@@ -74,6 +74,13 @@ Nueva comprobación realizada el 30 de julio de 2026:
 - Los hashes remotos de `auth.js`, `styles.css`, los ocho HTML, `README.md` y este contexto coincidían exactamente con la rama local final del Paso 11.
 - El Paso 11C se abrió en `codex/password-security-step-11c`, sin modificar el remoto ni los historiales desincronizados.
 
+Comprobación posterior del 30 de julio de 2026:
+
+- La usuaria publicó el Paso 11C y configuró en Supabase Auth doce caracteres y la combinación más fuerte.
+- El nuevo `main` público quedó en `c18e04e` (`SEGURIDAD`) y se clonó limpio como base exacta del Paso 12.
+- La rama local actual es `codex/quality-observability-step-12`.
+- No se debe hacer `push`: la usuaria continúa publicando manualmente el ZIP completo.
+
 ## 4. Funcionalidades terminadas y comprobadas
 
 ### Base real
@@ -208,7 +215,7 @@ Los asesores de Supabase se ejecutaron después del despliegue. Los avisos infor
 
 ### Paso 11C: protección gratuita de contraseñas
 
-Implementado localmente el 30 de julio de 2026 en `codex/password-security-step-11c`; pendiente de publicación y aceptación en la URL pública:
+Implementado, publicado y validado el 30 de julio de 2026:
 
 - El alta exige doce caracteres, minúscula, mayúscula, número y símbolo.
 - La interfaz muestra cinco requisitos accesibles y los actualiza localmente mientras se escribe.
@@ -220,13 +227,58 @@ Implementado localmente el 30 de julio de 2026 en `codex/password-security-step-
 - Si HIBP o Web Crypto no están disponibles, el alta falla de forma cerrada con un mensaje en español; no se crea una cuenta sin comprobar.
 - Los errores comunes de Supabase Auth ya no se muestran como mensajes técnicos crudos.
 - Todas las páginas cargan primero `password-security.js` y usan la versión de caché `20260730-password1`.
-- No hay migración, SQL, Edge Function, secreto ni modificación del Supabase vivo.
+- No hay migración, SQL, Edge Function ni secreto.
+- Supabase Auth exige ya doce caracteres y la combinación más fuerte de caracteres.
+- GitHub Pages carga `password-security.js` y la versión coordinada `20260730-password1`.
 
-Pruebas superadas en local: sintaxis de ambos JavaScript, cinco tests unitarios, flujo DOM completo con HIBP simulado para segura/filtrada/caída, mantenimiento del inicio de sesión, integridad de recursos y `git diff --check`. La validación visual definitiva queda pendiente de la publicación porque el entorno local no dispone del ejecutable de Chromium.
-
-La activación exige dos acciones manuales: subir el paquete completo a GitHub y configurar en **Authentication → Providers → Email** la longitud mínima `12` y la opción más fuerte de caracteres requeridos. La protección integrada de filtraciones puede permanecer bloqueada en Free. No ejecutar SQL.
+Pruebas superadas: sintaxis, cinco tests unitarios, flujo DOM con HIBP simulado para segura/filtrada/caída, mantenimiento del inicio de sesión, integridad de recursos y comprobación de los once archivos públicos. La API real de Pwned Passwords respondió correctamente con CORS.
 
 Checklist: `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
+
+### Paso 12: calidad, secretos, disponibilidad y errores
+
+La usuaria aprobó el 30 de julio de 2026 la incorporación de cuatro herramientas gratuitas:
+
+- **SonarQube Cloud:** activado sobre el repositorio público mediante su aplicación oficial de GitHub. `.sonarcloud.properties` separa pruebas y excluye solo dependencias/resultados generados. El primer análisis de `main` en `c18e04e` encontró ocho vulnerabilidades bajas `Web:S5725`: la misma carga de Supabase desde jsDelivr sin SRI en los ocho HTML. La rama del Paso 12 fija `@supabase/supabase-js@2.111.0`, añade su hash SHA-384 y `crossorigin="anonymous"` y lo protege con una prueba. Tras publicar debe comprobarse que el segundo análisis muestra Security A, cero vulnerabilidades y un Quality Gate ya calculado.
+- **GitGuardian:** aplicación oficial de GitHub con lectura limitada al repositorio de Oraklo, escaneo histórico y vigilancia de commits nuevos. No se concederán permisos de escritura.
+- **Checkly:** dos URL monitors —portada cada 10 minutos y Comunidad cada 30— y un recorrido Playwright público cada hora desde `eu-central-1`. El recorrido no inicia sesión ni modifica datos. El presupuesto previsto es de unas 720 ejecuciones mensuales de navegador.
+- **Sentry:** errores JavaScript únicamente en producción, sin Replay, sin Performance, sin breadcrumbs y con `sendDefaultPii: false`. Antes del envío elimina `user`, `request`, extras y campos sensibles; además redacta correos, UUID, JWT, tokens y query strings.
+
+Archivos principales añadidos:
+
+- `.github/workflows/oraklo-quality.yml`
+- `.github/workflows/checkly.yml`
+- `.github/workflows/checkly-deploy.yml`
+- `.sonarcloud.properties`
+- `checkly.config.ts`
+- `checks/oraklo-availability.check.ts`
+- `checks/oraklo-public.spec.ts`
+- `observability-config.js`
+- `monitoring.js`
+- `tests/monitoring.test.js`
+- `STEP_12_TOOLING_CHECKLIST.md`
+
+La configuración local está preparada y probada. La activación externa necesita que la usuaria inicie sesión o cree personalmente las cuentas, acepte sus condiciones y autorice las aplicaciones de GitHub.
+
+Checkly ya tiene instalada su aplicación oficial de GitHub, limitada exclusivamente a
+`oraklo-prototype-2.0`. La usuaria guardó `CHECKLY_ACCOUNT_ID` como variable de GitHub Actions y
+`CHECKLY_API_KEY` como secreto el 30 de julio de 2026. El workflow de despliegue todavía no aparece
+en GitHub porque forma parte de la rama local del Paso 12: se publicará con el ZIP final y después se
+ejecutará manualmente para probar los tres controles antes de crear o actualizar los monitores
+programados.
+
+Sentry ya tiene creada la organización europea `mercado-predicciones` y el proyecto Browser
+JavaScript `oraklo-web`, con solo Error Monitoring activo. Su DSN público quedó incorporado el 30 de
+julio de 2026 en `observability-config.js`. La carga continúa limitada al host público de GitHub
+Pages, fija el SDK `10.69.0` con integridad SHA-384 y conserva la limpieza de PII acordada. Tras
+publicar el ZIP final falta provocar un error controlado sin datos reales y confirmar que llega al
+proyecto.
+
+Herramientas aplazadas pero vinculadas a un momento concreto:
+
+- **Penpot:** debe abrir el próximo bloque visual del MVP antes de volver a modificar identidad, componentes, responsive, rangos, emblemas o avatares.
+- **Mailjet:** antes de recuperación de contraseña, invitaciones o beta con correo transaccional.
+- **PostHog:** al comenzar la beta cerrada y solo después de preparar consentimiento, eventos mínimos y privacidad.
 
 ## 5. Migraciones y backend del repositorio
 
@@ -249,9 +301,12 @@ No debe suponerse que toda función antigua del Supabase vivo está versionada a
 - Paso 10: perfil de usuario como currículum predictivo — terminado.
 - Paso 10B: personalización y menú de cuenta — terminado; su esquema se verificó en Supabase aunque el historial remoto de migraciones no lo refleja de forma fiable.
 - Paso 11: MVP social y comunidad — terminado, desplegado y aceptado con cuentas reales.
-- Paso 11C: protección gratuita de contraseñas — implementada localmente; pendiente de publicación, configuración de requisitos en Supabase Auth y aceptación pública.
+- Paso 11C: protección gratuita de contraseñas — terminado, publicado y validado.
+- Paso 12: SonarQube Cloud, GitGuardian, Checkly y Sentry — configuración versionada en curso; falta activar las cuentas externas y completar la aceptación.
 
-Siguiente paso operativo: publicar y aceptar el Paso 11C. Después, acordar con la usuaria el alcance del Paso 12 de pulido y preparación para beta. No iniciar automáticamente las ampliaciones sociales posteriores al MVP ni el pulido visual final sin definir y aprobar primero su alcance.
+Siguiente paso operativo: publicar el ZIP final del Paso 12, desplegar los monitores de Checkly,
+provocar un error controlado de Sentry y comprobar los primeros resultados de las cuatro
+herramientas. No iniciar automáticamente ampliaciones sociales.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -301,6 +356,7 @@ No implementar sin autorización expresa:
 
 ## 10. Recordatorios para el pulido final
 
+- Antes de programar el siguiente rediseño, crear en Penpot el sistema visual del MVP: tokens, componentes, estados, escritorio y móvil.
 - Diseñar un emblema propio para cada rango: Observador, Intérprete, Analista, Visionario y Oráculo.
 - Sustituir los avatares simbólicos por avatares originales relacionados con gaming y Oraklo.
 - Mantener el tono de oráculo moderno y evitar estética de casino.
@@ -309,6 +365,7 @@ No implementar sin autorización expresa:
 
 - `node --check` en cada JavaScript modificado.
 - `node --test tests/password-security.test.js` cuando se modifique el control de contraseñas.
+- `npm run validate` cuando exista `package.json`; incluye sintaxis, todas las pruebas unitarias y tipado de Checkly.
 - `git diff --check`.
 - Comprobar que todos los recursos locales existen y comparten una versión de caché coherente.
 - Probar sesión invitada y autenticada cuando afecte a Auth/cabecera.

@@ -89,6 +89,23 @@ La secuencia detallada de activación y pruebas está en `STEP_11_ACCEPTANCE_CHE
 
 La activación y la matriz de aceptación están en `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
 
+## Calidad y observabilidad · Paso 12
+
+El Paso 12 incorpora cuatro capas gratuitas sin sustituir la arquitectura del MVP:
+
+- SonarQube Cloud: análisis automático de calidad, mantenibilidad y seguridad.
+- GitGuardian: escaneo histórico y continuo de secretos mediante la aplicación de GitHub de solo lectura.
+- Checkly: dos controles de disponibilidad y un recorrido público Playwright sin escrituras ni cuentas de prueba.
+- Sentry: errores JavaScript en producción con PII desactivada, sin Replay, sin trazas y con redacción adicional antes del envío.
+
+La configuración versionada, las cuotas elegidas, los datos que nunca deben enviarse y la secuencia de activación están en `STEP_12_TOOLING_CHECKLIST.md`.
+
+Herramientas ya reservadas para fases posteriores:
+
+- **Penpot:** debe abrir el próximo bloque visual del MVP antes de modificar de nuevo la identidad, los componentes, emblemas, avatares o responsive.
+- **Mailjet:** antes de recuperación de contraseña, invitaciones o beta con correo transaccional real.
+- **PostHog:** al comenzar la beta cerrada y únicamente después de preparar consentimiento, eventos mínimos y privacidad.
+
 ### Backlog social posterior al MVP
 
 Cuando Oraklo salga del MVP, ampliar el Paso 11 de forma progresiva con: mensajes directos o chat; notificaciones por email o push; menciones; hashtags y tendencias; imágenes, vídeo, GIF y archivos; grupos o comunidades privadas; feed algorítmico; cuentas privadas y solicitudes de seguimiento; hilos con más profundidad; varias reacciones o votos negativos; recompensas sociales de Karma o Prestigio; y moderación o sanciones automatizadas con IA. Ninguno de estos puntos forma parte del MVP actual y deberá diseñarse y aprobarse antes de implementarlo.
@@ -105,5 +122,6 @@ select public.configure_oraklo_seasons(
 
 ## Recordatorio para el pulido final
 
+- Diseñar primero en Penpot el sistema visual del MVP y trasladar después sus tokens y componentes al frontend.
 - Diseñar un emblema visual propio para cada nivel de Prestigio: Observador, Intérprete, Analista, Visionario y Oráculo.
 - Sustituir los avatares simbólicos provisionales por una colección de avatares propios y atractivos, relacionados con el gaming y el universo de Oraklo, manteniendo el tono de oráculo moderno y evitando cualquier estética de casino.

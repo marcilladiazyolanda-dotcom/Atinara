@@ -57,5 +57,6 @@
 - Paso 9 (rangos, clasificación y temporadas dormidas): terminado.
 - Paso 10 y 10B (currículum predictivo, personalización y menú de cuenta): terminado en la rama de trabajo local.
 - Paso 11 (comentarios, seguimiento, feed, reacción y moderación): terminado, desplegado y aceptado.
-- Paso 11C (protección gratuita de contraseñas filtradas): implementado localmente; debe publicarse, coordinarse con los requisitos de Supabase Auth y validarse antes de iniciar otro bloque.
-- Paso 12 (pulido y preparación para beta): no iniciarlo hasta definir y aprobar su alcance con la usuaria.
+- Paso 11C (protección gratuita de contraseñas filtradas): publicado y validado el 30 de julio de 2026.
+- Paso 12 (pulido y preparación para beta): la usuaria ha aprobado SonarQube Cloud, GitGuardian, Checkly y Sentry como primer bloque.
+- Antes del próximo cambio visual importante del MVP, abrir un bloque de Penpot para definir identidad, componentes, emblemas, avatares y responsive; no improvisar el rediseño directamente en CSS.
