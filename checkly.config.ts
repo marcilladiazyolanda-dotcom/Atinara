@@ -1,6 +1,6 @@
 import { defineConfig } from "checkly";
 
-const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0";
+const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/";
 
 export default defineConfig({
   projectName: "Oraklo · Producción",
