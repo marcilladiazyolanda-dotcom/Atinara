@@ -1,4 +1,5 @@
 const authClient = window.orakloSupabase;
+const passwordSecurityClient = window.orakloPasswordSecurity;
 
 const guestProfile = {
   username: "Invitado",
@@ -371,6 +372,78 @@ function setAuthStatus(message, tone = "neutral") {
   statusNode.hidden = !message;
 }
 
+function renderPasswordRequirements(password = "") {
+  const requirementsPanel = document.querySelector("#auth-password-security");
+  if (!requirementsPanel || !passwordSecurityClient) return null;
+
+  const evaluation = passwordSecurityClient.evaluate(password);
+
+  requirementsPanel.querySelectorAll("[data-password-rule]").forEach((item) => {
+    const ruleName = item.dataset.passwordRule;
+    const isMet = Boolean(evaluation.rules[ruleName]);
+    const icon = item.querySelector("[data-password-rule-icon]");
+    const label = item.querySelector("[data-password-rule-label]")?.textContent || "Requisito";
+
+    item.dataset.met = String(isMet);
+    item.setAttribute(
+      "aria-label",
+      `${label}. ${isMet ? "Requisito cumplido" : "Requisito pendiente"}`
+    );
+    if (icon) {
+      icon.textContent = isMet ? "✓" : "○";
+    }
+  });
+
+  return evaluation;
+}
+
+function getFriendlyAuthError(error, mode) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  if (message.includes("invalid login credentials")) {
+    return "El email o la contraseña no son correctos.";
+  }
+
+  if (message.includes("email not confirmed")) {
+    return "Confirma tu email antes de iniciar sesión.";
+  }
+
+  if (message.includes("user already registered")) {
+    return "Ya existe una cuenta con ese email.";
+  }
+
+  if (
+    code.includes("weak_password")
+    || message.includes("weak password")
+    || message.includes("password should")
+  ) {
+    return "La contraseña no cumple los requisitos de seguridad de Oraklo.";
+  }
+
+  if (code.includes("over_request_rate_limit") || message.includes("rate limit")) {
+    return "Se han realizado demasiados intentos. Espera unos minutos y vuelve a probar.";
+  }
+
+  return mode === "signup"
+    ? "No se ha podido crear la cuenta. Revisa los datos e inténtalo de nuevo."
+    : "No se ha podido iniciar sesión. Revisa los datos e inténtalo de nuevo.";
+}
+
+function setAuthFormBusy(isBusy) {
+  const form = document.querySelector("#auth-form");
+  const submitButton = document.querySelector("#auth-submit");
+
+  form?.setAttribute("aria-busy", String(isBusy));
+  if (submitButton) {
+    submitButton.disabled = isBusy;
+  }
+
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => {
+    button.disabled = isBusy;
+  });
+}
+
 function setAuthMode(mode) {
   authMode = mode;
   const isSignup = authMode === "signup";
@@ -378,6 +451,8 @@ function setAuthMode(mode) {
   const submitNode = document.querySelector("#auth-submit");
   const usernameGroup = document.querySelector("#auth-username-group");
   const usernameInput = document.querySelector("#auth-username");
+  const passwordInput = document.querySelector("#auth-password");
+  const passwordSecurity = document.querySelector("#auth-password-security");
 
   document.querySelectorAll("[data-auth-mode]").forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.authMode === authMode));
@@ -396,6 +471,28 @@ function setAuthMode(mode) {
     usernameInput.required = isSignup;
   }
 
+  if (passwordInput) {
+    passwordInput.autocomplete = isSignup ? "new-password" : "current-password";
+    passwordInput.minLength = isSignup
+      ? passwordSecurityClient?.minLength || 12
+      : 6;
+    passwordInput.placeholder = isSignup
+      ? "12 caracteres o más"
+      : "Tu contraseña";
+    passwordInput.setAttribute(
+      "aria-describedby",
+      isSignup
+        ? "auth-password-requirements auth-password-privacy auth-status"
+        : "auth-status"
+    );
+    passwordInput.removeAttribute("aria-invalid");
+  }
+
+  if (passwordSecurity) {
+    passwordSecurity.hidden = !isSignup;
+  }
+
+  renderPasswordRequirements(passwordInput?.value || "");
   setAuthStatus("");
 }
 
@@ -425,9 +522,40 @@ function injectAuthModal() {
           <input id="auth-email" type="email" autocomplete="email" required placeholder="tu@email.com">
         </label>
         <label>
-          <span>Password</span>
-          <input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="Mínimo 6 caracteres">
+          <span>Contraseña</span>
+          <input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="Tu contraseña">
         </label>
+        <section class="auth-password-security" id="auth-password-security" aria-labelledby="auth-password-security-title" hidden>
+          <div class="auth-password-security-heading">
+            <strong id="auth-password-security-title">Contraseña segura</strong>
+            <span>Todos los requisitos deben cumplirse</span>
+          </div>
+          <ul id="auth-password-requirements" aria-label="Requisitos de la contraseña">
+            <li data-password-rule="length" data-met="false">
+              <span data-password-rule-icon aria-hidden="true">○</span>
+              <span data-password-rule-label>12 caracteres como mínimo</span>
+            </li>
+            <li data-password-rule="lowercase" data-met="false">
+              <span data-password-rule-icon aria-hidden="true">○</span>
+              <span data-password-rule-label>Una letra minúscula</span>
+            </li>
+            <li data-password-rule="uppercase" data-met="false">
+              <span data-password-rule-icon aria-hidden="true">○</span>
+              <span data-password-rule-label>Una letra mayúscula</span>
+            </li>
+            <li data-password-rule="number" data-met="false">
+              <span data-password-rule-icon aria-hidden="true">○</span>
+              <span data-password-rule-label>Un número</span>
+            </li>
+            <li data-password-rule="symbol" data-met="false">
+              <span data-password-rule-icon aria-hidden="true">○</span>
+              <span data-password-rule-label>Un símbolo</span>
+            </li>
+          </ul>
+          <p class="auth-password-privacy" id="auth-password-privacy">
+            Al crear la cuenta comprobaremos que no figure en filtraciones conocidas. Tu contraseña nunca se envía al servicio de comprobación.
+          </p>
+        </section>
         <p class="auth-status" id="auth-status" hidden></p>
         <button class="primary-button auth-submit" id="auth-submit" type="submit">Entrar</button>
       </form>
@@ -463,6 +591,7 @@ function normalizeUsername(username) {
 
 async function handleAuthSubmit(event) {
   event.preventDefault();
+  const requestedMode = authMode;
 
   if (!authClient) {
     setAuthStatus("Supabase no está disponible ahora mismo.", "error");
@@ -472,18 +601,65 @@ async function handleAuthSubmit(event) {
   const email = document.querySelector("#auth-email")?.value.trim();
   const password = document.querySelector("#auth-password")?.value;
   const username = normalizeUsername(document.querySelector("#auth-username")?.value || "");
-  const submitButton = document.querySelector("#auth-submit");
 
-  if (authMode === "signup" && !username) {
+  if (requestedMode === "signup" && !username) {
     setAuthStatus("Elige un username para crear la cuenta.", "error");
     return;
   }
 
-  submitButton.disabled = true;
-  setAuthStatus(authMode === "signup" ? "Creando cuenta..." : "Entrando...", "info");
+  if (requestedMode === "signup") {
+    if (!passwordSecurityClient) {
+      setAuthStatus(
+        "La comprobación segura de contraseñas no está disponible. Recarga la página e inténtalo de nuevo.",
+        "error"
+      );
+      return;
+    }
+
+    const evaluation = renderPasswordRequirements(password);
+    if (!evaluation?.valid) {
+      const passwordInput = document.querySelector("#auth-password");
+      passwordInput?.setAttribute("aria-invalid", "true");
+      passwordInput?.focus();
+      setAuthStatus("La contraseña debe cumplir los cinco requisitos indicados.", "error");
+      return;
+    }
+  }
+
+  setAuthFormBusy(true);
+  setAuthStatus(
+    requestedMode === "signup"
+      ? "Comprobando la seguridad de la contraseña..."
+      : "Entrando...",
+    "info"
+  );
 
   try {
-    if (authMode === "signup") {
+    if (requestedMode === "signup") {
+      let exposureResult;
+
+      try {
+        exposureResult = await passwordSecurityClient.checkExposure(password);
+      } catch (_error) {
+        setAuthStatus(
+          "No hemos podido comprobar la contraseña de forma segura. Inténtalo de nuevo en unos minutos.",
+          "error"
+        );
+        return;
+      }
+
+      if (exposureResult.exposed) {
+        const passwordInput = document.querySelector("#auth-password");
+        passwordInput?.setAttribute("aria-invalid", "true");
+        passwordInput?.focus();
+        setAuthStatus(
+          "Esta contraseña aparece en filtraciones conocidas. Elige otra distinta y no la reutilices.",
+          "error"
+        );
+        return;
+      }
+
+      setAuthStatus("Contraseña segura. Creando cuenta...", "info");
       const { data, error } = await authClient.auth.signUp({
         email,
         password,
@@ -509,9 +685,9 @@ async function handleAuthSubmit(event) {
       window.setTimeout(closeAuthModal, 500);
     }
   } catch (error) {
-    setAuthStatus(error.message || "No se ha podido completar el acceso.", "error");
+    setAuthStatus(getFriendlyAuthError(error, requestedMode), "error");
   } finally {
-    submitButton.disabled = false;
+    setAuthFormBusy(false);
   }
 }
 
@@ -566,6 +742,14 @@ function bindAuthUi() {
 
   document.querySelector("#auth-modal-close")?.addEventListener("click", closeAuthModal);
   document.querySelector("#auth-form")?.addEventListener("submit", handleAuthSubmit);
+  document.querySelector("#auth-password")?.addEventListener("input", (event) => {
+    if (authMode !== "signup") return;
+
+    const evaluation = renderPasswordRequirements(event.target.value);
+    if (evaluation?.valid) {
+      event.target.removeAttribute("aria-invalid");
+    }
+  });
   document.querySelector("#auth-modal")?.addEventListener("click", (event) => {
     if (event.target.id === "auth-modal") {
       closeAuthModal();

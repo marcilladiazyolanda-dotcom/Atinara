@@ -56,4 +56,6 @@
 
 - Paso 9 (rangos, clasificación y temporadas dormidas): terminado.
 - Paso 10 y 10B (currículum predictivo, personalización y menú de cuenta): terminado en la rama de trabajo local.
-- Paso 11 previsto: funciones sociales y comunidad. Antes de implementarlo hay que acordar con la usuaria el alcance de comentarios, seguimiento, feed, reacciones, moderación y reportes.
+- Paso 11 (comentarios, seguimiento, feed, reacción y moderación): terminado, desplegado y aceptado.
+- Paso 11C (protección gratuita de contraseñas filtradas): implementado localmente; debe publicarse, coordinarse con los requisitos de Supabase Auth y validarse antes de iniciar otro bloque.
+- Paso 12 (pulido y preparación para beta): no iniciarlo hasta definir y aprobar su alcance con la usuaria.

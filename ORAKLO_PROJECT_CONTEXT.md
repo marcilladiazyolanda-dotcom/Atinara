@@ -1,6 +1,6 @@
 # Oraklo · contexto de relevo para un nuevo chat Work
 
-Última actualización del contexto: 18 de julio de 2026.
+Última actualización del contexto: 30 de julio de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
@@ -67,6 +67,12 @@ Nueva comprobación realizada el 18 de julio de 2026:
 - El árbol funcional que sirvió de base local coincidía con el árbol público, pero los historiales continuaban siendo distintos por las subidas manuales anteriores.
 - El Paso 11 se implementó en una rama nueva para no reescribir, rebasar ni mezclar ese historial desincronizado.
 - No hacer `reset`, `rebase` o `pull` destructivo ni asumir que el `origin/main` local representa el `main` público. Comparar árboles y commits antes de una futura sincronización.
+
+Nueva comprobación realizada el 30 de julio de 2026:
+
+- El `main` público de GitHub estaba en `deeb302` (`correcciones`).
+- Los hashes remotos de `auth.js`, `styles.css`, los ocho HTML, `README.md` y este contexto coincidían exactamente con la rama local final del Paso 11.
+- El Paso 11C se abrió en `codex/password-security-step-11c`, sin modificar el remoto ni los historiales desincronizados.
 
 ## 4. Funcionalidades terminadas y comprobadas
 
@@ -200,6 +206,28 @@ La aceptación detectó que la RPC histórica publicaba `comments_count = 0` aun
 
 Los asesores de Supabase se ejecutaron después del despliegue. Los avisos informativos de tablas sociales con RLS sin políticas son intencionados: `anon` y `authenticated` no tienen permisos directos y toda la API usa RPC cerradas. Los avisos sobre RPC `security definer` también corresponden a la superficie pública/autenticada deliberada y las funciones sensibles comprueban identidad o administración internamente. Los índices sociales aún aparecen como no usados por falta de tráfico suficiente; no eliminarlos por ese aviso temprano. Queda como endurecimiento previo a una beta pública activar la protección de contraseñas filtradas de Supabase Auth.
 
+### Paso 11C: protección gratuita de contraseñas
+
+Implementado localmente el 30 de julio de 2026 en `codex/password-security-step-11c`; pendiente de publicación y aceptación en la URL pública:
+
+- El alta exige doce caracteres, minúscula, mayúscula, número y símbolo.
+- La interfaz muestra cinco requisitos accesibles y los actualiza localmente mientras se escribe.
+- `password-security.js` calcula SHA-1 mediante Web Crypto dentro del navegador.
+- Al enviar el alta consulta Pwned Passwords por k-anonimato usando solo los primeros cinco caracteres del hash.
+- La petición usa `Add-Padding: true`, `credentials: omit`, `referrerPolicy: no-referrer`, no tiene cuerpo y dispone de un límite de espera.
+- La comprobación no se realiza carácter a carácter y nunca afecta al inicio de sesión.
+- Las contraseñas filtradas se bloquean antes de llamar a `supabase.auth.signUp`.
+- Si HIBP o Web Crypto no están disponibles, el alta falla de forma cerrada con un mensaje en español; no se crea una cuenta sin comprobar.
+- Los errores comunes de Supabase Auth ya no se muestran como mensajes técnicos crudos.
+- Todas las páginas cargan primero `password-security.js` y usan la versión de caché `20260730-password1`.
+- No hay migración, SQL, Edge Function, secreto ni modificación del Supabase vivo.
+
+Pruebas superadas en local: sintaxis de ambos JavaScript, cinco tests unitarios, flujo DOM completo con HIBP simulado para segura/filtrada/caída, mantenimiento del inicio de sesión, integridad de recursos y `git diff --check`. La validación visual definitiva queda pendiente de la publicación porque el entorno local no dispone del ejecutable de Chromium.
+
+La activación exige dos acciones manuales: subir el paquete completo a GitHub y configurar en **Authentication → Providers → Email** la longitud mínima `12` y la opción más fuerte de caracteres requeridos. La protección integrada de filtraciones puede permanecer bloqueada en Free. No ejecutar SQL.
+
+Checklist: `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
+
 ## 5. Migraciones y backend del repositorio
 
 Orden actual:
@@ -221,8 +249,9 @@ No debe suponerse que toda función antigua del Supabase vivo está versionada a
 - Paso 10: perfil de usuario como currículum predictivo — terminado.
 - Paso 10B: personalización y menú de cuenta — terminado; su esquema se verificó en Supabase aunque el historial remoto de migraciones no lo refleja de forma fiable.
 - Paso 11: MVP social y comunidad — terminado, desplegado y aceptado con cuentas reales.
+- Paso 11C: protección gratuita de contraseñas — implementada localmente; pendiente de publicación, configuración de requisitos en Supabase Auth y aceptación pública.
 
-Siguiente paso operativo: acordar con la usuaria el siguiente bloque del roadmap. No iniciar automáticamente las ampliaciones sociales posteriores al MVP ni el pulido visual final sin definir y aprobar primero su alcance.
+Siguiente paso operativo: publicar y aceptar el Paso 11C. Después, acordar con la usuaria el alcance del Paso 12 de pulido y preparación para beta. No iniciar automáticamente las ampliaciones sociales posteriores al MVP ni el pulido visual final sin definir y aprobar primero su alcance.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -279,6 +308,7 @@ No implementar sin autorización expresa:
 ## 11. Comprobación mínima antes de entregar cambios
 
 - `node --check` en cada JavaScript modificado.
+- `node --test tests/password-security.test.js` cuando se modifique el control de contraseñas.
 - `git diff --check`.
 - Comprobar que todos los recursos locales existen y comparten una versión de caché coherente.
 - Probar sesión invitada y autenticada cuando afecte a Auth/cabecera.

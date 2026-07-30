@@ -76,6 +76,19 @@ Ambas migraciones fueron aplicadas en producción y el MVP social se validó com
 
 La secuencia detallada de activación y pruebas está en `STEP_11_ACCEPTANCE_CHECKLIST.md`.
 
+## Protección gratuita de contraseñas · Paso 11C
+
+- El registro exige doce caracteres, minúscula, mayúscula, número y símbolo.
+- `password-security.js` calcula SHA-1 dentro del navegador y consulta gratuitamente Pwned Passwords mediante k-anonimato.
+- Solo se envían los primeros cinco caracteres del hash, nunca la contraseña ni el hash completo.
+- La petición se realiza únicamente al enviar el alta, usa `Add-Padding: true` y no incluye cookies, credenciales, referente o cuerpo.
+- Una contraseña filtrada bloquea el registro. Si HIBP no está disponible, el alta se detiene con un mensaje comprensible; el inicio de sesión existente continúa funcionando.
+- El control de filtraciones protege el formulario normal, pero al ejecutarse en el cliente no sustituye una validación de servidor frente a llamadas directas a Supabase Auth.
+- En Supabase Free deben configurarse por separado los requisitos de servidor: doce caracteres y la opción más fuerte de caracteres requeridos.
+- Este paso no necesita SQL ni secretos.
+
+La activación y la matriz de aceptación están en `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
+
 ### Backlog social posterior al MVP
 
 Cuando Oraklo salga del MVP, ampliar el Paso 11 de forma progresiva con: mensajes directos o chat; notificaciones por email o push; menciones; hashtags y tendencias; imágenes, vídeo, GIF y archivos; grupos o comunidades privadas; feed algorítmico; cuentas privadas y solicitudes de seguimiento; hilos con más profundidad; varias reacciones o votos negativos; recompensas sociales de Karma o Prestigio; y moderación o sanciones automatizadas con IA. Ninguno de estos puntos forma parte del MVP actual y deberá diseñarse y aprobarse antes de implementarlo.

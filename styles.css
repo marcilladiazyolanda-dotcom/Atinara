@@ -1037,7 +1037,10 @@ h3 {
 }
 
 .auth-modal {
-  width: min(100%, 460px);
+  width: min(100%, 500px);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 
 .auth-tabs {
@@ -1087,6 +1090,89 @@ h3 {
 .auth-form input:focus {
   border-color: rgba(110, 168, 255, 0.75);
   box-shadow: 0 0 0 3px rgba(110, 168, 255, 0.16);
+}
+
+.auth-form input[aria-invalid="true"] {
+  border-color: rgba(255, 138, 138, 0.72);
+  box-shadow: 0 0 0 3px rgba(255, 138, 138, 0.12);
+}
+
+.auth-password-security {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(110, 168, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(110, 168, 255, 0.055);
+}
+
+.auth-password-security[hidden] {
+  display: none;
+}
+
+.auth-password-security-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-password-security-heading strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.auth-password-security-heading span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: right;
+}
+
+.auth-password-security ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.auth-password-security li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.79rem;
+}
+
+.auth-password-security li [data-password-rule-icon] {
+  display: inline-grid;
+  flex: 0 0 18px;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.auth-password-security li[data-met="true"] {
+  color: #c8f4dc;
+}
+
+.auth-password-security li[data-met="true"] [data-password-rule-icon] {
+  border-color: rgba(94, 224, 160, 0.48);
+  color: #07140e;
+  background: var(--green);
+}
+
+.auth-password-security .auth-password-privacy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
 }
 
 .auth-status {
@@ -5330,6 +5416,20 @@ select {
 }
 
 @media (max-width: 520px) {
+  .auth-password-security-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .auth-password-security-heading span {
+    text-align: left;
+  }
+
+  .auth-password-security ul {
+    grid-template-columns: 1fr;
+  }
+
   .market-comments-section,
   .community-feed-panel,
   .community-sidebar-card,
