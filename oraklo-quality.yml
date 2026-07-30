@@ -1,0 +1,34 @@
+name: Calidad de Oraklo
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Sintaxis y pruebas unitarias
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Instalar dependencias bloqueadas
+        run: npm ci
+
+      - name: Auditar dependencias
+        run: npm audit --audit-level=high
+
+      - name: Validar JavaScript y pruebas
+        run: npm run validate

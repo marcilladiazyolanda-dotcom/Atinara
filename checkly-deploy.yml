@@ -1,0 +1,55 @@
+name: Desplegar monitores de Checkly
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checkly-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Probar y desplegar monitorización
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Instalar dependencias bloqueadas
+        run: npm ci
+
+      - name: Comprobar credenciales de Checkly
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CHECKLY_API_KEY" ]; then
+            echo "::error::Falta el secreto CHECKLY_API_KEY."
+            exit 1
+          fi
+
+          if [ -z "$CHECKLY_ACCOUNT_ID" ]; then
+            echo "::error::Falta la variable CHECKLY_ACCOUNT_ID."
+            exit 1
+          fi
+
+      - name: Probar los tres controles
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
+        run: npm run checkly:test -- --reporter=ci
+
+      - name: Desplegar los monitores programados
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
+        run: npm run checkly:deploy -- --force --output

@@ -1,0 +1,14 @@
+node_modules/
+.checkly/
+test-results/
+playwright-report/
+checkly-github-report.md
+checkly-summary.md
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,49 @@
+name: Checkly
+
+on:
+  pull_request:
+    paths:
+      - "checks/**"
+      - "checkly.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "*.html"
+      - "*.js"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-smoke:
+    name: Recorrido público de producción
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Comprobar que Checkly está conectado
+        id: checkly-ready
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CHECKLY_API_KEY" ] && [ -n "$CHECKLY_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Checkly se activará cuando existan CHECKLY_API_KEY y CHECKLY_ACCOUNT_ID."
+          fi
+
+      - name: Ejecutar Checkly
+        if: steps.checkly-ready.outputs.ready == 'true'
+        uses: checkly/checkly-action@v1
+        with:
+          command: test
+          cli-version: "8.18.0"
+          install-command: npm ci
+          reporting: auto
+          github-check-name: Checkly · Oraklo público
+        env:
+          CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
+          CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}

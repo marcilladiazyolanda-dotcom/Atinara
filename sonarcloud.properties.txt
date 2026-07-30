@@ -1,0 +1,4 @@
+# SonarQube Cloud usa análisis automático sobre el repositorio público.
+# No necesita tokens ni workflows dentro del proyecto.
+sonar.exclusions=node_modules/**,.checkly/**,test-results/**,playwright-report/**
+sonar.test.inclusions=tests/**,checks/**/*.spec.ts,checks/**/*.check.ts
