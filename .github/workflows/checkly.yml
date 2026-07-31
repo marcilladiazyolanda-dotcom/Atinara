@@ -37,13 +37,13 @@ jobs:
 
       - name: Ejecutar Checkly
         if: steps.checkly-ready.outputs.ready == 'true'
-        uses: checkly/checkly-action@v1
+        uses: checkly/checkly-action@61918e2a2713ee6f6a5b02addb52423a0b358272 # v1
         with:
           command: test
           cli-version: "8.18.0"
-          install-command: npm ci
+          install-command: npm ci --ignore-scripts
           reporting: auto
-          github-check-name: Checkly · Oraklo público
+          github-check-name: Checkly · Atinara pública
         env:
           CHECKLY_API_KEY: ${{ secrets.CHECKLY_API_KEY }}
           CHECKLY_ACCOUNT_ID: ${{ vars.CHECKLY_ACCOUNT_ID }}
