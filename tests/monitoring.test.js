@@ -58,7 +58,7 @@ test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
       browser: { name: "Chrome" },
       trace: { trace_id: "123" }
     },
-    transaction: "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/profile.html?id=privado"
+    transaction: "https://marcilladiazyolanda-dotcom.github.io/atinara/profile.html?id=privado"
   });
 
   assert.equal(sanitized.message, "Fallo para [correo oculto]");
@@ -70,7 +70,7 @@ test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
   assert.equal(sanitized.contexts.trace, undefined);
   assert.equal(
     sanitized.transaction,
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/profile.html"
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/profile.html"
   );
 });
 

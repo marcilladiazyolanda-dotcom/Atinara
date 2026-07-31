@@ -4,10 +4,10 @@ import {
   UrlMonitor
 } from "checkly/constructs";
 
-const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0";
+const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/atinara";
 
 new UrlMonitor("oraklo-home-availability", {
-  name: "Oraklo · Portada disponible",
+  name: "Atinara · Portada disponible",
   activated: true,
   frequency: Frequency.EVERY_10M,
   locations: ["eu-central-1"],
@@ -21,7 +21,7 @@ new UrlMonitor("oraklo-home-availability", {
   }
 });
 new UrlMonitor("oraklo-community-availability", {
-  name: "Oraklo · Comunidad disponible",
+  name: "Atinara · Comunidad disponible",
   activated: true,
   frequency: Frequency.EVERY_30M,
   locations: ["eu-central-1"],

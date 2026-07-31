@@ -2,7 +2,7 @@
   "name": "oraklo-prototype-2.0",
   "version": "12.0.0",
   "private": true,
-  "description": "MVP estático de Oraklo y sus comprobaciones automatizadas de calidad.",
+  "description": "MVP estático de Atinara y sus comprobaciones automatizadas de calidad.",
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "node --test tests/*.test.js",

@@ -1,4 +1,4 @@
-# Paso 12 · Calidad, secretos, disponibilidad y errores
+# Paso 12 · Calidad, secretos, disponibilidad y errores · completado
 
 ## Objetivo
 
@@ -25,10 +25,10 @@ Ninguna herramienta sustituye Supabase, GitHub Pages, Gemini o Pwned Passwords. 
 ### Activación externa
 
 - [x] Entrar en SonarQube Cloud con GitHub.
-- [x] Importar exclusivamente `marcilladiazyolanda-dotcom/oraklo-prototype-2.0`.
+- [x] Importar exclusivamente el repositorio que ahora se publicará como `marcilladiazyolanda-dotcom/atinara`.
 - [x] Mantener el proyecto público y el análisis automático.
 - [x] Confirmar que el primer análisis termina y revisar sus ocho vulnerabilidades.
-- [ ] Tras publicar el Paso 12, comprobar el segundo análisis: Security A, cero vulnerabilidades y Quality Gate calculado.
+- [x] Tras publicar el Paso 12, comprobar el segundo análisis: Security A, cero vulnerabilidades y Quality Gate calculado.
 
 El primer análisis de `main` en `c18e04e` encontró ocho instancias de `Web:S5725`, una por cada HTML, todas de impacto bajo y cinco minutos de esfuerzo. La causa común era cargar `@supabase/supabase-js@2` desde jsDelivr sin `integrity` ni CORS anónimo. La corrección se verificó contra el contenido exacto servido por jsDelivr antes de fijar el hash.
 
@@ -74,12 +74,12 @@ Esta frecuencia consume aproximadamente 720 ejecuciones mensuales de navegador. 
 ### Activación externa
 
 - [x] Crear o abrir una cuenta de Checkly que bajará a Hobby al terminar la prueba Team.
-- [ ] Comprobar los límites reales de la cuenta y la disponibilidad de `eu-central-1`.
-- [ ] Desplegar los tres monitores definidos en el repositorio.
+- [x] Comprobar los límites reales de la cuenta y la disponibilidad de `eu-central-1`.
+- [x] Desplegar los tres monitores definidos en el repositorio.
 - [x] Conectar desde Checkly la aplicación de GitHub limitada únicamente a Oraklo.
 - [x] Guardar la API key como secreto y el Account ID como variable del repositorio.
-- [ ] Ejecutar una sesión de prueba y confirmar que pasan los tres controles.
-- [ ] Mantener alertas por email únicamente para fallos y recuperación.
+- [x] Ejecutar una sesión de prueba y confirmar que pasan los tres controles.
+- [x] Mantener alertas por email únicamente para fallos y recuperación.
 
 ## 4. Sentry
 
@@ -96,17 +96,17 @@ Esta frecuencia consume aproximadamente 720 ejecuciones mensuales de navegador. 
 - Eliminación de query strings, por lo que no se envían identificadores de perfil o mercado incluidos en una URL.
 - Carga exclusiva en el host público de GitHub Pages.
 - SDK fijado en la versión `10.69.0`, con integridad SHA-384, CORS anónimo y sin referente.
-- Si Sentry o su CDN fallan, Oraklo continúa funcionando.
+- Si Sentry o su CDN fallan, Atinara continúa funcionando.
 
 ### Activación externa
 
 - [x] Crear una organización gratuita en región europea si Sentry ofrece esa elección.
 - [x] Crear un proyecto Browser JavaScript llamado `oraklo-web`.
 - [x] Mantener desactivados Replay, Performance y envío de PII.
-- [ ] Conservar activo el data scrubber del servidor.
+- [x] Conservar activo el data scrubber del servidor.
 - [x] Copiar únicamente el DSN público en `observability-config.js`.
-- [ ] Publicar y provocar un error controlado que no contenga datos reales.
-- [ ] Confirmar la recepción y eliminar el evento de prueba si procede.
+- [x] Publicar y provocar un error controlado que no contenga datos reales.
+- [x] Confirmar la recepción y eliminar el evento de prueba si procede.
 
 ## Automatización de GitHub
 
@@ -135,7 +135,7 @@ npm run validate
 Además:
 
 - [x] Los ocho HTML cargan `observability-config.js` y `monitoring.js`.
-- [x] Todos los recursos locales usan la versión `20260730-tools1`.
+- [x] Todos los recursos locales usan la versión coordinada vigente; tras el cambio de marca pública es `20260731-brand1`.
 - [x] No hay tokens ni API keys privadas dentro del repositorio; el único identificador
   versionado de Sentry es su DSN público de ingestión.
 - [x] `git diff --check` no encuentra errores.

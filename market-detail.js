@@ -870,7 +870,7 @@ function openPredictionModal(market, mode = "saved", errorMessage = "", context 
   `;
 
   predictionModalWarning.textContent = isSaved
-    ? "Tu predicción se ha guardado y el Karma se ha descontado. Al resolverse, Oraklo abonará automáticamente el retorno que corresponda y actualizará el Prestigio."
+    ? "Tu predicción se ha guardado y el Karma se ha descontado. Al resolverse, Atinara abonará automáticamente el retorno que corresponda y actualizará el Prestigio."
     : isDuplicate
       ? "Puedes revisar tu predicción existente en Mis predicciones."
       : errorMessage || "No se ha guardado ningún dato nuevo.";

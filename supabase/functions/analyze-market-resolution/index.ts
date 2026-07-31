@@ -9,7 +9,7 @@ const MAX_REQUEST_BYTES = 8_192;
 const MAX_RESEARCH_TEXT_LENGTH = 20_000;
 const DEFINITION_CHECK_MODEL = "oraklo-definition-check-v1";
 const ORAKLO_PUBLIC_SITE_URL =
-  "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/";
+  "https://marcilladiazyolanda-dotcom.github.io/atinara/";
 
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: "object",
@@ -222,7 +222,7 @@ function buildDefinitionIssueResponse(
   market: JsonRecord,
   issues: string[],
 ): JsonRecord {
-  const sourceTitle = "Ficha original y criterios del mercado en Oraklo";
+  const sourceTitle = "Ficha original y criterios del mercado en Atinara";
   const citedText = [
     `Pregunta: ${getText(market.question)}`,
     `Descripcion: ${getText(market.description)}`,
@@ -358,7 +358,7 @@ function buildAnalysisPrompt(
     cited_text: getText(source.cited_text),
   }));
 
-  return `Eres el arbitro de evidencia de Oraklo, un prototipo de mercados de prediccion sin dinero real.
+  return `Eres el arbitro de evidencia de Atinara, un prototipo de mercados de prediccion sin dinero real.
 
 Tu trabajo es proponer una resolucion, nunca ejecutarla. Una persona administradora revisara tu propuesta antes de repartir Karma o Prestigio. No tienes acceso a la web en esta fase: debes usar exclusivamente la investigacion y las fuentes incluidas abajo.
 

@@ -104,7 +104,7 @@ function renderUserMenu() {
   const profile = authState.profile || guestProfile;
   const profileId = profile.id ? encodeURIComponent(profile.id) : "";
   const isAdmin = authState.user?.app_metadata?.oraklo_admin === true;
-  const accountEmail = authState.user?.email || "Cuenta de Oraklo";
+  const accountEmail = authState.user?.email || "Cuenta de Atinara";
 
   if (!authState.session || !profile.id) {
     menu.hidden = true;
@@ -143,8 +143,8 @@ function renderUserMenu() {
     </section>
 
     <section class="user-menu-section" aria-labelledby="user-menu-oraklo-title">
-      <p id="user-menu-oraklo-title">Tu Oraklo</p>
-      <nav class="user-menu-links" aria-label="Navegación de Oraklo">
+      <p id="user-menu-oraklo-title">Tu Atinara</p>
+      <nav class="user-menu-links" aria-label="Navegación de Atinara">
         <a href="index.html">
           <span aria-hidden="true">⌕</span>
           <span><strong>Explorar mercados</strong><small>Mercados abiertos y próximos cierres</small></span>
@@ -176,7 +176,7 @@ function renderUserMenu() {
 
     <section class="user-menu-reference" aria-label="Ayuda y privacidad">
       <details>
-        <summary><span aria-hidden="true">?</span> Cómo funciona Oraklo</summary>
+        <summary><span aria-hidden="true">?</span> Cómo funciona Atinara</summary>
         <div>
           <p><strong>Karma</strong> es el saldo para participar.</p>
           <p><strong>Prestigio</strong> mide tu historial como predictor y determina tu rango.</p>
@@ -306,7 +306,7 @@ function updateHeaderSessionState() {
     node.textContent = isAuthenticated ? profile.username : "Entrar";
     node.setAttribute(
       "aria-label",
-      isAuthenticated ? `Usuario ${profile.username}` : "Entrar en Oraklo"
+      isAuthenticated ? `Usuario ${profile.username}` : "Entrar en Atinara"
     );
 
     if (node.matches("[data-auth-state='user']")) {
@@ -418,7 +418,7 @@ function getFriendlyAuthError(error, mode) {
     || message.includes("weak password")
     || message.includes("password should")
   ) {
-    return "La contraseña no cumple los requisitos de seguridad de Oraklo.";
+    return "La contraseña no cumple los requisitos de seguridad de Atinara.";
   }
 
   if (code.includes("over_request_rate_limit") || message.includes("rate limit")) {
@@ -506,7 +506,7 @@ function injectAuthModal() {
   modal.innerHTML = `
     <section class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-status">
       <button class="modal-close" id="auth-modal-close" type="button" aria-label="Cerrar acceso">×</button>
-      <p class="eyebrow">Acceso Oraklo</p>
+      <p class="eyebrow">Acceso Atinara</p>
       <h2 id="auth-modal-title">Iniciar sesión</h2>
       <div class="auth-tabs" role="group" aria-label="Modo de acceso">
         <button type="button" data-auth-mode="login" aria-pressed="true">Iniciar sesión</button>

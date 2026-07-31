@@ -1,11 +1,11 @@
 import { defineConfig } from "checkly";
 
-const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/";
+const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/atinara/";
 
 export default defineConfig({
-  projectName: "Oraklo · Producción",
+  projectName: "Atinara · Producción",
   logicalId: "oraklo-production-monitoring",
-  repoUrl: "https://github.com/marcilladiazyolanda-dotcom/oraklo-prototype-2.0",
+  repoUrl: "https://github.com/marcilladiazyolanda-dotcom/atinara",
   checks: {
     frequency: 60,
     locations: ["eu-central-1"],

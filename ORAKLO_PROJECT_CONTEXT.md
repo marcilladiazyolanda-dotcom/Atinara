@@ -1,12 +1,12 @@
-# Oraklo · contexto de relevo para un nuevo chat Work
+# Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 30 de julio de 2026.
+Última actualización del contexto: 31 de julio de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 ## 1. Objetivo del producto
 
-Oraklo es un MVP de red social competitiva de predicciones sobre videojuegos, estudios, lanzamientos, eventos, creadores e industria gaming.
+Atinara es un MVP de red social competitiva de predicciones sobre videojuegos, estudios, lanzamientos, eventos, creadores e industria gaming. `Oraklo` dejó de ser la marca pública el 31 de julio de 2026 y se conserva únicamente en infraestructura, historial e identificadores técnicos existentes.
 
 Conceptos centrales:
 
@@ -14,18 +14,27 @@ Conceptos centrales:
 - **Prestigio:** reputación histórica del predictor. Cambia cuando se resuelve el mercado y determina el rango.
 - **Rangos:** Observador, Intérprete, Analista, Visionario y Oráculo.
 - **Privacidad:** el saldo de Karma y las predicciones activas son privados. El perfil público solo muestra trayectoria y resultados ya liquidados.
-- **Identidad:** tono de oráculo moderno y gaming, nunca casino. Sin dinero real, pagos, compra de Karma ni Modo Real.
+- **Identidad:** anticipación, criterio y gaming premium, nunca casino. Sin dinero real, pagos, compra de Karma ni Modo Real.
 
 La usuaria quiere datos reales de Supabase, no cifras, usuarios, comentarios ni actividad simulados.
 
 ## 2. Repositorio y stack
 
-- Repositorio: `marcilladiazyolanda-dotcom/oraklo-prototype-2.0`.
+- Repositorio público acordado: `marcilladiazyolanda-dotcom/atinara`.
+- URL gratuita acordada durante el desarrollo: `https://marcilladiazyolanda-dotcom.github.io/atinara/`.
+- Dominio propio: comprar y conectar `atinara.com` inmediatamente antes de abrir la beta cerrada, tras volver a comprobar su disponibilidad y precio.
 - Frontend: HTML, CSS y JavaScript estático para GitHub Pages.
 - Backend: Supabase Auth, Postgres, RLS, RPC y Edge Functions.
 - Investigación de resoluciones: Tavily Search básico.
 - Análisis de fuentes: `gemini-3-flash-preview`.
 - Secretos ya manejados en Supabase: `GEMINI_API_KEY` y `TAVILY_API_KEY`; nunca registrar sus valores.
+
+Convención de nombres:
+
+- **Marca pública:** Atinara; en el logotipo puede escribirse `ATINARA`.
+- **Nombre interno heredado:** Oraklo, permitido en nombres de archivos, variables, eventos, RPC, migraciones, Sentry, Checkly, historial y metadatos administrativos.
+- **Contratos que no deben renombrarse:** `oraklo_admin`, funciones SQL `*_oraklo_*`, eventos `oraklo:*`, variables `window.oraklo*` y rutas públicas que continúen activas durante la transición.
+- Ninguna interfaz, título, descripción, etiqueta accesible, correo o explicación pública debe presentar Oraklo como marca del producto.
 
 Archivos principales:
 
@@ -45,7 +54,7 @@ Archivos principales:
 
 ## 3. Estado Git en el momento del relevo
 
-Rama local de trabajo actual: `codex/community-mvp-step-11`.
+Rama local de trabajo actual: `codex/atinara-public-brand`.
 
 Commits funcionales de referencia:
 
@@ -80,6 +89,14 @@ Comprobación posterior del 30 de julio de 2026:
 - El nuevo `main` público quedó en `c18e04e` (`SEGURIDAD`) y se clonó limpio como base exacta del Paso 12.
 - La rama local actual es `codex/quality-observability-step-12`.
 - No se debe hacer `push`: la usuaria continúa publicando manualmente el ZIP completo.
+
+Nueva comprobación realizada el 31 de julio de 2026:
+
+- `origin/main` está en `9fa10ca` (`ajustes`) e incluye la corrección que conserva la subcarpeta de GitHub Pages en los recorridos de Checkly.
+- La rama local previa y `origin/main` tenían commits distintos pero el mismo árbol; se abrió `codex/atinara-public-brand` directamente desde el remoto actualizado, sin `reset`, `rebase` ni pérdida de cambios.
+- El cambio de marca pública usa la versión coordinada `20260731-brand1` y mantiene intactos los contratos internos heredados.
+- No se debe hacer `push` ni cambiar el nombre del repositorio o la URL externa sin petición expresa de la usuaria.
+- La usuaria autorizó el 31 de julio de 2026 renombrar el repositorio a `atinara` y continuar gratis en GitHub Pages. La compra de `atinara.com` queda aplazada hasta justo antes de la beta cerrada.
 
 ## 4. Funcionalidades terminadas y comprobadas
 
@@ -237,9 +254,9 @@ Checklist: `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
 
 ### Paso 12: calidad, secretos, disponibilidad y errores
 
-La usuaria aprobó el 30 de julio de 2026 la incorporación de cuatro herramientas gratuitas:
+La usuaria aprobó y completó el 30 de julio de 2026 la incorporación de cuatro herramientas gratuitas:
 
-- **SonarQube Cloud:** activado sobre el repositorio público mediante su aplicación oficial de GitHub. `.sonarcloud.properties` separa pruebas y excluye solo dependencias/resultados generados. El primer análisis de `main` en `c18e04e` encontró ocho vulnerabilidades bajas `Web:S5725`: la misma carga de Supabase desde jsDelivr sin SRI en los ocho HTML. La rama del Paso 12 fija `@supabase/supabase-js@2.111.0`, añade su hash SHA-384 y `crossorigin="anonymous"` y lo protege con una prueba. Tras publicar debe comprobarse que el segundo análisis muestra Security A, cero vulnerabilidades y un Quality Gate ya calculado.
+- **SonarQube Cloud:** activo sobre el repositorio público mediante su aplicación oficial de GitHub. `.sonarcloud.properties` separa pruebas y excluye solo dependencias/resultados generados. El primer análisis de `main` en `c18e04e` encontró ocho vulnerabilidades bajas `Web:S5725`; se corrigieron fijando `@supabase/supabase-js@2.111.0`, su SRI SHA-384 y `crossorigin="anonymous"` en los ocho HTML. El segundo análisis confirmó Security A, cero vulnerabilidades y Quality Gate calculado.
 - **GitGuardian:** aplicación oficial de GitHub con lectura limitada al repositorio de Oraklo, escaneo histórico y vigilancia de commits nuevos. No se concederán permisos de escritura.
 - **Checkly:** dos URL monitors —portada cada 10 minutos y Comunidad cada 30— y un recorrido Playwright público cada hora desde `eu-central-1`. El recorrido no inicia sesión ni modifica datos. El presupuesto previsto es de unas 720 ejecuciones mensuales de navegador.
 - **Sentry:** errores JavaScript únicamente en producción, sin Replay, sin Performance, sin breadcrumbs y con `sendDefaultPii: false`. Antes del envío elimina `user`, `request`, extras y campos sensibles; además redacta correos, UUID, JWT, tokens y query strings.
@@ -258,21 +275,7 @@ Archivos principales añadidos:
 - `tests/monitoring.test.js`
 - `STEP_12_TOOLING_CHECKLIST.md`
 
-La configuración local está preparada y probada. La activación externa necesita que la usuaria inicie sesión o cree personalmente las cuentas, acepte sus condiciones y autorice las aplicaciones de GitHub.
-
-Checkly ya tiene instalada su aplicación oficial de GitHub, limitada exclusivamente a
-`oraklo-prototype-2.0`. La usuaria guardó `CHECKLY_ACCOUNT_ID` como variable de GitHub Actions y
-`CHECKLY_API_KEY` como secreto el 30 de julio de 2026. El workflow de despliegue todavía no aparece
-en GitHub porque forma parte de la rama local del Paso 12: se publicará con el ZIP final y después se
-ejecutará manualmente para probar los tres controles antes de crear o actualizar los monitores
-programados.
-
-Sentry ya tiene creada la organización europea `mercado-predicciones` y el proyecto Browser
-JavaScript `oraklo-web`, con solo Error Monitoring activo. Su DSN público quedó incorporado el 30 de
-julio de 2026 en `observability-config.js`. La carga continúa limitada al host público de GitHub
-Pages, fija el SDK `10.69.0` con integridad SHA-384 y conserva la limpieza de PII acordada. Tras
-publicar el ZIP final falta provocar un error controlado sin datos reales y confirmar que llega al
-proyecto.
+La configuración, activación externa y aceptación de las cuatro herramientas están terminadas. Checkly tiene desplegados y comprobados sus tres controles; Sentry recibió el error controlado sin datos reales; GitGuardian mantiene el repositorio en estado seguro; y SonarQube confirmó la corrección. Los nombres internos existentes de proyectos y monitores pueden conservar `oraklo` sin afectar a la marca pública.
 
 Herramientas aplazadas pero vinculadas a un momento concreto:
 
@@ -302,11 +305,22 @@ No debe suponerse que toda función antigua del Supabase vivo está versionada a
 - Paso 10B: personalización y menú de cuenta — terminado; su esquema se verificó en Supabase aunque el historial remoto de migraciones no lo refleja de forma fiable.
 - Paso 11: MVP social y comunidad — terminado, desplegado y aceptado con cuentas reales.
 - Paso 11C: protección gratuita de contraseñas — terminado, publicado y validado.
-- Paso 12: SonarQube Cloud, GitGuardian, Checkly y Sentry — configuración versionada en curso; falta activar las cuentas externas y completar la aceptación.
+- Paso 12: SonarQube Cloud, GitGuardian, Checkly y Sentry — terminado, publicado y validado.
+- Cambio de marca pública: Atinara sustituye a Oraklo. El código local está preparado en `codex/atinara-public-brand`; antes de dar la transición por publicada hay que completar `STEP_PUBLIC_BRAND_ATINARA_CHECKLIST.md`.
+- Paso 13: preparación de la beta cerrada — siguiente fase aprobada.
 
-Siguiente paso operativo: publicar el ZIP final del Paso 12, desplegar los monitores de Checkly,
-provocar un error controlado de Sentry y comprobar los primeros resultados de las cuatro
-herramientas. No iniciar automáticamente ampliaciones sociales.
+Orden acordado para el Paso 13:
+
+1. **13.0 · Cierre documental:** terminado al corregir el estado real del Paso 12 y registrar Atinara como marca pública.
+2. **13.1 · Auditoría funcional:** revisar recorridos completos de invitada, usuaria y administradora y clasificar cada punto como terminado, parcial, sin comprobar, ausente o aplazado.
+3. **13.2 · Definición de soluciones:** priorizar huecos `P0/P1/P2` y fijar criterios de aceptación.
+4. **13.3 · Diseño en Penpot:** diseñar únicamente las pantallas, componentes, estados y responsive necesarios antes de modificar de nuevo la interfaz.
+5. **13.4 · Implementación:** construir las funciones aprobadas sin rehacer lo que ya funciona.
+6. **13.5 · QA y beta:** probar los recorridos completos y abrir acceso controlado a un grupo pequeño.
+
+Huecos funcionales ya confirmados para la auditoría: recuperación completa de contraseña y administración cotidiana de mercados —crear, guardar borrador, programar, publicar, editar bajo reglas seguras, cancelar y consultar participación—. No asumir que el resto de puntos auditables está ausente hasta comprobar el código y el estado vivo.
+
+Siguiente paso operativo: publicar y verificar Atinara en toda la superficie pública, incluida la Edge Function y la configuración externa de Auth/URL. Después iniciar exclusivamente la auditoría funcional 13.1; no ampliar todavía chat, GIF, feed algorítmico, temporadas o monetización.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -358,8 +372,8 @@ No implementar sin autorización expresa:
 
 - Antes de programar el siguiente rediseño, crear en Penpot el sistema visual del MVP: tokens, componentes, estados, escritorio y móvil.
 - Diseñar un emblema propio para cada rango: Observador, Intérprete, Analista, Visionario y Oráculo.
-- Sustituir los avatares simbólicos por avatares originales relacionados con gaming y Oraklo.
-- Mantener el tono de oráculo moderno y evitar estética de casino.
+- Sustituir los avatares simbólicos por avatares originales relacionados con gaming y el universo de Atinara.
+- Mantener el tono de anticipación y criterio y evitar estética de casino.
 
 ## 11. Comprobación mínima antes de entregar cambios
 

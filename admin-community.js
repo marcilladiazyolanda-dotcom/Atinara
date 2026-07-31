@@ -194,7 +194,7 @@ function renderAdminCommunityAccess(auth) {
   adminCommunityRoot.innerHTML = `
     <article class="admin-access-card">
       <p class="eyebrow">Acceso restringido</p>
-      <h2>${isAuthenticated ? "Esta cuenta no administra Oraklo" : "Inicia sesión como administradora"}</h2>
+      <h2>${isAuthenticated ? "Esta cuenta no administra Atinara" : "Inicia sesión como administradora"}</h2>
       <p>Los reportes contienen información privada y solo pueden consultarse desde una cuenta autorizada.</p>
       ${isAuthenticated
         ? '<a class="secondary-button" href="community.html">Volver a comunidad</a>'

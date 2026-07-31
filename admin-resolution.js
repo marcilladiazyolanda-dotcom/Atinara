@@ -86,7 +86,7 @@ function renderAdminAccessRequired(message, canLogin = false) {
     <article class="admin-access-card">
       <p class="eyebrow">Acceso protegido</p>
       <h2>${escapeAdminHtml(message)}</h2>
-      <p>Esta pantalla puede investigar y confirmar resoluciones, por lo que está reservada a la administración de Oraklo.</p>
+      <p>Esta pantalla puede investigar y confirmar resoluciones, por lo que está reservada a la administración de Atinara.</p>
       ${canLogin ? '<button class="primary-button" type="button" data-auth-open>Iniciar sesión</button>' : '<a class="secondary-button" href="index.html">Volver a mercados</a>'}
     </article>
   `;

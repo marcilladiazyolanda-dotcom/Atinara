@@ -283,7 +283,7 @@ async function loadCommunityFeed({ append = false } = {}) {
     communityState.cursor = page.cursor;
     communityState.hasMore = page.hasMore;
   } catch (error) {
-    communityState.error = communitySocial.getErrorMessage(error, "No se ha podido consultar la actividad real de Oraklo.");
+    communityState.error = communitySocial.getErrorMessage(error, "No se ha podido consultar la actividad real de Atinara.");
     if (!append) communityState.rows = [];
   } finally {
     communityState.loading = false;

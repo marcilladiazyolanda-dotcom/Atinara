@@ -90,7 +90,7 @@ function createSentryOptions(config) {
     maxBreadcrumbs: 0,
     attachStacktrace: true,
     allowUrls: [
-      /https:\/\/marcilladiazyolanda-dotcom\.github\.io\/oraklo-prototype-2\.0\//
+      /https:\/\/marcilladiazyolanda-dotcom\.github\.io\/atinara\//
     ],
     denyUrls: [
       /^chrome-extension:\/\//i,

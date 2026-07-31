@@ -204,7 +204,7 @@ function renderCompetitionStatus() {
     : `
       <span>Temporadas</span>
       <strong>Preparadas, todavía inactivas</strong>
-      <small>Comenzarán únicamente cuando Oraklo se lance y cumpla el umbral configurado.</small>
+      <small>Comenzarán únicamente cuando Atinara se lance y cumpla el umbral configurado.</small>
     `;
 
   seasonLaunchSummary.innerHTML = isActive
@@ -244,7 +244,7 @@ function renderMySummary() {
     : "Sin posición todavía";
   const progressText = progress.next
     ? `Faltan ${formatRankingNumber(progress.remaining)} de Prestigio para ${escapeRankingHtml(progress.next.name)}.`
-    : "Has alcanzado el rango máximo de Oraklo.";
+    : "Has alcanzado el rango máximo de Atinara.";
 
   myRankingSummary.innerHTML = `
     <p class="eyebrow">Tu progreso</p>

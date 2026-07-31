@@ -463,7 +463,7 @@ function renderActivity() {
   if (!publicActivity) {
     activityPanelNode.innerHTML = `
       <p class="eyebrow">Actividad</p>
-      <h2>Ahora en Oraklo</h2>
+      <h2>Ahora en Atinara</h2>
       <p>Conectando con la actividad pública de Supabase...</p>
     `;
     return;
@@ -472,7 +472,7 @@ function renderActivity() {
   if (publicActivity.activePredictions === 0) {
     activityPanelNode.innerHTML = `
       <p class="eyebrow">Actividad</p>
-      <h2>Ahora en Oraklo</h2>
+      <h2>Ahora en Atinara</h2>
       <p>Todavía no hay actividad predictiva registrada.</p>
       <div class="activity-metrics" aria-label="Métricas públicas">
         <span>${formatNumber(publicActivity.registeredUsers)} usuarios registrados</span>
@@ -484,7 +484,7 @@ function renderActivity() {
 
   activityPanelNode.innerHTML = `
     <p class="eyebrow">Actividad</p>
-    <h2>Ahora en Oraklo</h2>
+    <h2>Ahora en Atinara</h2>
     <div class="activity-metrics" aria-label="Métricas públicas">
       <span><strong>${formatNumber(publicActivity.registeredUsers)}</strong> usuarios registrados</span>
       <span><strong>${formatNumber(publicActivity.activePredictions)}</strong> predicciones activas</span>

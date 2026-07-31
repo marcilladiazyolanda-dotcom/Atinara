@@ -89,7 +89,7 @@ function normalizeProfileRow(data) {
 }
 
 function getProfileInitials(username) {
-  const clean = String(username || "Oraklo")
+  const clean = String(username || "Atinara")
     .replace(/^@/, "")
     .trim();
   const parts = clean.split(/[\s._-]+/).filter(Boolean);
@@ -407,7 +407,7 @@ function reportPredictorProfile() {
   window.orakloSocial?.openReport({
     targetType: "profile",
     targetId: predictorProfileState.targetId,
-    targetLabel: predictorProfileState.profile?.username || "Perfil de Oraklo",
+    targetLabel: predictorProfileState.profile?.username || "Perfil de Atinara",
     trigger: document.querySelector("#profile-report-button")
   });
 }
@@ -420,7 +420,7 @@ function createProfileEditorMarkup(profile) {
     <div class="modal-backdrop profile-editor-backdrop" id="profile-editor" hidden>
       <section class="modal profile-editor" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title" aria-describedby="profile-editor-note">
         <button class="modal-close" id="profile-editor-close" type="button" aria-label="Cerrar personalización">×</button>
-        <p class="eyebrow">Tu identidad en Oraklo</p>
+        <p class="eyebrow">Tu identidad en Atinara</p>
         <h2 id="profile-editor-title">Personalizar perfil</h2>
         <p id="profile-editor-note">Estos datos serán públicos. Tu email, Karma disponible y predicciones activas nunca se mostrarán.</p>
 
@@ -635,7 +635,7 @@ function createSeasonMarkup(profile) {
     <span class="profile-side-label">Temporadas</span>
     <h2>Temporada no iniciada</h2>
     <strong class="profile-season-position">—</strong>
-    <p>La posición de temporada aparecerá cuando Oraklo se lance y el sistema sea activado expresamente.</p>
+    <p>La posición de temporada aparecerá cuando Atinara se lance y el sistema sea activado expresamente.</p>
   `;
 }
 
@@ -722,9 +722,9 @@ function renderPredictorProfile() {
     ? escapeProfileHtml(profile.bio)
     : isOwnProfile
       ? "Añade una biografía para contar cómo analizas el futuro del gaming."
-      : "Construyendo su trayectoria como predictor en Oraklo.";
+      : "Construyendo su trayectoria como predictor en Atinara.";
 
-  document.title = `${profile.username || "Perfil"} | Oraklo`;
+  document.title = `${profile.username || "Perfil"} | Atinara`;
 
   profileRoot.innerHTML = `
     <section class="predictor-hero predictor-theme-${theme}" aria-labelledby="predictor-name">
@@ -980,7 +980,7 @@ async function loadPredictorProfile() {
     renderProfileMessage({
       eyebrow: "Supabase",
       title: "El perfil no está disponible ahora mismo",
-      message: "No se ha podido conectar con los datos reales de Oraklo. Inténtalo de nuevo en unos minutos."
+      message: "No se ha podido conectar con los datos reales de Atinara. Inténtalo de nuevo en unos minutos."
     });
     return;
   }
@@ -1094,6 +1094,6 @@ loadPredictorProfile().catch(() => {
   renderProfileMessage({
     eyebrow: "Error de conexión",
     title: "No se ha podido cargar el perfil",
-    message: "Oraklo no ha recibido una respuesta válida. Recarga la página para volver a intentarlo."
+    message: "Atinara no ha recibido una respuesta válida. Recarga la página para volver a intentarlo."
   });
 });

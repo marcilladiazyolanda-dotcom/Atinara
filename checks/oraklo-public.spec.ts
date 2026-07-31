@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Oraklo mantiene operativo el recorrido público esencial", async ({ page }) => {
+test("Atinara mantiene operativo el recorrido público esencial", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => {
     pageErrors.push(error.message);
@@ -9,7 +9,7 @@ test("Oraklo mantiene operativo el recorrido público esencial", async ({ page }
   await test.step("La portada carga datos y abre una ficha real", async () => {
     const response = await page.goto("./");
     expect(response?.status()).toBeLessThan(400);
-    await expect(page).toHaveTitle(/Oraklo/i);
+    await expect(page).toHaveTitle(/Atinara/i);
 
     const marketLink = page.locator('a[href^="market-detail.html?id="]').first();
     await expect(marketLink).toBeVisible();
@@ -22,7 +22,7 @@ test("Oraklo mantiene operativo el recorrido público esencial", async ({ page }
   await test.step("La comunidad pública responde sin mostrar un error de carga", async () => {
     const response = await page.goto("community.html");
     expect(response?.status()).toBeLessThan(400);
-    await expect(page.getByRole("heading", { name: "Comunidad Oraklo" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Comunidad Atinara" })).toBeVisible();
     await expect(page.locator("#community-root")).not.toContainText("No se ha podido cargar el feed");
   });
 

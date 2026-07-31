@@ -1,4 +1,4 @@
-# Instrucciones permanentes del proyecto Oraklo
+# Instrucciones permanentes de Atinara · nombre interno Oraklo
 
 ## Antes de empezar cualquier tarea
 
@@ -10,10 +10,11 @@
 
 ## Producto y tono
 
-- Oraklo es una red social competitiva de predicciones sobre videojuegos y el ecosistema gaming.
+- Atinara es la marca pública de la red social competitiva de predicciones sobre videojuegos y el ecosistema gaming. `Oraklo` se conserva únicamente en infraestructura, historial e identificadores técnicos existentes.
 - Karma es el saldo ficticio para participar; Prestigio es la reputación histórica y determina el rango.
 - No hay dinero real, pagos, compra de Karma ni Modo Real.
 - El tono visual es «oráculo moderno» y gaming. Evita cualquier estética o lenguaje de casino.
+- Ningún texto, título, metadato o mensaje visible para usuarias debe presentar `Oraklo` como marca. La marca pública se escribe **Atinara** y en logotipo puede escribirse **ATINARA**.
 - Las predicciones activas y el Karma disponible son privados. El perfil y las predicciones liquidadas sí pueden ser públicos.
 - No inventes usuarios, métricas, actividad, comentarios ni resultados. La interfaz debe reflejar datos reales de Supabase o estados vacíos honestos.
 - La interfaz y los mensajes para la usuaria deben estar en español, ser claros y evitar errores técnicos crudos.
@@ -58,5 +59,7 @@
 - Paso 10 y 10B (currículum predictivo, personalización y menú de cuenta): terminado en la rama de trabajo local.
 - Paso 11 (comentarios, seguimiento, feed, reacción y moderación): terminado, desplegado y aceptado.
 - Paso 11C (protección gratuita de contraseñas filtradas): publicado y validado el 30 de julio de 2026.
-- Paso 12 (pulido y preparación para beta): la usuaria ha aprobado SonarQube Cloud, GitGuardian, Checkly y Sentry como primer bloque.
+- Paso 12 (calidad y observabilidad): terminado, publicado y comprobado con SonarQube Cloud, GitGuardian, Checkly y Sentry.
+- Cambio de marca pública: aprobado el 31 de julio de 2026. Atinara sustituye a Oraklo en toda la superficie pública; los contratos técnicos internos no se renombran.
+- Paso 13 (preparación de la beta cerrada): continuar después de publicar y verificar el cambio de marca. Empezar por auditoría funcional; los huecos ya confirmados son recuperación de contraseña y administración cotidiana de mercados.
 - Antes del próximo cambio visual importante del MVP, abrir un bloque de Penpot para definir identidad, componentes, emblemas, avatares y responsive; no improvisar el rediseño directamente en CSS.

@@ -30,12 +30,12 @@ test("las rutas de Checkly conservan la subcarpeta de GitHub Pages", () => {
 
   assert.equal(
     productionUrl,
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/"
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/"
   );
   assert.deepEqual(resolvedUrls, [
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/",
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/community.html",
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/admin-community.html",
-    "https://marcilladiazyolanda-dotcom.github.io/oraklo-prototype-2.0/admin-resolution.html"
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/",
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/community.html",
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/admin-community.html",
+    "https://marcilladiazyolanda-dotcom.github.io/atinara/admin-resolution.html"
   ]);
 });
