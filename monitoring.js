@@ -1,8 +1,19 @@
 const ORAKLO_REDACTED_VALUE = "[dato oculto]";
 const ORAKLO_MONITORING_MAX_DEPTH = 5;
 
+function stripMonitoringQueryStrings(value) {
+  return String(value || "").replace(/\bhttps?:\/\/[^\s"'<>]+/gi, (rawUrl) => {
+    try {
+      const url = new URL(rawUrl);
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return rawUrl.split(/[?#]/, 1)[0];
+    }
+  });
+}
+
 function redactMonitoringString(value) {
-  return String(value || "")
+  return stripMonitoringQueryStrings(value)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[correo oculto]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token oculto]")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, "[id oculto]")
@@ -87,10 +98,12 @@ function createSentryOptions(config) {
     sendDefaultPii: false,
     sampleRate: 1,
     tracesSampleRate: 0,
+    replaysSessionSampleRate: 0,
+    replaysOnErrorSampleRate: 0,
     maxBreadcrumbs: 0,
     attachStacktrace: true,
     allowUrls: [
-      /https:\/\/marcilladiazyolanda-dotcom\.github\.io\/atinara\//
+      /https:\/\/marcilladiazyolanda-dotcom\.github\.io\/Atinara\//
     ],
     denyUrls: [
       /^chrome-extension:\/\//i,
@@ -162,6 +175,7 @@ const orakloMonitoringApi = {
   redactMonitoringString,
   sanitizeSentryEvent,
   scrubMonitoringValue,
+  stripMonitoringQueryStrings,
   stripMonitoringUrl
 };
 

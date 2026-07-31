@@ -13,6 +13,10 @@ test("las rutas de Checkly conservan la subcarpeta de GitHub Pages", () => {
     join(repositoryRoot, "checks", "oraklo-public.spec.ts"),
     "utf8"
   );
+  const availabilitySource = readFileSync(
+    join(repositoryRoot, "checks", "oraklo-availability.check.ts"),
+    "utf8"
+  );
 
   const productionUrlMatch = configSource.match(
     /const productionUrl = "([^"]+)";/
@@ -30,12 +34,21 @@ test("las rutas de Checkly conservan la subcarpeta de GitHub Pages", () => {
 
   assert.equal(
     productionUrl,
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/"
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/"
   );
+  assert.match(
+    configSource,
+    /repoUrl: "https:\/\/github\.com\/marcilladiazyolanda-dotcom\/Atinara"/
+  );
+  assert.match(
+    availabilitySource,
+    /const productionUrl = "https:\/\/marcilladiazyolanda-dotcom\.github\.io\/Atinara\/";/
+  );
+  assert.doesNotMatch(configSource + availabilitySource, /\/oraklo-prototype-2\.0\/|github\.io\/atinara\//);
   assert.deepEqual(resolvedUrls, [
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/",
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/community.html",
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/admin-community.html",
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/admin-resolution.html"
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/",
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/community.html",
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/admin-community.html",
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/admin-resolution.html"
   ]);
 });

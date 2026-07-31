@@ -9,7 +9,7 @@ const MAX_REQUEST_BYTES = 8_192;
 const MAX_RESEARCH_TEXT_LENGTH = 20_000;
 const DEFINITION_CHECK_MODEL = "oraklo-definition-check-v1";
 const ORAKLO_PUBLIC_SITE_URL =
-  "https://marcilladiazyolanda-dotcom.github.io/atinara/";
+  "https://marcilladiazyolanda-dotcom.github.io/Atinara/";
 
 const ANALYSIS_RESPONSE_SCHEMA = {
   type: "object",

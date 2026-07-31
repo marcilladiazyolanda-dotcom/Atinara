@@ -2,6 +2,8 @@
 
 MVP de red social competitiva de predicciones gaming basada en Karma, Prestigio y rankings. **Atinara** es la marca pública; parte de la infraestructura y los identificadores técnicos conservan `Oraklo` como nombre interno para evitar cambios incompatibles.
 
+Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
+
 ## Continuidad entre chats
 
 - `AGENTS.md` contiene las instrucciones permanentes que Codex debe aplicar al trabajar en esta carpeta.

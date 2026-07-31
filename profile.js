@@ -710,6 +710,15 @@ function renderPublicHistory() {
 
 function renderPredictorProfile() {
   const profile = predictorProfileState.profile;
+  if (!profile) {
+    renderProfileMessage({
+      eyebrow: "Perfil no disponible",
+      title: "No se ha podido mostrar este currículum",
+      message: "Recarga la página para volver a consultar el perfil."
+    });
+    return;
+  }
+
   const rankProgress = getRankProgress(profile);
   const badges = getProfileBadges(profile);
   const isOwnProfile = isViewingOwnProfile(profile);

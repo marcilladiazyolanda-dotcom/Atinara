@@ -34,7 +34,8 @@ test("redacta correos, UUID, JWT y campos sensibles", () => {
       authorization: "Bearer dato-privado"
     },
     tokenText: "token=secreto",
-    jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.firma"
+    jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.firma",
+    frameUrl: "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.js?v=20260731-brand1#detalle"
   };
 
   const sanitized = monitoring.scrubMonitoringValue(source);
@@ -45,6 +46,10 @@ test("redacta correos, UUID, JWT y campos sensibles", () => {
   assert.equal(sanitized.nested.authorization, "[dato oculto]");
   assert.equal(sanitized.tokenText, "token=[dato oculto]");
   assert.equal(sanitized.jwt, "[token oculto]");
+  assert.equal(
+    sanitized.frameUrl,
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.js"
+  );
 });
 
 test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
@@ -58,7 +63,7 @@ test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
       browser: { name: "Chrome" },
       trace: { trace_id: "123" }
     },
-    transaction: "https://marcilladiazyolanda-dotcom.github.io/atinara/profile.html?id=privado"
+    transaction: "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.html?id=privado"
   });
 
   assert.equal(sanitized.message, "Fallo para [correo oculto]");
@@ -70,7 +75,7 @@ test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
   assert.equal(sanitized.contexts.trace, undefined);
   assert.equal(
     sanitized.transaction,
-    "https://marcilladiazyolanda-dotcom.github.io/atinara/profile.html"
+    "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.html"
   );
 });
 
@@ -178,7 +183,21 @@ test("inicializa Sentry con privacidad estricta en producción", () => {
   assert.equal(initialized, true);
   assert.equal(receivedOptions.sendDefaultPii, false);
   assert.equal(receivedOptions.tracesSampleRate, 0);
+  assert.equal(receivedOptions.replaysSessionSampleRate, 0);
+  assert.equal(receivedOptions.replaysOnErrorSampleRate, 0);
   assert.equal(receivedOptions.maxBreadcrumbs, 0);
   assert.equal(receivedOptions.beforeBreadcrumb({ message: "privado" }), null);
   assert.equal(receivedOptions.release, "oraklo@test");
+  assert.equal(
+    receivedOptions.allowUrls[0].test(
+      "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.js"
+    ),
+    true
+  );
+  assert.equal(
+    receivedOptions.allowUrls[0].test(
+      "https://marcilladiazyolanda-dotcom.github.io/atinara/profile.js"
+    ),
+    false
+  );
 });

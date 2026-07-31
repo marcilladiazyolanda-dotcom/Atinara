@@ -4,7 +4,7 @@ import {
   UrlMonitor
 } from "checkly/constructs";
 
-const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/atinara";
+const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/Atinara/";
 
 new UrlMonitor("oraklo-home-availability", {
   name: "Atinara · Portada disponible",
@@ -13,7 +13,7 @@ new UrlMonitor("oraklo-home-availability", {
   locations: ["eu-central-1"],
   maxResponseTime: 20000,
   request: {
-    url: `${productionUrl}/`,
+    url: productionUrl,
     ipFamily: "IPv4",
     assertions: [
       UrlAssertionBuilder.statusCode().equals(200)
@@ -27,7 +27,7 @@ new UrlMonitor("oraklo-community-availability", {
   locations: ["eu-central-1"],
   maxResponseTime: 20000,
   request: {
-    url: `${productionUrl}/community.html`,
+    url: `${productionUrl}community.html`,
     ipFamily: "IPv4",
     assertions: [
       UrlAssertionBuilder.statusCode().equals(200)

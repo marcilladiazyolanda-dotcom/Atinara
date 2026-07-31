@@ -23,11 +23,11 @@
 
 ## 2. Publicación del frontend
 
-- [ ] Publicar el ZIP completo de esta rama en `main`; no subir archivos sueltos.
-- [ ] Esperar a que GitHub Pages termine el despliegue.
+- [x] Publicar el cambio de marca en `main`; commit comprobado: `f58a28a` (`Migra la marca pública a Atinara`).
+- [x] Esperar a que GitHub Pages termine el despliegue; build y deploy terminaron correctamente para `f58a28a`.
 - [ ] Recargar con `Ctrl+F5` y comprobar portada, mercado, predicciones, clasificación, perfil, comunidad y los dos paneles administrativos.
 - [ ] Confirmar que títulos del navegador, cabeceras, modal de acceso, menú de cuenta y mensajes de error muestran Atinara.
-- [ ] Confirmar que el código fuente público carga únicamente recursos con `v=20260731-brand1`.
+- [x] Confirmar que los ocho HTML publicados cargan los recursos locales con `v=20260731-brand1`; todos los HTML, CSS y JavaScript comprobados devolvieron HTTP 200.
 
 ## 3. Supabase y contenido generado
 
@@ -35,7 +35,7 @@
 - [ ] Desde el panel administrativo, analizar sin aprobar un mercado ambiguo y comprobar que la fuente propuesta se titula «Ficha original y criterios del mercado en Atinara».
 - [ ] Revisar en Auth > Email Templates los asuntos y cuerpos de confirmación, invitación y cambio de correo; sustituir cualquier marca visible antigua por Atinara.
 - [ ] Revisar el nombre visible del remitente o del proyecto en los correos de Auth. Si el proveedor gratuito no permite personalizarlo, dejarlo anotado para Mailjet en el Paso 13.
-- [ ] Revisar mercados ya resueltos o anulados para confirmar que ninguna explicación o fuente histórica pública conserva «Oraklo». No modificar una fila sin identificar antes el campo y el mercado exactos.
+- [x] Revisar mediante lectura pública los mercados resueltos disponibles: ninguna explicación ni fuente devuelta presentaba «Oraklo» como marca. No se modificó ninguna fila.
 
 ## 4. URL pública · decisión aprobada
 
@@ -43,11 +43,13 @@ La usuaria decidió el 31 de julio de 2026 continuar gratuitamente en GitHub Pag
 
 ### Ruta actual · GitHub Pages
 
-- [ ] Renombrar el mismo repositorio a `atinara`, sin copiarlo ni crear otro.
-- [x] Preparar las rutas hardcodeadas de GitHub Pages para `https://marcilladiazyolanda-dotcom.github.io/atinara/` en Checkly, Sentry, pruebas y `analyze-market-resolution`.
+- [x] Renombrar el mismo repositorio a `Atinara`, sin copiarlo ni crear otro.
+- [x] Preparar las rutas hardcodeadas de GitHub Pages para `https://marcilladiazyolanda-dotcom.github.io/Atinara/` en Checkly, Sentry, pruebas y `analyze-market-resolution`.
 - [x] Preparar `checkly.config.ts` con la nueva URL del repositorio.
 - [ ] Tras el renombrado, actualizar en Supabase Auth la Site URL y las redirecciones permitidas a la nueva ruta exacta.
 - [ ] Verificar SonarQube, GitGuardian, Checkly y GitHub Actions después del cambio de nombre.
+
+Estado comprobado tras `f58a28a`: Pages y el workflow de calidad terminaron correctamente; el workflow de Checkly quedó omitido por sus disparadores. SonarQube analizó el commit y falló el Quality Gate con Security C, Reliability C y cinco incidencias. GitGuardian, los monitores vivos de Checkly y el proyecto de Sentry requieren acceso autenticado para completar la verificación actual.
 
 ### Ruta posterior · dominio propio
 

@@ -472,11 +472,17 @@ async function approveSelectedResolution(event) {
   const result = document.querySelector("#admin-resolution-result")?.value || "";
   const note = document.querySelector("#admin-resolution-note")?.value.trim() || "";
   const humanReviewed = document.querySelector("#admin-human-reviewed")?.checked;
+  if (!market || !response) {
+    window.alert("El análisis ya no está disponible. Vuelve a analizar el mercado antes de aprobarlo.");
+    return;
+  }
+
+  const responseSources = Array.isArray(response.sources) ? response.sources : [];
   const selectedSources = Array.from(document.querySelectorAll("[data-admin-source-index]:checked"))
-    .map((input) => response.sources[Number(input.dataset.adminSourceIndex)])
+    .map((input) => responseSources[Number(input.dataset.adminSourceIndex)])
     .filter(Boolean);
 
-  if (!market || !response || !result || !humanReviewed || !selectedSources.length) {
+  if (!result || !humanReviewed || !selectedSources.length) {
     window.alert("Selecciona el resultado, revisa al menos una fuente y confirma la revisión humana.");
     return;
   }

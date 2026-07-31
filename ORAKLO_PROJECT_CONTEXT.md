@@ -20,8 +20,8 @@ La usuaria quiere datos reales de Supabase, no cifras, usuarios, comentarios ni 
 
 ## 2. Repositorio y stack
 
-- Repositorio público acordado: `marcilladiazyolanda-dotcom/atinara`.
-- URL gratuita acordada durante el desarrollo: `https://marcilladiazyolanda-dotcom.github.io/atinara/`.
+- Repositorio público acordado: `marcilladiazyolanda-dotcom/Atinara`.
+- URL gratuita acordada durante el desarrollo: `https://marcilladiazyolanda-dotcom.github.io/Atinara/`.
 - Dominio propio: comprar y conectar `atinara.com` inmediatamente antes de abrir la beta cerrada, tras volver a comprobar su disponibilidad y precio.
 - Frontend: HTML, CSS y JavaScript estático para GitHub Pages.
 - Backend: Supabase Auth, Postgres, RLS, RPC y Edge Functions.
@@ -54,7 +54,16 @@ Archivos principales:
 
 ## 3. Estado Git en el momento del relevo
 
-Rama local de trabajo actual: `codex/atinara-public-brand`.
+Comprobación directa realizada el 31 de julio de 2026 desde un clon nuevo del repositorio publicado:
+
+- Repositorio fuente de verdad: `marcilladiazyolanda-dotcom/Atinara`.
+- Rama publicada y local: `main`.
+- `HEAD`, `origin/main` y el commit público coinciden exactamente en `f58a28a3f452dc4845d6caf65570826f68444137` (`Migra la marca pública a Atinara`).
+- El historial anterior al renombrado se conserva y no se creó otro repositorio.
+- El clon estaba limpio antes de preparar las correcciones de verificación descritas más abajo.
+- No publicar una corrección sin volver a comprobar el diff, ejecutar la validación completa y conservar los identificadores técnicos heredados.
+
+Los párrafos siguientes son comprobaciones históricas conservadas como trazabilidad; la comprobación anterior es la que describe el estado actual.
 
 Commits funcionales de referencia:
 
@@ -68,7 +77,7 @@ Observación realizada el 15 de julio de 2026:
 - La subida remota más reciente solo había cambiado `index.html` a la versión de caché `account3`.
 - La rama local contenía todavía cambios más nuevos que `origin/main` en `auth.js`, `styles.css`, el resto de HTML y documentación.
 
-Este dato puede quedar obsoleto. Al iniciar el chat nuevo hay que ejecutar primero comprobaciones de estado y comparar árboles. No hacer `reset`, `checkout` destructivo ni asumir que `main` local está actualizado. La copia de trabajo local es la fuente más completa hasta demostrar lo contrario.
+Este dato quedó obsoleto. No hacer `reset`, `checkout` destructivo ni asumir que una copia local antigua está actualizada; el repositorio publicado es la fuente de verdad.
 
 Nueva comprobación realizada el 18 de julio de 2026:
 
@@ -96,7 +105,18 @@ Nueva comprobación realizada el 31 de julio de 2026:
 - La rama local previa y `origin/main` tenían commits distintos pero el mismo árbol; se abrió `codex/atinara-public-brand` directamente desde el remoto actualizado, sin `reset`, `rebase` ni pérdida de cambios.
 - El cambio de marca pública usa la versión coordinada `20260731-brand1` y mantiene intactos los contratos internos heredados.
 - No se debe hacer `push` ni cambiar el nombre del repositorio o la URL externa sin petición expresa de la usuaria.
-- La usuaria autorizó el 31 de julio de 2026 renombrar el repositorio a `atinara` y continuar gratis en GitHub Pages. La compra de `atinara.com` queda aplazada hasta justo antes de la beta cerrada.
+- La usuaria autorizó el 31 de julio de 2026 renombrar el repositorio a `Atinara` y continuar gratis en GitHub Pages. La compra de `atinara.com` queda aplazada hasta justo antes de la beta cerrada.
+
+Comprobación posterior al commit de marca `f58a28a`:
+
+- GitHub Pages respondió correctamente en la URL canónica exacta `https://marcilladiazyolanda-dotcom.github.io/Atinara/`; los ocho HTML y sus recursos locales devolvieron HTTP 200 y cargaron `v=20260731-brand1`.
+- La portada, Comunidad y una ficha de mercado cargaron datos reales de las RPC públicas sin modificar datos. La consola no mostró errores propios de Atinara ni recursos rotos.
+- GitHub Actions completó correctamente calidad y Pages para `f58a28a`. El workflow de Checkly no se ejecutó porque solo admite `pull_request` y `workflow_dispatch`; fue omitido por configuración, no falló.
+- SonarQube Cloud siguió enlazado al mismo repositorio renombrado y analizó `main` en `f58a28a`, pero el Quality Gate falló: Security C, Reliability C, cinco incidencias y cero hotspots. No reutilizar el resultado Security A anterior como estado actual.
+- La función desplegada `analyze-market-resolution` seguía en la versión 9 con la ruta antigua y la marca pública anterior. El archivo local corregido usa la URL canónica y Atinara, pero aún debe publicarse y desplegarse de forma aislada.
+- Checkly, Sentry y el frontend publicado conservaban referencias activas que no respetaban la mayúscula de `/Atinara/`. Se prepararon correcciones locales manteniendo los `logicalId` y nombres técnicos para actualizar los recursos existentes, no duplicarlos.
+- La descripción pública del repositorio en GitHub aún presentaba Oraklo como marca y debe corregirse a Atinara.
+- La validación local de las correcciones superó sintaxis, dieciocho pruebas unitarias, tipado de Checkly y `git diff --check`.
 
 ## 4. Funcionalidades terminadas y comprobadas
 

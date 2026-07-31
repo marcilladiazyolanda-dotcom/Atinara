@@ -83,3 +83,18 @@ test("no genera textos visibles con la marca pública anterior", () => {
     );
   });
 });
+
+test("la Edge Function enlaza la ficha con la URL canónica exacta", () => {
+  const source = readRepositoryFile(
+    "supabase/functions/analyze-market-resolution/index.ts"
+  );
+
+  assert.match(
+    source,
+    /"https:\/\/marcilladiazyolanda-dotcom\.github\.io\/Atinara\/"/
+  );
+  assert.doesNotMatch(
+    source,
+    /\/oraklo-prototype-2\.0\/|github\.io\/atinara\//
+  );
+});
