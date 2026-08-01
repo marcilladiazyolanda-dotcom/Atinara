@@ -4,7 +4,7 @@ Fecha de preparación y activación: 1 de agosto de 2026.
 
 Estado: **migración aplicada y frontend productivo**. La migración `supabase/migrations/20260801172543_add_live_prediction_market_model.sql` ya se ejecutó una sola vez en producción y **no debe volver a ejecutarse**. Supabase la registra como `20260801184105_add_live_prediction_market_model`; la diferencia de hora corresponde al registro remoto, no a una migración distinta.
 
-El frontend inicial se publicó en `f7aac42` con `v=20260801-market1`. El árbol final de limpieza elimina `data.js`, corrige las métricas ficticias que veía una invitada y coordina `v=20260801-market2`. La escritura automática devolvió `403 Resource not accessible by integration` en el primer intento y no se repitió; el commit remoto queda pendiente de publicación manual y su hash no debe inventarse.
+El frontend inicial se publicó en `f7aac42` con `v=20260801-market1`; se conserva como evidencia histórica. `data.js` fue eliminado en `4ccd97e` y la limpieza completa se publicó en `a5c633b`. GitHub Pages sirve `v=20260801-market2`, la URL pública de `data.js` devuelve 404 y las métricas privadas provisionales ya no aparecen para invitadas.
 
 ## 1. Por qué se coordinó
 
@@ -40,7 +40,7 @@ Reglas que siguen vigentes:
 
 ## 4. Supabase · comprobación administrativa de solo lectura
 
-Resultado del 1 de agosto de 2026, sin publicar identificadores personales:
+Resultado comprobado de nuevo el 1 de agosto de 2026 mediante consultas exclusivamente de lectura y sin publicar identificadores personales. Coincide con la fotografía anterior:
 
 - [x] 11 mercados.
 - [x] 11 estados `market_maker_state`.
@@ -49,6 +49,7 @@ Resultado del 1 de agosto de 2026, sin publicar identificadores personales:
 - [x] 0 contratos `lmsr_v1` después de la aceptación de solo lectura.
 - [x] Todos los estados y puntos cumplen `Sí + No = 100 %`.
 - [x] Todos los estados mantienen `b = 2000 Karma`.
+- [x] Los 11 estados y los 11 puntos históricos continúan en versión 0; no existe actividad LMSR posterior.
 - [x] No hay mercados sin estado ni estados sin mercado.
 - [x] Los contratos heredados no contienen campos de ejecución LMSR y sus valores compatibles siguen coherentes con el contrato anterior.
 - [x] Existe `get_prediction_quote(text, text, integer)`.
@@ -60,7 +61,9 @@ Resultado del 1 de agosto de 2026, sin publicar identificadores personales:
 - [x] Las RPC de mercado no devuelven identidad, opción, contratos ni saldo privado.
 - [x] El feed social publica predicciones únicamente cuando `settled_at` existe.
 - [x] `resolve_market` solo es ejecutable por `service_role`.
+- [x] `resolve_market_with_evidence` solo es ejecutable por `service_role`.
 - [x] `approve-market-resolution` está activa, exige JWT válido y comprueba `app_metadata.oraklo_admin === true` antes de invocar la RPC protegida.
+- [x] Ninguna consulta creó o modificó mercados, saldos, contratos o predicciones.
 
 Los avisos de asesores sobre tablas con RLS sin políticas son informativos e intencionados porque no tienen permisos directos y se accede por RPC cerradas. Los avisos genéricos sobre RPC `SECURITY DEFINER` públicas incluyen superficies deliberadamente públicas; deben evaluarse por contrato, no silenciarse automáticamente. Los índices sin uso continúan siendo esperables con dos perfiles y poco tráfico. La protección nativa de contraseñas filtradas sigue no disponible en el plan actual y se complementa con el control HIBP por k-anonimato ya documentado.
 
@@ -69,8 +72,8 @@ Los avisos de asesores sobre tablas con RLS sin políticas son informativos e in
 Comprobado sobre la página realmente renderizada, no solo sobre el repositorio:
 
 - [x] Portada, Comunidad, clasificación, un perfil público y una ficha real cargaron datos de Supabase.
-- [x] HTML, CSS y JavaScript principales respondieron correctamente y la versión inicial fue `v=20260801-market1`.
-- [x] Ningún HTML ni JavaScript cargó o referenció `data.js`.
+- [x] HTML, CSS y JavaScript principales respondieron correctamente. La versión inicial fue `v=20260801-market1` y la comprobación posterior confirmó `v=20260801-market2` en los ocho HTML.
+- [x] Ningún HTML ni JavaScript cargó o referenció `data.js`; su URL pública devuelve 404.
 - [x] Ante un fallo, el código usa un error honesto con reintento y no un catálogo alternativo.
 - [x] La ficha mostró valores reales de `Sí` y `No` que sumaban 100 %.
 - [x] Un mercado sin participaciones mostró 50/50, un único punto inicial y el texto «Sin movimientos todavía».
@@ -82,7 +85,14 @@ Comprobado sobre la página realmente renderizada, no solo sobre el repositorio:
 - [x] No apareció lenguaje de dinero real, inversión o rentabilidad.
 - [x] No hubo errores propios de Atinara en consola; el único error observado pertenecía a una extensión del navegador de aceptación.
 - [x] En escritorio no hubo desbordamiento horizontal en portada, Comunidad, clasificación, perfil o ficha.
-- [ ] La inspección visual móvil real sigue pendiente: el navegador de aceptación rechazó el cambio de viewport y no debe afirmarse que una revisión estática lo sustituye.
+- [x] A 768 × 1024 no hubo desbordamiento global en portada, Comunidad, clasificación, perfil público, ficha abierta ni ficha resuelta.
+- [x] A 375 × 667 y 390 × 844, portada, Comunidad, clasificación, perfil y ficha abierta quedaron correctas; la ficha resuelta reveló un desbordamiento real causado por URLs largas.
+- [x] A 320 × 568, las seis superficies revelaron un desbordamiento global de 15 px causado por `min-width: 320px` en el elemento raíz.
+- [x] El árbol de cierre elimina ese mínimo rígido y aplica `overflow-wrap: anywhere` a los textos de resolución. La comprobación visual local posterior supera las seis superficies a 320 × 568 y 375 × 667 sin scroll global.
+- [x] Pregunta, `Sí`, `No`, gráfica, cinco rangos y desglose completo de cotización permanecen visibles; no hay solapamientos del panel ni objetivos táctiles menores de 24 px.
+- [x] Los cinco rangos responden por interacción a 320 px y conservan el único punto real sin fabricar movimiento.
+- [x] Los controles tienen nombres accesibles, las líneas se identifican también por texto y el foco de teclado es visible.
+- [x] Confirmar como invitada abre el diálogo de acceso, mantiene la URL y no envía un formulario ni crea datos.
 
 Incidencia encontrada y corregida en el árbol de limpieza:
 
@@ -98,12 +108,12 @@ Incidencia encontrada y corregida en el árbol de limpieza:
 - [x] La portada no calcula progreso de rango para invitadas.
 - [x] Todos los recursos locales se coordinan en `v=20260801-market2`.
 - [x] Preparar el paquete completo del árbol final validado sin ZIP internos, secretos ni archivos ajenos.
-- [ ] Eliminar expresamente `data.js` desde GitHub y confirmar esa eliminación en un commit.
-- [ ] Publicar el resto del árbol final y registrar el hash remoto real de limpieza.
-- [ ] Confirmar que `origin/main` contiene la eliminación.
-- [ ] Confirmar que GitHub Pages devuelve 404 para `data.js` y sigue cargando datos reales.
-- [ ] Repetir portada, ficha y consola sobre `v=20260801-market2`.
-- [ ] Completar la comprobación móvil real sin desbordamiento ni acciones ocultas.
+- [x] Eliminar `data.js` en GitHub mediante `4ccd97e`.
+- [x] Publicar el resto del árbol final en `a5c633b`.
+- [x] Confirmar que `origin/main` contiene la eliminación y la limpieza completa.
+- [x] Confirmar que GitHub Pages devuelve 404 para `data.js` y sigue cargando datos reales.
+- [x] Repetir portada, Comunidad, clasificación, perfil y fichas sobre `v=20260801-market2`.
+- [x] Completar la comprobación móvil real y corregir en el árbol de cierre los dos desbordamientos encontrados.
 
 ## 7. Pruebas autenticadas que requieren autorización separada
 
@@ -132,4 +142,4 @@ No ejecutar estas operaciones sobre datos reales sin autorización expresa de Yo
 
 ## 9. Condición de cierre
 
-La migración y el frontend vivo están activos. El bloque de limpieza solo se cierra cuando el commit esté en `origin/main`, `data.js` devuelva 404, la versión `market2` esté realmente renderizada y la comprobación móvil real quede aceptada. Hasta entonces, el siguiente paso operativo sigue siendo terminar esta aceptación; después se vuelve al Paso 13.3 en Penpot y no se programa otro bloque funcional.
+La migración, el frontend vivo y la limpieza `a5c633b` están activos. `data.js` devuelve 404, `market2` está renderizado y la aceptación móvil real ya se ejecutó. El mercado vivo solo queda técnicamente cerrado cuando la corrección responsive mínima de esta aceptación esté publicada y vuelva a comprobarse en GitHub Pages; si la publicación no puede automatizarse, esa es la única tarea manual previa. Después se vuelve al Paso 13.3 en Penpot y no se programa otro bloque funcional.

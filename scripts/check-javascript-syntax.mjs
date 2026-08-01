@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const projectRoot = new URL("../", import.meta.url);
 const excludedDirectories = new Set([".git", ".checkly", "node_modules", "playwright-report", "test-results"]);
@@ -22,7 +23,7 @@ function collectJavascriptFiles(directory) {
   });
 }
 
-const rootPath = projectRoot.pathname;
+const rootPath = fileURLToPath(projectRoot);
 if (!statSync(rootPath).isDirectory()) {
   throw new Error("No se ha encontrado la raíz del proyecto.");
 }

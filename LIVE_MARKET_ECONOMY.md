@@ -15,7 +15,7 @@ Evidencia de activación:
 - cotización autoritativa de solo lectura válida, con contratos, precio medio, impacto, bonus y Prestigio separados;
 - ninguna predicción, saldo o dato temporal creado durante la comprobación.
 
-La validación y las pruebas autenticadas se distinguen en `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`. El árbol final de limpieza elimina `data.js`, corrige la exposición ficticia de métricas de invitada y usa `v=20260801-market2`. La escritura automática en GitHub devolvió `403 Resource not accessible by integration`; el commit remoto queda pendiente de publicación manual y no debe inventarse su hash.
+La validación y las pruebas autenticadas se distinguen en `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`. `data.js` fue eliminado en `4ccd97e` y la limpieza completa se publicó en `a5c633b`. GitHub Pages sirve `v=20260801-market2`, la URL pública de `data.js` devuelve 404 y las invitadas ya no ven métricas privadas provisionales. La aceptación de escritorio quedó superada; la aceptación móvil real detectó dos desbordamientos responsive que el árbol de cierre corrige de forma mínima en `styles.css` y valida visualmente a 320 y 375 px. Una nueva comprobación de Supabase exclusivamente de lectura mantuvo la fotografía 11/11/11, 7 contratos heredados —5 activos— y 0 `lmsr_v1`, sin crear ni modificar predicciones.
 
 ## 1. Decisión de producto
 
