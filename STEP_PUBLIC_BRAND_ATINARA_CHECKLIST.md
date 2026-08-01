@@ -31,8 +31,8 @@
 
 ## 3. Supabase y contenido generado
 
-- [ ] Volver a desplegar únicamente la Edge Function `analyze-market-resolution` con el archivo actualizado. No hace falta SQL ni migración.
-- [ ] Desde el panel administrativo, analizar sin aprobar un mercado ambiguo y comprobar que la fuente propuesta se titula «Ficha original y criterios del mercado en Atinara».
+- [x] Volver a desplegar únicamente la Edge Function `analyze-market-resolution` con el archivo actualizado. La versión 10 quedó activa el 1 de agosto de 2026 con JWT, la URL canónica y los textos públicos de Atinara; no se ejecutó SQL ni se modificaron mercados.
+- [x] Desde el panel administrativo, analizar sin aprobar un mercado ambiguo y comprobar que la fuente propuesta se titula «Ficha original y criterios del mercado en Atinara». La prueba del 1 de agosto respondió sin modificar datos y reveló una incoherencia entre el periodo «durante julio» y `closes_at` el día 28; no se aprobó ni liquidó.
 - [ ] Revisar en Auth > Email Templates los asuntos y cuerpos de confirmación, invitación y cambio de correo; sustituir cualquier marca visible antigua por Atinara.
 - [ ] Revisar el nombre visible del remitente o del proyecto en los correos de Auth. Si el proveedor gratuito no permite personalizarlo, dejarlo anotado para Mailjet en el Paso 13.
 - [x] Revisar mediante lectura pública los mercados resueltos disponibles: ninguna explicación ni fuente devuelta presentaba «Oraklo» como marca. No se modificó ninguna fila.
@@ -46,8 +46,8 @@ La usuaria decidió el 31 de julio de 2026 continuar gratuitamente en GitHub Pag
 - [x] Renombrar el mismo repositorio a `Atinara`, sin copiarlo ni crear otro.
 - [x] Preparar las rutas hardcodeadas de GitHub Pages para `https://marcilladiazyolanda-dotcom.github.io/Atinara/` en Checkly, Sentry, pruebas y `analyze-market-resolution`.
 - [x] Preparar `checkly.config.ts` con la nueva URL del repositorio.
-- [ ] Tras el renombrado, actualizar en Supabase Auth la Site URL y las redirecciones permitidas a la nueva ruta exacta.
-- [ ] Verificar SonarQube, GitGuardian, Checkly y GitHub Actions después del cambio de nombre.
+- [x] Tras el renombrado, actualizar en Supabase Auth la Site URL y las redirecciones permitidas a la nueva ruta exacta. El 1 de agosto quedaron configuradas únicamente con `https://marcilladiazyolanda-dotcom.github.io/Atinara/`.
+- [x] Verificar SonarQube, GitGuardian, Checkly y GitHub Actions después del cambio de nombre. SonarQube quedó en verde con Security A; GitGuardian mostró Atinara segura y monitorizada; Checkly conservó sus tres controles y quedó en verde; los workflows de calidad, Pages y despliegue manual terminaron correctamente.
 
 Estado comprobado tras `f58a28a`: Pages y el workflow de calidad terminaron correctamente; el workflow de Checkly quedó omitido por sus disparadores. SonarQube analizó el commit y falló el Quality Gate con Security C, Reliability C y cinco incidencias. GitGuardian, los monitores vivos de Checkly y el proyecto de Sentry requieren acceso autenticado para completar la verificación actual.
 
@@ -63,7 +63,7 @@ La nueva configuración no debe desplegarse por partes: primero se publica el fr
 
 - [ ] Buscar `Oraklo` en todas las pantallas y estados accesibles para invitada, usuaria y administradora; no debe aparecer como marca.
 - [ ] Compartir la portada y una ficha en un comprobador Open Graph; deben mostrar Atinara.
-- [ ] Ejecutar los tres controles de Checkly contra la URL final.
-- [ ] Confirmar que Sentry acepta el host final y continúa redactando PII.
-- [ ] Ejecutar `npm run validate` y `git diff --check` sobre la versión definitiva.
+- [x] Ejecutar los tres controles de Checkly contra la URL final; los tres quedaron en estado `Passing`.
+- [x] Confirmar que Sentry acepta el host final y continúa redactando PII; el evento controlado llegó en `production`, como gestionado y sin usuaria, URL ni parámetros sensibles.
+- [x] Ejecutar `npm run validate` y `git diff --check` sobre la versión definitiva; sintaxis, dieciocho tests unitarios, tipado de Checkly y comprobación del diff superados el 1 de agosto de 2026.
 - [ ] Solo entonces marcar la transición pública como terminada y comenzar la auditoría funcional 13.1.

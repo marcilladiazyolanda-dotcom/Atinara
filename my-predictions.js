@@ -8,6 +8,23 @@ function formatKarma(value) {
   return `${formatNumber(Math.round(Number(value) || 0))} Karma`;
 }
 
+function formatPercentage(value, maximumFractionDigits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return `${new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits
+  }).format(number)} %`;
+}
+
+function escapePredictionHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function formatDate(value) {
   if (!value) return "Fecha no disponible";
   if (typeof window.formatOrakloLocalDate === "function") {
@@ -86,8 +103,42 @@ function getPredictionStatusClass(viewState) {
   return classes[viewState.key] || "status-open";
 }
 
-function createActiveEstimateMarkup(prediction, isPending) {
+function getPredictionEntryPrice(prediction) {
+  return Number(prediction.entry_price_percentage ?? prediction.entry_percentage);
+}
+
+function getCurrentOptionPrice(prediction, market) {
+  if (!market) return Number.NaN;
+  return prediction.option_selected === "Sí"
+    ? Number(market.porcentajeSi)
+    : Number(market.porcentajeNo);
+}
+
+function createActiveEstimateMarkup(prediction, market, isPending) {
+  const entryPrice = getPredictionEntryPrice(prediction);
+  const currentPrice = getCurrentOptionPrice(prediction, market);
+  const priceMovement = currentPrice - entryPrice;
+  const movementLabel = Number.isFinite(priceMovement)
+    ? `${priceMovement > 0 ? "+" : ""}${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 }).format(priceMovement)} puntos`
+    : "—";
+  const movementClass = priceMovement > 0
+    ? "value-positive"
+    : priceMovement < 0
+      ? "value-negative"
+      : "value-neutral";
+  const baseReturn = Number(
+    prediction.base_return_estimated
+      ?? (Number(prediction.karma_risked) || 0) + (Number(prediction.base_benefit_estimated) || 0)
+  );
+  const contractsMarkup = prediction.pricing_model === "lmsr_v1"
+    ? `<div><dt>Contratos</dt><dd>${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 }).format(Number(prediction.contract_shares) || 0)}</dd></div>`
+    : "";
+
   return `
+    <div><dt>Precio actual</dt><dd>${formatPercentage(currentPrice)}</dd></div>
+    <div><dt>Desde tu entrada</dt><dd class="${movementClass}">${movementLabel}</dd></div>
+    ${contractsMarkup}
+    <div><dt>Retorno base estimado</dt><dd>${formatKarma(baseReturn)}</dd></div>
     <div><dt>Beneficio base estimado</dt><dd>${formatKarma(prediction.base_benefit_estimated)}</dd></div>
     <div><dt>Bonus dificultad estimado</dt><dd>+${formatKarma(prediction.difficulty_bonus_estimated)}</dd></div>
     <div><dt>Prestigio si acierta</dt><dd>+${formatNumber(prediction.prestige_if_hit)}</dd></div>
@@ -158,7 +209,7 @@ function renderPredictionsError(message) {
     <section class="not-found-card predictions-access-card">
       <p class="eyebrow">Supabase</p>
       <h2>No se han podido cargar tus predicciones</h2>
-      <p>${message || "Revisa la sesión y vuelve a intentarlo."}</p>
+      <p>${escapePredictionHtml(message || "Revisa la sesión y vuelve a intentarlo.")}</p>
       <button class="secondary-button retry-predictions" type="button">Reintentar</button>
     </section>
   `;
@@ -210,18 +261,18 @@ function createPredictionCard(prediction, market) {
 
   article.innerHTML = `
     <div class="prediction-card-header">
-      <span class="tag">${marketCategory}</span>
+      <span class="tag">${escapePredictionHtml(marketCategory)}</span>
       <span class="status ${getPredictionStatusClass(viewState)}">${viewState.label}</span>
     </div>
-    <h2>${marketQuestion}</h2>
+    <h2>${escapePredictionHtml(marketQuestion)}</h2>
     <dl class="prediction-summary-grid">
-      <div><dt>Opción elegida</dt><dd>${prediction.option_selected || "No disponible"}</dd></div>
-      <div><dt>Porcentaje de entrada</dt><dd>${prediction.entry_percentage ?? "-"}%</dd></div>
-      <div><dt>Dificultad</dt><dd>${prediction.option_difficulty || "No disponible"}</dd></div>
-      <div><dt>Karma arriesgado</dt><dd>${formatKarma(prediction.karma_risked)}</dd></div>
+      <div><dt>Opción elegida</dt><dd>${escapePredictionHtml(prediction.option_selected || "No disponible")}</dd></div>
+      <div><dt>Precio medio de entrada</dt><dd>${formatPercentage(getPredictionEntryPrice(prediction))}</dd></div>
+      <div><dt>Dificultad</dt><dd>${escapePredictionHtml(prediction.option_difficulty || "No disponible")}</dd></div>
+      <div><dt>Karma utilizado</dt><dd>${formatKarma(prediction.karma_risked)}</dd></div>
       ${viewState.settled
         ? createSettlementMarkup(prediction, viewState)
-        : createActiveEstimateMarkup(prediction, viewState.key === "pending")}
+        : createActiveEstimateMarkup(prediction, market, viewState.key === "pending")}
       <div><dt>Fecha de participación</dt><dd>${formatDate(prediction.created_at)}</dd></div>
     </dl>
     <div class="prediction-card-actions">
@@ -274,8 +325,8 @@ async function renderMyPredictions() {
 
     const marketsById = await fetchMarketsForPredictions(predictions);
     renderPredictionList(predictions, marketsById);
-  } catch (error) {
-    renderPredictionsError(error.message);
+  } catch (_error) {
+    renderPredictionsError("No se han podido consultar tus predicciones privadas. Inténtalo de nuevo.");
   }
 }
 

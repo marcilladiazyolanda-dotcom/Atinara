@@ -8,7 +8,22 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
 - `AGENTS.md` contiene las instrucciones permanentes que Codex debe aplicar al trabajar en esta carpeta.
 - `ORAKLO_PROJECT_CONTEXT.md` recoge el estado técnico, decisiones, roadmap, restricciones y comprobaciones necesarias para retomar el proyecto en un chat nuevo.
-- Antes de editar, hay que leer ambos documentos y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
+- `LIVE_MARKET_ECONOMY.md` define el contrato económico aprobado del precio vivo y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` corrige los supuestos anteriores que no deben llegar al diseño definitivo.
+- Antes de editar, hay que leer estos documentos vinculantes y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
+
+## Mercado predictivo vivo · preparado para activación
+
+El árbol local incorpora un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La gráfica conserva únicamente movimientos confirmados; no simula volatilidad cuando no hay actividad.
+
+- Cada mercado nuevo empieza al 50/50 y usa `b = 2000 Karma` durante la beta.
+- Antes de confirmar, Supabase cotiza impacto, precio medio, contratos, retorno base, bonus de dificultad y Prestigio.
+- La versión del mercado y el precio máximo revisado protegen frente a una confirmación con una cotización antigua.
+- Cada contrato acertado nuevo liquida a 1 Karma y el bonus se añade por separado. El antiguo tope `×10` solo permanece en predicciones anteriores.
+- La beta admite una sola posición bloqueada hasta la resolución. No incluye venta, salida anticipada, cambio de lado, órdenes ni mercado secundario.
+- Las actualizaciones usan Broadcast de Supabase y una consulta periódica como respaldo, sin publicar identidad ni posiciones privadas.
+- `data.js` se elimina: ante un fallo se muestra un error honesto con reintento, nunca mercados de demostración.
+
+La implementación todavía no está aplicada en producción. La migración y el frontend deben activarse juntos siguiendo `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`.
 
 ## Resolución asistida por IA
 
@@ -103,6 +118,8 @@ El Paso 12 incorpora cuatro capas gratuitas sin sustituir la arquitectura del MV
 
 La configuración versionada, las cuotas elegidas, los datos que nunca deben enviarse y la secuencia de activación están en `STEP_12_TOOLING_CHECKLIST.md`.
 
+La auditoría funcional histórica por roles que abre la preparación de la beta está en `STEP_13_FUNCTIONAL_AUDIT.md`. Las prioridades y los criterios de aceptación aprobados están en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`: P0, P1 y P2 son obligatorios antes de la beta, incluida una puerta automática sin omisión que impide publicar mercados ambiguos o no resolubles y el contrato de precio vivo aprobado después de la auditoría.
+
 Herramientas ya reservadas para fases posteriores:
 
 - **Penpot:** debe abrir el próximo bloque visual del MVP antes de modificar de nuevo la identidad, los componentes, emblemas, avatares o responsive.
@@ -126,5 +143,6 @@ select public.configure_oraklo_seasons(
 ## Recordatorio para el pulido final
 
 - Diseñar primero en Penpot el sistema visual del MVP y trasladar después sus tokens y componentes al frontend.
+- Corregir primero los inventarios de la Fase A con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`: precio vivo, gráfica real, cotización, impacto y ausencia de compraventa durante la beta.
 - Diseñar un emblema visual propio para cada nivel de Prestigio: Observador, Intérprete, Analista, Visionario y Oráculo.
 - Sustituir los avatares simbólicos provisionales por una colección de avatares propios y atractivos, relacionados con el gaming y el universo de Atinara, manteniendo el tono de anticipación y criterio y evitando cualquier estética de casino.

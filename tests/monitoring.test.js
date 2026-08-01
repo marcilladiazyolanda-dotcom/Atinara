@@ -35,7 +35,7 @@ test("redacta correos, UUID, JWT y campos sensibles", () => {
     },
     tokenText: "token=secreto",
     jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.firma",
-    frameUrl: "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.js?v=20260731-brand1#detalle"
+    frameUrl: "https://marcilladiazyolanda-dotcom.github.io/Atinara/profile.js?v=20260801-market1#detalle"
   };
 
   const sanitized = monitoring.scrubMonitoringValue(source);

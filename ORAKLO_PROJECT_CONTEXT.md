@@ -1,6 +1,6 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 31 de julio de 2026.
+Última actualización del contexto: 1 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
@@ -15,6 +15,9 @@ Conceptos centrales:
 - **Rangos:** Observador, Intérprete, Analista, Visionario y Oráculo.
 - **Privacidad:** el saldo de Karma y las predicciones activas son privados. El perfil público solo muestra trayectoria y resultados ya liquidados.
 - **Identidad:** anticipación, criterio y gaming premium, nunca casino. Sin dinero real, pagos, compra de Karma ni Modo Real.
+- **Precio colectivo vivo:** en mercados binarios, `Sí` y `No` suman 100 % y se mueven únicamente por Karma realmente confirmado mediante un creador automático LMSR.
+- **Contrato de beta:** una participación adquiere contratos al precio medio real, queda bloqueada hasta la resolución y no puede venderse, cambiarse o cerrarse anticipadamente. La negociación secundaria solo se reevaluará después de la beta y no está prometida.
+- **Pago:** cada contrato nuevo acertado liquida a 1 Karma; el bonus de dificultad y el Prestigio se guardan por separado. El antiguo límite `×10` solo se conserva para predicciones confirmadas antes de activar el modelo vivo.
 
 La usuaria quiere datos reales de Supabase, no cifras, usuarios, comentarios ni actividad simulados.
 
@@ -118,6 +121,25 @@ Comprobación posterior al commit de marca `f58a28a`:
 - La descripción pública del repositorio en GitHub aún presentaba Oraklo como marca y debe corregirse a Atinara.
 - La validación local de las correcciones superó sintaxis, dieciocho pruebas unitarias, tipado de Checkly y `git diff --check`.
 
+Comprobación posterior al cierre de las correcciones, realizada el 1 de agosto de 2026:
+
+- `main` y `origin/main` coinciden en `135f759` (`Completa workflows de Atinara`). El único archivo local no versionado es el ZIP de trabajo de la usuaria y no debe modificarse ni incluirse accidentalmente.
+- GitHub Pages continúa en la URL canónica exacta. SonarQube tiene Quality Gate aprobado y Security A; GitGuardian muestra una única fuente Atinara segura, monitorizada y con histórico completo; Checkly conserva los tres controles existentes y todos están en verde.
+- Sentry recibió y resolvió un error controlado de Atinara en `production`, redactó identidad, URL y parámetros, y entregó correctamente una notificación de prueba por correo. La usuaria dio por cerrada la revisión de sus alertas el 1 de agosto de 2026; no debe volver a bloquear el Paso 13 ni ampliarse salvo nueva petición expresa.
+- `analyze-market-resolution` se desplegó aisladamente como versión 10 activa y con verificación JWT. La lectura posterior confirmó la URL canónica, el título público «Ficha original y criterios del mercado en Atinara» y la ausencia de la ruta pública anterior. No se ejecutó SQL ni se modificaron datos.
+- Supabase Auth ya usa la Site URL y la única redirección exacta de Atinara. El plan gratuito mantiene plantillas de correo predeterminadas sin personalización hasta configurar SMTP propio. El análisis administrativo de producción respondió sin modificar datos, pero reveló que un mercado que abarcaba todo julio tenía `closes_at` el día 28; no se aprobó ni liquidó. Continúa pendiente la aceptación visual final de marca y Open Graph.
+- La clasificación funcional del Paso 13.1 está documentada en `STEP_13_FUNCTIONAL_AUDIT.md`. El 13.2 fue aprobado con correcciones en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`: P0, P1 y P2 son requisitos completos antes de la beta y no fases que puedan aplazarse tras abrirla.
+- Ningún mercado podrá publicarse o programarse como público sin superar una revisión automática de claridad, coherencia y resolubilidad. La validación será autoritativa en Supabase, fallará de forma cerrada, explicará todos los motivos bloqueantes y no admitirá omisión administrativa. Cualquier cambio esencial invalidará el aprobado y exigirá una nueva revisión; después seguirá existiendo confirmación humana.
+
+Trabajo local posterior autorizado el 1 de agosto de 2026:
+
+- La base comprobada sigue siendo `main = origin/main = 135f759`; se conservaron los documentos locales de los pasos 13.1 y 13.2 y el ZIP previo de la usuaria no se modificó.
+- Yol aprobó sustituir el porcentaje por recuento por un mercado vivo de Karma, con gráfica real, retorno base por contratos y bonus de dificultad separado. Aprobó también retirar el límite `×10` para posiciones nuevas y aplazar toda compraventa o especulación hasta después de la beta.
+- Se preparó `20260801172543_add_live_prediction_market_model.sql` después de auditar el esquema vivo. La migración completa se probó dentro de una transacción real con cotización, participación, histórico y liquidación, y terminó con `ROLLBACK`; producción no cambió.
+- El frontend local usa precios vivos, histórico real, Broadcast de Supabase con consulta periódica de respaldo, cotización versionada y estados honestos. Se eliminó `data.js` para impedir que un fallo de Supabase muestre mercados simulados.
+- `LIVE_MARKET_ECONOMY.md` contiene el contrato económico y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` las correcciones vinculantes que el segundo prompt debe aplicar sobre la Fase A neutral.
+- Esta implementación todavía no está publicada ni aplicada a Supabase. SQL y frontend se activarán de forma coordinada únicamente siguiendo `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md` y con autorización expresa de Yol.
+
 ## 4. Funcionalidades terminadas y comprobadas
 
 ### Base real
@@ -138,14 +160,15 @@ RPC públicas usadas, entre otras:
 
 ### Confirmación de predicción y Karma
 
-- El frontend usa `place_prediction(...)`; no inserta directamente en `public.predictions`.
-- Supabase comprueba sesión, mercado abierto, duplicado, saldo y máximo permitido.
-- Inserta la predicción y descuenta Karma en una sola operación.
-- Devuelve predicción y perfil autoritativos.
-- Tras confirmar se actualizan cabecera y métricas y aparece modal de éxito.
-- Errores conocidos se traducen a mensajes amables.
+- El frontend solicita primero `get_prediction_quote(...)` y confirma mediante la nueva firma versionada de `place_prediction(...)`; nunca inserta directamente en `public.predictions`.
+- Supabase comprueba sesión, mercado abierto, duplicado, saldo, mínimo, máximo personal, versión exacta y precio medio máximo aceptado.
+- La confirmación adquiere contratos LMSR, mueve el precio, guarda un punto histórico, inserta la predicción y descuenta Karma en una sola transacción.
+- Si otra participación mueve el mercado, devuelve `PRICE_MOVED`; el frontend actualiza el desglose y exige una nueva confirmación.
+- Tras confirmar se actualizan cabecera, métricas, gráfica y posición privada y aparece un modal de éxito con el contrato guardado.
+- Realtime transmite únicamente precio, versión y hora, sin identidad ni posición; una consulta cada 30 segundos recupera cambios si falla la conexión.
+- Errores conocidos se traducen a mensajes amables y nunca se sustituyen por mercados de demostración.
 
-Importante: la función `place_prediction` fue creada manualmente en Supabase antes de que existieran las migraciones actuales y puede no estar representada en esta carpeta. No recrearla ni sustituirla sin auditar primero el esquema vivo.
+Importante: la función viva anterior fue creada manualmente y se auditó antes de preparar la migración. La migración versionada sustituye su firma y conserva todas las predicciones existentes como `legacy_fixed_v1`. No debe aplicarse aislada del frontend nuevo.
 
 ### Tiempo y cierre de mercados
 
@@ -153,15 +176,19 @@ Importante: la función `place_prediction` fue creada manualmente en Supabase an
 - Cambia de días a horas, minutos y segundos y muestra fecha exacta.
 - Al vencer, el mercado queda cerrado visualmente y se bloquean controles.
 - Se distinguen mercado abierto, cerrado pendiente de resolución y resuelto.
+- Decisión confirmada el 1 de agosto de 2026: si la pregunta fija un mes, una fecha o un límite anual, `closes_at` debe coincidir con el final exacto del periodo que abarca la pregunta. Para «durante julio», el cierre correcto es el final del 31 de julio.
+- La administración cotidiana que se añadirá durante el Paso 13 debe permitir crear y editar mercados directamente desde una cuenta administradora en Atinara. El formulario pedirá la fecha límite que abarca la pregunta, derivará de ella `closes_at`, mostrará la zona horaria y bloqueará la publicación cuando pregunta, criterios y fecha sean incoherentes. La relación entre los campos temporales deberá validarse también en Supabase.
+- Antes de publicar, el borrador deberá superar automáticamente controles deterministas y semánticos sobre ambigüedad, opciones, criterios, fechas, fuentes y posibilidad real de resolución. Si la revisión falla, no es concluyente o el servicio no está disponible, el mercado seguirá privado y Atinara mostrará el motivo concreto; una administradora podrá corregirlo y reenviarlo, pero no saltarse el rechazo.
 
 ### Resolución y liquidación
 
 - Resolución atómica de mercados y predicciones.
-- Acierto: se abona el retorno correspondiente y se actualiza Prestigio.
+- Acierto nuevo `lmsr_v1`: cada contrato abona 1 Karma, se añade el bonus de dificultad guardado y se actualiza Prestigio.
+- Acierto anterior `legacy_fixed_v1`: conserva el cálculo y el límite `×10` vigentes cuando se confirmó.
 - Fallo: no se devuelve el Karma arriesgado y se aplica el cambio de Prestigio sin bajar nunca de 0.
 - Anulación: devolución íntegra y Prestigio sin cambios.
-- Retorno total máximo: x10 del Karma arriesgado.
-- El historial muestra Karma recibido, balance y Prestigio real.
+- Las posiciones nuevas no tienen un tope artificial `×10`; la economía se protege con liquidez, límites de participación, impacto de precio y simulaciones antes de beta.
+- El historial muestra Karma recibido, balance, Prestigio y las condiciones reales de cada modelo sin reescribir contratos antiguos.
 
 ### Resolución asistida por IA
 
@@ -315,6 +342,7 @@ Orden actual:
 6. `20260715020000_add_profile_customization.sql`
 7. `20260718143106_add_social_community_mvp.sql`
 8. `20260718182915_expose_real_market_comment_counts.sql`
+9. `20260801172543_add_live_prediction_market_model.sql` — preparada y probada con `ROLLBACK`; pendiente de activación coordinada.
 
 No debe suponerse que toda función antigua del Supabase vivo está versionada aquí. Antes de escribir SQL nuevo, inspeccionar esquema, firmas, políticas, permisos y migraciones existentes.
 
@@ -326,21 +354,23 @@ No debe suponerse que toda función antigua del Supabase vivo está versionada a
 - Paso 11: MVP social y comunidad — terminado, desplegado y aceptado con cuentas reales.
 - Paso 11C: protección gratuita de contraseñas — terminado, publicado y validado.
 - Paso 12: SonarQube Cloud, GitGuardian, Checkly y Sentry — terminado, publicado y validado.
-- Cambio de marca pública: Atinara sustituye a Oraklo. El código local está preparado en `codex/atinara-public-brand`; antes de dar la transición por publicada hay que completar `STEP_PUBLIC_BRAND_ATINARA_CHECKLIST.md`.
-- Paso 13: preparación de la beta cerrada — siguiente fase aprobada.
+- Cambio de marca pública: Atinara sustituye a Oraklo y está publicada en `main`; antes de cerrar su aceptación hay que completar los puntos manuales restantes de `STEP_PUBLIC_BRAND_ATINARA_CHECKLIST.md`.
+- Paso 13: preparación de la beta cerrada — 13.1 cerrado y 13.2 aprobado con correcciones; el alcance vinculante está en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`.
 
 Orden acordado para el Paso 13:
 
 1. **13.0 · Cierre documental:** terminado al corregir el estado real del Paso 12 y registrar Atinara como marca pública.
 2. **13.1 · Auditoría funcional:** revisar recorridos completos de invitada, usuaria y administradora y clasificar cada punto como terminado, parcial, sin comprobar, ausente o aplazado.
-3. **13.2 · Definición de soluciones:** priorizar huecos `P0/P1/P2` y fijar criterios de aceptación.
-4. **13.3 · Diseño en Penpot:** diseñar únicamente las pantallas, componentes, estados y responsive necesarios antes de modificar de nuevo la interfaz.
+3. **13.2 · Definición de soluciones:** terminado y aprobado. `P0`, `P1` y `P2` indican orden, pero todos deben completarse antes de la beta.
+4. **13.3 · Diseño en Penpot:** diseñar el sistema visual definitivo y todas las pantallas, componentes, estados y responsive necesarios antes de modificar de nuevo la interfaz.
 5. **13.4 · Implementación:** construir las funciones aprobadas sin rehacer lo que ya funciona.
 6. **13.5 · QA y beta:** probar los recorridos completos y abrir acceso controlado a un grupo pequeño.
 
-Huecos funcionales ya confirmados para la auditoría: recuperación completa de contraseña y administración cotidiana de mercados —crear, guardar borrador, programar, publicar, editar bajo reglas seguras, cancelar y consultar participación—. No asumir que el resto de puntos auditables está ausente hasta comprobar el código y el estado vivo.
+El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
-Siguiente paso operativo: publicar y verificar Atinara en toda la superficie pública, incluida la Edge Function y la configuración externa de Auth/URL. Después iniciar exclusivamente la auditoría funcional 13.1; no ampliar todavía chat, GIF, feed algorítmico, temporadas o monetización.
+Durante 13.3 Yol autorizó implementar primero el contrato económico vivo porque Penpot necesita diseñar el comportamiento real y no la encuesta estática anterior. Esto no autoriza a saltarse el diseño artístico ni el QA: el código continúa local y pendiente de activación coordinada. La Fase A neutral de Penpot debe conservarse, pero la Fase B corregirá sus inventarios con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de aplicar la identidad aprobada.
+
+Siguiente paso operativo: mantener sin aprobar el mercado que reveló la incoherencia entre «durante julio» y el cierre del día 28; terminar la dirección artística con Yol; y enviar a Codex el segundo prompt que cite expresamente el contrato vivo y sus correcciones. En paralelo, conservar el código validado sin aplicarlo a producción hasta coordinar SQL y ZIP. Después se completarán los demás P0, P1 y P2 y se cerrará 13.5; no se abre la beta con ningún punto pendiente. No ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización o compraventa secundaria. La revisión de alertas de Sentry está cerrada por decisión de la usuaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -363,11 +393,14 @@ Este backlog está recordado, pero no debe implementarse sin definir y aprobar c
 No implementar sin autorización expresa:
 
 - Dinero real, pagos, compra de Karma o Modo Real.
+- Venta de posiciones, salida anticipada, cambio de lado, cobertura, órdenes límite, libro de órdenes o mercado secundario durante la beta.
 - Resolución autónoma por IA.
 - Arranque de temporadas durante el desarrollo.
 - Datos simulados para rellenar pantallas.
+- Fluctuaciones, históricos o actividad simulados para que un mercado parezca vivo.
 - Exposición pública de predicciones activas o saldo de Karma.
 - Paneles o permisos administrativos inseguros.
+- Publicar o programar un mercado que no tenga una validación automática vigente de claridad, coherencia y resolubilidad, o permitir que una administradora omita un rechazo.
 - Cambios grandes fuera del paso pedido.
 
 ## 8. Flujo de colaboración preferido por la usuaria
@@ -387,13 +420,21 @@ No implementar sin autorización expresa:
 - No elegir modelos de IA solo porque aparecen en AI Studio: confirmar disponibilidad API y manejar 404/429 de forma comprensible.
 - Tavily puede no encontrar fuentes. Mercado ambiguo y búsqueda insuficiente son estados de producto, no necesariamente fallos técnicos.
 - No fiarse de etiquetas estáticas de cierre cuando existe `closes_at`.
+- No usar `closes_at` como límite de investigación sin comprobar antes que coincide con el periodo temporal expresado por la pregunta y los criterios. La auditoría del 1 de agosto detectó un mercado que abarcaba todo julio pero cerraba el día 28; no se aprobó su propuesta de resolución.
+- No confundir precio con porcentaje de personas: desde el modelo vivo el precio depende del Karma y del impacto LMSR; participantes y precio son métricas distintas.
+- No desplegar por separado la nueva firma SQL y el frontend que la consume. Seguir la activación coordinada y minimizar la ventana entre ambos.
+- No describir la beta como un clon económico exacto de Polymarket o Kalshi: comparte el pago por contrato, pero usa LMSR sin libro de órdenes ni venta.
 
-## 10. Recordatorios para el pulido final
+## 10. Requisitos visuales previos a beta
 
-- Antes de programar el siguiente rediseño, crear en Penpot el sistema visual del MVP: tokens, componentes, estados, escritorio y móvil.
+- Antes de programar el siguiente rediseño, crear y aprobar en Penpot el sistema visual del MVP: tokens, componentes, estados, escritorio y móvil.
+- Usar patrones familiares de exploración y acción de Polymarket y Kalshi como referencia de claridad, nunca como plantilla visual. La interfaz será premium y sofisticada, con identidad, retícula, componentes y activos propios de Atinara.
+- Diseñar la gráfica real de `Sí` y `No`, los rangos temporales, el precio actual, impacto, precio medio, contratos, retorno base, bonus y Prestigio, incluidos carga, único punto, recotización, error y mercado congelado.
+- No diseñar botones o recorridos de venta, salida, cambio de posición o especulación para la beta.
 - Diseñar un emblema propio para cada rango: Observador, Intérprete, Analista, Visionario y Oráculo.
 - Sustituir los avatares simbólicos por avatares originales relacionados con gaming y el universo de Atinara.
 - Mantener el tono de anticipación y criterio y evitar estética de casino.
+- Implementar y aceptar visualmente todo el sistema, incluidos emblemas y avatares, antes de abrir la beta. P2 no es un pulido posterior al lanzamiento.
 
 ## 11. Comprobación mínima antes de entregar cambios
 

@@ -2,7 +2,7 @@
 
 ## Antes de empezar cualquier tarea
 
-1. Lee `ORAKLO_PROJECT_CONTEXT.md` y `README.md` completos.
+1. Lee `ORAKLO_PROJECT_CONTEXT.md` y `README.md` completos. Para economía, predicción o Penpot lee también `LIVE_MARKET_ECONOMY.md` y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de actuar.
 2. Inspecciona `git status`, la rama actual, los últimos commits y la diferencia con `origin/main` antes de editar.
 3. Conserva cualquier cambio local o remoto que no pertenezca a la tarea. No uses comandos destructivos para sincronizar.
 4. No repitas funcionalidades que el contexto marque como terminadas. Si el código y el documento discrepan, comprueba el código y explica la discrepancia.
@@ -13,7 +13,7 @@
 - Atinara es la marca pública de la red social competitiva de predicciones sobre videojuegos y el ecosistema gaming. `Oraklo` se conserva únicamente en infraestructura, historial e identificadores técnicos existentes.
 - Karma es el saldo ficticio para participar; Prestigio es la reputación histórica y determina el rango.
 - No hay dinero real, pagos, compra de Karma ni Modo Real.
-- El tono visual es «oráculo moderno» y gaming. Evita cualquier estética o lenguaje de casino.
+- La interfaz debe sentirse como un mercado predictivo premium, sofisticado, claro e intuitivo. Puede adoptar patrones familiares de descubrimiento y acción de Polymarket o Kalshi, pero nunca copiar sus pantallas, activos o identidad. La marca, los componentes y el lenguaje visual deben ser propios de Atinara y evitar cualquier estética o lenguaje de casino, dinero real, cripto o esports genérico.
 - Ningún texto, título, metadato o mensaje visible para usuarias debe presentar `Oraklo` como marca. La marca pública se escribe **Atinara** y en logotipo puede escribirse **ATINARA**.
 - Las predicciones activas y el Karma disponible son privados. El perfil y las predicciones liquidadas sí pueden ser públicos.
 - No inventes usuarios, métricas, actividad, comentarios ni resultados. La interfaz debe reflejar datos reales de Supabase o estados vacíos honestos.
@@ -26,8 +26,11 @@
 - Nunca pongas claves, `service_role`, `GEMINI_API_KEY` o `TAVILY_API_KEY` en el frontend o en el repositorio.
 - Las operaciones económicas o de liquidación deben ser atómicas y autoritativas en Supabase. El frontend solo ayuda a validar y mostrar mensajes.
 - No insertes directamente en `predictions` desde el frontend: usa `place_prediction`.
+- El mercado vivo usa una cotización LMSR versionada. El precio medio, impacto, contratos, retorno base, bonus y Prestigio se calculan en servidor; si la versión cambia, la usuaria debe revisar una nueva cotización.
+- Durante la beta no hay venta, salida anticipada, cambio de posición, cobertura, libro de órdenes ni mercado secundario. Solo se reevaluarán después de la beta y no están prometidos.
 - No expongas funciones de resolución protegidas a clientes públicos. La resolución requiere administradora autenticada y confirmación humana.
 - La IA investiga y propone; nunca liquida por sí sola.
+- Ningún mercado puede publicarse o programarse como público sin una validación automática vigente de claridad, coherencia y resolubilidad ejecutada y comprobada en servidor. Un rechazo debe mantenerlo privado, explicar los motivos y no admitir omisión administrativa; cualquier cambio esencial exige repetir la revisión.
 - Las temporadas están preparadas, pero deben permanecer desactivadas hasta alcanzar el umbral de usuarios y recibir activación administrativa explícita.
 
 ## Forma de trabajar acordada
@@ -47,9 +50,11 @@
 - Auth, cabecera y actualización de perfil real.
 - Descuento real de Karma al confirmar y persistencia tras recargar.
 - Contador basado en `closes_at`, cierre automático visual y bloqueo de predicción tras el vencimiento.
-- Resolución atómica con devolución/retorno y Prestigio, tope de retorno x10 y Prestigio nunca inferior a 0.
+- Resolución atómica con devolución/retorno y Prestigio nunca inferior a 0. Las posiciones nuevas `lmsr_v1` liquidan cada contrato acertado a 1 Karma más el bonus de dificultad separado y no tienen el antiguo tope `×10`; las posiciones anteriores `legacy_fixed_v1` conservan ese límite y todas sus condiciones originales.
 - Mercados anulados: devolución íntegra del Karma y sin cambio de Prestigio.
+- Los precios `Sí` y `No` suman 100 %, solo se mueven por participaciones confirmadas y su histórico nunca se rellena con fluctuaciones simuladas.
 - Fuentes de resolución visibles, verificables y anteriores al cierre.
+- Pregunta, opciones, criterios, periodo, fecha de cierre y fuentes coherentes antes de publicar; los mercados ambiguos o no resolubles permanecen como borradores privados.
 - Ranking y perfiles basados en datos reales; predicciones activas nunca públicas.
 - Compatibilidad con GitHub Pages.
 
@@ -61,5 +66,7 @@
 - Paso 11C (protección gratuita de contraseñas filtradas): publicado y validado el 30 de julio de 2026.
 - Paso 12 (calidad y observabilidad): terminado, publicado y comprobado con SonarQube Cloud, GitGuardian, Checkly y Sentry.
 - Cambio de marca pública: aprobado el 31 de julio de 2026. Atinara sustituye a Oraklo en toda la superficie pública; los contratos técnicos internos no se renombran.
-- Paso 13 (preparación de la beta cerrada): continuar después de publicar y verificar el cambio de marca. Empezar por auditoría funcional; los huecos ya confirmados son recuperación de contraseña y administración cotidiana de mercados.
-- Antes del próximo cambio visual importante del MVP, abrir un bloque de Penpot para definir identidad, componentes, emblemas, avatares y responsive; no improvisar el rediseño directamente en CSS.
+- Paso 13.1 (auditoría funcional): cerrado el 1 de agosto de 2026.
+- Paso 13.2 (prioridades y criterios): aprobado con correcciones en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`. P0, P1 y P2 son requisitos completos antes de abrir la beta.
+- Paso 13.3 está en curso en Penpot. La Fase A neutral debe corregirse después con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`; ese documento y `LIVE_MARKET_ECONOMY.md` sustituyen cualquier supuesto anterior sobre porcentajes por recuento, gráfica estática o límite general `×10`.
+- La implementación local del contrato de mercado vivo está preparada para que Penpot diseñe el comportamiento real, pero no está activada en producción. Aplicar SQL y frontend únicamente con `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md` y autorización expresa.

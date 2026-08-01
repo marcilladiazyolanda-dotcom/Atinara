@@ -157,8 +157,8 @@ function getOrakloMarketTiming(market, now = Date.now()) {
 function mapMarketFromSupabase(row) {
   const actualPredictionsCount = toNumber(row.actual_predictions_count, toNumber(row.participants_count));
   const hasRealPredictions = actualPredictionsCount > 0;
-  const porcentajeSi = hasRealPredictions ? toNumber(row.yes_percent, 50) : 50;
-  const porcentajeNo = hasRealPredictions ? toNumber(row.no_percent, 100 - porcentajeSi) : 50;
+  const porcentajeSi = toNumber(row.yes_price, toNumber(row.yes_percent, 50));
+  const porcentajeNo = toNumber(row.no_price, 100 - porcentajeSi);
 
   return {
     id: row.id,
@@ -190,7 +190,12 @@ function mapMarketFromSupabase(row) {
     prediccionesReales: actualPredictionsCount,
     conteoSi: toNumber(row.actual_yes_count),
     conteoNo: toNumber(row.actual_no_count),
-    tienePredicciones: hasRealPredictions
+    tienePredicciones: hasRealPredictions,
+    versionMercado: toNumber(row.market_version),
+    fechaPrecio: row.price_updated_at || null,
+    inicioHistorialPrecio: row.price_history_started_at || null,
+    modeloPrecio: row.pricing_model || "lmsr_v1",
+    liquidezMercado: toNumber(row.liquidity_parameter, 2000)
   };
 }
 

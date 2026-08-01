@@ -32,9 +32,11 @@ let rankLadder = [
 let currentAuthState = null;
 let publicActivity = null;
 let marketClockTimer = null;
+let marketDataRefreshTimer = null;
 let expiryRefreshPromise = null;
 let expiryRefreshPending = false;
 let marketsUseSupabase = false;
+let marketLoadFailed = false;
 const expirySyncRequested = new Set();
 
 const activeFilters = {
@@ -61,6 +63,14 @@ const clearButton = document.querySelector("#clear-filters");
 
 function formatNumber(value) {
   return new Intl.NumberFormat("es-ES").format(Number(value) || 0);
+}
+
+function formatPercentage(value, maximumFractionDigits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits
+  }).format(number);
 }
 
 function escapeHtml(value) {
@@ -139,10 +149,6 @@ function getStatusClass(status) {
 
 function isDifficultMarket(market) {
   return ["Difícil", "Muy difícil", "Épica"].includes(market.dificultad);
-}
-
-function getFallbackMarkets() {
-  return Array.isArray(window.ORAKLO_MARKETS) ? window.ORAKLO_MARKETS : [];
 }
 
 function setDataSourceWarning(message) {
@@ -318,18 +324,18 @@ function getFilteredMarkets() {
 function createTrendMarkup(market) {
   const hasPredictions = market.tienePredicciones !== false && market.prediccionesReales > 0;
   const label = hasPredictions
-    ? `Tendencia: Sí ${market.porcentajeSi} por ciento, No ${market.porcentajeNo} por ciento`
-    : "Sin predicciones todavía. Barra neutral al 50 por ciento para Sí y No.";
+    ? `Precio vivo: Sí ${formatPercentage(market.porcentajeSi, 2)} por ciento, No ${formatPercentage(market.porcentajeNo, 2)} por ciento`
+    : "Sin movimientos todavía. Precio inicial del 50 por ciento para Sí y No.";
 
   return `
     <div class="trend-card${hasPredictions ? "" : " trend-card-empty"}">
-      <p class="trend-title">Tendencia actual</p>
-      ${hasPredictions ? "" : '<p class="trend-empty-note">Sin predicciones todavía</p>'}
+      <p class="trend-title">Precio colectivo</p>
+      ${hasPredictions ? "" : '<p class="trend-empty-note">Sin movimientos todavía</p>'}
       <div class="trend-row">
-        <span>Sí ${market.porcentajeSi}%</span>
-        <span>No ${market.porcentajeNo}%</span>
+        <span>Sí ${formatPercentage(market.porcentajeSi, 2)} %</span>
+        <span>No ${formatPercentage(market.porcentajeNo, 2)} %</span>
       </div>
-      <div class="trend-bar" style="--yes: ${market.porcentajeSi}%; --no: ${market.porcentajeNo}%;" role="img" aria-label="${label}">
+      <div class="trend-bar" style="--yes: ${market.porcentajeSi}%; --no: ${market.porcentajeNo}%;" role="img" aria-label="${escapeHtml(label)}">
         <span class="trend-yes"></span>
         <span class="trend-no"></span>
       </div>
@@ -343,13 +349,13 @@ function createMarketCard(market) {
   card.className = "market-card";
   card.innerHTML = `
     <div class="market-card-header">
-      <span class="tag">${market.categoria}</span>
-      <span class="status ${getStatusClass(timing.effectiveStatus)}" data-market-status>${getMarketStatusLabel(market)}</span>
+      <span class="tag">${escapeHtml(market.categoria)}</span>
+      <span class="status ${getStatusClass(timing.effectiveStatus)}" data-market-status>${escapeHtml(getMarketStatusLabel(market))}</span>
     </div>
-    <h3>${market.pregunta}</h3>
+    <h3>${escapeHtml(market.pregunta)}</h3>
     ${createTrendMarkup(market)}
     <div class="market-stats-line" aria-label="Datos reales de actividad del mercado">
-      <span class="difficulty ${getDifficultyClass(market.dificultad)}">Dificultad: ${market.dificultad}</span>
+      <span class="difficulty ${getDifficultyClass(market.dificultad)}">Dificultad: ${escapeHtml(market.dificultad)}</span>
       <span class="metric metric-karma">${formatNumber(market.karmaTotal)} Karma</span>
       <span class="metric metric-users">${formatNumber(market.participantes)} participantes</span>
       <span class="metric metric-comments">${formatNumber(market.comentarios)} comentarios</span>
@@ -537,11 +543,11 @@ function renderFeaturedMarket() {
       <div>
         <div class="featured-meta">
           <span class="tag">Mercado destacado</span>
-          <span class="tag">${market.categoria}</span>
-          <span class="status ${getStatusClass(timing.effectiveStatus)}" data-market-status>${getMarketStatusLabel(market)}</span>
+          <span class="tag">${escapeHtml(market.categoria)}</span>
+          <span class="status ${getStatusClass(timing.effectiveStatus)}" data-market-status>${escapeHtml(getMarketStatusLabel(market))}</span>
         </div>
-        <h2 class="featured-question">${market.pregunta}</h2>
-        <p class="featured-copy">Mercado de prueba conectado a métricas reales de Supabase para medir criterio, anticipación y lectura del calendario de la industria.</p>
+        <h2 class="featured-question">${escapeHtml(market.pregunta)}</h2>
+        <p class="featured-copy">Consulta el precio colectivo, los criterios y el cierre antes de realizar tu predicción.</p>
       </div>
       <div>
         ${createTrendMarkup(market)}
@@ -558,6 +564,24 @@ function renderFeaturedMarket() {
 }
 
 function renderMarkets() {
+  if (marketLoadFailed) {
+    marketListNode.innerHTML = `
+      <section class="not-found-card market-load-error" role="alert">
+        <p class="eyebrow">Conexión no disponible</p>
+        <h2>No se han podido cargar los mercados</h2>
+        <p>No mostraremos datos de prueba. Reintenta para consultar los precios y mercados reales de Atinara.</p>
+        <button class="primary-button" type="button" data-market-load-retry>Reintentar</button>
+      </section>
+    `;
+    resultCountNode.textContent = "Mercados no disponibles";
+    emptyStateNode.hidden = true;
+    marketListNode.querySelector("[data-market-load-retry]")?.addEventListener(
+      "click",
+      initializeMarkets
+    );
+    return;
+  }
+
   const filteredMarkets = getFilteredMarkets();
   marketListNode.innerHTML = "";
 
@@ -639,6 +663,7 @@ async function refreshMarketsAfterExpiry() {
     .then((freshMarkets) => {
       markets = freshMarkets;
       marketsUseSupabase = true;
+      marketLoadFailed = false;
       setDataSourceWarning("");
       render();
     })
@@ -675,15 +700,24 @@ function startMarketClock() {
   if (marketClockTimer !== null) {
     window.clearInterval(marketClockTimer);
   }
+  if (marketDataRefreshTimer !== null) {
+    window.clearInterval(marketDataRefreshTimer);
+  }
 
   updateMarketTimingNodes();
   marketClockTimer = window.setInterval(updateMarketTimingNodes, 1000);
+  marketDataRefreshTimer = window.setInterval(refreshMarketsAfterExpiry, 30000);
 }
 
 function stopMarketClock() {
-  if (marketClockTimer === null) return;
-  window.clearInterval(marketClockTimer);
-  marketClockTimer = null;
+  if (marketClockTimer !== null) {
+    window.clearInterval(marketClockTimer);
+    marketClockTimer = null;
+  }
+  if (marketDataRefreshTimer !== null) {
+    window.clearInterval(marketDataRefreshTimer);
+    marketDataRefreshTimer = null;
+  }
 }
 
 clearButton.addEventListener("click", () => {
@@ -722,11 +756,13 @@ async function initializeMarkets() {
   if (marketsResult.status === "fulfilled") {
     markets = marketsResult.value;
     marketsUseSupabase = true;
+    marketLoadFailed = false;
     setDataSourceWarning("");
   } else {
-    markets = getFallbackMarkets();
+    markets = [];
     marketsUseSupabase = false;
-    setDataSourceWarning("No se han podido cargar los mercados desde Supabase. Mostrando mercados de prueba locales.");
+    marketLoadFailed = true;
+    setDataSourceWarning("No se han podido cargar los mercados reales. No mostraremos datos de prueba; vuelve a intentarlo en unos instantes.");
   }
 
   globalRankingUsers = globalLeaderboardResult.status === "fulfilled"

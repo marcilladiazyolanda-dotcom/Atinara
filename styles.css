@@ -1542,6 +1542,269 @@ h3 {
   padding: 18px;
 }
 
+.market-price-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 12, 23, 0.62);
+}
+
+.market-price-heading,
+.market-price-current,
+.market-price-legend,
+.market-price-ranges {
+  display: flex;
+  align-items: center;
+}
+
+.market-price-heading {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.market-price-heading .eyebrow,
+.market-price-live-state,
+.market-price-history-note,
+.market-price-single-note {
+  margin: 0;
+}
+
+.market-price-live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.market-price-live-state span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--subtle);
+}
+
+.market-price-live-state.is-live span {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(94, 224, 160, 0.1);
+}
+
+.market-price-current {
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.market-price-current span {
+  min-width: 112px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.market-price-current strong {
+  display: block;
+  color: var(--text);
+  font-size: 1.18rem;
+}
+
+.market-price-current-yes {
+  border-color: rgba(94, 224, 160, 0.28) !important;
+}
+
+.market-price-current-no {
+  border-color: rgba(169, 139, 255, 0.3) !important;
+}
+
+.market-price-legend {
+  gap: 18px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.market-price-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin-right: 7px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+.market-price-legend-yes::before {
+  background: var(--green);
+}
+
+.market-price-legend-no::before {
+  background: var(--violet);
+}
+
+.market-price-chart-shell {
+  min-width: 0;
+}
+
+.market-price-chart {
+  display: block;
+  width: 100%;
+  height: clamp(220px, 34vw, 310px);
+  overflow: visible;
+}
+
+.market-price-grid line {
+  stroke: rgba(165, 178, 207, 0.14);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-price-grid text {
+  fill: var(--subtle);
+  font-size: 12px;
+}
+
+.market-price-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-price-line-yes {
+  stroke: var(--green);
+}
+
+.market-price-line-no {
+  stroke: var(--violet);
+}
+
+.market-price-dot {
+  stroke: var(--bg-panel);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-price-dot.market-price-line-yes {
+  fill: var(--green);
+}
+
+.market-price-dot.market-price-line-no {
+  fill: var(--violet);
+}
+
+.market-price-hit-area {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
+  cursor: crosshair;
+  vector-effect: non-scaling-stroke;
+}
+
+.market-price-hit-area:hover,
+.market-price-hit-area:active {
+  fill: rgba(255, 255, 255, 0.12);
+  stroke: var(--text);
+  outline: none;
+}
+
+.market-price-scrubber {
+  width: 100%;
+  min-height: 28px;
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+}
+
+.market-price-tooltip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 38px;
+  margin-top: 4px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 0.78rem;
+}
+
+.market-price-tooltip strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.market-price-tooltip [data-price-tooltip-yes] {
+  color: var(--green);
+}
+
+.market-price-tooltip [data-price-tooltip-no] {
+  color: var(--violet);
+}
+
+.market-price-chart-state {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding: 20px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.market-price-chart-error {
+  gap: 12px;
+  color: #ffd2d2;
+  border-color: rgba(255, 138, 138, 0.28);
+}
+
+.market-price-single-note,
+.market-price-history-note {
+  color: var(--subtle);
+  font-size: 0.76rem;
+}
+
+.market-price-ranges {
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.market-price-ranges button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.market-price-ranges button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: rgba(110, 168, 255, 0.56);
+  background: rgba(110, 168, 255, 0.12);
+}
+
+.quote-loading,
+.quote-error {
+  margin: 0;
+  color: var(--muted);
+}
+
+.quote-error {
+  color: #ffd2d2;
+}
+
+.quote-retry {
+  width: 100%;
+  margin-top: 12px;
+}
+
 .market-empty-note,
 .comments-placeholder {
   margin: 14px 0 0;
@@ -1551,6 +1814,10 @@ h3 {
   color: #f7db9b;
   background: rgba(240, 196, 107, 0.075);
   font-size: 0.92rem;
+}
+
+.market-load-error {
+  grid-column: 1 / -1;
 }
 
 .detail-stat-grid {
@@ -4116,6 +4383,28 @@ body.has-open-modal {
 
   .stats {
     grid-template-columns: 1fr;
+  }
+
+  .market-price-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .market-price-current {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-price-current span {
+    min-width: 0;
+  }
+
+  .market-price-chart {
+    height: 230px;
+  }
+
+  .market-price-ranges button {
+    flex: 1 1 auto;
   }
 
   .ranking-board-card,
