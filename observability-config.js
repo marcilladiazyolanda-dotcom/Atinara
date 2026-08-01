@@ -1,7 +1,7 @@
 window.ORAKLO_OBSERVABILITY_CONFIG = Object.freeze({
   sentryDsn: "https://ff914afa3aee0e34e2a1eabd90b7a1b4@o4511825127276544.ingest.de.sentry.io/4511825596579920",
   environment: "production",
-  release: "oraklo@20260801-market1",
+  release: "oraklo@20260801-market2",
   allowedHosts: [
     "marcilladiazyolanda-dotcom.github.io"
   ],

@@ -11,9 +11,9 @@
   <meta property="og:description" content="Explora mercados de predicción sobre videojuegos, compite con Karma y construye tu Prestigio en Atinara.">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="styles.css?v=20260801-market1">
-  <script src="observability-config.js?v=20260801-market1"></script>
-  <script src="monitoring.js?v=20260801-market1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260801-market2">
+  <script src="observability-config.js?v=20260801-market2"></script>
+  <script src="monitoring.js?v=20260801-market2"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -29,12 +29,12 @@
       </div>
 
       <div class="topbar-actions" role="group" aria-label="Estado del usuario">
-        <span class="karma-pill" role="status" aria-label="Karma disponible: 1.000">
+        <span class="karma-pill" role="status" aria-label="Karma disponible" data-auth-private hidden>
           <span class="karma-symbol" aria-hidden="true">K</span>
-          <strong data-profile-karma>1.000</strong>
+          <strong data-profile-karma>—</strong>
         </span>
-        <span class="user-stat-pill">Prestigio: <strong data-profile-prestige>0</strong></span>
-        <span class="user-stat-pill">Rango: <strong data-profile-rank>Observador</strong></span>
+        <span class="user-stat-pill" data-auth-private hidden>Prestigio: <strong data-profile-prestige>—</strong></span>
+        <span class="user-stat-pill" data-auth-private hidden>Rango: <strong data-profile-rank>—</strong></span>
         <a class="topbar-link" href="community.html">Comunidad</a>
         <a class="topbar-link" href="ranking.html">Clasificación</a>
         <a class="topbar-link" href="my-predictions.html">Mis predicciones</a>
@@ -59,10 +59,10 @@
           <p class="supporting-copy">Elige un mercado, analiza las opciones y demuestra que lo viste venir.</p>
         </div>
         <div class="season-snapshot" id="competition-snapshot" role="status" aria-label="Resumen competitivo">
-          <span id="competition-snapshot-label">Rango actual</span>
-          <strong data-profile-rank>Observador</strong>
-          <small>Prestigio: <span data-profile-prestige>0</span></small>
-          <small class="prestige-note" id="rank-progress-note">Cargando progreso de rango...</small>
+          <span id="competition-snapshot-label">Tu progreso</span>
+          <strong id="competition-current-rank">Inicia sesión</strong>
+          <small id="competition-current-prestige" hidden></small>
+          <small class="prestige-note" id="rank-progress-note">Consulta tu Prestigio, rango y progreso.</small>
           <a class="season-snapshot-link" href="ranking.html">Ver clasificación</a>
         </div>
       </section>
@@ -142,9 +142,9 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260801-market1"></script>
-  <script src="password-security.js?v=20260801-market1"></script>
-  <script src="auth.js?v=20260801-market1"></script>
-  <script src="script.js?v=20260801-market1"></script>
+  <script src="supabaseClient.js?v=20260801-market2"></script>
+  <script src="password-security.js?v=20260801-market2"></script>
+  <script src="auth.js?v=20260801-market2"></script>
+  <script src="script.js?v=20260801-market2"></script>
 </body>
 </html>

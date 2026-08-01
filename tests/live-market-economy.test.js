@@ -77,3 +77,32 @@ test("el frontend usa cotización versionada, histórico real y ningún catálog
   assert.doesNotMatch(indexHtml, /Mercados de prueba/i);
   assert.equal(existsSync(join(repositoryRoot, "data.js")), false);
 });
+
+test("una invitada no recibe saldo ni progreso de cuenta simulados", () => {
+  const htmlFiles = [
+    "index.html",
+    "market-detail.html",
+    "community.html",
+    "ranking.html",
+    "profile.html",
+    "my-predictions.html",
+    "admin-resolution.html",
+    "admin-community.html"
+  ];
+  const authSource = readFileSync(join(repositoryRoot, "auth.js"), "utf8");
+  const homeSource = readFileSync(join(repositoryRoot, "script.js"), "utf8");
+
+  htmlFiles.forEach((fileName) => {
+    const html = readFileSync(join(repositoryRoot, fileName), "utf8");
+    assert.doesNotMatch(html, /Karma disponible: 1\.000/);
+    assert.doesNotMatch(html, /data-profile-karma>1\.000/);
+    assert.match(html, /data-auth-private hidden/);
+  });
+
+  assert.match(
+    authSource,
+    /querySelectorAll\("\[data-auth-private\]"\)[\s\S]+node\.hidden = !isAuthenticated/
+  );
+  assert.match(homeSource, /if \(!currentAuthState\?\.isAuthenticated\)/);
+  assert.match(homeSource, /Consulta tu Prestigio, rango y progreso/);
+});

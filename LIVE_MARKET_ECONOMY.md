@@ -2,7 +2,20 @@
 
 Fecha de aprobación: 1 de agosto de 2026.
 
-Estado técnico: **implementado y validado localmente; todavía no activado en producción**. La migración se ejecutó contra una copia transaccional del esquema vivo y terminó con `ROLLBACK`, por lo que no modificó mercados, predicciones, perfiles ni saldos reales. La activación coordinada está en `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`.
+Estado técnico: **activado en producción el 1 de agosto de 2026**. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez y no debe volver a ejecutarse. Supabase la registra en su historial remoto como `20260801184105_add_live_prediction_market_model`; esta diferencia de hora no autoriza una segunda aplicación. El frontend coordinado se publicó inicialmente en `f7aac42`.
+
+Evidencia de activación:
+
+- 11 mercados, 11 estados LMSR y 11 puntos históricos iniciales;
+- 7 predicciones anteriores conservadas como `legacy_fixed_v1`, 5 de ellas activas en la fotografía de activación;
+- 0 predicciones `lmsr_v1` tras la aceptación pública de solo lectura;
+- saldos agregados de Karma y Prestigio sin cambios durante la migración;
+- firma antigua de `place_prediction` eliminada y firmas nuevas disponibles;
+- tablas internas sin lectura directa para `anon` o `authenticated`;
+- cotización autoritativa de solo lectura válida, con contratos, precio medio, impacto, bonus y Prestigio separados;
+- ninguna predicción, saldo o dato temporal creado durante la comprobación.
+
+La validación y las pruebas autenticadas se distinguen en `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`. El árbol final de limpieza elimina `data.js`, corrige la exposición ficticia de métricas de invitada y usa `v=20260801-market2`. La escritura automática en GitHub devolvió `403 Resource not accessible by integration`; el commit remoto queda pendiente de publicación manual y no debe inventarse su hash.
 
 ## 1. Decisión de producto
 
@@ -113,4 +126,3 @@ El parámetro `b = 2000`, los límites de participación y las tasas de bonus de
 - Mapeo de RPC: `supabaseClient.js`.
 - Regresión automatizada: `tests/live-market-economy.test.js`.
 - Correcciones de diseño: `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`.
-

@@ -55,6 +55,8 @@ const leaderboardPanelNode = document.querySelector("#leaderboard-panel");
 const homeRankingEyebrowNode = document.querySelector("#home-ranking-eyebrow");
 const homeRankingTitleNode = document.querySelector("#home-ranking-title");
 const competitionSnapshotLabelNode = document.querySelector("#competition-snapshot-label");
+const competitionCurrentRankNode = document.querySelector("#competition-current-rank");
+const competitionCurrentPrestigeNode = document.querySelector("#competition-current-prestige");
 const rankProgressNoteNode = document.querySelector("#rank-progress-note");
 const activityPanelNode = document.querySelector("#public-activity-panel");
 const dataSourceWarningNode = document.querySelector("#data-source-warning");
@@ -411,15 +413,33 @@ function getHomeRankProgress(prestige) {
 }
 
 function renderCompetitionSnapshot() {
-  if (!competitionSnapshotLabelNode || !rankProgressNoteNode) return;
+  if (
+    !competitionSnapshotLabelNode
+    || !competitionCurrentRankNode
+    || !competitionCurrentPrestigeNode
+    || !rankProgressNoteNode
+  ) return;
 
-  const profile = currentAuthState?.profile || { prestige: 0, rank: "Observador" };
+  if (!currentAuthState?.isAuthenticated) {
+    competitionSnapshotLabelNode.textContent = "Tu progreso";
+    competitionCurrentRankNode.textContent = "Inicia sesión";
+    competitionCurrentPrestigeNode.textContent = "";
+    competitionCurrentPrestigeNode.hidden = true;
+    rankProgressNoteNode.textContent = "Consulta tu Prestigio, rango y progreso.";
+    return;
+  }
+
+  const profile = currentAuthState.profile;
   const progress = getHomeRankProgress(profile.prestige);
   const seasonsActive = competitionStatus?.state === "Activa";
 
   competitionSnapshotLabelNode.textContent = seasonsActive
     ? competitionStatus.season_name || "Temporada activa"
     : "Rango actual";
+
+  competitionCurrentRankNode.textContent = profile.rank || progress.current.nombre;
+  competitionCurrentPrestigeNode.textContent = `Prestigio: ${formatNumber(profile.prestige)}`;
+  competitionCurrentPrestigeNode.hidden = false;
 
   rankProgressNoteNode.textContent = progress.next
     ? `Faltan ${formatNumber(progress.remaining)} de Prestigio para ${progress.next.nombre}.`

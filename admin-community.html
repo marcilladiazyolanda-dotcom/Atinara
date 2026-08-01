@@ -12,9 +12,9 @@
   <meta property="og:description" content="Panel privado de moderación humana de la comunidad de Atinara.">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="styles.css?v=20260801-market1">
-  <script src="observability-config.js?v=20260801-market1"></script>
-  <script src="monitoring.js?v=20260801-market1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260801-market2">
+  <script src="observability-config.js?v=20260801-market2"></script>
+  <script src="monitoring.js?v=20260801-market2"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -31,12 +31,12 @@
       </nav>
 
       <div class="topbar-actions detail-user-state" role="group" aria-label="Estado del usuario">
-        <span class="karma-pill" role="status" aria-label="Karma disponible: 1.000">
+        <span class="karma-pill" role="status" aria-label="Karma disponible" data-auth-private hidden>
           <span class="karma-symbol" aria-hidden="true">K</span>
-          <strong data-profile-karma>1.000</strong>
+          <strong data-profile-karma>—</strong>
         </span>
-        <span class="user-stat-pill">Prestigio: <strong data-profile-prestige>0</strong></span>
-        <span class="user-stat-pill">Rango: <strong data-profile-rank>Observador</strong></span>
+        <span class="user-stat-pill" data-auth-private hidden>Prestigio: <strong data-profile-prestige>—</strong></span>
+        <span class="user-stat-pill" data-auth-private hidden>Rango: <strong data-profile-rank>—</strong></span>
         <button class="profile-button" type="button" data-auth-open data-auth-state="guest" data-profile-username aria-label="Entrar en Atinara">Entrar</button>
         <button class="profile-button" type="button" data-auth-state="user" data-profile-username hidden aria-label="Usuario @Usuario">@Usuario</button>
         <button class="logout-button" type="button" data-auth-signout data-auth-state="user" hidden>Salir</button>
@@ -73,10 +73,10 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260801-market1"></script>
-  <script src="password-security.js?v=20260801-market1"></script>
-  <script src="auth.js?v=20260801-market1"></script>
-  <script src="social.js?v=20260801-market1"></script>
-  <script src="admin-community.js?v=20260801-market1"></script>
+  <script src="supabaseClient.js?v=20260801-market2"></script>
+  <script src="password-security.js?v=20260801-market2"></script>
+  <script src="auth.js?v=20260801-market2"></script>
+  <script src="social.js?v=20260801-market2"></script>
+  <script src="admin-community.js?v=20260801-market2"></script>
 </body>
 </html>

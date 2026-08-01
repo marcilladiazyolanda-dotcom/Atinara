@@ -11,9 +11,9 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 - `LIVE_MARKET_ECONOMY.md` define el contrato económico aprobado del precio vivo y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` corrige los supuestos anteriores que no deben llegar al diseño definitivo.
 - Antes de editar, hay que leer estos documentos vinculantes y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
 
-## Mercado predictivo vivo · preparado para activación
+## Mercado predictivo vivo · activado en producción
 
-El árbol local incorpora un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La gráfica conserva únicamente movimientos confirmados; no simula volatilidad cuando no hay actividad.
+Atinara usa en producción un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez el 1 de agosto de 2026 y el frontend coordinado se publicó inicialmente en `f7aac42`. No se debe repetir la migración.
 
 - Cada mercado nuevo empieza al 50/50 y usa `b = 2000 Karma` durante la beta.
 - Antes de confirmar, Supabase cotiza impacto, precio medio, contratos, retorno base, bonus de dificultad y Prestigio.
@@ -21,9 +21,11 @@ El árbol local incorpora un creador automático de mercado LMSR con Karma para 
 - Cada contrato acertado nuevo liquida a 1 Karma y el bonus se añade por separado. El antiguo tope `×10` solo permanece en predicciones anteriores.
 - La beta admite una sola posición bloqueada hasta la resolución. No incluye venta, salida anticipada, cambio de lado, órdenes ni mercado secundario.
 - Las actualizaciones usan Broadcast de Supabase y una consulta periódica como respaldo, sin publicar identidad ni posiciones privadas.
-- `data.js` se elimina: ante un fallo se muestra un error honesto con reintento, nunca mercados de demostración.
+- `data.js` fue eliminado del árbol final de limpieza: ante un fallo se muestra un error honesto con reintento, nunca mercados de demostración. La eliminación en `origin/main` debe confirmarse después de la publicación manual.
 
-La implementación todavía no está aplicada en producción. La migración y el frontend deben activarse juntos siguiendo `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md`.
+La fotografía de activación fue de 11 mercados, 11 estados LMSR, 11 puntos históricos iniciales y 7 predicciones heredadas `legacy_fixed_v1`; no cambió ningún contrato anterior ni los saldos agregados de Karma y Prestigio. La aceptación pública de escritorio confirmó datos reales, `Sí + No = 100 %`, un único punto honesto sin movimiento, los cinco rangos temporales, cotización de solo lectura para invitadas y ausencia de controles de compraventa. No se creó ni modificó ninguna predicción durante la comprobación.
+
+La versión de limpieza `v=20260801-market2` también oculta a invitadas el Karma, Prestigio y rango provisionales que la cabecera mostraba como si fueran datos de cuenta. La publicación automática quedó bloqueada por un `403 Resource not accessible by integration`, por lo que el hash remoto todavía no existe y no debe inventarse. La inspección visual móvil real continúa identificada como comprobación manual pendiente porque el navegador de aceptación no admitió emulación de viewport y el entorno de Playwright no contenía un motor de navegador; el responsive del código y sus puntos de corte sí forman parte de la validación técnica.
 
 ## Resolución asistida por IA
 

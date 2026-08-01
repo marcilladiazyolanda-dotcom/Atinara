@@ -325,6 +325,10 @@ function updateHeaderSessionState() {
     node.hidden = !isAuthenticated;
   });
 
+  document.querySelectorAll("[data-auth-private]").forEach((node) => {
+    node.hidden = !isAuthenticated;
+  });
+
   document.querySelectorAll("[data-admin-only]").forEach((node) => {
     node.hidden = !isAuthenticated || !isAdmin;
   });

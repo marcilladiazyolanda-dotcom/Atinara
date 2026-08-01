@@ -57,6 +57,20 @@ Archivos principales:
 
 ## 3. Estado Git en el momento del relevo
 
+Estado productivo comprobado el 1 de agosto de 2026 desde un clon nuevo:
+
+- Repositorio fuente de verdad: `marcilladiazyolanda-dotcom/Atinara`; rama pública `main` y URL canónica `https://marcilladiazyolanda-dotcom.github.io/Atinara/`.
+- El frontend de activación del mercado vivo se publicó en `f7aac42` (`Implementa el mercado predictivo vivo de Atinara`).
+- La migración `20260801172543_add_live_prediction_market_model.sql` ya fue aplicada una sola vez en producción. Supabase la registra como `20260801184105_add_live_prediction_market_model`; no debe repetirse por la diferencia de hora.
+- La activación conservó 7 predicciones `legacy_fixed_v1`, 5 activas, sin alterar contratos ni saldos agregados. Después quedaron 11 mercados, 11 estados LMSR, 11 puntos iniciales y 0 predicciones `lmsr_v1`.
+- La aceptación pública de escritorio confirmó portada, Comunidad, ficha, clasificación y perfil; recursos `v=20260801-market1`, datos reales, cinco rangos, único punto honesto, cotización invitada y ausencia de compraventa. No se creó ni modificó ninguna predicción.
+- La aceptación detectó que los ocho HTML mostraban a invitadas un perfil provisional `1.000 / 0 / Observador`. El árbol final de limpieza lo oculta hasta tener sesión real, elimina `data.js` y coordina `v=20260801-market2`.
+- La escritura automática en GitHub devolvió `403 Resource not accessible by integration` en el primer intento y no se repitió. El commit remoto de limpieza queda pendiente de publicación manual y su hash no debe inventarse; `data.js` requiere una eliminación expresa porque `Upload files` no borra archivos existentes.
+- La comprobación visual móvil real continúa pendiente de una revisión manual porque el navegador de aceptación no permitió cambiar el viewport. El responsive y los puntos de corte se validan técnicamente, pero no deben presentarse como sustituto de esa revisión.
+- No hacer `reset`, `rebase`, `force push` ni mezclar una copia local basada en `77f447f` con el historial remoto. Cualquier corrección parte del `origin/main` vigente o de un clon limpio.
+
+Las comprobaciones que siguen se conservan como trazabilidad histórica y no sustituyen el estado productivo anterior.
+
 Comprobación directa realizada el 31 de julio de 2026 desde un clon nuevo del repositorio publicado:
 
 - Repositorio fuente de verdad: `marcilladiazyolanda-dotcom/Atinara`.
@@ -65,8 +79,6 @@ Comprobación directa realizada el 31 de julio de 2026 desde un clon nuevo del r
 - El historial anterior al renombrado se conserva y no se creó otro repositorio.
 - El clon estaba limpio antes de preparar las correcciones de verificación descritas más abajo.
 - No publicar una corrección sin volver a comprobar el diff, ejecutar la validación completa y conservar los identificadores técnicos heredados.
-
-Los párrafos siguientes son comprobaciones históricas conservadas como trazabilidad; la comprobación anterior es la que describe el estado actual.
 
 Commits funcionales de referencia:
 
@@ -131,14 +143,14 @@ Comprobación posterior al cierre de las correcciones, realizada el 1 de agosto 
 - La clasificación funcional del Paso 13.1 está documentada en `STEP_13_FUNCTIONAL_AUDIT.md`. El 13.2 fue aprobado con correcciones en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`: P0, P1 y P2 son requisitos completos antes de la beta y no fases que puedan aplazarse tras abrirla.
 - Ningún mercado podrá publicarse o programarse como público sin superar una revisión automática de claridad, coherencia y resolubilidad. La validación será autoritativa en Supabase, fallará de forma cerrada, explicará todos los motivos bloqueantes y no admitirá omisión administrativa. Cualquier cambio esencial invalidará el aprobado y exigirá una nueva revisión; después seguirá existiendo confirmación humana.
 
-Trabajo local posterior autorizado el 1 de agosto de 2026:
+Preparación histórica autorizada el 1 de agosto de 2026:
 
 - La base comprobada sigue siendo `main = origin/main = 135f759`; se conservaron los documentos locales de los pasos 13.1 y 13.2 y el ZIP previo de la usuaria no se modificó.
 - Yol aprobó sustituir el porcentaje por recuento por un mercado vivo de Karma, con gráfica real, retorno base por contratos y bonus de dificultad separado. Aprobó también retirar el límite `×10` para posiciones nuevas y aplazar toda compraventa o especulación hasta después de la beta.
-- Se preparó `20260801172543_add_live_prediction_market_model.sql` después de auditar el esquema vivo. La migración completa se probó dentro de una transacción real con cotización, participación, histórico y liquidación, y terminó con `ROLLBACK`; producción no cambió.
+- Se preparó `20260801172543_add_live_prediction_market_model.sql` después de auditar el esquema vivo. Antes de activarla, la migración completa se probó dentro de una transacción real con cotización, participación, histórico y liquidación, y terminó con `ROLLBACK`; aquella prueba previa no cambió producción.
 - El frontend local usa precios vivos, histórico real, Broadcast de Supabase con consulta periódica de respaldo, cotización versionada y estados honestos. Se eliminó `data.js` para impedir que un fallo de Supabase muestre mercados simulados.
 - `LIVE_MARKET_ECONOMY.md` contiene el contrato económico y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` las correcciones vinculantes que el segundo prompt debe aplicar sobre la Fase A neutral.
-- Esta implementación todavía no está publicada ni aplicada a Supabase. SQL y frontend se activarán de forma coordinada únicamente siguiendo `STEP_LIVE_MARKET_ACTIVATION_CHECKLIST.md` y con autorización expresa de Yol.
+- Esta preparación quedó superada por la activación real del 1 de agosto de 2026 descrita al inicio de esta sección. No reutilizar su antigua frase de «pendiente» ni volver a ejecutar el SQL.
 
 ## 4. Funcionalidades terminadas y comprobadas
 
@@ -342,7 +354,7 @@ Orden actual:
 6. `20260715020000_add_profile_customization.sql`
 7. `20260718143106_add_social_community_mvp.sql`
 8. `20260718182915_expose_real_market_comment_counts.sql`
-9. `20260801172543_add_live_prediction_market_model.sql` — preparada y probada con `ROLLBACK`; pendiente de activación coordinada.
+9. `20260801172543_add_live_prediction_market_model.sql` — aplicada una sola vez en producción el 1 de agosto de 2026; registrada remotamente como `20260801184105_add_live_prediction_market_model`. No repetir.
 
 No debe suponerse que toda función antigua del Supabase vivo está versionada aquí. Antes de escribir SQL nuevo, inspeccionar esquema, firmas, políticas, permisos y migraciones existentes.
 
@@ -368,9 +380,9 @@ Orden acordado para el Paso 13:
 
 El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
-Durante 13.3 Yol autorizó implementar primero el contrato económico vivo porque Penpot necesita diseñar el comportamiento real y no la encuesta estática anterior. Esto no autoriza a saltarse el diseño artístico ni el QA: el código continúa local y pendiente de activación coordinada. La Fase A neutral de Penpot debe conservarse, pero la Fase B corregirá sus inventarios con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de aplicar la identidad aprobada.
+Durante 13.3 Yol autorizó implementar y activar primero el contrato económico vivo porque Penpot necesita diseñar el comportamiento real y no la encuesta estática anterior. Esto no autoriza a saltarse el diseño artístico ni el QA. La Fase A neutral de Penpot debe conservarse, pero la Fase B corregirá sus inventarios con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de aplicar la identidad aprobada.
 
-Siguiente paso operativo: mantener sin aprobar el mercado que reveló la incoherencia entre «durante julio» y el cierre del día 28; terminar la dirección artística con Yol; y enviar a Codex el segundo prompt que cite expresamente el contrato vivo y sus correcciones. En paralelo, conservar el código validado sin aplicarlo a producción hasta coordinar SQL y ZIP. Después se completarán los demás P0, P1 y P2 y se cerrará 13.5; no se abre la beta con ningún punto pendiente. No ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización o compraventa secundaria. La revisión de alertas de Sentry está cerrada por decisión de la usuaria.
+Siguiente paso operativo: publicar y verificar la limpieza de `data.js` y de las métricas ficticias de invitada, completar la comprobación móvil real y, solo entonces, volver al Paso 13.3 con Yol para decidir logo, paleta, tipografías, iconografía, retícula, componentes, avatares, emblemas y movimiento antes del segundo prompt de Penpot. También se mantiene sin aprobar el mercado que reveló la incoherencia entre «durante julio» y el cierre del día 28. Después se completarán los demás P0, P1 y P2 y se cerrará 13.5; no se abre la beta con ningún punto pendiente. No ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización o compraventa secundaria. La revisión de alertas de Sentry está cerrada por decisión de la usuaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
