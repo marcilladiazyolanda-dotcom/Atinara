@@ -87,13 +87,15 @@ test("la publicación vuelve a comprobar versión, huella, rol y aprobación den
   assert.match(migration, /review_status <> 'approved'/);
 });
 
-test("la publicación programada exige la clave de servicio y no expone borradores", () => {
+test("la publicación programada v2 exige el secreto exclusivo de Cron y no expone borradores", () => {
   const scheduler = readFileSync(
     join(root, "supabase/functions/publish-scheduled-markets/index.ts"),
     "utf8"
   );
   assert.match(scheduler, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(scheduler, /sameSecret\(authorization, expectedAuthorization\)/);
+  assert.match(scheduler, /x-atinara-cron-secret/);
+  assert.match(scheduler, /verify_market_publish_cron_secret/);
+  assert.match(scheduler, /cronSecret\.length < 32/);
   assert.match(scheduler, /publish_due_market_drafts/);
   assert.match(scheduler, /published_count/);
   assert.doesNotMatch(scheduler, /JSON\.stringify\(data\)/);

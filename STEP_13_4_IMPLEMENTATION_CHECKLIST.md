@@ -18,7 +18,7 @@ Estado: **implementado localmente y pendiente de activación manual y aceptació
 - [x] `admin-markets.html` y `admin-markets.js`: listado, búsqueda, filtros, borrador privado incompleto, edición, revisión, confirmación humana, programación/publicación, cierre anticipado, cancelación y auditoría.
 - [x] `20260803143000_add_market_administration_gate.sql`: tablas privadas, RLS, permisos mínimos, huella y versión, invalidación de aprobaciones, validación determinista, publicación autoritativa y trazabilidad.
 - [x] `validate-market-draft`: revisión semántica cerrada con claves solo en Edge Functions, códigos estables y persistencia privada.
-- [x] `publish-scheduled-markets`: publicación periódica protegida por la clave de servicio y respuesta sin identificadores de borrador.
+- [x] `publish-scheduled-markets`: publicación periódica v2 protegida por JWT y un secreto exclusivo de Cron, verificado dentro de Supabase mediante `verify_market_publish_cron_secret`; la respuesta no expone identificadores de borrador.
 - [x] `analyze-market-resolution` y `approve-market-resolution`: guardas temporales, periodo original y bloqueo sin resultado preseleccionado.
 - [x] El mercado histórico de «durante julio» no se modificó, aprobó ni liquidó.
 - [x] Recuperación completa: respuesta no enumerativa, retorno seguro a `/Atinara/`, detección de recuperación, contraseña nueva de doce caracteres, comprobación de filtración, enlace inválido/caducado/reutilizado y cierre de sesión.
@@ -68,7 +68,7 @@ Estado: **implementado localmente y pendiente de activación manual y aceptació
 2. Aplicar **una sola vez** `supabase/migrations/20260803143000_add_market_administration_gate.sql`. No volver a ejecutar `20260801172543_add_live_prediction_market_model.sql`.
 3. Comprobar en lectura que las tablas privadas, RPC, RLS y permisos existen; no crear mercados de prueba en producción.
 4. Desplegar con verificación JWT las funciones `validate-market-draft`, `analyze-market-resolution`, `approve-market-resolution` y `publish-scheduled-markets`. Mantener `GEMINI_API_KEY`, `TAVILY_API_KEY` y `SUPABASE_SERVICE_ROLE_KEY` únicamente en secretos de Supabase.
-5. Configurar Supabase Cron para invocar `publish-scheduled-markets` periódicamente con la autorización de `service_role` almacenada en Vault o en la configuración segura del proyecto. No copiar esa clave al repositorio, al frontend ni al chat.
+5. Configurar Supabase Cron para invocar `publish-scheduled-markets` v2 periódicamente con su secreto exclusivo almacenado en Vault. La función debe verificarlo mediante `verify_market_publish_cron_secret`; no copiar la clave de servicio ni el secreto de Cron al repositorio, al frontend ni al chat.
 6. Añadir a Supabase Auth la redirección exacta `https://marcilladiazyolanda-dotcom.github.io/Atinara/reset-password.html` y conservar la Site URL `https://marcilladiazyolanda-dotcom.github.io/Atinara/`.
 7. Configurar SMTP propio/Mailjet desde el panel de Supabase: remitente Atinara, host, puerto y credenciales solo en el proveedor/panel. Revisar en español las plantillas de recuperación, confirmación e invitación. No registrar secretos en archivos.
 8. Extraer el ZIP y subir **su contenido completo**, no el ZIP, mediante `Add file → Upload files` en `main`. No hay eliminaciones manuales previstas en esta entrega.

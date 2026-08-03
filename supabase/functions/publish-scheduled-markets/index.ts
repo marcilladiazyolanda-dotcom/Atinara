@@ -9,22 +9,6 @@ function jsonResponse(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
 }
 
-async function sameSecret(received: string, expected: string) {
-  const encoder = new TextEncoder();
-  const [receivedHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(received)),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ]);
-  const left = new Uint8Array(receivedHash);
-  const right = new Uint8Array(expectedHash);
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left[index] ^ right[index];
-  }
-  return difference === 0;
-}
-
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
     return jsonResponse(405, { error: "METHOD_NOT_ALLOWED" });
@@ -32,17 +16,36 @@ Deno.serve(async (request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  const authorization = request.headers.get("authorization") || "";
-  const expectedAuthorization = serviceRoleKey ? `Bearer ${serviceRoleKey}` : "";
+  const cronSecret = request.headers.get("x-atinara-cron-secret") || "";
 
-  if (!supabaseUrl || !expectedAuthorization
-      || !(await sameSecret(authorization, expectedAuthorization))) {
+  if (!supabaseUrl || !serviceRoleKey) {
+    return jsonResponse(503, { error: "PUBLICATION_SERVICE_UNAVAILABLE" });
+  }
+
+  if (cronSecret.length < 32 || cronSecret.length > 256) {
     return jsonResponse(401, { error: "NOT_AUTHORIZED" });
   }
 
   const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  const { data: authorized, error: authorizationError } = await serviceClient.rpc(
+    "verify_market_publish_cron_secret",
+    { candidate_secret: cronSecret },
+  );
+
+  if (authorizationError) {
+    console.error("Scheduled market authorization failed", {
+      code: authorizationError.code || "RPC_FAILED",
+    });
+    return jsonResponse(503, { error: "PUBLICATION_SERVICE_UNAVAILABLE" });
+  }
+
+  if (authorized !== true) {
+    return jsonResponse(401, { error: "NOT_AUTHORIZED" });
+  }
+
   const { data, error } = await serviceClient.rpc("publish_due_market_drafts", {
     limit_count: 20,
   });
