@@ -11,6 +11,14 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 - `LIVE_MARKET_ECONOMY.md` define el contrato económico aprobado del precio vivo y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` corrige los supuestos anteriores que no deben llegar al diseño definitivo.
 - Antes de editar, hay que leer estos documentos vinculantes y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
 
+## Estado actual · Paso 13.4
+
+Yol cerró el Paso 13.3 el 3 de agosto de 2026. La identidad oficial de la beta v0.1 es `A3 · Criterio modular` y la dirección cromática definitiva es **Atinara Sunset**. El sistema aprobado se implementa con SVG centralizados en `assets/brand/`, tokens CSS canónicos, cabecera tinta con línea Sunset, superficies claras, `Sí` turquesa, `No` coral y el glifo de Karma después de cada cantidad compacta.
+
+El árbol local del Paso 13.4 añade la administración cotidiana de mercados con puerta automática cerrada, programación protegida, trazabilidad, guardas temporales de resolución, recuperación completa de contraseña, buscador real, accesibilidad y responsive. También conserva íntegros el LMSR vivo, la privacidad y la compatibilidad histórica de `legacy_fixed_v1`.
+
+Nada de esta entrega local está activo todavía en GitHub Pages o Supabase. La migración nueva y las Edge Functions no se ejecutaron ni desplegaron; no se crearon mercados, predicciones o datos. El estado verificable, las pruebas y el orden de activación manual están en `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`.
+
 ## Mercado predictivo vivo · activado en producción
 
 Atinara usa en producción un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez el 1 de agosto de 2026 y el frontend coordinado se publicó inicialmente en `f7aac42`. No se debe repetir la migración.
@@ -126,10 +134,10 @@ La configuración versionada, las cuotas elegidas, los datos que nunca deben env
 
 La auditoría funcional histórica por roles que abre la preparación de la beta está en `STEP_13_FUNCTIONAL_AUDIT.md`. Las prioridades y los criterios de aceptación aprobados están en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`: P0, P1 y P2 son obligatorios antes de la beta, incluida una puerta automática sin omisión que impide publicar mercados ambiguos o no resolubles y el contrato de precio vivo aprobado después de la auditoría.
 
-Herramientas ya reservadas para fases posteriores:
+Herramientas y activaciones posteriores:
 
-- **Penpot:** debe abrir el próximo bloque visual del MVP antes de modificar de nuevo la identidad, los componentes, emblemas, avatares o responsive.
-- **Mailjet:** antes de recuperación de contraseña, invitaciones o beta con correo transaccional real.
+- **Penpot:** el Paso 13.3 está cerrado y es la fuente visual de implementación. No reabrir identidad o paleta durante 13.4.
+- **Mailjet:** la integración y las plantillas quedan preparadas documentalmente; SMTP propio debe configurarse manualmente antes de validar el envío real de recuperación.
 - **PostHog:** al comenzar la beta cerrada y únicamente después de preparar consentimiento, eventos mínimos y privacidad.
 
 ### Backlog social posterior al MVP
@@ -146,9 +154,9 @@ select public.configure_oraklo_seasons(
 );
 ```
 
-## Recordatorio para el pulido final
+## Estado visual aprobado
 
-- Diseñar primero en Penpot el sistema visual del MVP y trasladar después sus tokens y componentes al frontend.
-- Corregir primero los inventarios de la Fase A con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`: precio vivo, gráfica real, cotización, impacto y ausencia de compraventa durante la beta.
-- Diseñar un emblema visual propio para cada nivel de Prestigio: Observador, Intérprete, Analista, Visionario y Oráculo.
-- Sustituir los avatares simbólicos provisionales por una colección de avatares propios y atractivos, relacionados con el gaming y el universo de Atinara, manteniendo el tono de anticipación y criterio y evitando cualquier estética de casino.
+- `A3 · Criterio modular`, su favicon, el glifo de Karma y los doce glifos iniciales son activos aprobados para la beta v0.1.
+- Atinara Sunset es la paleta definitiva del paso: fondo claro, cabecera `Brand Ink`, violeta para interacción y línea fina violeta–fucsia–naranja.
+- Las mejoras ópticas futuras, la ampliación de avatares, emblemas o iconografía no bloquean la beta ni reabren el Paso 13.3.
+- La implementación debe conservar la economía LMSR, los datos reales y la ausencia de compraventa; el diseño nunca autoriza contenido o fluctuaciones ficticias.

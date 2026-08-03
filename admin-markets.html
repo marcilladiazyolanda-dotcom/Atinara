@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atinara | Gestión de mercados</title>
+  <meta name="description" content="Panel privado para crear, revisar y publicar mercados de Atinara.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="application-name" content="Atinara">
+  <meta property="og:site_name" content="Atinara">
+  <meta property="og:title" content="Atinara | Gestión de mercados">
+  <meta property="og:description" content="Panel privado para crear, revisar y publicar mercados de Atinara.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=20260803-step134a">
+  <script src="observability-config.js?v=20260803-step134a"></script>
+  <script src="monitoring.js?v=20260803-step134a"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar" aria-label="Cabecera principal">
+      <a class="brand" href="index.html" aria-label="Atinara inicio">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Atinara</span>
+      </a>
+      <nav class="detail-nav" aria-label="Navegación administrativa">
+        <a href="index.html">Explorar</a>
+        <a href="admin-markets.html" aria-current="page">Mercados</a>
+        <a href="admin-resolution.html">Resolución</a>
+        <a href="admin-community.html">Moderación</a>
+      </nav>
+      <div class="topbar-actions" role="group" aria-label="Estado de la cuenta">
+        <button class="profile-button" type="button" data-auth-open data-auth-state="guest">Entrar</button>
+        <button class="profile-button" type="button" data-auth-state="user" data-profile-username hidden>@Usuario</button>
+        <button class="logout-button" type="button" data-auth-signout data-auth-state="user" hidden>Salir</button>
+      </div>
+    </header>
+
+    <main class="admin-market-page">
+      <header class="page-intro admin-market-intro">
+        <div>
+          <p class="eyebrow">Administración · Puerta previa a publicación</p>
+          <h1>Gestión de mercados</h1>
+          <p class="subtitle">Borrador privado → revisión automática → confirmación humana → programación o publicación.</p>
+        </div>
+        <button class="primary-button" id="admin-new-draft" type="button">Nuevo borrador privado</button>
+      </header>
+
+      <aside class="admin-fail-closed-notice" aria-label="Regla de publicación">
+        <strong>La revisión falla de forma cerrada.</strong>
+        <span>Un rechazo, una conclusión insuficiente o un servicio no disponible mantienen el mercado privado. No existe omisión.</span>
+      </aside>
+
+      <section id="admin-markets-root" class="admin-markets-root" aria-live="polite" aria-busy="true">
+        <article class="admin-loading-card">
+          <p class="eyebrow">Acceso protegido</p>
+          <h2>Comprobando sesión y permisos…</h2>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="admin-market-action-dialog" class="admin-action-dialog" aria-labelledby="admin-action-dialog-title" aria-describedby="admin-action-dialog-copy">
+    <form id="admin-market-action-form">
+      <p class="eyebrow">Acción administrativa auditada</p>
+      <h2 id="admin-action-dialog-title">Confirmar acción</h2>
+      <p id="admin-action-dialog-copy"></p>
+      <label>
+        <span>Motivo registrado en auditoría</span>
+        <textarea id="admin-action-reason" minlength="20" maxlength="2000" required aria-describedby="admin-action-reason-help"></textarea>
+        <small id="admin-action-reason-help">Mínimo 20 caracteres. No incluyas datos personales ni secretos.</small>
+      </label>
+      <label id="admin-action-acknowledgement" class="admin-human-check" hidden>
+        <input id="admin-action-confirmation" type="checkbox">
+        <span>Comprendo que el Karma se devolverá de forma atómica y el Prestigio no cambiará.</span>
+      </label>
+      <p id="admin-action-dialog-status" class="admin-status-message" role="alert" hidden></p>
+      <div class="admin-dialog-actions">
+        <button class="secondary-button" type="button" data-admin-dialog-cancel>Cancelar</button>
+        <button class="danger-button" type="submit" id="admin-action-submit">Confirmar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.111.0"
+    integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
+    crossorigin="anonymous"
+  ></script>
+  <script src="supabaseClient.js?v=20260803-step134a"></script>
+  <script src="password-security.js?v=20260803-step134a"></script>
+  <script src="password-recovery.js?v=20260803-step134a"></script>
+  <script src="site-ui.js?v=20260803-step134a"></script>
+  <script src="auth.js?v=20260803-step134a"></script>
+  <script src="market-admin-validation.js?v=20260803-step134a"></script>
+  <script src="admin-markets.js?v=20260803-step134a"></script>
+</body>
+</html>

@@ -4,6 +4,8 @@ Fecha de corte: 1 de agosto de 2026.
 
 > **Aviso de continuidad:** esta es una fotografía histórica del commit `135f759`, no la descripción del árbol local posterior. Después de la auditoría Yol aprobó un mercado de precios vivos y autorizó su implementación local; también se eliminaron `data.js`, los fallbacks simulados y varios puntos de escape y errores amistosos. Para cualquier trabajo actual —y especialmente para el segundo prompt de Penpot— prevalecen `ORAKLO_PROJECT_CONTEXT.md`, `STEP_13_2_PRIORITIES_ACCEPTANCE.md`, `LIVE_MARKET_ECONOMY.md` y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`. No debe recuperarse el frontend auditado ni diseñarse como estado final.
 
+> **Actualización del 3 de agosto de 2026:** Yol cerró el Paso 13.3 con A3 y Atinara Sunset aprobados. Los huecos P0, P1 y P2 de esta fotografía se implementan localmente en 13.4 y se siguen en `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`; esta auditoría permanece histórica y no debe reejecutarse como condición de la entrega local.
+
 ## 1. Objetivo y límites
 
 Esta auditoría determina qué recorridos del MVP de Atinara están terminados, cuáles necesitan una comprobación final y qué funciones faltan antes de preparar la beta cerrada. El análisis no crea cuentas, mercados, predicciones, comentarios ni movimientos de Karma o Prestigio, y no aprueba ni liquida ningún mercado.

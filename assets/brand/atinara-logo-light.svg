@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 382 80" role="img" aria-labelledby="title">
+  <title id="title">Atinara</title>
+  <g fill="#FFFFFF">
+    <g transform="translate(8 8)">
+      <path d="M14 6h36c4.42 0 8 3.58 8 8v10H40.49L32 32.49 23.51 24H6V14c0-4.42 3.58-8 8-8Z"/>
+      <path d="M6 30h16.07L28 35.93V58H14c-4.42 0-8-3.58-8-8V30Z"/>
+      <path d="m36 35.93 5.93-5.93H58v20c0 4.42-3.58 8-8 8H36V35.93Z"/>
+    </g>
+    <g transform="translate(88 22)" fill-rule="evenodd" clip-rule="evenodd">
+      <path d="M2 36 12 0h14l10 36h-9l-2.5-9h-11L11 36H2Zm13.5-17h7L19 6.5 15.5 19Z"/>
+      <path d="M42 0h34v8H63v28h-8V8H42V0Z"/>
+      <path d="M82 0h28v8h-10v20h10v8H82v-8h10V8H82V0Z"/>
+      <path d="M118 36V0h8l18 22.5V0h8v36h-8l-18-22.5V36h-8Z"/>
+      <path d="M160 36 170 0h14l10 36h-9l-2.5-9h-11l-2.5 9h-9Zm13.5-17h7L177 6.5 173.5 19Z"/>
+      <path d="M202 36V0h18c10 0 16 4.7 16 13 0 5.8-3.1 9.8-8.5 11.7L238 36h-11l-9-10h-8v10h-8Zm8-18h10c5 0 8-1.5 8-5s-3-5-8-5h-10v10Z"/>
+      <path d="M244 36 254 0h14l10 36h-9l-2.5-9h-11l-2.5 9h-9Zm13.5-17h7L261 6.5 257.5 19Z"/>
+    </g>
+  </g>
+</svg>

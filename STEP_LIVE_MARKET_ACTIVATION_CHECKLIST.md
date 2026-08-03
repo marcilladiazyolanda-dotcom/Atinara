@@ -142,4 +142,6 @@ No ejecutar estas operaciones sobre datos reales sin autorización expresa de Yo
 
 ## 9. Condición de cierre
 
-La migración, el frontend vivo y la limpieza `a5c633b` están activos. `data.js` devuelve 404, `market2` está renderizado y la aceptación móvil real ya se ejecutó. El mercado vivo solo queda técnicamente cerrado cuando la corrección responsive mínima de esta aceptación esté publicada y vuelva a comprobarse en GitHub Pages; si la publicación no puede automatizarse, esa es la única tarea manual previa. Después se vuelve al Paso 13.3 en Penpot y no se programa otro bloque funcional.
+El mercado vivo quedó formalmente cerrado tras la publicación posterior en `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`: GitHub Pages mantuvo `v=20260801-market2`, las dos correcciones responsive quedaron servidas, `data.js` continuó en 404 y no se creó ninguna predicción. Esta checklist se conserva como evidencia histórica y no debe volver a ejecutarse.
+
+Yol cerró después el Paso 13.3 el 3 de agosto de 2026 y abrió el Paso 13.4. La migración nueva de administración pertenece a 13.4, tiene una fecha posterior y no sustituye ni repite el modelo vivo.

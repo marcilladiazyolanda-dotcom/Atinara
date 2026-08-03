@@ -1,9 +1,10 @@
 const authClient = window.orakloSupabase;
 const passwordSecurityClient = window.orakloPasswordSecurity;
+const passwordRecoveryClient = window.atinaraPasswordRecovery;
 
 const guestProfile = {
   username: "Invitado",
-  karma: 1000,
+  karma: 0,
   prestige: 0,
   rank: "Observador",
   bio: "",
@@ -32,6 +33,7 @@ let authReadyResolver;
 let authMode = "login";
 let userMenuOpen = false;
 let userMenuTrigger = null;
+let authModalTrigger = null;
 
 const authReady = new Promise((resolve) => {
   authReadyResolver = resolve;
@@ -123,7 +125,7 @@ function renderUserMenu() {
       <button class="user-menu-close" type="button" data-user-menu-close aria-label="Cerrar menú de usuario">×</button>
     </div>
     <dl class="user-menu-metrics" aria-label="Resumen de la cuenta">
-      <div><dt>Karma</dt><dd>${formatAuthNumber(profile.karma)}</dd></div>
+      <div><dt>Karma</dt><dd>${window.atinaraUi?.formatKarmaAmount(profile.karma, { maximumFractionDigits: 0 }) || `${formatAuthNumber(profile.karma)} Karma`}</dd></div>
       <div><dt>Prestigio</dt><dd>${formatAuthNumber(profile.prestige)}</dd></div>
       <div><dt>Rango</dt><dd>${escapeAuthHtml(profile.rank)}</dd></div>
     </dl>
@@ -162,6 +164,10 @@ function renderUserMenu() {
           <span><strong>Clasificación</strong><small>Posición global, rangos y temporada</small></span>
         </a>
         ${isAdmin ? `
+          <a href="admin-markets.html">
+            <span aria-hidden="true">◇</span>
+            <span><strong>Administrar mercados</strong><small>Borradores, revisión y publicación</small></span>
+          </a>
           <a href="admin-resolution.html">
             <span aria-hidden="true">✓</span>
             <span><strong>Resolver mercados</strong><small>Análisis con IA y revisión administrativa</small></span>
@@ -287,7 +293,11 @@ function updateHeaderSessionState() {
   const isAdmin = authState.user?.app_metadata?.oraklo_admin === true;
 
   document.querySelectorAll("[data-profile-karma]").forEach((node) => {
-    node.textContent = formatAuthNumber(profile.karma);
+    if (window.atinaraUi?.setKarmaAmount) {
+      window.atinaraUi.setKarmaAmount(node, profile.karma, { maximumFractionDigits: 0 });
+    } else {
+      node.textContent = formatAuthNumber(profile.karma);
+    }
     const pill = node.closest(".karma-pill");
     if (pill) {
       pill.setAttribute("aria-label", `Karma disponible: ${formatAuthNumber(profile.karma)}`);
@@ -451,28 +461,40 @@ function setAuthFormBusy(isBusy) {
 function setAuthMode(mode) {
   authMode = mode;
   const isSignup = authMode === "signup";
+  const isRecovery = authMode === "recovery";
   const titleNode = document.querySelector("#auth-modal-title");
   const submitNode = document.querySelector("#auth-submit");
   const usernameGroup = document.querySelector("#auth-username-group");
   const usernameInput = document.querySelector("#auth-username");
+  const passwordGroup = document.querySelector("#auth-password-group");
   const passwordInput = document.querySelector("#auth-password");
   const passwordSecurity = document.querySelector("#auth-password-security");
+  const recoveryHelp = document.querySelector("#auth-recovery-help");
 
   document.querySelectorAll("[data-auth-mode]").forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.authMode === authMode));
   });
 
   if (titleNode) {
-    titleNode.textContent = isSignup ? "Crear cuenta" : "Iniciar sesión";
+    titleNode.textContent = isRecovery
+      ? "Recuperar contraseña"
+      : isSignup ? "Crear cuenta" : "Iniciar sesión";
   }
 
   if (submitNode) {
-    submitNode.textContent = isSignup ? "Crear cuenta" : "Entrar";
+    submitNode.textContent = isRecovery
+      ? "Enviar enlace seguro"
+      : isSignup ? "Crear cuenta" : "Entrar";
   }
 
   if (usernameGroup && usernameInput) {
-    usernameGroup.hidden = !isSignup;
-    usernameInput.required = isSignup;
+    usernameGroup.hidden = !isSignup || isRecovery;
+    usernameInput.required = isSignup && !isRecovery;
+  }
+
+  if (passwordGroup && passwordInput) {
+    passwordGroup.hidden = isRecovery;
+    passwordInput.required = !isRecovery;
   }
 
   if (passwordInput) {
@@ -493,8 +515,10 @@ function setAuthMode(mode) {
   }
 
   if (passwordSecurity) {
-    passwordSecurity.hidden = !isSignup;
+    passwordSecurity.hidden = !isSignup || isRecovery;
   }
+
+  if (recoveryHelp) recoveryHelp.hidden = !isRecovery;
 
   renderPasswordRequirements(passwordInput?.value || "");
   setAuthStatus("");
@@ -525,7 +549,7 @@ function injectAuthModal() {
           <span>Email</span>
           <input id="auth-email" type="email" autocomplete="email" required placeholder="tu@email.com">
         </label>
-        <label>
+        <label id="auth-password-group">
           <span>Contraseña</span>
           <input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="Tu contraseña">
         </label>
@@ -560,9 +584,13 @@ function injectAuthModal() {
             Al crear la cuenta comprobaremos que no figure en filtraciones conocidas. Tu contraseña nunca se envía al servicio de comprobación.
           </p>
         </section>
+        <p id="auth-recovery-help" class="auth-recovery-help" hidden>
+          Si existe una cuenta con ese email, recibirás un enlace de un solo uso. La respuesta será siempre la misma para proteger tu privacidad.
+        </p>
         <p class="auth-status" id="auth-status" hidden></p>
         <button class="primary-button auth-submit" id="auth-submit" type="submit">Entrar</button>
       </form>
+      <button class="auth-recovery-link" type="button" data-auth-mode="recovery">¿Has olvidado la contraseña?</button>
       <p class="prototype-warning">Sin dinero real. El Prestigio se actualizará cuando los mercados se resuelvan.</p>
     </section>
   `;
@@ -571,20 +599,25 @@ function injectAuthModal() {
   setAuthMode("login");
 }
 
-function openAuthModal(message = "") {
+function openAuthModal(message = "", trigger = document.activeElement) {
   injectAuthModal();
   const modal = document.querySelector("#auth-modal");
+  authModalTrigger = trigger instanceof HTMLElement ? trigger : null;
   modal.hidden = false;
   setAuthMode("login");
   setAuthStatus(message, message ? "info" : "neutral");
   document.querySelector("#auth-email")?.focus();
 }
 
-function closeAuthModal() {
+function closeAuthModal(options = {}) {
   const modal = document.querySelector("#auth-modal");
   if (modal) {
     modal.hidden = true;
   }
+  if (options.restoreFocus !== false) {
+    authModalTrigger?.focus({ preventScroll: true });
+  }
+  authModalTrigger = null;
 }
 
 function normalizeUsername(username) {
@@ -605,6 +638,31 @@ async function handleAuthSubmit(event) {
   const email = document.querySelector("#auth-email")?.value.trim();
   const password = document.querySelector("#auth-password")?.value;
   const username = normalizeUsername(document.querySelector("#auth-username")?.value || "");
+
+  if (requestedMode === "recovery") {
+    if (!email) {
+      setAuthStatus("Escribe el email asociado a tu cuenta.", "error");
+      document.querySelector("#auth-email")?.focus();
+      return;
+    }
+
+    setAuthFormBusy(true);
+    setAuthStatus("Preparando el enlace seguro…", "info");
+    try {
+      const redirectTo = passwordRecoveryClient?.getRecoveryRedirectUrl(window.location)
+        || new URL("reset-password.html", window.location.href).href;
+      await authClient.auth.resetPasswordForEmail(email, { redirectTo });
+    } catch (_error) {
+      // La respuesta visible debe ser idéntica para correos existentes y no existentes.
+    } finally {
+      setAuthStatus(
+        "Si existe una cuenta con ese email, recibirás un enlace para crear una contraseña nueva.",
+        "success"
+      );
+      setAuthFormBusy(false);
+    }
+    return;
+  }
 
   if (requestedMode === "signup" && !username) {
     setAuthStatus("Elige un username para crear la cuenta.", "error");
@@ -717,7 +775,7 @@ function bindAuthUi() {
     const clickedInsideUserMenu = event.target.closest("#oraklo-user-menu");
 
     if (openButton) {
-      openAuthModal(openButton.dataset.authMessage || "");
+      openAuthModal(openButton.dataset.authMessage || "", openButton);
     }
 
     if (signOutButton) {
@@ -744,7 +802,7 @@ function bindAuthUi() {
     }
   });
 
-  document.querySelector("#auth-modal-close")?.addEventListener("click", closeAuthModal);
+  document.querySelector("#auth-modal-close")?.addEventListener("click", () => closeAuthModal());
   document.querySelector("#auth-form")?.addEventListener("submit", handleAuthSubmit);
   document.querySelector("#auth-password")?.addEventListener("input", (event) => {
     if (authMode !== "signup") return;
@@ -764,6 +822,20 @@ function bindAuthUi() {
     if (moveUserMenuFocus(event)) return;
 
     const modal = document.querySelector("#auth-modal");
+    if (event.key === "Tab" && modal && !modal.hidden) {
+      const focusable = Array.from(
+        modal.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href]")
+      ).filter((item) => !item.hidden && item.offsetParent !== null);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
     if (event.key === "Escape" && modal && !modal.hidden) {
       closeAuthModal();
     }

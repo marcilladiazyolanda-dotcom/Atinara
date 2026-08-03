@@ -5,13 +5,15 @@ const { test } = require("node:test");
 
 const htmlFiles = [
   "admin-community.html",
+  "admin-markets.html",
   "admin-resolution.html",
   "community.html",
   "index.html",
   "market-detail.html",
   "my-predictions.html",
   "profile.html",
-  "ranking.html"
+  "ranking.html",
+  "reset-password.html"
 ];
 
 const supabaseScriptUrl =

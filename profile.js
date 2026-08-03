@@ -61,6 +61,11 @@ function formatProfileNumber(value) {
   return new Intl.NumberFormat("es-ES").format(Number(value) || 0);
 }
 
+function formatProfileKarma(value) {
+  return window.atinaraUi?.formatKarmaAmount(value, { maximumFractionDigits: 0 })
+    || `${formatProfileNumber(value)} Karma`;
+}
+
 function formatProfilePercent(value) {
   return `${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 }).format(Number(value) || 0)}%`;
 }
@@ -96,7 +101,7 @@ function getProfileInitials(username) {
   const initials = parts.length > 1
     ? `${parts[0][0] || ""}${parts[1][0] || ""}`
     : clean.slice(0, 2);
-  return (initials || "OR").toUpperCase();
+  return (initials || "AT").toUpperCase();
 }
 
 function getProfileAvatar(profile) {
@@ -665,8 +670,8 @@ function createHistoryCardMarkup(historyItem) {
         <small>Resultado oficial: ${escapeProfileHtml(historyItem.resolution_result || "Anulado")}</small>
       </div>
       <dl class="public-history-metrics">
-        <div><dt>Karma arriesgado</dt><dd>${formatProfileNumber(historyItem.karma_risked)}</dd></div>
-        <div><dt>Balance final</dt><dd class="${balanceClass}">${formatSignedProfileNumber(balance)}</dd></div>
+        <div><dt>Karma arriesgado</dt><dd>${formatProfileKarma(historyItem.karma_risked)}</dd></div>
+        <div><dt>Balance final</dt><dd class="${balanceClass}">${balance > 0 ? "+" : ""}${formatProfileKarma(balance)}</dd></div>
         <div><dt>Prestigio</dt><dd class="${prestigeClass}">${formatSignedProfileNumber(historyItem.prestige_change)}</dd></div>
       </dl>
       <a class="secondary-button" href="market-detail.html?id=${encodeURIComponent(historyItem.market_id)}">Ver resolución y fuentes</a>

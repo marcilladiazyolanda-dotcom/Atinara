@@ -1,8 +1,10 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 1 de agosto de 2026.
+Última actualización del contexto: 3 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
+
+> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. El Paso 13.4 está implementado en un árbol local basado en `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`, pero sigue pendiente de activación manual y aceptación. GitHub, GitHub Pages, Supabase, Penpot y los datos reales no se modificaron durante esta preparación.
 
 ## 1. Objetivo del producto
 
@@ -56,6 +58,15 @@ Archivos principales:
 - `supabase/migrations/`: migraciones versionadas que sí están registradas en el repositorio.
 
 ## 3. Estado Git en el momento del relevo
+
+Estado local del Paso 13.4, 3 de agosto de 2026:
+
+- Clon canónico limpio de partida: `C:\Users\34696\Documents\Atinara-paso-13-4`.
+- Base remota inspeccionada: `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`.
+- Rama de trabajo local: `codex/paso-13-4-implementacion`.
+- El directorio `C:\Users\34696\Documents\ATINARA` era un repositorio vacío sin commits ni remoto y no se utilizó como base.
+- No se ejecutaron `pull`, `reset`, `rebase`, `push`, despliegues ni mutaciones externas. La publicación seguirá siendo manual mediante el ZIP completo validado.
+- El checklist de entrega y activación es `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`.
 
 Estado productivo comprobado el 1 de agosto de 2026 desde un clon nuevo:
 
@@ -139,7 +150,7 @@ Comprobación posterior al cierre de las correcciones, realizada el 1 de agosto 
 - GitHub Pages continúa en la URL canónica exacta. SonarQube tiene Quality Gate aprobado y Security A; GitGuardian muestra una única fuente Atinara segura, monitorizada y con histórico completo; Checkly conserva los tres controles existentes y todos están en verde.
 - Sentry recibió y resolvió un error controlado de Atinara en `production`, redactó identidad, URL y parámetros, y entregó correctamente una notificación de prueba por correo. La usuaria dio por cerrada la revisión de sus alertas el 1 de agosto de 2026; no debe volver a bloquear el Paso 13 ni ampliarse salvo nueva petición expresa.
 - `analyze-market-resolution` se desplegó aisladamente como versión 10 activa y con verificación JWT. La lectura posterior confirmó la URL canónica, el título público «Ficha original y criterios del mercado en Atinara» y la ausencia de la ruta pública anterior. No se ejecutó SQL ni se modificaron datos.
-- Supabase Auth ya usa la Site URL y la única redirección exacta de Atinara. El plan gratuito mantiene plantillas de correo predeterminadas sin personalización hasta configurar SMTP propio. El análisis administrativo de producción respondió sin modificar datos, pero reveló que un mercado que abarcaba todo julio tenía `closes_at` el día 28; no se aprobó ni liquidó. Continúa pendiente la aceptación visual final de marca y Open Graph.
+- Supabase Auth ya usa la Site URL y la única redirección exacta de Atinara. El plan gratuito mantiene plantillas de correo predeterminadas sin personalización hasta configurar SMTP propio. El análisis administrativo de producción respondió sin modificar datos, pero reveló que un mercado que abarcaba todo julio tenía `closes_at` el día 28; no se aprobó ni liquidó. La identidad visual quedó aprobada después en 13.3; la comprobación pública del Open Graph A3 pertenece a la activación y QA del 13.4.
 - La clasificación funcional del Paso 13.1 está documentada en `STEP_13_FUNCTIONAL_AUDIT.md`. El 13.2 fue aprobado con correcciones en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`: P0, P1 y P2 son requisitos completos antes de la beta y no fases que puedan aplazarse tras abrirla.
 - Ningún mercado podrá publicarse o programarse como público sin superar una revisión automática de claridad, coherencia y resolubilidad. La validación será autoritativa en Supabase, fallará de forma cerrada, explicará todos los motivos bloqueantes y no admitirá omisión administrativa. Cualquier cambio esencial invalidará el aprobado y exigirá una nueva revisión; después seguirá existiendo confirmación humana.
 
@@ -336,10 +347,10 @@ Archivos principales añadidos:
 
 La configuración, activación externa y aceptación de las cuatro herramientas están terminadas. Checkly tiene desplegados y comprobados sus tres controles; Sentry recibió el error controlado sin datos reales; GitGuardian mantiene el repositorio en estado seguro; y SonarQube confirmó la corrección. Los nombres internos existentes de proyectos y monitores pueden conservar `oraklo` sin afectar a la marca pública.
 
-Herramientas aplazadas pero vinculadas a un momento concreto:
+Herramientas vinculadas a un momento concreto:
 
-- **Penpot:** debe abrir el próximo bloque visual del MVP antes de volver a modificar identidad, componentes, responsive, rangos, emblemas o avatares.
-- **Mailjet:** antes de recuperación de contraseña, invitaciones o beta con correo transaccional.
+- **Penpot:** Paso 13.3 cerrado; los tableros A3, 13.3D y Atinara Sunset son la fuente visual de 13.4 y no requieren otra aprobación.
+- **Mailjet:** SMTP y plantillas deben configurarse manualmente antes de afirmar que el correo real de recuperación está validado.
 - **PostHog:** al comenzar la beta cerrada y solo después de preparar consentimiento, eventos mínimos y privacidad.
 
 ## 5. Migraciones y backend del repositorio
@@ -355,6 +366,7 @@ Orden actual:
 7. `20260718143106_add_social_community_mvp.sql`
 8. `20260718182915_expose_real_market_comment_counts.sql`
 9. `20260801172543_add_live_prediction_market_model.sql` — aplicada una sola vez en producción el 1 de agosto de 2026; registrada remotamente como `20260801184105_add_live_prediction_market_model`. No repetir.
+10. `20260803143000_add_market_administration_gate.sql` — preparada localmente para el Paso 13.4; **no ejecutada**. Añade borradores privados, revisión, confirmación humana, programación, auditoría, coherencia temporal y permisos mínimos.
 
 No debe suponerse que toda función antigua del Supabase vivo está versionada aquí. Antes de escribir SQL nuevo, inspeccionar esquema, firmas, políticas, permisos y migraciones existentes.
 
@@ -374,15 +386,16 @@ Orden acordado para el Paso 13:
 1. **13.0 · Cierre documental:** terminado al corregir el estado real del Paso 12 y registrar Atinara como marca pública.
 2. **13.1 · Auditoría funcional:** revisar recorridos completos de invitada, usuaria y administradora y clasificar cada punto como terminado, parcial, sin comprobar, ausente o aplazado.
 3. **13.2 · Definición de soluciones:** terminado y aprobado. `P0`, `P1` y `P2` indican orden, pero todos deben completarse antes de la beta.
-4. **13.3 · Diseño en Penpot:** diseñar el sistema visual definitivo y todas las pantallas, componentes, estados y responsive necesarios antes de modificar de nuevo la interfaz.
-5. **13.4 · Implementación:** construir las funciones aprobadas sin rehacer lo que ya funciona.
-6. **13.5 · QA y beta:** probar los recorridos completos y abrir acceso controlado a un grupo pequeño.
+4. **13.3 · Diseño en Penpot:** cerrado y aprobado por Yol el 3 de agosto de 2026. A3 y Atinara Sunset son definitivos para beta v0.1.
+5. **13.4 · Implementación:** preparada en local; pendiente de activación manual y aceptación de Yol. No está publicada.
+6. **13.5 · Radar y catálogo:** siguiente fase definida por `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`; no se implementa dentro de 13.4.
+7. **13.6 · QA integral y beta:** aceptación completa después de activar el árbol coordinado.
 
 El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
-Durante 13.3 Yol autorizó implementar y activar primero el contrato económico vivo porque Penpot necesita diseñar el comportamiento real y no la encuesta estática anterior. Esto no autoriza a saltarse el diseño artístico ni el QA. La Fase A neutral de Penpot debe conservarse, pero la Fase B corregirá sus inventarios con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de aplicar la identidad aprobada.
+Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: publicar y verificar en GitHub Pages la corrección móvil mínima del árbol de cierre. Una vez comprobada, se vuelve al Paso 13.3 con Yol para decidir logo, paleta, tipografías, iconografía, retícula, componentes, avatares, emblemas y movimiento antes del segundo prompt de Penpot. También se mantiene sin aprobar el mercado que reveló la incoherencia entre «durante julio» y el cierre del día 28. Después se completarán los demás P0, P1 y P2 y se cerrará 13.5; no se abre la beta con ningún punto pendiente. No ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización o compraventa secundaria. La revisión de alertas de Sentry está cerrada por decisión de la usuaria.
+Siguiente paso operativo: seguir el orden manual de `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`, activar primero la capa aditiva de Supabase y sus Edge Functions, configurar Auth/SMTP y solo después publicar el frontend coordinado. El mercado antiguo de julio continúa sin aprobar ni liquidar. Tras aceptar 13.4 se abre 13.5; no ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización, dinero real, Radar ni compraventa secundaria dentro de esta entrega.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -439,14 +452,13 @@ No implementar sin autorización expresa:
 
 ## 10. Requisitos visuales previos a beta
 
-- Antes de programar el siguiente rediseño, crear y aprobar en Penpot el sistema visual del MVP: tokens, componentes, estados, escritorio y móvil.
+- El sistema visual fue aprobado por Yol el 3 de agosto de 2026: A3, Atinara Sunset, tokens, componentes, estados, escritorio y móvil.
 - Usar patrones familiares de exploración y acción de Polymarket y Kalshi como referencia de claridad, nunca como plantilla visual. La interfaz será premium y sofisticada, con identidad, retícula, componentes y activos propios de Atinara.
 - Diseñar la gráfica real de `Sí` y `No`, los rangos temporales, el precio actual, impacto, precio medio, contratos, retorno base, bonus y Prestigio, incluidos carga, único punto, recotización, error y mercado congelado.
 - No diseñar botones o recorridos de venta, salida, cambio de posición o especulación para la beta.
-- Diseñar un emblema propio para cada rango: Observador, Intérprete, Analista, Visionario y Oráculo.
-- Sustituir los avatares simbólicos por avatares originales relacionados con gaming y el universo de Atinara.
+- Las mejoras futuras de emblemas y avatares no reabren 13.3 ni bloquean beta v0.1; cualquier ampliación debe conservar A3 y propiedad intelectual original.
 - Mantener el tono de anticipación y criterio y evitar estética de casino.
-- Implementar y aceptar visualmente todo el sistema, incluidos emblemas y avatares, antes de abrir la beta. P2 no es un pulido posterior al lanzamiento.
+- Implementar y aceptar visualmente el sistema aprobado antes de abrir la beta. P2 no es un pulido posterior al lanzamiento, aunque mejoras ópticas no bloqueantes puedan planificarse después.
 
 ## 11. Comprobación mínima antes de entregar cambios
 

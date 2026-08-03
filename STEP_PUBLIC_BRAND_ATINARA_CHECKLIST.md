@@ -3,6 +3,8 @@
 ## Decisión
 
 - **Marca visible:** Atinara; `ATINARA` puede usarse en el logotipo.
+- **Identidad beta v0.1:** `A3 · Criterio modular`, favicon, glifo de Karma y doce glifos aprobados por Yol el 3 de agosto de 2026.
+- **Paleta definitiva:** Atinara Sunset. La identidad y la paleta ya no están pendientes; el Paso 13.4 las implementa localmente.
 - **Nombre interno heredado:** Oraklo.
 - No se renombran contratos técnicos existentes como `oraklo_admin`, RPC, eventos `oraklo:*`, variables `window.oraklo*`, migraciones, proyectos de monitorización o historial Git.
 - El cambio no modifica datos económicos, permisos, RLS, Auth ni liquidaciones.
@@ -61,9 +63,11 @@ La nueva configuración no debe desplegarse por partes: primero se publica el fr
 
 ## 5. Aceptación final
 
+El árbol local del Paso 13.4 vuelve a comprobar mediante pruebas que las diez páginas muestran Atinara, comparten favicon A3 y no generan texto visible con la marca anterior. La aceptación pública de este nuevo árbol pertenece a la activación manual y a la QA posterior; no se presenta todavía como desplegada.
+
 - [ ] Buscar `Oraklo` en todas las pantallas y estados accesibles para invitada, usuaria y administradora; no debe aparecer como marca.
 - [ ] Compartir la portada y una ficha en un comprobador Open Graph; deben mostrar Atinara.
 - [x] Ejecutar los tres controles de Checkly contra la URL final; los tres quedaron en estado `Passing`.
 - [x] Confirmar que Sentry acepta el host final y continúa redactando PII; el evento controlado llegó en `production`, como gestionado y sin usuaria, URL ni parámetros sensibles.
 - [x] Ejecutar `npm run validate` y `git diff --check` sobre la versión definitiva; sintaxis, dieciocho tests unitarios, tipado de Checkly y comprobación del diff superados el 1 de agosto de 2026.
-- [ ] Solo entonces marcar la transición pública como terminada y comenzar la auditoría funcional 13.1.
+- [x] La transición pública inicial se cerró y permitió comenzar la auditoría funcional 13.1. El sistema A3/Sunset posterior queda pendiente únicamente de la publicación del árbol 13.4.

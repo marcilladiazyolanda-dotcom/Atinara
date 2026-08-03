@@ -1,19 +1,10 @@
-const categories = [
-  "Todos",
-  "Lanzamientos",
-  "Eventos",
-  "Streamers",
-  "YouTubers",
-  "Industria",
-  "Reviews/Premios"
-];
+let categories = ["Todos"];
 
 const stateFilters = [
-  { id: "activos", label: "Activos" },
+  { id: "activos", label: "Abiertos" },
   { id: "cierran-pronto", label: "Cierran pronto" },
   { id: "populares", label: "Populares" },
-  { id: "dificiles", label: "Difíciles" },
-  { id: "nuevos", label: "Nuevos" },
+  { id: "sin-movimiento", label: "Sin movimiento" },
   { id: "resueltos", label: "Resueltos" }
 ];
 
@@ -73,6 +64,11 @@ function formatPercentage(value, maximumFractionDigits = 1) {
   return new Intl.NumberFormat("es-ES", {
     maximumFractionDigits
   }).format(number);
+}
+
+function formatKarma(value, maximumFractionDigits = 0) {
+  return window.atinaraUi?.formatKarmaAmount(value, { maximumFractionDigits })
+    || `${formatNumber(value)} Karma`;
 }
 
 function escapeHtml(value) {
@@ -304,6 +300,12 @@ function getFilteredMarkets() {
       .sort((a, b) => b.popularidad - a.popularidad);
   }
 
+  if (activeFilters.state === "sin-movimiento") {
+    filtered = filtered.filter((market) =>
+      getMarketTiming(market).isOpen && toNumber(market.prediccionesReales) === 0
+    );
+  }
+
   if (activeFilters.state === "dificiles") {
     filtered = filtered
       .filter((market) => getMarketTiming(market).isOpen && isDifficultMarket(market))
@@ -330,17 +332,9 @@ function createTrendMarkup(market) {
     : "Sin movimientos todavía. Precio inicial del 50 por ciento para Sí y No.";
 
   return `
-    <div class="trend-card${hasPredictions ? "" : " trend-card-empty"}">
-      <p class="trend-title">Precio colectivo</p>
-      ${hasPredictions ? "" : '<p class="trend-empty-note">Sin movimientos todavía</p>'}
-      <div class="trend-row">
-        <span>Sí ${formatPercentage(market.porcentajeSi, 2)} %</span>
-        <span>No ${formatPercentage(market.porcentajeNo, 2)} %</span>
-      </div>
-      <div class="trend-bar" style="--yes: ${market.porcentajeSi}%; --no: ${market.porcentajeNo}%;" role="img" aria-label="${escapeHtml(label)}">
-        <span class="trend-yes"></span>
-        <span class="trend-no"></span>
-      </div>
+    <div class="market-price-pair${hasPredictions ? "" : " has-no-movement"}" role="group" aria-label="${escapeHtml(label)}">
+      <span class="market-price is-yes"><small>✓ Sí</small><strong>${formatPercentage(market.porcentajeSi, 2)} %</strong></span>
+      <span class="market-price is-no"><small>× No</small><strong>${formatPercentage(market.porcentajeNo, 2)} %</strong></span>
     </div>
   `;
 }
@@ -356,15 +350,15 @@ function createMarketCard(market) {
     </div>
     <h3>${escapeHtml(market.pregunta)}</h3>
     ${createTrendMarkup(market)}
-    <div class="market-stats-line" aria-label="Datos reales de actividad del mercado">
-      <span class="difficulty ${getDifficultyClass(market.dificultad)}">Dificultad: ${escapeHtml(market.dificultad)}</span>
-      <span class="metric metric-karma">${formatNumber(market.karmaTotal)} Karma</span>
-      <span class="metric metric-users">${formatNumber(market.participantes)} participantes</span>
-      <span class="metric metric-comments">${formatNumber(market.comentarios)} comentarios</span>
-    </div>
+    <p class="market-movement-state">${market.prediccionesReales > 0 ? "Precio actualizado solo por participaciones reales" : "Sin movimientos · punto inicial honesto"}</p>
     ${createMarketTimingMarkup(market)}
+    <div class="market-stats-line" aria-label="Datos reales de actividad del mercado">
+      <span class="metric metric-users">${formatNumber(market.participantes)} participantes</span>
+      <span class="metric metric-karma">${formatKarma(market.karmaTotal)}</span>
+    </div>
     <div class="card-actions">
-      <a class="primary-button" href="${getMarketUrl(market)}">Ver mercado</a>
+      <a class="predict-yes-button" href="${getMarketUrl(market)}&amp;side=yes">✓ Predecir Sí</a>
+      <a class="predict-no-button" href="${getMarketUrl(market)}&amp;side=no">× Predecir No</a>
     </div>
   `;
 
@@ -550,37 +544,8 @@ function renderFilterButtons() {
 }
 
 function renderFeaturedMarket() {
-  const market = markets.find((item) => item.destacado);
-  if (!market) {
-    featuredMarketNode.hidden = true;
-    return;
-  }
-
-  featuredMarketNode.hidden = false;
-  const timing = getMarketTiming(market);
-  featuredMarketNode.innerHTML = `
-    <div class="featured-card">
-      <div>
-        <div class="featured-meta">
-          <span class="tag">Mercado destacado</span>
-          <span class="tag">${escapeHtml(market.categoria)}</span>
-          <span class="status ${getStatusClass(timing.effectiveStatus)}" data-market-status>${escapeHtml(getMarketStatusLabel(market))}</span>
-        </div>
-        <h2 class="featured-question">${escapeHtml(market.pregunta)}</h2>
-        <p class="featured-copy">Consulta el precio colectivo, los criterios y el cierre antes de realizar tu predicción.</p>
-      </div>
-      <div>
-        ${createTrendMarkup(market)}
-        <div class="stats">
-          <div class="stat"><span>Karma total</span><strong>${formatNumber(market.karmaTotal)}</strong></div>
-          <div class="stat"><span>Participantes</span><strong>${formatNumber(market.participantes)}</strong></div>
-          <div class="stat"><span>Comentarios</span><strong>${formatNumber(market.comentarios)}</strong></div>
-        </div>
-        ${createMarketTimingMarkup(market)}
-        <a class="primary-button" href="${getMarketUrl(market)}">Ver mercado</a>
-      </div>
-    </div>
-  `;
+  featuredMarketNode.hidden = true;
+  featuredMarketNode.replaceChildren();
 }
 
 function renderMarkets() {
@@ -775,6 +740,7 @@ async function initializeMarkets() {
 
   if (marketsResult.status === "fulfilled") {
     markets = marketsResult.value;
+    categories = ["Todos", ...new Set(markets.map((market) => market.categoria).filter(Boolean))];
     marketsUseSupabase = true;
     marketLoadFailed = false;
     setDataSourceWarning("");

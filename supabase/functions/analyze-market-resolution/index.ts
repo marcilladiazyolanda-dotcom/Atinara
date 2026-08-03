@@ -1,4 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import {
+  getTemporalDefinitionIssues,
+  isReadyForResolution,
+} from "../_shared/market-definition.ts";
 
 const GEMINI_ANALYSIS_MODEL = "gemini-3-flash-preview";
 const GEMINI_INTERACTIONS_REVISION = "2026-05-20";
@@ -141,12 +145,7 @@ function normalizeMarket(payload: unknown): JsonRecord | null {
 }
 
 function isMarketClosed(market: JsonRecord): boolean {
-  const status = getText(market.status).toLowerCase();
-  const closesAt = Date.parse(getText(market.closes_at));
-  const hasPassedCutoff = Number.isFinite(closesAt) && closesAt <= Date.now();
-
-  return hasPassedCutoff &&
-    ["cerrado", "closed", "resuelto", "resolved"].includes(status);
+  return isReadyForResolution(market);
 }
 
 function getMarketEvidence(market: JsonRecord): JsonRecord {
@@ -155,6 +154,9 @@ function getMarketEvidence(market: JsonRecord): JsonRecord {
     question: getText(market.question),
     description: getText(market.description),
     closes_at: getText(market.closes_at),
+    evaluation_ends_at: getText(market.evaluation_ends_at),
+    resolution_deadline: getText(market.resolution_deadline),
+    participation_closed_at: getText(market.participation_closed_at),
     resolution_source: getText(market.resolution_source),
     yes_criteria: getText(market.yes_criteria),
     no_criteria: getText(market.no_criteria),
@@ -230,26 +232,22 @@ function buildDefinitionIssueResponse(
     `Criterio de No: ${getText(market.no_criteria)}`,
     `Fuente prevista: ${getText(market.resolution_source)}`,
   ].filter(Boolean).join(" ").slice(0, 1_000);
-  const note =
-    `Mercado anulado por una definicion ambigua. ${issues.join(" ")} ` +
-    "No es posible aplicar los criterios de Si o No de forma objetiva sin cambiar las condiciones originales.";
-
   return {
     ok: true,
     market: getMarketSummary(market),
     analysis_kind: "definition_check",
     analysis: {
-      proposed_result: "Anulado",
+      proposed_result: "No concluyente",
       confidence: "Alta",
       summary:
-        "El mercado es anulable porque su redaccion no identifica de forma univoca el hecho que debe resolverse.",
+        "La definición presenta un bloqueo y no debe preseleccionarse ningún resultado.",
       reasons: issues.slice(0, 6),
       cutoff_analysis:
         "La ambiguedad ya existe en la ficha original y no puede corregirse despues del cierre sin alterar las condiciones para quienes participaron.",
       caveats: [
-        "La anulacion y la devolucion del Karma solo se ejecutaran si una persona administradora las confirma expresamente.",
+        "No selecciones Sí, No ni Anulado mientras permanezca este bloqueo.",
       ],
-      recommended_note: note.slice(0, 4_000),
+      recommended_note: "",
       source_dates: [{
         title: sourceTitle,
         published_at: "No aplica",
@@ -263,7 +261,7 @@ function buildDefinitionIssueResponse(
     }],
     search_queries: [],
     evidence_warning:
-      "Revisa la ficha original antes de confirmar la anulacion. No se ha modificado ningun saldo.",
+      "Revisión necesaria. La liquidación permanece bloqueada y no se ha modificado ningún saldo.",
     model: DEFINITION_CHECK_MODEL,
     research_model: "not_applicable",
     provider_api: "definition-check",
@@ -1232,7 +1230,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const marketResponse = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/get_public_market_by_id`,
+      `${supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
       {
         method: "POST",
         headers: {
@@ -1267,7 +1265,11 @@ Deno.serve(async (req: Request) => {
       }, 409);
     }
 
-    const definitionIssues = getMarketDefinitionIssues(market);
+    const temporalIssues = getTemporalDefinitionIssues(market).map((issue) => issue.message);
+    const definitionIssues = [
+      ...temporalIssues,
+      ...getMarketDefinitionIssues(market),
+    ];
     if (definitionIssues.length) {
       console.log(
         "Market definition check proposed annulment",
@@ -1319,7 +1321,7 @@ Deno.serve(async (req: Request) => {
       research_model: "tavily-search-basic",
       provider_api: `research:tavily;analysis:${geminiAnalysis.analysisProvider}`,
       generated_at: new Date().toISOString(),
-      can_resolve_market: false,
+      can_resolve_market: true,
     });
   } catch (error) {
     const isTimeout = error instanceof DOMException &&

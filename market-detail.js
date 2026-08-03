@@ -118,7 +118,8 @@ function createResolutionSourcesMarkup(market) {
 }
 
 function formatKarma(value) {
-  return `${formatNumber(Math.round(Number(value) || 0))} Karma`;
+  return window.atinaraUi?.formatKarmaAmount(value, { maximumFractionDigits: 2 })
+    || `${formatNumber(Math.round(Number(value) || 0))} Karma`;
 }
 
 function formatPercentage(value, maximumFractionDigits = 1) {
@@ -141,6 +142,11 @@ function formatSignedPoints(value) {
 
 function getQueryMarketId() {
   return new URLSearchParams(window.location.search).get("id");
+}
+
+function getQueryPredictionSide() {
+  const side = new URLSearchParams(window.location.search).get("side");
+  return side === "no" ? "no" : side === "yes" ? "si" : null;
 }
 
 function getDisplayUser() {
@@ -321,7 +327,7 @@ function getChartPointCoordinates(points, valueKey) {
   });
 }
 
-function createPriceSeriesMarkup(points, valueKey, className, label) {
+function createPriceSeriesMarkup(points, valueKey, className, label, showLastDot = true) {
   const coordinates = getChartPointCoordinates(points, valueKey);
   if (coordinates.length === 0) return "";
 
@@ -333,11 +339,32 @@ function createPriceSeriesMarkup(points, valueKey, className, label) {
     ? window.formatOrakloLocalDate(last.point.recordedAt)
     : last.point.recordedAt;
 
-  return `
-    ${polyline}
+  const lastDot = showLastDot ? `
     <circle class="market-price-dot ${className}" cx="${last.x}" cy="${last.y}" r="5">
       <title>${label} ${formatPercentage(last.value, 2)} % · ${escapeDetailHtml(dateLabel)}</title>
     </circle>
+  ` : "";
+
+  return `
+    ${polyline}
+    ${lastDot}
+  `;
+}
+
+function createCombinedPriceMarkerMarkup(points) {
+  const coordinates = getChartPointCoordinates(points, "yesPercent");
+  const last = coordinates.at(-1);
+  if (!last) return "";
+  const dateLabel = typeof window.formatOrakloLocalDate === "function"
+    ? window.formatOrakloLocalDate(last.point.recordedAt)
+    : last.point.recordedAt;
+  const value = formatPercentage(last.point.yesPercent, 2);
+
+  return `
+    <circle class="market-price-combined-marker market-price-combined-marker-yes" cx="${last.x}" cy="${last.y}" r="7">
+      <title>Sí y No ${value} % · ${escapeDetailHtml(dateLabel)}</title>
+    </circle>
+    <circle class="market-price-combined-marker market-price-combined-marker-no" cx="${last.x}" cy="${last.y}" r="3.5" aria-hidden="true"></circle>
   `;
 }
 
@@ -399,6 +426,9 @@ function createPriceChartMarkup(market) {
   }
 
   const latest = points.at(-1);
+  const latestPricesOverlap = Math.abs(
+    Number(latest.yesPercent) - Number(latest.noPercent)
+  ) < 0.0001;
   const accessibleLabel = `Evolución real. Último precio: Sí ${formatPercentage(latest.yesPercent, 2)} por ciento y No ${formatPercentage(latest.noPercent, 2)} por ciento.`;
   const singlePointNote = points.length === 1
     ? '<p class="market-price-single-note">Solo existe el punto inicial; la línea aparecerá con el primer movimiento real.</p>'
@@ -416,8 +446,9 @@ function createPriceChartMarkup(market) {
           <text x="16" y="127">50 %</text>
           <text x="25" y="231">0 %</text>
         </g>
-        ${createPriceSeriesMarkup(points, "yesPercent", "market-price-line-yes", "Sí")}
-        ${createPriceSeriesMarkup(points, "noPercent", "market-price-line-no", "No")}
+        ${createPriceSeriesMarkup(points, "yesPercent", "market-price-line-yes", "Sí", !latestPricesOverlap)}
+        ${createPriceSeriesMarkup(points, "noPercent", "market-price-line-no", "No", !latestPricesOverlap)}
+        ${latestPricesOverlap ? createCombinedPriceMarkerMarkup(points) : ""}
         ${createPriceInteractionMarkup(points)}
       </svg>
       <input
@@ -599,7 +630,7 @@ function renderDetail(market) {
         <span>${displayUser.isAuthenticated ? "Estado de la cuenta" : "Acceso"}</span>
         <strong>${escapeDetailHtml(displayUser.rank)}</strong>
         ${displayUser.isAuthenticated
-          ? `<small>Prestigio: ${formatNumber(displayUser.prestige)}</small><small>Karma disponible: ${formatNumber(displayUser.karma)}</small>`
+          ? `<small>Prestigio: ${formatNumber(displayUser.prestige)}</small><small>Karma disponible: ${formatKarma(displayUser.karma)}</small>`
           : "<small>Inicia sesión para consultar tu Karma y confirmar.</small>"}
       </div>
     </section>
@@ -608,7 +639,7 @@ function renderDetail(market) {
 
     <section class="detail-notices" aria-label="Avisos importantes">
       <p><strong>Privacidad:</strong> Tu predicción activa será privada hasta que el mercado se resuelva.</p>
-      <p><strong>Prototipo:</strong> Sin dinero real, sin compra de Karma y sin Modo Real.</p>
+      <p><strong>Atinara:</strong> El Karma es ficticio, no puede adquirirse con dinero y no existe Modo Real.</p>
       <p><strong>Resolución:</strong> El Karma se descuenta al confirmar. Cada contrato acertado liquida a 1 Karma, se añade por separado el bonus de dificultad y el Prestigio nunca baja de 0. Si se anula, se devuelve todo el Karma y no cambia el Prestigio.</p>
     </section>
 
@@ -627,12 +658,12 @@ function renderDetail(market) {
           <label for="karma-amount">Karma utilizado</label>
           <div class="karma-input-row">
             <input id="karma-amount" type="number" min="${hasEnoughKarma ? predictionRules.minKarma : 0}" max="${maxKarma}" step="10" value="${predictionState.amount}"${participationDisabled ? " disabled" : ""}>
-            <span class="input-limit">Máx. ${formatNumber(maxKarma)}</span>
+            <span class="input-limit">Máx. ${formatKarma(maxKarma)}</span>
           </div>
           <div class="quick-amounts" aria-label="Cantidades rápidas">
-            <button type="button" data-amount="10"${participationDisabled || maxKarma < 10 ? " disabled" : ""}>10 K</button>
-            <button type="button" data-amount="50"${participationDisabled || maxKarma < 50 ? " disabled" : ""}>50 K</button>
-            <button type="button" data-amount="100"${participationDisabled || maxKarma < 100 ? " disabled" : ""}>100 K</button>
+            <button type="button" data-amount="10"${participationDisabled || maxKarma < 10 ? " disabled" : ""}>${formatKarma(10)}</button>
+            <button type="button" data-amount="50"${participationDisabled || maxKarma < 50 ? " disabled" : ""}>${formatKarma(50)}</button>
+            <button type="button" data-amount="100"${participationDisabled || maxKarma < 100 ? " disabled" : ""}>${formatKarma(100)}</button>
             <button type="button" data-amount="max"${participationDisabled ? " disabled" : ""}>Máx.</button>
           </div>
         </div>
@@ -648,7 +679,7 @@ function renderDetail(market) {
           ${createLivePriceMarkup(market)}
           ${noPredictionsNotice}
           <div class="detail-stat-grid">
-            <div class="stat"><span>Karma total</span><strong data-detail-karma-total>${formatNumber(market.karmaTotal)}</strong></div>
+            <div class="stat"><span>Karma total</span><strong data-detail-karma-total>${formatKarma(market.karmaTotal)}</strong></div>
             <div class="stat"><span>Participantes</span><strong data-detail-participants>${formatNumber(market.participantes)}</strong></div>
             <div class="stat"><span>Comentarios</span><strong data-detail-comment-count>${formatNumber(market.comentarios)}</strong></div>
             <div class="stat detail-close-stat">
@@ -1575,6 +1606,7 @@ async function initializeMarketDetail() {
   }
 
   renderLoadingState();
+  predictionState.option = getQueryPredictionSide() || "si";
   predictionState.amount = predictionRules.minKarma;
   invalidatePredictionQuote();
   priceHistoryState.range = "24h";

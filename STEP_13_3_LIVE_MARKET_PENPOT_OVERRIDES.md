@@ -2,7 +2,7 @@
 
 Fecha de aprobación: 1 de agosto de 2026.
 
-Estado: **decisión de producto vinculante para la Fase B visual**. Este documento debe leerse después de `STEP_13_2_PRIORITIES_ACCEPTANCE.md` y `LIVE_MARKET_ECONOMY.md`.
+Estado: **contrato funcional vinculante ya incorporado al diseño aprobado**. Yol cerró el Paso 13.3 el 3 de agosto de 2026. Este documento continúa mandando sobre economía, gráfica y cotización durante la implementación, pero sus antiguas notas de identidad pendiente quedaron sustituidas por la aprobación de A3 y Atinara Sunset.
 
 ## 1. Autoridad frente al primer prompt
 
@@ -39,7 +39,7 @@ Son referencias de jerarquía, densidad y facilidad de uso, no plantillas. No se
 
 La sensación buscada es la de un producto de mercado predictivo premium, sofisticado, claro e intuitivo. Debe necesitar muy poco texto explicativo porque la jerarquía y las acciones se entienden solas. Nunca debe parecer casino, casa de apuestas, plataforma de dinero real, bolsa genérica, cripto o clon de esports.
 
-Logo, colores principales definitivos y el resto de la identidad artística continúan pendientes de la aprobación específica de Yol y se completarán en el segundo prompt.
+Yol aprobó posteriormente `A3 · Criterio modular`, su logotipo, símbolo, favicon, glifo de Karma y doce glifos, junto con la paleta **Atinara Sunset**. Esos activos son definitivos para beta v0.1 y no deben rediseñarse durante 13.4.
 
 ## 4. Ficha de mercado obligatoria
 
@@ -143,9 +143,9 @@ Las líneas de la gráfica deben identificarse también por texto y no solo por 
 - Ninguna exposición pública del Karma disponible o de posiciones activas.
 - Ninguna simplificación que oculte criterios de resolución, impacto o precio medio antes de confirmar.
 
-## 8. Punto de parada de la Fase B
+## 8. Cierre de la Fase B
 
-Codex podrá corregir los inventarios y diseñar estas superficies solo cuando reciba la dirección artística aprobada. Debe detenerse si intenta inferir por su cuenta logo, paleta, tipografía, iconografía, emblemas o avatares todavía pendientes.
+La dirección artística ya fue aprobada y la Fase B quedó cerrada el 3 de agosto de 2026. El Paso 13.4 debe implementar lo aprobado sin inferir variantes nuevas de logo, paleta o composición.
 
 Antes de dar por terminada la Fase B deberá confirmar expresamente que:
 
@@ -155,4 +155,6 @@ Antes de dar por terminada la Fase B deberá confirmar expresamente que:
 4. incluyó gráfica real, ausencia honesta de histórico y estados de recotización;
 5. no introdujo compraventa ni especulación en la beta;
 6. no copió ninguna pantalla o activo de Polymarket o Kalshi.
+
+Yol confirmó estos puntos al cerrar el Paso 13.3. La QA del 13.4 debe comprobar que el frontend conserva este contrato, no reabrir su aprobación artística.
 

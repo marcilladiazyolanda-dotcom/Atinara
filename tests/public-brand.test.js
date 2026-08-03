@@ -6,17 +6,20 @@ const { test } = require("node:test");
 const repositoryRoot = join(__dirname, "..");
 const publicHtmlFiles = [
   "admin-community.html",
+  "admin-markets.html",
   "admin-resolution.html",
   "community.html",
   "index.html",
   "market-detail.html",
   "my-predictions.html",
   "profile.html",
-  "ranking.html"
+  "ranking.html",
+  "reset-password.html"
 ];
 
 const publicTextSources = [
   "admin-community.js",
+  "admin-markets.js",
   "admin-resolution.js",
   "auth.js",
   "community.js",
@@ -24,6 +27,7 @@ const publicTextSources = [
   "profile.js",
   "ranking.js",
   "script.js",
+  "site-ui.js",
   "supabase/functions/analyze-market-resolution/index.ts"
 ];
 
@@ -41,7 +45,9 @@ test("presenta Atinara como única marca pública en todas las páginas", () => 
     assert.match(html, /<meta property="og:title" content="Atinara \|[^">]+">/);
     assert.match(html, /<meta property="og:description" content="[^">]+Atinara[^">]*">/);
     assert.match(html, /<meta name="twitter:card" content="summary">/);
-    assert.match(html, /<span class="brand-name">Atinara<\/span>/);
+    assert.match(html, /class="brand"/);
+    assert.match(html, /site-ui\.js\?v=20260803-step134a/);
+    assert.match(html, /assets\/brand\/favicon\.svg/);
     assert.doesNotMatch(html, /\bOraklo\b/);
   });
 });
@@ -57,14 +63,14 @@ test("mantiene coordinada la versión de los recursos públicos", () => {
     assert.ok(versions.length > 0, `${fileName} no versiona sus recursos locales.`);
     assert.deepEqual(
       [...new Set(versions)],
-      ["20260801-market2"],
+      ["20260803-step134a"],
       `${fileName} mezcla versiones de caché.`
     );
   });
 });
 
-test("evita indexar los paneles administrativos", () => {
-  ["admin-community.html", "admin-resolution.html"].forEach((fileName) => {
+test("evita indexar los paneles administrativos y la recuperación", () => {
+  ["admin-community.html", "admin-markets.html", "admin-resolution.html", "reset-password.html"].forEach((fileName) => {
     const html = readRepositoryFile(fileName);
 
     assert.match(html, /<meta name="robots" content="noindex, nofollow">/);

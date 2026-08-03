@@ -4,16 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atinara | Explorar mercados</title>
-  <meta name="description" content="Explora mercados de predicción sobre videojuegos, compite con Karma y construye tu Prestigio en Atinara.">
+  <meta name="description" content="Explora mercados de predicción, participa con Karma ficticio y construye tu Prestigio en Atinara.">
   <meta name="application-name" content="Atinara">
   <meta property="og:site_name" content="Atinara">
   <meta property="og:title" content="Atinara | Explorar mercados">
-  <meta property="og:description" content="Explora mercados de predicción sobre videojuegos, compite con Karma y construye tu Prestigio en Atinara.">
+  <meta property="og:description" content="Explora mercados de predicción, participa con Karma ficticio y construye tu Prestigio en Atinara.">
   <meta property="og:type" content="website">
+  <meta property="og:image" content="https://marcilladiazyolanda-dotcom.github.io/Atinara/assets/brand/atinara-symbol.svg">
+  <meta property="og:image:alt" content="Símbolo A3 de Atinara">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="styles.css?v=20260801-market2">
-  <script src="observability-config.js?v=20260801-market2"></script>
-  <script src="monitoring.js?v=20260801-market2"></script>
+  <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=20260803-step134a">
+  <script src="observability-config.js?v=20260803-step134a"></script>
+  <script src="monitoring.js?v=20260803-step134a"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -38,6 +41,7 @@
         <a class="topbar-link" href="community.html">Comunidad</a>
         <a class="topbar-link" href="ranking.html">Clasificación</a>
         <a class="topbar-link" href="my-predictions.html">Mis predicciones</a>
+        <a class="topbar-link admin-link" href="admin-markets.html" data-admin-only hidden>Gestionar mercados</a>
         <a class="topbar-link admin-link" href="admin-resolution.html" data-admin-only hidden>Resolver mercados</a>
         <a class="topbar-link admin-link" href="admin-community.html" data-admin-only hidden>Moderar</a>
         <button class="icon-button" type="button" aria-label="Notificaciones">
@@ -50,90 +54,57 @@
       </div>
     </header>
 
-    <main>
-      <section class="page-intro" aria-labelledby="page-title">
+    <main class="explore-page">
+      <nav class="category-navigation" aria-label="Categorías de mercados">
+        <div class="chip-group" id="category-filters" role="group" aria-label="Filtrar por categoría"></div>
+      </nav>
+
+      <header class="explore-heading" aria-labelledby="page-title">
         <div>
-          <p class="eyebrow">Temporada beta · Gaming predictivo</p>
           <h1 id="page-title">Explorar mercados</h1>
-          <p class="subtitle">Predice el futuro del gaming. Gana Prestigio. Sube en el ranking.</p>
-          <p class="supporting-copy">Elige un mercado, analiza las opciones y demuestra que lo viste venir.</p>
+          <p class="subtitle">Precios vivos, criterios públicos y actividad real de Atinara.</p>
         </div>
-        <div class="season-snapshot" id="competition-snapshot" role="status" aria-label="Resumen competitivo">
-          <span id="competition-snapshot-label">Tu progreso</span>
-          <strong id="competition-current-rank">Inicia sesión</strong>
-          <small id="competition-current-prestige" hidden></small>
-          <small class="prestige-note" id="rank-progress-note">Consulta tu Prestigio, rango y progreso.</small>
-          <a class="season-snapshot-link" href="ranking.html">Ver clasificación</a>
-        </div>
+        <p class="result-count" id="result-count" aria-live="polite"></p>
+      </header>
+
+      <section class="filters explore-filters" aria-label="Estado y orden de mercados">
+        <div class="chip-group" id="state-filters" role="group" aria-label="Filtrar por estado u orden"></div>
+        <button class="clear-button" id="clear-filters" type="button">Limpiar filtros</button>
       </section>
 
-      <section class="filters" aria-label="Filtros de mercados">
-        <div class="filter-row">
+      <section class="featured-market" id="featured-market" aria-label="Mercado destacado" hidden></section>
+
+      <section class="markets-section" aria-labelledby="markets-heading">
+        <div class="section-heading compact-section-heading">
           <div>
-            <p class="filter-label">Categorías</p>
-            <div class="chip-group" id="category-filters" role="group" aria-label="Filtrar por categoría"></div>
+            <p class="eyebrow">Catálogo real</p>
+            <h2 id="markets-heading">Mercados disponibles</h2>
           </div>
         </div>
-        <div class="filter-row filter-row-bottom">
-          <div>
-            <p class="filter-label">Estado y orden</p>
-            <div class="chip-group" id="state-filters" role="group" aria-label="Filtrar por estado u orden"></div>
-          </div>
-          <button class="clear-button" id="clear-filters" type="button">Limpiar filtros</button>
-        </div>
+        <p class="data-source-warning" id="data-source-warning" hidden></p>
+        <div class="market-grid" id="market-list"></div>
+        <p class="empty-state" id="empty-state" hidden>No hay mercados reales que coincidan con estos filtros.</p>
       </section>
 
-      <section class="featured-market" id="featured-market" aria-label="Mercado destacado"></section>
+      <section class="home-community-callout" aria-labelledby="home-community-title">
+        <div><p class="eyebrow">Comunidad y reputación</p><h2 id="home-community-title">Compara criterios después de explorar</h2><p>Debate mercados, consulta resultados liquidados y descubre la clasificación sin desplazar el catálogo.</p></div>
+        <a class="secondary-button" href="community.html">Ver comunidad</a>
+      </section>
 
-      <div class="content-layout">
-        <section class="markets-section" aria-labelledby="markets-heading">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Mercados disponibles</p>
-              <h2 id="markets-heading">Predicciones activas</h2>
-              <p class="prototype-note">Mercados reales con precios y métricas conectados a Supabase.</p>
-            </div>
-            <p class="result-count" id="result-count" aria-live="polite"></p>
+      <section class="home-secondary-grid" aria-label="Comunidad, clasificación y actividad">
+        <article class="side-card">
+          <div class="side-heading"><p class="eyebrow" id="home-ranking-eyebrow">Clasificación</p><h2 id="home-ranking-title">Top global</h2></div>
+          <div class="leaderboard" id="leaderboard-panel"></div>
+          <a class="secondary-button leaderboard-more-link" href="ranking.html">Ver clasificación completa</a>
+        </article>
+        <article class="side-card activity-card" id="public-activity-panel"><p class="eyebrow">Actividad</p><h2>Ahora en Atinara</h2><p>Conectando con la actividad pública de Supabase…</p></article>
+        <article class="side-card">
+          <p class="eyebrow">Tu progreso</p>
+          <div class="season-snapshot" id="competition-snapshot" role="status" aria-label="Resumen competitivo">
+            <span id="competition-snapshot-label">Tu progreso</span><strong id="competition-current-rank">Inicia sesión</strong><small id="competition-current-prestige" hidden></small><small class="prestige-note" id="rank-progress-note">Consulta tu Prestigio, rango y progreso.</small><a class="season-snapshot-link" href="ranking.html">Ver clasificación</a>
           </div>
-          <p class="data-source-warning" id="data-source-warning" hidden></p>
-          <div class="market-grid" id="market-list"></div>
-          <p class="empty-state" id="empty-state" hidden>No hay mercados que coincidan con estos filtros.</p>
-        </section>
-
-        <aside class="sidebar" aria-label="Panel lateral">
-          <section class="side-card">
-            <div class="side-heading">
-              <p class="eyebrow" id="home-ranking-eyebrow">Clasificación</p>
-              <h2 id="home-ranking-title">Top global</h2>
-            </div>
-            <div class="leaderboard" id="leaderboard-panel"></div>
-            <a class="secondary-button leaderboard-more-link" href="ranking.html">Ver clasificación completa</a>
-          </section>
-
-          <section class="side-card weekly-event">
-            <p class="eyebrow">Evento semanal</p>
-            <h2>La Gran Predicción del Viernes</h2>
-            <p>¿Habrá nuevo Mario 3D en el próximo Direct?</p>
-            <a class="secondary-button" href="market-detail.html?id=nuevo-mario-3d-direct">Ver evento</a>
-          </section>
-
-          <section class="side-card">
-            <p class="eyebrow">Guía rápida</p>
-            <ul class="quick-guide">
-              <li>Karma = saldo para participar.</li>
-              <li>Prestigio = reputación como predictor.</li>
-              <li>Las predicciones activas son privadas.</li>
-              <li>El historial se muestra cuando el mercado se resuelve.</li>
-            </ul>
-          </section>
-
-          <section class="side-card activity-card" id="public-activity-panel">
-            <p class="eyebrow">Actividad</p>
-            <h2>Ahora en Atinara</h2>
-            <p>Conectando con la actividad pública de Supabase...</p>
-          </section>
-        </aside>
-      </div>
+        </article>
+      </section>
     </main>
   </div>
 
@@ -142,9 +113,11 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260801-market2"></script>
-  <script src="password-security.js?v=20260801-market2"></script>
-  <script src="auth.js?v=20260801-market2"></script>
-  <script src="script.js?v=20260801-market2"></script>
+  <script src="supabaseClient.js?v=20260803-step134a"></script>
+  <script src="password-security.js?v=20260803-step134a"></script>
+  <script src="password-recovery.js?v=20260803-step134a"></script>
+  <script src="site-ui.js?v=20260803-step134a"></script>
+  <script src="auth.js?v=20260803-step134a"></script>
+  <script src="script.js?v=20260803-step134a"></script>
 </body>
 </html>

@@ -251,6 +251,7 @@ function createAdminAnalysisMarkup(response, market) {
   const proposedResult = ["Sí", "No", "Anulado"].includes(analysis.proposed_result)
     ? analysis.proposed_result
     : "";
+  const resolutionBlocked = response.can_resolve_market === false;
   const isAlreadyResolved = Boolean(market?.resolution_result);
   const proposalEyebrow = response.analysis_kind === "definition_check"
     ? "2 · Control de definición"
@@ -300,6 +301,8 @@ function createAdminAnalysisMarkup(response, market) {
 
       ${isAlreadyResolved
         ? '<div class="admin-audit-notice"><strong>Mercado ya resuelto.</strong><p>Este análisis es únicamente una auditoría y no permite volver a repartir Karma.</p></div>'
+        : resolutionBlocked
+        ? '<div class="admin-audit-notice" role="alert"><strong>Resolución bloqueada.</strong><p>No se ha preseleccionado ningún resultado. Corrige la definición o reúne evidencia suficiente antes de intentar una resolución manual protegida.</p></div>'
         : createAdminApprovalMarkup(response, proposedResult, sources.length)}
     </div>
   `;
@@ -442,16 +445,20 @@ async function analyzeSelectedMarket() {
     );
 
     if (error) {
-      throw new Error(await readFunctionError(error, "La IA no ha podido analizar este mercado."));
+      throw Object.assign(new Error("ANALYSIS_FAILED"), {
+        friendlyMessage: await readFunctionError(error, "La IA no ha podido analizar este mercado.")
+      });
     }
 
     if (!data?.ok) {
-      throw new Error(data?.message || "La IA no ha podido analizar este mercado.");
+      throw Object.assign(new Error("ANALYSIS_FAILED"), {
+        friendlyMessage: "La IA no ha podido analizar este mercado."
+      });
     }
 
     adminResolutionState.analysisResponse = data;
   } catch (error) {
-    const message = error.message || "La IA no ha podido analizar este mercado.";
+    const message = error?.friendlyMessage || "La IA no ha podido analizar este mercado.";
     adminResolutionState.statusMessage = /resoluci[oó]n manual/i.test(message)
       ? message
       : `${message} Puedes reintentarlo o continuar con la resolución manual.`;
@@ -563,11 +570,15 @@ async function completeMarketResolution({
     );
 
     if (error) {
-      throw new Error(await readFunctionError(error, "No se ha podido resolver el mercado."));
+      throw Object.assign(new Error("RESOLUTION_FAILED"), {
+        friendlyMessage: await readFunctionError(error, "No se ha podido resolver el mercado.")
+      });
     }
 
     if (!data?.ok) {
-      throw new Error(data?.message || "No se ha podido resolver el mercado.");
+      throw Object.assign(new Error("RESOLUTION_FAILED"), {
+        friendlyMessage: "No se ha podido resolver el mercado."
+      });
     }
 
     const resolution = Array.isArray(data.resolution) ? data.resolution[0] : data.resolution;
@@ -578,7 +589,7 @@ async function completeMarketResolution({
     adminResolutionState.statusTone = "success";
     await loadAdminMarkets();
   } catch (error) {
-    adminResolutionState.statusMessage = error.message || "No se ha podido resolver el mercado.";
+    adminResolutionState.statusMessage = error?.friendlyMessage || "No se ha podido resolver el mercado.";
     adminResolutionState.statusTone = "error";
   } finally {
     adminResolutionState.approving = false;

@@ -4,6 +4,8 @@ Fecha de aprobación: 1 de agosto de 2026.
 
 Estado: **aprobado por Yol con las correcciones recogidas en este documento**. El 1 de agosto de 2026 Yol amplió expresamente el alcance con el mercado predictivo vivo descrito en `LIVE_MARKET_ECONOMY.md`. Su implementación local no autoriza por sí sola una publicación, despliegue o modificación de datos.
 
+> **Continuidad del 3 de agosto de 2026:** Yol cerró el Paso 13.3 con A3 y Atinara Sunset aprobados y abrió 13.4. El árbol local implementa los P0, P1 y P2 de este documento; su activación y aceptación siguen pendientes y se controlan con `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`. Esta nota no convierte ninguna preparación local en producción ni adelanta la QA integral.
+
 ## 1. Decisión de lanzamiento
 
 Las prioridades indican el orden de ejecución, no qué puede aplazarse después de la beta:

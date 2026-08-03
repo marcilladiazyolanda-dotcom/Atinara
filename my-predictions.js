@@ -5,7 +5,8 @@ function formatNumber(value) {
 }
 
 function formatKarma(value) {
-  return `${formatNumber(Math.round(Number(value) || 0))} Karma`;
+  return window.atinaraUi?.formatKarmaAmount(value, { maximumFractionDigits: 2 })
+    || `${formatNumber(Math.round(Number(value) || 0))} Karma`;
 }
 
 function formatPercentage(value, maximumFractionDigits = 2) {
@@ -44,8 +45,8 @@ function formatSignedNumber(value) {
 
 function formatSignedKarma(value) {
   const number = Math.round(Number(value) || 0);
-  if (number > 0) return `+${formatNumber(number)} Karma`;
-  return `${formatNumber(number)} Karma`;
+  if (number > 0) return `+${formatKarma(number)}`;
+  return formatKarma(number);
 }
 
 function normalizePredictionResult(value) {

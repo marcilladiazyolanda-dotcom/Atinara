@@ -1,5 +1,12 @@
 # Instrucciones permanentes de Atinara · nombre interno Oraklo
 
+## Estado vigente · 3 de agosto de 2026
+
+- Yol cerró y aprobó el Paso 13.3. `A3 · Criterio modular`, el logotipo, símbolo, favicon, glifo vectorial de Karma, doce glifos, las composiciones 13.3D y la paleta **Atinara Sunset** son la fuente visual oficial de la beta v0.1.
+- El Paso 13.4 es la fase actual. Su implementación se prepara localmente sobre `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`, sin `push`, despliegue, SQL remoto ni cambios de datos.
+- La migración nueva de administración, las Edge Functions, el frontend y la recuperación de contraseña no se consideran activos hasta que Yol ejecute el orden manual de `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`.
+- El Paso 13.5 de Radar y catálogo comienza únicamente después de la activación y aceptación del 13.4. No implementarlo durante este paso.
+
 ## Antes de empezar cualquier tarea
 
 1. Lee `ORAKLO_PROJECT_CONTEXT.md` y `README.md` completos. Para economía, predicción o Penpot lee también `LIVE_MARKET_ECONOMY.md` y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de actuar.
@@ -73,5 +80,6 @@
 - `data.js` fue eliminado de `main` en `4ccd97e` y la limpieza completa se publicó en `a5c633b`. GitHub Pages sirve `v=20260801-market2`, la URL pública de `data.js` devuelve 404 y las invitadas ya no ven Karma, Prestigio ni rango provisionales.
 - La aceptación pública de escritorio quedó superada. La aceptación móvil real se ejecutó en 320 × 568, 375 × 667, 390 × 844 y 768 × 1024 sobre portada, Comunidad, clasificación, perfil público y fichas abierta y resuelta. Detectó dos desbordamientos reales —el mínimo raíz de 320 px y las URLs largas de una resolución—; el árbol de cierre los corrige de forma mínima en `styles.css` y la comprobación visual local posterior supera las seis superficies a 320 y 375 px.
 - Una nueva consulta administrativa exclusivamente de lectura confirmó 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos `legacy_fixed_v1` —5 activos— y 0 `lmsr_v1`; versiones, probabilidades, RPC, privacidad y resolución administrativa siguen protegidas. No se creó ni modificó ninguna predicción.
-- Paso 13.3 continúa en Penpot. La Fase A neutral debe corregirse con `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`; ese documento y `LIVE_MARKET_ECONOMY.md` sustituyen cualquier supuesto anterior sobre porcentajes por recuento, gráfica estática o límite general `×10`.
-- Tras publicar y comprobar en GitHub Pages la corrección móvil mínima del árbol de cierre, el siguiente paso vuelve a ser el Paso 13.3 con Yol: logo, paleta, tipografías, iconografía, retícula, componentes, avatares, emblemas, movimiento y responsive. No se programa otro bloque funcional.
+- Paso 13.3: cerrado y aprobado por Yol el 3 de agosto de 2026. La identidad A3 y Atinara Sunset no están pendientes ni deben rediseñarse durante la implementación.
+- Paso 13.4: implementado en el árbol local de entrega y pendiente de activación manual y aceptación de Yol. No confundir código preparado con funciones activas en producción.
+- Siguiente paso después de activar y aceptar 13.4: Paso 13.5, siguiendo `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`; Radar y el catálogo ampliado siguen fuera del alcance actual.

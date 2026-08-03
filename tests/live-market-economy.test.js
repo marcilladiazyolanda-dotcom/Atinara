@@ -67,6 +67,7 @@ test("el frontend usa cotización versionada, histórico real y ningún catálog
   assert.match(detailSource, /setInterval\([\s\S]+30000\)/);
   assert.match(detailSource, /data-price-point-date/);
   assert.match(detailSource, /data-price-chart-scrubber/);
+  assert.match(detailSource, /market-price-combined-marker/);
   assert.match(detailSource, /data-market-empty-note/);
   assert.doesNotMatch(detailSource, /entry_percentage_input|base_benefit_estimated_input/);
   assert.match(homeSource, /data-market-load-retry/);

@@ -1,5 +1,7 @@
 # Economía del mercado predictivo vivo de Atinara
 
+> **Estado de implementación, 3 de agosto de 2026:** este contrato continúa vigente y manda sobre el Paso 13.4. El frontend local conserva la cotización y confirmación autoritativas, el histórico real, `PRICE_MOVED`, la liquidación por contratos y la compatibilidad `legacy_fixed_v1`. La administración y la puerta previa añadidas en `20260803143000_add_market_administration_gate.sql` son aditivas, no cambian este modelo y todavía no se han ejecutado en Supabase.
+
 Fecha de aprobación: 1 de agosto de 2026.
 
 Estado técnico: **activado en producción el 1 de agosto de 2026**. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez y no debe volver a ejecutarse. Supabase la registra en su historial remoto como `20260801184105_add_live_prediction_market_model`; esta diferencia de hora no autoriza una segunda aplicación. El frontend coordinado se publicó inicialmente en `f7aac42`.

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title">
+  <title id="title">Símbolo de Atinara</title>
+  <g transform="translate(8 8)" fill="#171225">
+    <path d="M14 6h36c4.42 0 8 3.58 8 8v10H40.49L32 32.49 23.51 24H6V14c0-4.42 3.58-8 8-8Z"/>
+    <path d="M6 30h16.07L28 35.93V58H14c-4.42 0-8-3.58-8-8V30Z"/>
+    <path d="m36 35.93 5.93-5.93H58v20c0 4.42-3.58 8-8 8H36V35.93Z"/>
+  </g>
+</svg>

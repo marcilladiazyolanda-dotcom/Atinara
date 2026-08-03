@@ -1,4 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import {
+  getTemporalDefinitionIssues,
+  isReadyForResolution,
+} from "../_shared/market-definition.ts";
 
 const MAX_REQUEST_BYTES = 65_536;
 
@@ -56,6 +60,16 @@ function getSecretKey(): string {
   }
 
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+}
+
+function restHeaders(key: string, authorization?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    apikey: key,
+    "Content-Type": "application/json",
+  };
+  if (authorization) headers.Authorization = authorization;
+  else if (!key.startsWith("sb_secret_")) headers.Authorization = `Bearer ${key}`;
+  return headers;
 }
 
 function normalizeResult(value: unknown): string | null {
@@ -246,6 +260,36 @@ Deno.serve(async (req: Request) => {
         error: "INVALID_RESOLUTION_SOURCES",
         message: "Selecciona entre 1 y 12 fuentes HTTPS validas.",
       }, 400);
+    }
+
+    const marketResponse = await fetch(
+      `${supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
+      {
+        method: "POST",
+        headers: restHeaders(publishableKey, authorization),
+        body: JSON.stringify({ market_id_input: marketId }),
+      },
+    );
+    const market = await marketResponse.json().catch(() => ({})) as JsonRecord;
+    if (!marketResponse.ok) {
+      return jsonResponse({
+        error: "MARKET_LOOKUP_FAILED",
+        message: "No se ha podido volver a comprobar el mercado.",
+      }, 502);
+    }
+    if (!isReadyForResolution(market)) {
+      return jsonResponse({
+        error: "MARKET_PERIOD_NOT_COMPLETE",
+        message: "El periodo original que debe investigarse todavía no ha terminado.",
+      }, 409);
+    }
+    const definitionIssues = getTemporalDefinitionIssues(market);
+    if (definitionIssues.length) {
+      return jsonResponse({
+        error: "MARKET_DEFINITION_BLOCKED",
+        message: "La definición temporal es incoherente. El mercado no se ha liquidado.",
+        blocking_reasons: definitionIssues,
+      }, 409);
     }
 
     const headers: Record<string, string> = {

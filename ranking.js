@@ -422,7 +422,7 @@ async function initializeRanking() {
     ? competitionResult.value
     : fallbackCompetitionStatus;
   rankingState.error = globalResult.status === "rejected"
-    ? globalResult.reason?.message || "No se han podido cargar los datos."
+    ? "No se han podido cargar los datos reales. Reinténtalo más tarde."
     : "";
   rankingState.loading = false;
 
