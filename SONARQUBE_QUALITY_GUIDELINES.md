@@ -35,9 +35,20 @@ La distribución explicaba el origen:
 
 ### Migraciones
 
-Las migraciones aplicadas no se reescriben. `.sonarcloud.properties` ignora
-exclusivamente `plsql:S1192` dentro de `supabase/migrations/**`. Los archivos
-siguen analizándose para cualquier otra regla de seguridad, fiabilidad o calidad.
+Las migraciones aplicadas no se reescriben. El análisis automático de
+SonarQube Cloud no aplica exclusiones avanzadas desde
+`.sonarcloud.properties`; ese archivo solo mantiene el alcance básico del
+análisis. La excepción selectiva debe guardarse en el panel del proyecto:
+
+1. `Administration` → `General Settings` → `Analysis Scope`.
+2. Abrir `Ignore Issues on Multiple Criteria`.
+3. Añadir el criterio con regla `plsql:S1192`.
+4. Usar el patrón de archivo `supabase/migrations/**/*.sql`.
+5. Guardar y lanzar un análisis nuevo.
+
+Esta combinación omite únicamente los literales repetidos de las migraciones
+históricas. Los mismos archivos siguen analizándose para cualquier otra regla
+de seguridad, fiabilidad o calidad.
 
 Nunca se debe:
 
@@ -114,6 +125,8 @@ Después de subir a `main`:
 5. si aparece una incidencia, corregir la causa en código editable o documentar
    una excepción mínima y verificable.
 
-Las pruebas `tests/sonarqube-quality.test.js` protegen la exclusión mínima de
-migraciones, la semántica HTML nativa, los contrastes corregidos, la separación
-de responsabilidades administrativas y la versión coordinada de caché.
+Las pruebas `tests/sonarqube-quality.test.js` impiden volver a declarar una
+exclusión avanzada ineficaz en `.sonarcloud.properties`, protegen la trampa de
+foco que originó `javascript:S3403`, la semántica HTML nativa, los contrastes
+corregidos, la separación de responsabilidades administrativas y la versión
+coordinada de caché.

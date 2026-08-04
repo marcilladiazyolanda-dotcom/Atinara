@@ -35,12 +35,18 @@ function contrast(foreground, background) {
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }
 
-test("las excepciones de Sonar conservan las migraciones analizadas y solo omiten literales repetidos", () => {
+test("la configuración local de Sonar usa únicamente parámetros admitidos por el análisis automático", () => {
   const properties = read(".sonarcloud.properties");
-  assert.match(properties, /ruleKey=plsql:S1192/);
-  assert.match(properties, /resourceKey=supabase\/migrations\/\*\*/);
   assert.doesNotMatch(properties, /sonar\.exclusions=[^\n]*supabase\/migrations/);
+  assert.doesNotMatch(properties, /sonar\.issue\.ignore\.multicriteria/);
   assert.doesNotMatch(properties, /sonar\.issue\.ignore\.allfile/);
+});
+
+test("la trampa de foco del acceso no compara elementos de tipos opcionales", () => {
+  const auth = read("auth.js");
+  assert.match(auth, /first\?\.matches\(":focus"\)/);
+  assert.match(auth, /last\?\.matches\(":focus"\)/);
+  assert.doesNotMatch(auth, /document\.activeElement === (?:first|last)/);
 });
 
 test("las páginas usan elementos HTML nativos para navegación, estado, filtros y diálogo", () => {

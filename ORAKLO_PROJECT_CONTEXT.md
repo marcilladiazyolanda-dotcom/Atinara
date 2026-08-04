@@ -24,6 +24,14 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - Esta entrega no despliega Edge Functions ni modifica Supabase, Cron, Vault,
   autenticación, permisos, mercados, predicciones, comentarios, economía o datos
   reales. Queda pendiente de la subida manual de Yol y del nuevo análisis.
+- El análisis posterior del commit público `8d8ffd91` redujo el total a 112,
+  pero reveló una incidencia `javascript:S3403` en la trampa de foco de
+  `auth.js` y mantuvo 111 incidencias `plsql:S1192`. La causa de estas últimas
+  fue que el análisis automático ignoró la exclusión avanzada declarada en
+  `.sonarcloud.properties`. La corrección final reescribe la comparación de
+  foco y traslada ese único criterio a `Administration → General Settings →
+  Analysis Scope → Ignore Issues on Multiple Criteria`, con la regla
+  `plsql:S1192` y el patrón `supabase/migrations/**/*.sql`.
 
 ## 1. Objetivo del producto
 
