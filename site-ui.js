@@ -2,6 +2,15 @@
   "use strict";
 
   const SEARCH_LIMIT = 8;
+  const NAVIGATION_DESTINATIONS = Object.freeze([
+    { label: "Explorar mercados", href: "index.html" },
+    { label: "Comunidad", href: "community.html" },
+    { label: "Clasificación", href: "ranking.html" },
+    { label: "Mis predicciones", href: "my-predictions.html" },
+    { label: "Gestionar mercados", href: "admin-markets.html", adminOnly: true },
+    { label: "Resolver mercados", href: "admin-resolution.html", adminOnly: true },
+    { label: "Moderar comunidad", href: "admin-community.html", adminOnly: true }
+  ]);
   const state = {
     markets: null,
     loadingPromise: null,
@@ -25,6 +34,56 @@
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
+  }
+
+  function normalizeCurrentPage(pathname = global.location?.pathname || "") {
+    const segments = String(pathname).split("/").filter(Boolean);
+    const lastSegment = decodeURIComponent(segments.at(-1) || "").toLocaleLowerCase("es-ES");
+    return !lastSegment || !lastSegment.includes(".") ? "index.html" : lastSegment;
+  }
+
+  function getNavigationDestinations(
+    pathname = global.location?.pathname || "",
+    { includeAdmin = true } = {}
+  ) {
+    const currentPage = normalizeCurrentPage(pathname);
+    return NAVIGATION_DESTINATIONS.filter((destination) => {
+      if (destination.href === currentPage) return false;
+      return includeAdmin || !destination.adminOnly;
+    });
+  }
+
+  function createNavigationLink(destination) {
+    const link = document.createElement("a");
+    link.href = destination.href;
+    link.textContent = destination.label;
+    if (destination.adminOnly) link.dataset.adminOnly = "true";
+    return link;
+  }
+
+  function renderNavigationLinks(container, { includeAdmin = false } = {}) {
+    if (!container) return;
+    container.replaceChildren(
+      ...getNavigationDestinations(global.location?.pathname || "", { includeAdmin })
+        .map(createNavigationLink)
+    );
+  }
+
+  function setAdminNavigation(isAuthorizedAdmin) {
+    const includeAdmin = isAuthorizedAdmin === true;
+    document.querySelectorAll("[data-primary-navigation]").forEach((navigation) => {
+      renderNavigationLinks(navigation, { includeAdmin });
+    });
+
+    const mobilePanel = document.querySelector("#mobile-menu-panel");
+    if (mobilePanel) {
+      const firstControl = mobilePanel.querySelector(".mobile-account-metrics");
+      const fragment = document.createDocumentFragment();
+      getNavigationDestinations(global.location?.pathname || "", { includeAdmin })
+        .forEach((destination) => fragment.appendChild(createNavigationLink(destination)));
+      mobilePanel.querySelectorAll(":scope > a").forEach((link) => link.remove());
+      mobilePanel.insertBefore(fragment, firstControl);
+    }
   }
 
   function formatNumber(value, maximumFractionDigits = 2) {
@@ -107,8 +166,12 @@
 
   function closeSearch({ restoreFocus = false } = {}) {
     const panel = getSearchPanel();
-    if (panel) panel.hidden = true;
+    if (panel) {
+      panel.hidden = true;
+      panel.replaceChildren();
+    }
     state.activeIndex = -1;
+    state.results = [];
     document.querySelectorAll("[data-global-search]").forEach((input) => {
       input.setAttribute("aria-expanded", "false");
       input.removeAttribute("aria-activedescendant");
@@ -133,23 +196,14 @@
   function renderSearchResults(query, status = "ready") {
     const panel = getSearchPanel();
     if (!panel || !state.trigger) return;
+    if (!query.trim()) {
+      closeSearch();
+      return;
+    }
     panel.replaceChildren();
     panel.hidden = false;
     state.trigger.setAttribute("aria-expanded", "true");
     state.activeIndex = -1;
-
-    const heading = document.createElement("div");
-    heading.className = "global-search-heading";
-    const headingText = document.createElement("strong");
-    headingText.textContent = status === "loading" ? "Buscando mercados" : "Mercados reales";
-    const closeButton = document.createElement("button");
-    closeButton.type = "button";
-    closeButton.className = "global-search-close";
-    closeButton.setAttribute("aria-label", "Cerrar resultados y volver al buscador");
-    closeButton.textContent = "Cerrar";
-    closeButton.addEventListener("click", () => closeSearch({ restoreFocus: true }));
-    heading.append(headingText, closeButton);
-    panel.appendChild(heading);
 
     if (status === "loading") {
       const loading = document.createElement("p");
@@ -170,14 +224,6 @@
     }
 
     state.results = filterMarkets(state.markets, query);
-    if (!query.trim()) {
-      const hint = document.createElement("p");
-      hint.className = "global-search-state";
-      hint.textContent = "Escribe una pregunta, categoría o estado.";
-      panel.appendChild(hint);
-      return;
-    }
-
     if (!state.results.length) {
       const empty = document.createElement("p");
       empty.className = "global-search-state";
@@ -248,14 +294,18 @@
 
   async function openSearch(input) {
     state.trigger = input;
+    if (!input.value.trim()) {
+      closeSearch();
+      return;
+    }
     renderSearchResults(input.value, state.markets ? "ready" : "loading");
     try {
       await loadMarketsForSearch();
-      if (state.trigger === input && !getSearchPanel()?.hidden) {
+      if (state.trigger === input && input.value.trim() && !getSearchPanel()?.hidden) {
         renderSearchResults(input.value);
       }
     } catch (_error) {
-      renderSearchResults(input.value, "error");
+      if (input.value.trim()) renderSearchResults(input.value, "error");
     }
   }
 
@@ -298,11 +348,20 @@
     input.setAttribute("aria-controls", "global-search-results");
     input.setAttribute("aria-expanded", "false");
 
-    input.addEventListener("focus", () => openSearch(input));
+    if (input.dataset.searchEnhanced === "true") return;
+    input.dataset.searchEnhanced = "true";
+    input.addEventListener("focus", () => {
+      state.trigger = input;
+      if (input.value.trim()) openSearch(input);
+      else closeSearch();
+    });
     input.addEventListener("input", () => {
       state.trigger = input;
-      renderSearchResults(input.value, state.markets ? "ready" : "loading");
-      if (!state.markets) openSearch(input);
+      if (!input.value.trim()) {
+        closeSearch();
+        return;
+      }
+      openSearch(input);
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown") {
@@ -334,6 +393,25 @@
     brand.appendChild(logo);
   }
 
+  function ensureCanonicalNavigation(topbar) {
+    const navigation = topbar.querySelector("[data-primary-navigation]") || document.createElement("nav");
+    topbar.querySelectorAll(".detail-nav").forEach((legacyNavigation) => {
+      if (legacyNavigation !== navigation) legacyNavigation.remove();
+    });
+    topbar.querySelectorAll(".topbar-actions .topbar-link").forEach((legacyControl) => {
+      legacyControl.remove();
+    });
+
+    navigation.className = "primary-navigation";
+    navigation.dataset.primaryNavigation = "true";
+    navigation.setAttribute("aria-label", "Navegación principal");
+    renderNavigationLinks(navigation);
+
+    if (!navigation.isConnected) {
+      topbar.querySelector(".topbar-actions")?.insertAdjacentElement("beforebegin", navigation);
+    }
+  }
+
   function ensureMobileMenu(topbar) {
     if (topbar.querySelector("[data-mobile-menu-toggle]")) return;
     const button = document.createElement("button");
@@ -350,18 +428,39 @@
     panel.className = "mobile-menu-panel";
     panel.setAttribute("aria-label", "Navegación móvil");
     panel.hidden = true;
-    panel.innerHTML = `
-      <a href="index.html">Explorar mercados</a>
-      <a href="community.html">Comunidad</a>
-      <a href="ranking.html">Clasificación</a>
-      <a href="my-predictions.html">Mis predicciones</a>
-      <a href="admin-markets.html" data-admin-only hidden>Administrar mercados</a>
-      <a href="admin-resolution.html" data-admin-only hidden>Resolver mercados</a>
-      <a href="admin-community.html" data-admin-only hidden>Moderar comunidad</a>
-      <button type="button" data-auth-open data-auth-state="guest">Entrar o crear cuenta</button>
-      <button type="button" data-auth-state="user" data-profile-username hidden>Cuenta</button>
-      <button type="button" data-auth-signout data-auth-state="user" hidden>Cerrar sesión</button>
+    const links = document.createDocumentFragment();
+    getNavigationDestinations(global.location?.pathname || "", { includeAdmin: false })
+      .forEach((destination) => links.appendChild(createNavigationLink(destination)));
+    panel.appendChild(links);
+
+    const metrics = document.createElement("div");
+    metrics.className = "mobile-account-metrics";
+    metrics.dataset.authPrivate = "true";
+    metrics.hidden = true;
+    metrics.innerHTML = `
+      <span aria-label="Karma disponible"><strong data-profile-karma>—</strong></span>
+      <span>Prestigio: <strong data-profile-prestige>—</strong></span>
+      <span>Rango: <strong data-profile-rank>—</strong></span>
     `;
+
+    const guestButton = document.createElement("button");
+    guestButton.type = "button";
+    guestButton.dataset.authOpen = "true";
+    guestButton.dataset.authState = "guest";
+    guestButton.textContent = "Entrar o crear cuenta";
+    const profileButton = document.createElement("button");
+    profileButton.type = "button";
+    profileButton.dataset.authState = "user";
+    profileButton.dataset.profileUsername = "true";
+    profileButton.hidden = true;
+    profileButton.textContent = "Cuenta";
+    const signOutButton = document.createElement("button");
+    signOutButton.type = "button";
+    signOutButton.dataset.authSignout = "true";
+    signOutButton.dataset.authState = "user";
+    signOutButton.hidden = true;
+    signOutButton.textContent = "Cerrar sesión";
+    panel.append(metrics, guestButton, profileButton, signOutButton);
     topbar.appendChild(button);
     topbar.insertAdjacentElement("afterend", panel);
 
@@ -380,7 +479,7 @@
       button.focus();
     });
     panel.addEventListener("click", (event) => {
-      if (!event.target.closest("a")) return;
+      if (!event.target.closest("a, button")) return;
       panel.hidden = true;
       button.setAttribute("aria-expanded", "false");
       button.setAttribute("aria-label", "Abrir menú principal");
@@ -392,6 +491,7 @@
     if (!topbar) return;
     ensureBrand(topbar);
     ensureSearch(topbar);
+    ensureCanonicalNavigation(topbar);
     ensureMobileMenu(topbar);
   }
 
@@ -403,6 +503,8 @@
   }
 
   function initialize() {
+    if (document.documentElement.dataset.atinaraUiInitialized === "true") return;
+    document.documentElement.dataset.atinaraUiInitialized = "true";
     enhanceHeader();
     bindGlobalDismissal();
     document.querySelectorAll("[data-karma-value]").forEach((node) => {
@@ -413,18 +515,23 @@
   const api = {
     escapeHtml,
     normalizeSearchText,
+    normalizeCurrentPage,
+    getNavigationDestinations,
     filterMarkets,
     formatNumber,
     formatKarmaAmount,
     setKarmaAmount,
     closeSearch,
+    setAdminNavigation,
     enhanceHeader
   };
 
   global.atinaraUi = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document !== "undefined") {
-    if (document.readyState === "loading") {
+    if (document.querySelector(".topbar")) {
+      initialize();
+    } else if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initialize, { once: true });
     } else {
       initialize();

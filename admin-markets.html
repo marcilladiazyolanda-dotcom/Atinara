@@ -13,9 +13,9 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20260803-step134a">
-  <script src="observability-config.js?v=20260803-step134a"></script>
-  <script src="monitoring.js?v=20260803-step134a"></script>
+  <link rel="stylesheet" href="styles.css?v=20260804-ui1">
+  <script src="observability-config.js?v=20260804-ui1"></script>
+  <script src="monitoring.js?v=20260804-ui1"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -24,13 +24,14 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">Atinara</span>
       </a>
-      <nav class="detail-nav" aria-label="Navegación administrativa">
-        <a href="index.html">Explorar</a>
-        <a href="admin-markets.html" aria-current="page">Mercados</a>
-        <a href="admin-resolution.html">Resolución</a>
-        <a href="admin-community.html">Moderación</a>
-      </nav>
+      <nav class="primary-navigation" data-primary-navigation aria-label="Navegación principal"></nav>
       <div class="topbar-actions" role="group" aria-label="Estado de la cuenta">
+        <span class="karma-pill" role="status" aria-label="Karma disponible" data-auth-private hidden>
+          <span class="karma-symbol" aria-hidden="true">K</span>
+          <strong data-profile-karma>—</strong>
+        </span>
+        <span class="user-stat-pill" data-auth-private hidden>Prestigio: <strong data-profile-prestige>—</strong></span>
+        <span class="user-stat-pill" data-auth-private hidden>Rango: <strong data-profile-rank>—</strong></span>
         <button class="profile-button" type="button" data-auth-open data-auth-state="guest">Entrar</button>
         <button class="profile-button" type="button" data-auth-state="user" data-profile-username hidden>@Usuario</button>
         <button class="logout-button" type="button" data-auth-signout data-auth-state="user" hidden>Salir</button>
@@ -88,12 +89,12 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260803-step134a"></script>
-  <script src="password-security.js?v=20260803-step134a"></script>
-  <script src="password-recovery.js?v=20260803-step134a"></script>
-  <script src="site-ui.js?v=20260803-step134a"></script>
-  <script src="auth.js?v=20260803-step134a"></script>
-  <script src="market-admin-validation.js?v=20260803-step134a"></script>
-  <script src="admin-markets.js?v=20260803-step134a"></script>
+  <script src="supabaseClient.js?v=20260804-ui1"></script>
+  <script src="password-security.js?v=20260804-ui1"></script>
+  <script src="password-recovery.js?v=20260804-ui1"></script>
+  <script src="site-ui.js?v=20260804-ui1"></script>
+  <script src="auth.js?v=20260804-ui1"></script>
+  <script src="market-admin-validation.js?v=20260804-ui1"></script>
+  <script src="admin-markets.js?v=20260804-ui1"></script>
 </body>
 </html>

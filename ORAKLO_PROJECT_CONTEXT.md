@@ -1,10 +1,10 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 3 de agosto de 2026.
+Última actualización del contexto: 4 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. El Paso 13.4 está implementado en un árbol local basado en `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`, pero sigue pendiente de activación manual y aceptación. GitHub, GitHub Pages, Supabase, Penpot y los datos reales no se modificaron durante esta preparación.
+> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. El árbol canónico previo a la corrección visual final del Paso 13.4 es `origin/main = cf9d114eee7e2284d80de6bbdef7777b07547730`. La corrección unifica la cabecera y la navegación, repara contraste y responsive, elimina el control inerte y evita abrir el buscador sin consulta. No modifica Supabase, la economía, mercados, predicciones ni datos reales.
 
 ## 1. Objetivo del producto
 
@@ -58,6 +58,15 @@ Archivos principales:
 - `supabase/migrations/`: migraciones versionadas que sí están registradas en el repositorio.
 
 ## 3. Estado Git en el momento del relevo
+
+Corrección visual final del Paso 13.4, 4 de agosto de 2026:
+
+- Clon limpio de partida: `C:\Users\34696\Documents\Atinara-ui-fix`.
+- Base remota inspeccionada: `origin/main = cf9d114eee7e2284d80de6bbdef7777b07547730`.
+- Rama de trabajo: `codex/fix-ui-responsive`.
+- La navegación usa una lista canónica, omite la ruta actual y solo incorpora destinos administrativos después de que la sesión autoritativa confirme `oraklo_admin`.
+- La validación visual cubre los seis tamaños solicitados sin ocultar desbordamientos mediante `overflow-x`.
+- El directorio vacío `C:\Users\34696\Documents\ATINARA` no se utilizó como base y no se descartó ningún trabajo existente.
 
 Estado local del Paso 13.4, 3 de agosto de 2026:
 

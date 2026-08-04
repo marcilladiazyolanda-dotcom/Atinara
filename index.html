@@ -14,9 +14,9 @@
   <meta property="og:image:alt" content="Símbolo A3 de Atinara">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20260803-step134a">
-  <script src="observability-config.js?v=20260803-step134a"></script>
-  <script src="monitoring.js?v=20260803-step134a"></script>
+  <link rel="stylesheet" href="styles.css?v=20260804-ui1">
+  <script src="observability-config.js?v=20260804-ui1"></script>
+  <script src="monitoring.js?v=20260804-ui1"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -31,6 +31,8 @@
         <input id="market-search" type="search" placeholder="Buscar mercados, juegos, streamers o eventos..." autocomplete="off">
       </div>
 
+      <nav class="primary-navigation" data-primary-navigation aria-label="Navegación principal"></nav>
+
       <div class="topbar-actions" role="group" aria-label="Estado del usuario">
         <span class="karma-pill" role="status" aria-label="Karma disponible" data-auth-private hidden>
           <span class="karma-symbol" aria-hidden="true">K</span>
@@ -38,16 +40,6 @@
         </span>
         <span class="user-stat-pill" data-auth-private hidden>Prestigio: <strong data-profile-prestige>—</strong></span>
         <span class="user-stat-pill" data-auth-private hidden>Rango: <strong data-profile-rank>—</strong></span>
-        <a class="topbar-link" href="community.html">Comunidad</a>
-        <a class="topbar-link" href="ranking.html">Clasificación</a>
-        <a class="topbar-link" href="my-predictions.html">Mis predicciones</a>
-        <a class="topbar-link admin-link" href="admin-markets.html" data-admin-only hidden>Gestionar mercados</a>
-        <a class="topbar-link admin-link" href="admin-resolution.html" data-admin-only hidden>Resolver mercados</a>
-        <a class="topbar-link admin-link" href="admin-community.html" data-admin-only hidden>Moderar</a>
-        <button class="icon-button" type="button" aria-label="Notificaciones">
-          <span class="bell" aria-hidden="true"></span>
-          <span class="notification-dot" aria-hidden="true"></span>
-        </button>
         <button class="profile-button" type="button" data-auth-open data-auth-state="guest" data-profile-username aria-label="Entrar en Atinara">Entrar</button>
         <button class="profile-button" type="button" data-auth-state="user" data-profile-username hidden aria-label="Usuario @Usuario">@Usuario</button>
         <button class="logout-button" type="button" data-auth-signout data-auth-state="user" hidden>Salir</button>
@@ -113,11 +105,11 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260803-step134a"></script>
-  <script src="password-security.js?v=20260803-step134a"></script>
-  <script src="password-recovery.js?v=20260803-step134a"></script>
-  <script src="site-ui.js?v=20260803-step134a"></script>
-  <script src="auth.js?v=20260803-step134a"></script>
-  <script src="script.js?v=20260803-step134a"></script>
+  <script src="supabaseClient.js?v=20260804-ui1"></script>
+  <script src="password-security.js?v=20260804-ui1"></script>
+  <script src="password-recovery.js?v=20260804-ui1"></script>
+  <script src="site-ui.js?v=20260804-ui1"></script>
+  <script src="auth.js?v=20260804-ui1"></script>
+  <script src="script.js?v=20260804-ui1"></script>
 </body>
 </html>

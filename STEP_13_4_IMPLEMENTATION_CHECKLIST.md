@@ -37,7 +37,7 @@ Estado: **implementado localmente y pendiente de activación manual y aceptació
 - [x] `prefers-reduced-motion`, contraste AA de combinaciones canónicas y gráfica con resumen textual.
 - [x] QA local sin desbordamiento global a 320, 375, 390, 768, 1024 y 1440 px en los recorridos inspeccionados.
 - [x] Consola local sin errores o advertencias propios de Atinara.
-- [x] Versión coordinada `v=20260803-step134a` en las diez páginas HTML.
+- [x] Versión coordinada `v=20260804-ui1` en las diez páginas HTML.
 - [x] Compatibilidad directa con `/Atinara/` y GitHub Pages sin compilación.
 - [ ] Prueba autenticada de los flujos de usuaria y administradora. **Pendiente de activación y entorno controlado; no se fingió.**
 - [ ] Envío real de recuperación. **Pendiente de SMTP/Mailjet.**
@@ -55,11 +55,12 @@ Estado: **implementado localmente y pendiente de activación manual y aceptació
 
 ## 5. Validación local
 
-- [x] `npm run validate`: sintaxis válida en 30 JavaScript, 51/51 pruebas unitarias y TypeScript de Checkly.
+- [x] `npm run validate`: sintaxis válida en 31 JavaScript, 58/58 pruebas unitarias y TypeScript de Checkly.
 - [x] Pruebas de economía LMSR, buscador, recuperación, privacidad, permisos, invalidación, fallo cerrado, HTML malicioso, marca, SVG y contraste.
 - [x] `git diff --check`.
 - [x] Búsquedas de `data.js`, Oraklo visible, secretos, lenguaje de compraventa, `×10` nuevo y fluctuaciones simuladas.
-- [x] Revisión visual local como invitada, sin iniciar sesión ni crear datos.
+- [x] Revisión visual local como invitada en 1648 × 928, 1366 × 768, 1280 × 720, 768 × 1024, 375 × 667 y 320 × 568, sin iniciar sesión ni crear datos.
+- [x] Corrección final de cabecera canónica, buscador vacío, hover de tarjetas, Karma en línea, contraste de métricas y superficies claras de Comunidad y Clasificación.
 - [ ] QA integral pública y aceptación final. **Pertenece al Paso 13.6.**
 
 ## 6. Orden seguro de activación manual
@@ -72,7 +73,7 @@ Estado: **implementado localmente y pendiente de activación manual y aceptació
 6. Añadir a Supabase Auth la redirección exacta `https://marcilladiazyolanda-dotcom.github.io/Atinara/reset-password.html` y conservar la Site URL `https://marcilladiazyolanda-dotcom.github.io/Atinara/`.
 7. Configurar SMTP propio/Mailjet desde el panel de Supabase: remitente Atinara, host, puerto y credenciales solo en el proveedor/panel. Revisar en español las plantillas de recuperación, confirmación e invitación. No registrar secretos en archivos.
 8. Extraer el ZIP y subir **su contenido completo**, no el ZIP, mediante `Add file → Upload files` en `main`. No hay eliminaciones manuales previstas en esta entrega.
-9. Esperar el despliegue de Pages y comprobar la versión `v=20260803-step134a`, recursos A3, diez HTML y rutas bajo `/Atinara/`.
+9. Esperar el despliegue de Pages y comprobar la versión `v=20260804-ui1`, recursos A3, diez HTML y rutas bajo `/Atinara/`.
 10. Ejecutar la QA autenticada en un entorno controlado: administración, fallo cerrado, invalidación, programación, recuperación real, privacidad y LMSR. No utilizar el mercado contradictorio de julio ni alterar datos existentes.
 
 El orden es intencionado: la capa de Supabase es aditiva y compatible con el frontend anterior; el frontend nuevo solo se publica después de que sus RPC y Edge Functions estén disponibles.

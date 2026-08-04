@@ -292,6 +292,8 @@ function updateHeaderSessionState() {
   const isAuthenticated = Boolean(authState.session);
   const isAdmin = authState.user?.app_metadata?.oraklo_admin === true;
 
+  window.atinaraUi?.setAdminNavigation?.(isAuthenticated && isAdmin);
+
   document.querySelectorAll("[data-profile-karma]").forEach((node) => {
     if (window.atinaraUi?.setKarmaAmount) {
       window.atinaraUi.setKarmaAmount(node, profile.karma, { maximumFractionDigits: 0 });

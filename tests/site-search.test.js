@@ -21,6 +21,37 @@ test("el buscador normaliza acentos, limita resultados y no fabrica coincidencia
   assert.equal(ui.filterMarkets([...markets, ...markets], "abierto", 2).length, 2);
 });
 
+test("la navegación conserva el orden canónico y omite únicamente la página actual", () => {
+  assert.equal(ui.normalizeCurrentPage("/Atinara/"), "index.html");
+  assert.equal(ui.normalizeCurrentPage("/Atinara/index.html"), "index.html");
+  assert.deepEqual(
+    ui.getNavigationDestinations("/Atinara/community.html").map((item) => item.label),
+    [
+      "Explorar mercados",
+      "Clasificación",
+      "Mis predicciones",
+      "Gestionar mercados",
+      "Resolver mercados",
+      "Moderar comunidad"
+    ]
+  );
+  assert.deepEqual(
+    ui.getNavigationDestinations("/Atinara/admin-resolution.html").map((item) => item.label),
+    [
+      "Explorar mercados",
+      "Comunidad",
+      "Clasificación",
+      "Mis predicciones",
+      "Gestionar mercados",
+      "Moderar comunidad"
+    ]
+  );
+  assert.equal(
+    ui.getNavigationDestinations("/Atinara/profile.html").filter((item) => item.adminOnly).length,
+    3
+  );
+});
+
 test("el formateador de Karma coloca el glifo después de la cifra y conserva la etiqueta accesible", () => {
   const markup = ui.formatKarmaAmount(200);
   assert.match(markup, />200<\/span><img class="karma-glyph"/);
@@ -30,4 +61,11 @@ test("el formateador de Karma coloca el glifo después de la cifra y conserva la
 
 test("el escape compartido neutraliza contenido HTML malicioso", () => {
   assert.equal(ui.escapeHtml('<img src=x onerror="alert(1)">'), "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+});
+
+test("la navegacion publica omite por completo los destinos administrativos", () => {
+  const labels = ui.getNavigationDestinations("/Atinara/index.html", { includeAdmin: false })
+    .map((destination) => destination.label);
+
+  assert.deepEqual(labels, ["Comunidad", "Clasificación", "Mis predicciones"]);
 });
