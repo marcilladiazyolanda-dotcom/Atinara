@@ -65,7 +65,13 @@ test("las combinaciones canónicas de texto y semántica superan WCAG 2.2 AA", (
     ["0B7F78", "E9FBF8", 4.5, "Yes / Yes Soft"],
     ["B94459", "FFF0F2", 4.5, "No / No Soft"],
     ["9A4C12", "FFF4E8", 4.5, "Karma Copper / Karma Soft"],
-    ["FFFFFF", "171225", 4.5, "White / Brand Ink"]
+    ["FFFFFF", "171225", 4.5, "White / Brand Ink"],
+    ["F8F6FC", "0D0A14", 4.5, "Dark Text / Dark Background"],
+    ["C8C0D4", "0D0A14", 4.5, "Dark Secondary / Dark Background"],
+    ["B39CFF", "0D0A14", 4.5, "Dark Link / Dark Background"],
+    ["72DED5", "123B38", 4.5, "Dark Yes / Dark Yes Soft"],
+    ["FF9AAC", "411F2A", 4.5, "Dark No / Dark No Soft"],
+    ["FFB477", "3B2518", 4.5, "Dark Karma / Dark Karma Soft"]
   ];
   combinations.forEach(([foreground, background, minimum, label]) => {
     assert.ok(contrast(foreground, background) >= minimum, `${label} no alcanza ${minimum}:1`);

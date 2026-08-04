@@ -44,11 +44,14 @@ test("el buscador vacío no construye un panel redundante", () => {
   assert.match(source, /if \(!input\.value\.trim\(\)\) \{\s*closeSearch\(\);/);
 });
 
-test("las tarjetas y paneles principales conservan superficies claras", () => {
+test("las tarjetas y paneles principales usan superficies semÃ¡nticas en ambos temas", () => {
   const css = read("styles.css");
-  assert.match(css, /\.market-card:hover,\s*\.market-card:focus-within\s*\{[^}]*background:\s*#fcfaff/s);
+  assert.match(css, /\.market-card:hover,\s*\.market-card:focus-within\s*\{[^}]*background:\s*var\(--interactive-surface-hover\)/s);
+  assert.match(css, /\.predictions-grid \.prediction-card:hover,\s*\.predictions-grid \.prediction-card:focus-within\s*\{[^}]*background:\s*var\(--interactive-surface-hover\)/s);
+  assert.doesNotMatch(css, /\.prediction-card:hover\s*\{[^}]*rgba\(21,\s*28,\s*45/s);
   assert.match(css, /\.community-feed-panel,\s*\.community-sidebar-card\s*\{[^}]*background:\s*var\(--surface\)/s);
   assert.match(css, /\.ranking-summary-card,\s*\.ranking-board-card,\s*\.rank-tier\s*\{[^}]*background:\s*var\(--surface\)/s);
+  assert.match(css, /\.admin-market-panel,\s*\.admin-analysis-panel,\s*\.admin-access-card,\s*\.admin-loading-card\s*\{[^}]*background:\s*var\(--surface\)/s);
 });
 
 test("Karma y las métricas de cabecera no pueden partirse ni heredar texto oscuro", () => {

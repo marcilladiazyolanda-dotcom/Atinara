@@ -492,6 +492,7 @@
     ensureBrand(topbar);
     ensureSearch(topbar);
     ensureCanonicalNavigation(topbar);
+    global.atinaraTheme?.ensureToggle(topbar);
     ensureMobileMenu(topbar);
   }
 

@@ -4,7 +4,15 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. El árbol canónico previo a la corrección visual final del Paso 13.4 es `origin/main = cf9d114eee7e2284d80de6bbdef7777b07547730`. La corrección unifica la cabecera y la navegación, repara contraste y responsive, elimina el control inerte y evita abrir el buscador sin consulta. No modifica Supabase, la economía, mercados, predicciones ni datos reales.
+> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. La corrección 13.4.1 ya está publicada en `origin/main = 26685e203715c06df55f743c4be536e3e83cd219`. El Paso 13.4.2 corrige localmente dos estados visuales residuales y añade el tema claro/oscuro global; queda pendiente de la subida manual de Yol. No modifica Supabase, la economía, mercados, predicciones ni datos reales.
+
+### Paso 13.4.2 · corrección de contraste y tema global
+
+- Base canónica comprobada: `origin/main = 26685e203715c06df55f743c4be536e3e83cd219` (`fix(ui): unify headers and restore interface contrast`).
+- Se ha preparado localmente un tema claro/oscuro global, persistente mediante `atinara-theme`, con primera visita clara y sin depender de la preferencia del sistema operativo.
+- Las diez páginas cargan `theme.js` antes de `styles.css` con la versión coordinada `v=20260804-theme1`; la cabecera Atinara Sunset permanece cromáticamente estable en ambos temas.
+- Se corrigieron en origen el `hover`/`focus-within` oscuro heredado de `Mis predicciones` y las superficies oscuras residuales de `Resolver mercados`.
+- La entrega de esta subfase es exclusivamente un ZIP local con los archivos nuevos o modificados. GitHub, GitHub Pages, Supabase, autenticación, permisos, mercados, predicciones, comentarios, economía y datos reales permanecen sin cambios.
 
 ## 1. Objetivo del producto
 
