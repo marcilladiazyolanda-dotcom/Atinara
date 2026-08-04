@@ -140,6 +140,44 @@ test("Tavily solo queda utilizable cuando la adaptación demuestra pregunta, fec
   assert.equal(radar.isAdaptedIdeaComplete(adapted), true);
 });
 
+test("la entrada de Gemini queda acotada y elimina campos innecesarios", () => {
+  const compact = radar.compactGeminiCandidate({
+    provider: "polymarket",
+    external_id: "poly-gaming-1",
+    source_title: "T".repeat(500),
+    source_question: "Q".repeat(500),
+    source_description: "D".repeat(4000),
+    source_resolution_rules: "R".repeat(6000),
+    source_resolution_url: "https://example.com/rules",
+    source_close_at: "2026-12-01T22:59:00Z",
+    source_tags: Array.from({ length: 20 }, (_, index) => `tag-${index}`),
+    source_volume_total: 5000,
+    private_field: "never-send"
+  });
+  assert.equal(compact.source_title.length, 300);
+  assert.equal(compact.source_question.length, 300);
+  assert.equal(compact.source_description.length, 900);
+  assert.equal(compact.source_resolution_rules.length, 1800);
+  assert.equal(compact.source_tags.length, 12);
+  assert.equal("source_volume_total" in compact, false);
+  assert.equal("private_field" in compact, false);
+});
+
+test("Gemini interpreta texto dividido y descarta partes de razonamiento", () => {
+  const result = radar.parseGeminiAdaptations({
+    candidates: [{
+      content: {
+        parts: [
+          { thought: true, text: "razonamiento privado" },
+          { text: '[{"external_id":"poly-' },
+          { text: 'gaming-1"}]' }
+        ]
+      }
+    }]
+  });
+  assert.deepEqual(result, [{ external_id: "poly-gaming-1" }]);
+});
+
 test("normalización descarta NaN, Infinity, protocolos inseguros y campos nulos", () => {
   assert.equal(radar.safeNumber("NaN"), null);
   assert.equal(radar.safeNumber(Infinity), null);
@@ -275,6 +313,11 @@ test("los límites internos evitan consumo accidental y no hay Cron", () => {
   assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 120/);
   assert.match(edge, /MAX_VISIBLE = 60/);
   assert.match(edge, /MAX_GEMINI_BATCH = 12/);
+  assert.match(edge, /GEMINI_TIMEOUT_MS = 35_000/);
+  assert.match(edge, /GEMINI_MAX_OUTPUT_TOKENS = 8_192/);
+  assert.match(edge, /thinkingLevel: "minimal"/);
+  assert.match(edge, /responseMimeType: "application\/json"/);
+  assert.doesNotMatch(edge, /responseJsonSchema/);
   assert.match(edge, /REFRESH_COOLDOWN_MS = 60_000/);
   assert.match(edge, /horizon_filter: filters\.horizon/);
   assert.equal((edge.match(/adaptWithGemini\(environment\.geminiKey/g) || []).length, 1);

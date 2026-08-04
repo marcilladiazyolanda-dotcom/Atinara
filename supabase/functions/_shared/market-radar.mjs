@@ -560,6 +560,59 @@ export function scoreCandidates(candidates, existing = [], now = new Date().toIS
   });
 }
 
+export function compactGeminiCandidate(candidate) {
+  if (!isRecord(candidate)) return null;
+  const externalId = cleanText(candidate.external_id, 220);
+  if (!externalId) return null;
+  return {
+    provider: cleanText(candidate.provider, 40) || null,
+    external_id: externalId,
+    source_title: cleanText(candidate.source_title, 300) || null,
+    source_question: cleanText(candidate.source_question, 300) || null,
+    source_description: cleanText(candidate.source_description, 900) || null,
+    source_resolution_rules: cleanText(candidate.source_resolution_rules, 1800) || null,
+    source_resolution_url: safePublicUrl(candidate.source_resolution_url),
+    source_close_at: safeIsoDate(candidate.source_close_at),
+    source_tags: safeStringArray(candidate.source_tags, 12)
+      .map((tag) => cleanText(tag, 80))
+      .filter(Boolean)
+  };
+}
+
+export function compactGeminiDefinition(item) {
+  if (!isRecord(item)) return null;
+  const id = cleanText(item.id || item.market_id || item.market_slug, 220);
+  const question = cleanText(item.question || item.title, 350);
+  if (!id || !question) return null;
+  return {
+    id,
+    kind: cleanText(item.kind || item.state || "existing", 60),
+    question
+  };
+}
+
+export function parseGeminiAdaptations(payload) {
+  if (!isRecord(payload)) return [];
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+  const first = isRecord(candidates[0]) ? candidates[0] : null;
+  const content = first && isRecord(first.content) ? first.content : null;
+  const parts = content && Array.isArray(content.parts) ? content.parts : [];
+  const text = parts
+    .filter((part) => isRecord(part) && part.thought !== true)
+    .map((part) => typeof part.text === "string" ? part.text : "")
+    .filter(Boolean)
+    .join("")
+    .slice(0, 80_000)
+    .trim();
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function applyAdaptation(candidate, adaptation) {
   if (!isRecord(adaptation) || cleanText(adaptation.external_id, 220) !== candidate.external_id) return candidate;
   const closeAt = safeIsoDate(adaptation.atinara_closes_at) || candidate.atinara_closes_at;

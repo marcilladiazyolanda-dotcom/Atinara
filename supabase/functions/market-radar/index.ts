@@ -11,9 +11,12 @@ import {
   buildCacheKey,
   buildDraftPrefill,
   cleanText,
+  compactGeminiCandidate,
+  compactGeminiDefinition,
   detectDuplicates,
   isRecord,
   isAdaptedIdeaComplete,
+  parseGeminiAdaptations,
   publicProviderError,
   scoreCandidates,
 } from "../_shared/market-radar.mjs";
@@ -32,7 +35,9 @@ function toRecordArray(value: unknown): JsonRecord[] {
 
 const MAX_REQUEST_BYTES = 8_192;
 const PROVIDER_TIMEOUT_MS = 12_000;
-const GEMINI_TIMEOUT_MS = 24_000;
+const GEMINI_TIMEOUT_MS = 35_000;
+const GEMINI_MAX_OUTPUT_TOKENS = 8_192;
+const GEMINI_MODEL = "gemini-3-flash-preview";
 const MAX_PROVIDER_PAGES = 1;
 const MAX_NORMALIZED_PER_PROVIDER = 120;
 const MAX_VISIBLE = 60;
@@ -166,6 +171,10 @@ async function fetchJson(url: URL, init: RequestInit = {}, timeoutMs = PROVIDER_
         if (text.length > 2_000_000) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
         try { return JSON.parse(text); } catch { throw new Error("PROVIDER_INVALID_RESPONSE"); }
       }
+      console.warn("Market Radar provider request failed", JSON.stringify({
+        host: url.hostname,
+        http_status: response.status,
+      }));
       if (response.status !== 429 && response.status < 500) throw new Error(`PROVIDER_HTTP_${response.status}`);
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 500));
     } catch (error) {
@@ -182,7 +191,8 @@ function providerFailure(error: unknown, provider: string) {
   const raw = error instanceof Error ? error.message : "PROVIDER_UNAVAILABLE";
   const code = raw.includes("TIMEOUT") ? "PROVIDER_TIMEOUT"
     : raw.includes("RATE_LIMITED") || raw.includes("429") ? "PROVIDER_RATE_LIMITED"
-      : raw.includes("INVALID") || raw.includes("TOO_LARGE") ? "PROVIDER_INVALID_RESPONSE"
+      : raw.includes("INVALID") || raw.includes("TOO_LARGE") || raw.includes("HTTP_400")
+        ? "PROVIDER_INVALID_RESPONSE"
         : "PROVIDER_UNAVAILABLE";
   return publicProviderError(provider, code, code === "PROVIDER_RATE_LIMITED" ? 429 : 502);
 }
@@ -322,62 +332,39 @@ async function discoverTavily(
   });
 }
 
-function parseGeminiJson(payload: JsonRecord): JsonRecord[] {
-  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
-  const first = isRecord(candidates[0]) ? candidates[0] : null;
-  const content = first && isRecord(first.content) ? first.content : null;
-  const parts = content && Array.isArray(content.parts) ? content.parts : [];
-  const text = isRecord(parts[0]) ? cleanText(parts[0].text, 80_000) : "";
-  if (!text) return [];
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
-  } catch {
-    return [];
-  }
-}
-
 async function adaptWithGemini(
   apiKey: string,
   candidates: JsonRecord[],
   existing: JsonRecord[],
-): Promise<JsonRecord[]> {
-  if (!apiKey || !candidates.length) return candidates;
+): Promise<{ candidates: JsonRecord[]; processedCount: number }> {
+  if (!apiKey || !candidates.length) return { candidates, processedCount: 0 };
   const selected = candidates
     .filter((candidate) => !detectDuplicates(candidate, existing).some((match: JsonRecord) => match.status === "confirmed"))
     .sort((left, right) => Number(right.provider === "tavily") - Number(left.provider === "tavily"))
     .slice(0, MAX_GEMINI_BATCH);
-  if (!selected.length) return candidates;
-  const safeInput = selected.map((candidate) => ({
-    provider: candidate.provider,
-    external_id: candidate.external_id,
-    source_title: candidate.source_title,
-    source_question: candidate.source_question,
-    source_description: candidate.source_description,
-    source_resolution_rules: candidate.source_resolution_rules,
-    source_resolution_url: candidate.source_resolution_url,
-    source_close_at: candidate.source_close_at,
-    source_tags: candidate.source_tags,
-  }));
-  const safeExisting = existing.slice(0, 100).map((item) => ({
-    id: cleanText(item.id || item.market_id || item.market_slug, 220),
-    kind: cleanText(item.kind || item.state || "existing", 60),
-    question: cleanText(item.question || item.title, 500),
-  })).filter((item) => item.id && item.question);
-  const prompt = `Adapta exclusivamente estos candidatos gaming a español para un borrador privado de Atinara. No inventes hechos, URLs ni fechas. Conserva nombres, cantidades y condiciones. Compara semánticamente cada candidata con las definiciones existentes solo cuando no haya una coincidencia determinista. Una coincidencia semántica nunca confirma ni descarta por sí sola: solo solicita revisión humana. Devuelve un array JSON; cada elemento debe incluir external_id, atinara_category (una de ${RADAR_CATEGORIES.join(", ")}), atinara_question_es, atinara_context_es, atinara_resolution_criteria_es, atinara_resolution_source_url, atinara_closes_at, atinara_resolves_at, warnings y semantic_duplicate. semantic_duplicate debe ser null o un objeto con matched_id, kind y reason; no incluyas datos que no estén en las entradas. Deja null cualquier dato no demostrado. Candidatas no confiables:\n${JSON.stringify(safeInput)}\nDefiniciones privadas existentes, sin datos personales:\n${JSON.stringify(safeExisting)}`;
-  const url = new URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent");
+  if (!selected.length) return { candidates, processedCount: 0 };
+  const safeInput = selected.map(compactGeminiCandidate).filter(isRecord);
+  const safeExisting = existing.slice(0, 50).map(compactGeminiDefinition).filter(isRecord);
+  const prompt = `Adapta estos candidatos gaming a borradores privados de Atinara en español. Devuelve exactamente un elemento por external_id y no inventes hechos, URLs, fechas, nombres, cifras ni condiciones. Conserva el significado y deja null cualquier dato no demostrado. La categoría debe ser una de ${RADAR_CATEGORIES.join(", ")}. Compara semánticamente con las definiciones existentes solo para señalar posibles coincidencias; nunca confirmes ni descartes una candidata. Candidatas:\n${JSON.stringify(safeInput)}\nDefiniciones existentes sin datos personales:\n${JSON.stringify(safeExisting)}`;
+  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`);
+  const startedAt = Date.now();
   const payload = await fetchJson(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        thinkingConfig: { thinkingLevel: "minimal" },
+      },
     }),
   }, GEMINI_TIMEOUT_MS);
-  const adaptations = parseGeminiJson(toRecord(payload) ?? {});
+  const adaptations = parseGeminiAdaptations(toRecord(payload) ?? {}) as JsonRecord[];
   if (!adaptations.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   const byId = new Map(adaptations.map((item) => [cleanText(item.external_id, 220), item]));
-  return candidates.map((candidate) => {
+  const adaptedCandidates = candidates.map((candidate) => {
     const adaptation = byId.get(cleanText(candidate.external_id, 220)) ?? null;
     const adapted = applyAdaptation(candidate, adaptation);
     const semanticDuplicate = toRecord(adaptation?.semantic_duplicate);
@@ -397,6 +384,12 @@ async function adaptWithGemini(
       warnings: [...new Set([...(Array.isArray(adapted.warnings) ? adapted.warnings : []), "Posible duplicado semántico: revisa la coincidencia antes de preparar el borrador."])],
     };
   });
+  console.info("Market Radar Gemini completed", JSON.stringify({
+    elapsed_ms: Date.now() - startedAt,
+    requested: safeInput.length,
+    returned: adaptations.length,
+  }));
+  return { candidates: adaptedCandidates, processedCount: adaptations.length };
 }
 
 async function persistProviderResult(
@@ -515,11 +508,18 @@ async function runDiscovery(
 
   let candidates = [...discoveredByProvider.values()].flat();
   if (environment.geminiKey && candidates.length) {
+    const geminiStartedAt = Date.now();
     try {
-      candidates = await adaptWithGemini(environment.geminiKey, candidates, existing);
-      await persistProcessingSuccess(environment, "gemini", cacheKey, Math.min(candidates.length, MAX_GEMINI_BATCH));
+      const adaptation = await adaptWithGemini(environment.geminiKey, candidates, existing);
+      candidates = adaptation.candidates;
+      await persistProcessingSuccess(environment, "gemini", cacheKey, adaptation.processedCount);
     } catch (error) {
       const failure = providerFailure(error, "gemini");
+      console.warn("Market Radar provider degraded", JSON.stringify({
+        provider: "gemini",
+        code: failure.code,
+        elapsed_ms: Date.now() - geminiStartedAt,
+      }));
       errors.push(failure);
       await persistProviderFailure(environment, "gemini", cacheKey, failure);
     }

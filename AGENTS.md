@@ -1,10 +1,10 @@
 # Instrucciones permanentes de Atinara · nombre interno Oraklo
 
-## Estado vigente · 4 de agosto de 2026
+## Estado vigente · 5 de agosto de 2026
 
 - Yol cerró y aprobó el Paso 13.3. `A3 · Criterio modular`, el logotipo, símbolo, favicon, glifo vectorial de Karma, doce glifos, las composiciones 13.3D y la paleta **Atinara Sunset** son la fuente visual oficial de la beta v0.1.
-- El Paso 13.5 es la fase actual por decisión expresa de Yol. La base canónica de esta entrega es `origin/main = f2e4963e54c94a0a606f32ff95e11174dc69c1e3`, rama local `codex/paso-13-5-radar`.
-- El Radar se prepara localmente, sin `push`, despliegue, SQL remoto ni cambios de datos. La migración y la Edge Function nuevas no están activas hasta que Yol siga `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`.
+- El Paso 13.5 está activado y aceptado técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`; la migración local `20260804194933_add_market_radar.sql` consta remotamente como `20260804213111 · add_market_radar` y no debe repetirse.
+- `market-radar` está activa en Supabase como versión 4 con `verify_jwt=true`. La corrección del 5 de agosto compacta la entrada de Gemini, limita su salida, usa razonamiento mínimo y amplía su timeout interno a 35 s. La aceptación real terminó con Gemini disponible y 12 adaptaciones, sin borradores ni cambios públicos.
 - El catálogo ampliado de 24–36 mercados continúa fuera de alcance: este paso descubre y pre-rellena borradores privados, pero nunca publica, aprueba o programa automáticamente.
 
 ## Antes de empezar cualquier tarea
@@ -83,4 +83,4 @@
 - Una nueva consulta administrativa exclusivamente de lectura confirmó 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos `legacy_fixed_v1` —5 activos— y 0 `lmsr_v1`; versiones, probabilidades, RPC, privacidad y resolución administrativa siguen protegidas. No se creó ni modificó ninguna predicción.
 - Paso 13.3: cerrado y aprobado por Yol el 3 de agosto de 2026. La identidad A3 y Atinara Sunset no están pendientes ni deben rediseñarse durante la implementación.
 - Paso 13.4: incorporado al árbol canónico que sirve de base al Radar; su aceptación integral continúa separada de esta entrega.
-- Paso 13.5: Radar administrativo implementado localmente y pendiente de activación manual. Polymarket y Kalshi son proveedores públicos; Tavily y Gemini se reutilizan solo si sus secretos ya existen. IGDB queda preparado como proveedor futuro, sin credenciales ni interfaz rota.
+- Paso 13.5: Radar administrativo activado y aceptado técnicamente. Polymarket y Kalshi son proveedores públicos; Tavily y Gemini reutilizan los secretos existentes. IGDB queda preparado como proveedor futuro, sin credenciales ni interfaz rota. El catálogo ampliado de 24–36 mercados sigue fuera de alcance.

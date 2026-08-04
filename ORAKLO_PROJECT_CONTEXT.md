@@ -1,15 +1,35 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 4 de agosto de 2026.
+Última actualización del contexto: 5 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026.
 > `A3 · Criterio modular`, sus activos vectoriales y Atinara Sunset son
-> definitivos para la beta v0.1. El Paso 13.5 está abierto sobre
-> `origin/main = f2e4963e54c94a0a606f32ff95e11174dc69c1e3`. El Radar está
-> implementado solo en el árbol local: su migración y Edge Function no se han
-> desplegado y no se ha escrito ningún dato remoto.
+> definitivos para la beta v0.1. El Paso 13.5 está activado y aceptado
+> técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`;
+> la migración y la Edge Function están desplegadas y no deben repetirse.
+
+### Activación y corrección de Gemini en el Radar · 5 de agosto de 2026
+
+- La migración local `20260804194933_add_market_radar.sql` fue la única alta
+  nueva y Supabase la registra como `20260804213111 · add_market_radar`. La
+  migración LMSR no se repitió.
+- `market-radar` está activa como versión 4 con `verify_jwt=true`;
+  `publish-scheduled-markets` permanece intacta como versión 2.
+- La aceptación inicial confirmó actualización, caché, fallo parcial, detalle,
+  descarte y pre-rellenado. Una cuenta ordinaria queda bloqueada con
+  `ADMIN_REQUIRED`; no se guardó ni publicó ningún borrador.
+- Gemini agotaba el timeout interno de 24 s porque `gemini-3-flash-preview`
+  aplicaba su razonamiento predeterminado a un lote amplio. La corrección limita
+  y compacta la entrada, reduce a 50 las definiciones de comparación, exige JSON,
+  usa `thinkingLevel: minimal`, limita la salida a 8.192 tokens y concede 35 s.
+- La prueba productiva posterior dejó los cuatro proveedores disponibles:
+  Polymarket 22 candidatas, Kalshi 0, Ideas gaming 0 y Gemini 12 adaptaciones.
+  La invocación terminó con HTTP 200 en 24,8 s y Gemini quedó sin error.
+- La fotografía protegida posterior conserva 11 mercados, 9 predicciones,
+  2 perfiles, 2.027 Karma, 40 Prestigio y 0 borradores. Las 45 candidatas, incluido
+  el único descarte de aceptación, permanecen privadas.
 
 ### Corrección de incidencias SonarQube · 4 de agosto de 2026
 
@@ -451,19 +471,19 @@ Orden acordado para el Paso 13:
    Vault y Cron activados; frontend y sincronización de
    `publish-scheduled-markets` v2 subidos a `main`. Pendiente de aceptación
    funcional final de Yol; no declarar el paso cerrado todavía.
-6. **13.5 · Radar y catálogo:** Radar administrativo implementado localmente, pendiente de aplicar su migración, desplegar `market-radar` y realizar la aceptación autenticada. El catálogo ampliado de 24–36 mercados no forma parte de esta entrega.
+6. **13.5 · Radar y catálogo:** Radar administrativo activado y aceptado técnicamente; migración aplicada una sola vez y `market-radar` v4 activa con JWT. El catálogo ampliado de 24–36 mercados no forma parte de esta entrega.
 7. **13.6 · QA integral y beta:** aceptación completa después de activar el árbol coordinado.
 
 El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
 Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: Yol debe subir el ZIP de 13.5, aplicar una sola vez la
-migración nueva y desplegar `market-radar` con verificación JWT. Después debe
-comprobar el Radar como administradora sin publicar candidatas. El mercado
-antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el catálogo,
-chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni compraventa
-secundaria.
+Siguiente paso operativo: subir a GitHub la corrección versionada de Gemini para
+que el repositorio coincida con `market-radar` v4. No hay que repetir migraciones,
+secretos ni despliegues. Después puede continuar el QA integral del Paso 13.6. El
+mercado antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el
+catálogo, chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni
+compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
