@@ -1,0 +1,83 @@
+ATINARA · PASO 13.5 · MANIFIESTO DE ENTREGA LOCAL
+Fecha: 2026-08-04
+Base canónica: origin/main f2e4963e54c94a0a606f32ff95e11174dc69c1e3
+Rama local: codex/paso-13-5-radar
+
+ALCANCE
+
+- Radar privado y exclusivo para administradoras.
+- Descubrimiento externo con caché y fallos parciales por proveedor.
+- Adaptadores para Polymarket, Kalshi y Tavily; IGDB queda reservado.
+- Priorización determinista con Atinara Score y adaptación semántica opcional en un único lote de Gemini.
+- Pre-rellenado revisable de borradores privados, sin guardado, aprobación, programación ni publicación automática.
+- Interfaz Radar integrada en Gestionar mercados, responsive y compatible con los temas claro y oscuro.
+- Ningún cambio remoto, despliegue, dato real, mercado, predicción o saldo forma parte de este paquete.
+
+ARCHIVOS NUEVOS
+
+- ATINARA_PASO_13_5_MANIFEST.txt
+- STEP_13_5_MARKET_RADAR_AND_CATALOG.md
+- supabase/functions/_shared/market-radar.mjs
+- supabase/functions/market-radar/index.ts
+- supabase/migrations/20260804194933_add_market_radar.sql
+- tests/market-radar.test.js
+
+ARCHIVOS MODIFICADOS
+
+- AGENTS.md
+- ORAKLO_PROJECT_CONTEXT.md
+- README.md
+- STEP_13_4_IMPLEMENTATION_CHECKLIST.md
+- admin-community.html
+- admin-markets.html
+- admin-markets.js
+- admin-resolution.html
+- community.html
+- index.html
+- market-detail.html
+- my-predictions.html
+- profile.html
+- ranking.html
+- reset-password.html
+- scripts/check-javascript-syntax.mjs
+- styles.css
+- tests/public-brand.test.js
+- tests/sonarqube-quality.test.js
+- tests/theme.test.js
+- tests/ui-regressions.test.js
+
+ARCHIVOS ELIMINADOS
+
+- Ninguno.
+
+ACTIVACIÓN MANUAL SEGURA
+
+1. Subir a GitHub el contenido completo descomprimido, no el ZIP.
+2. Comprobar que GitHub Pages sirve la versión coordinada 20260804-radar1 en los diez HTML.
+3. Aplicar una sola vez la migración nueva 20260804194933_add_market_radar.sql.
+4. Configurar en Supabase Edge Functions solo los secretos opcionales que se vayan a utilizar:
+   - GEMINI_API_KEY
+   - TAVILY_API_KEY
+   Las credenciales internas de Supabase deben mantenerse en la configuración segura del proyecto; nunca en el frontend.
+5. Desplegar la Edge Function market-radar y su módulo compartido.
+6. Probar como administradora autorizada: caché vacía, actualización explícita, fallo parcial, filtros, detalle, descartar y preparar borrador.
+7. Confirmar que preparar un candidato solo pre-rellena el formulario y que guardar crea un borrador privado pendiente de la puerta P0 ya existente.
+8. Confirmar que ninguna candidata, procedencia o informe aparece en superficies públicas.
+
+VALIDACIÓN LOCAL
+
+- Sintaxis válida en 37 archivos JavaScript/MJS.
+- 89 de 89 pruebas unitarias superadas.
+- TypeScript de Checkly superado.
+- git diff --check superado.
+- Recursos locales de los diez HTML comprobados.
+- Cabecera administrativa protegida comprobada visualmente entre 320 y 1648 px, sin desbordamiento horizontal.
+- Tema claro, tema oscuro, menú móvil, foco y Escape comprobados.
+- La vista autenticada del Radar queda pendiente de activar migración y Edge Function en un entorno autorizado.
+
+LÍMITES Y EVIDENCIA EXTERNA
+
+- Polymarket devolvió candidatos gaming reales en la comprobación pública de solo lectura.
+- Kalshi respondió correctamente, pero no ofreció mercados gaming abiertos en la fotografía comprobada; el estado vacío es honesto.
+- No se insistió con APIs que requieren credenciales.
+- No se ejecutaron migraciones, Edge Functions ni escrituras remotas.

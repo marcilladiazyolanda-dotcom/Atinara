@@ -1,11 +1,11 @@
 # Instrucciones permanentes de Atinara · nombre interno Oraklo
 
-## Estado vigente · 3 de agosto de 2026
+## Estado vigente · 4 de agosto de 2026
 
 - Yol cerró y aprobó el Paso 13.3. `A3 · Criterio modular`, el logotipo, símbolo, favicon, glifo vectorial de Karma, doce glifos, las composiciones 13.3D y la paleta **Atinara Sunset** son la fuente visual oficial de la beta v0.1.
-- El Paso 13.4 es la fase actual. Su implementación se prepara localmente sobre `origin/main = 260495252c08667714a3dbfc03b24e4fbf853cfd`, sin `push`, despliegue, SQL remoto ni cambios de datos.
-- La migración nueva de administración, las Edge Functions, el frontend y la recuperación de contraseña no se consideran activos hasta que Yol ejecute el orden manual de `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`.
-- El Paso 13.5 de Radar y catálogo comienza únicamente después de la activación y aceptación del 13.4. No implementarlo durante este paso.
+- El Paso 13.5 es la fase actual por decisión expresa de Yol. La base canónica de esta entrega es `origin/main = f2e4963e54c94a0a606f32ff95e11174dc69c1e3`, rama local `codex/paso-13-5-radar`.
+- El Radar se prepara localmente, sin `push`, despliegue, SQL remoto ni cambios de datos. La migración y la Edge Function nuevas no están activas hasta que Yol siga `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`.
+- El catálogo ampliado de 24–36 mercados continúa fuera de alcance: este paso descubre y pre-rellena borradores privados, pero nunca publica, aprueba o programa automáticamente.
 
 ## Antes de empezar cualquier tarea
 
@@ -31,6 +31,7 @@
 - Frontend estático compatible con GitHub Pages: HTML, CSS y JavaScript sin proceso de compilación.
 - Backend: Supabase Auth, Postgres/RLS, RPC y Edge Functions.
 - Nunca pongas claves, `service_role`, `GEMINI_API_KEY` o `TAVILY_API_KEY` en el frontend o en el repositorio.
+- Las APIs externas del Radar solo se consultan desde `market-radar`, con JWT, rol administrativo, hosts permitidos, caché, cooldown y fallos parciales. El navegador nunca actúa como proxy y ninguna métrica externa modifica la economía de Atinara.
 - Las operaciones económicas o de liquidación deben ser atómicas y autoritativas en Supabase. El frontend solo ayuda a validar y mostrar mensajes.
 - No insertes directamente en `predictions` desde el frontend: usa `place_prediction`.
 - El mercado vivo usa una cotización LMSR versionada. El precio medio, impacto, contratos, retorno base, bonus y Prestigio se calculan en servidor; si la versión cambia, la usuaria debe revisar una nueva cotización.
@@ -81,5 +82,5 @@
 - La aceptación pública de escritorio quedó superada. La aceptación móvil real se ejecutó en 320 × 568, 375 × 667, 390 × 844 y 768 × 1024 sobre portada, Comunidad, clasificación, perfil público y fichas abierta y resuelta. Detectó dos desbordamientos reales —el mínimo raíz de 320 px y las URLs largas de una resolución—; el árbol de cierre los corrige de forma mínima en `styles.css` y la comprobación visual local posterior supera las seis superficies a 320 y 375 px.
 - Una nueva consulta administrativa exclusivamente de lectura confirmó 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos `legacy_fixed_v1` —5 activos— y 0 `lmsr_v1`; versiones, probabilidades, RPC, privacidad y resolución administrativa siguen protegidas. No se creó ni modificó ninguna predicción.
 - Paso 13.3: cerrado y aprobado por Yol el 3 de agosto de 2026. La identidad A3 y Atinara Sunset no están pendientes ni deben rediseñarse durante la implementación.
-- Paso 13.4: implementado en el árbol local de entrega y pendiente de activación manual y aceptación de Yol. No confundir código preparado con funciones activas en producción.
-- Siguiente paso después de activar y aceptar 13.4: Paso 13.5, siguiendo `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`; Radar y el catálogo ampliado siguen fuera del alcance actual.
+- Paso 13.4: incorporado al árbol canónico que sirve de base al Radar; su aceptación integral continúa separada de esta entrega.
+- Paso 13.5: Radar administrativo implementado localmente y pendiente de activación manual. Polymarket y Kalshi son proveedores públicos; Tavily y Gemini se reutilizan solo si sus secretos ya existen. IGDB queda preparado como proveedor futuro, sin credenciales ni interfaz rota.

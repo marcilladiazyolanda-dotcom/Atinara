@@ -59,3 +59,10 @@ test("Karma y las métricas de cabecera no pueden partirse ni heredar texto oscu
   assert.match(css, /\.karma-pill\s*\{[^}]*white-space:\s*nowrap/s);
   assert.match(css, /\.user-stat-pill,\s*\.user-stat-pill strong\s*\{\s*color:\s*#f8f6fc;/s);
 });
+
+test("la cabecera compacta conserva especificidad y objetivos táctiles a 320 px", () => {
+  const css = read("styles.css");
+  assert.match(css, /@media \(max-width: 620px\)[\s\S]*?body \.app-shell\s*\{[^}]*padding:\s*0 12px 32px;/);
+  assert.match(css, /@media \(max-width: 390px\)[\s\S]*?body \.topbar\s*\{[^}]*grid-template-columns:\s*64px minmax\(0, 1fr\) 44px 44px;/);
+  assert.match(css, /\.mobile-menu-toggle\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;/s);
+});

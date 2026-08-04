@@ -6,10 +6,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 
 > **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026.
 > `A3 · Criterio modular`, sus activos vectoriales y Atinara Sunset son
-> definitivos para la beta v0.1. El backend del Paso 13.4 y su fuente coordinada
-> están activados, incluida `publish-scheduled-markets` v2; todavía falta la
-> aceptación funcional final de Yol. La base canónica revisada para la
-> corrección de SonarQube es `origin/main = c7469c449ac7db44f9f8cfdbc4509ab87e76a12c`.
+> definitivos para la beta v0.1. El Paso 13.5 está abierto sobre
+> `origin/main = f2e4963e54c94a0a606f32ff95e11174dc69c1e3`. El Radar está
+> implementado solo en el árbol local: su migración y Edge Function no se han
+> desplegado y no se ha escrito ningún dato remoto.
 
 ### Corrección de incidencias SonarQube · 4 de agosto de 2026
 
@@ -85,6 +85,17 @@ Archivos principales:
 - `supabase/migrations/`: migraciones versionadas que sí están registradas en el repositorio.
 
 ## 3. Estado Git en el momento del relevo
+
+Implementación local del Paso 13.5, 4 de agosto de 2026:
+
+- Clon limpio: `C:\Users\34696\Documents\Atinara-13-5`.
+- Base canónica: `origin/main = f2e4963e54c94a0a606f32ff95e11174dc69c1e3` (`CORREGIR SONARQUBE FIN`).
+- Rama local: `codex/paso-13-5-radar`.
+- El repositorio vacío `C:\Users\34696\Documents\ATINARA` no se utilizó.
+- Polymarket, Kalshi, Supabase, GitHub y producción solo se inspeccionaron en lectura. No hubo `push`, despliegue, SQL remoto, mercados o predicciones de prueba.
+- La prueba pública puntual confirmó 22 candidatas gaming normalizables en Polymarket. Kalshi expone las etiquetas `Entertainment / Video games` y series gaming reales, pero en la fotografía comprobada no tenía mercados abiertos para esas series; se conserva un estado vacío honesto.
+- IGDB no se activa: no hay credenciales Twitch configuradas. Tavily y Gemini quedan condicionados a los secretos existentes de las Edge Functions y fallan de forma independiente.
+- La activación manual y el contrato técnico están en `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`.
 
 Corrección visual final del Paso 13.4, 4 de agosto de 2026:
 
@@ -440,18 +451,19 @@ Orden acordado para el Paso 13:
    Vault y Cron activados; frontend y sincronización de
    `publish-scheduled-markets` v2 subidos a `main`. Pendiente de aceptación
    funcional final de Yol; no declarar el paso cerrado todavía.
-6. **13.5 · Radar y catálogo:** siguiente fase definida por `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`; no se implementa dentro de 13.4.
+6. **13.5 · Radar y catálogo:** Radar administrativo implementado localmente, pendiente de aplicar su migración, desplegar `market-radar` y realizar la aceptación autenticada. El catálogo ampliado de 24–36 mercados no forma parte de esta entrega.
 7. **13.6 · QA integral y beta:** aceptación completa después de activar el árbol coordinado.
 
 El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
 Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: publicar la corrección local de SonarQube, esperar el
-nuevo análisis automático y completar la aceptación funcional del Paso 13.4. El
-mercado antiguo de julio continúa sin aprobar ni liquidar. Tras aceptar 13.4 se
-abre 13.5; no ampliar todavía chat, GIF, feed algorítmico, temporadas,
-monetización, dinero real, Radar ni compraventa secundaria dentro de esta entrega.
+Siguiente paso operativo: Yol debe subir el ZIP de 13.5, aplicar una sola vez la
+migración nueva y desplegar `market-radar` con verificación JWT. Después debe
+comprobar el Radar como administradora sin publicar candidatas. El mercado
+antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el catálogo,
+chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni compraventa
+secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

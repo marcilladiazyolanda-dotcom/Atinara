@@ -22,7 +22,32 @@
     notice: "",
     noticeTone: "info",
     pendingAction: null,
-    actionTrigger: null
+    actionTrigger: null,
+    radar: {
+      candidates: [],
+      providers: [],
+      errors: [],
+      selected: null,
+      cached: false,
+      cooldownUntil: 0,
+      provider: "all",
+      category: "",
+      query: "",
+      horizon: "180d",
+      quality: "review",
+      order: "recommended"
+    },
+    radarPrefill: null,
+    radarCooldownTimer: null
+  };
+
+  const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
+  const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming", gemini: "Gemini" };
+  const RADAR_ORIGIN_LABELS = {
+    source: "Importado de la fuente",
+    adapted: "Adaptado automáticamente",
+    review: "Requiere revisión",
+    missing: "Sin información"
   };
 
   function escapeHtml(value) {
@@ -71,6 +96,38 @@
       : "Fecha no válida";
   }
 
+  function displayNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number)
+      ? new Intl.NumberFormat("es-ES", { notation: Math.abs(number) >= 1000000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(number)
+      : "No disponible";
+  }
+
+  function displayProbability(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 && number <= 1
+      ? new Intl.NumberFormat("es-ES", { style: "percent", maximumFractionDigits: 1 }).format(number)
+      : "No disponible";
+  }
+
+  function externalLink(url, label = "Abrir fuente") {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:") return "";
+      return `<a class="text-link" href="${escapeHtml(parsed.toString())}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+    } catch {
+      return "";
+    }
+  }
+
+  async function invokeRadar(action, payload = {}) {
+    const { data, error } = await client.functions.invoke("market-radar", {
+      body: { action, ...payload }
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
   function setNotice(message, tone = "info") {
     state.notice = message;
     state.noticeTone = tone;
@@ -108,7 +165,8 @@
   function toolbarMarkup() {
     return `
       <div class="admin-market-tabs" role="tablist" aria-label="Secciones de gestión">
-        <button type="button" role="tab" data-admin-view="drafts" aria-selected="${state.view === "drafts"}">Borradores y revisión</button>
+        <button type="button" role="tab" data-admin-view="drafts" aria-selected="${state.view === "drafts"}">Crear manualmente</button>
+        <button type="button" role="tab" data-admin-view="radar" aria-selected="${state.view === "radar"}">Radar de mercados</button>
         <button type="button" role="tab" data-admin-view="catalog" aria-selected="${state.view === "catalog"}">Mercados publicados</button>
         <button type="button" role="tab" data-admin-view="audit" aria-selected="${state.view === "audit"}">Auditoría</button>
       </div>`;
@@ -193,6 +251,8 @@
 
   function formMarkup(payload) {
     const draft = payload?.draft || { market_slug: "", content_version: null, workflow_status: "draft_incomplete" };
+    const radarOrigins = payload?.radar_origins || {};
+    const radarCandidate = payload?.radar_candidate || null;
     const locked = ["published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
     const source = draft.primary_source || {};
     const alternatives = Array.isArray(draft.alternative_sources) ? draft.alternative_sources.map((item) => item?.url || "").filter(Boolean).join("\n") : "";
@@ -213,16 +273,24 @@
         ? ` aria-invalid="true" aria-describedby="admin-issue-${escapeHtml(field)}-${issueIndex}"`
         : "";
     };
+    const originMarkup = (name) => {
+      const origin = radarOrigins[name];
+      return origin && RADAR_ORIGIN_LABELS[origin]
+        ? `<small class="radar-field-origin" data-origin="${escapeHtml(origin)}">${escapeHtml(RADAR_ORIGIN_LABELS[origin])}</small>`
+        : "";
+    };
     const f = (name, label, type = "text", options = {}) => `
       <label class="${options.wide ? "field-wide" : ""}">
         <span>${escapeHtml(label)}${options.required ? " *" : ""}</span>
         <input type="${type}" name="${escapeHtml(name)}" value="${valueAttribute(options.value ?? draft[name])}"${options.required ? " required" : ""}${locked ? " disabled" : ""}${invalidAttributes(name)}${options.help && !invalidAttributes(name) ? ` aria-describedby="help-${escapeHtml(name)}"` : ""}>
+        ${originMarkup(name)}
         ${options.help ? `<small id="help-${escapeHtml(name)}">${escapeHtml(options.help)}</small>` : ""}
       </label>`;
     const t = (name, label, options = {}) => `
       <label class="${options.wide === false ? "" : "field-wide"}">
         <span>${escapeHtml(label)}${options.required ? " *" : ""}</span>
         <textarea name="${escapeHtml(name)}" rows="${options.rows || 3}"${options.required ? " required" : ""}${locked ? " disabled" : ""}${invalidAttributes(name)}>${escapeHtml(options.value ?? draft[name] ?? "")}</textarea>
+        ${originMarkup(name)}
         ${options.help ? `<small>${escapeHtml(options.help)}</small>` : ""}
       </label>`;
 
@@ -233,6 +301,7 @@
             <div><p class="eyebrow">Borrador privado</p><h2>${draft.id ? "Editar mercado" : "Crear mercado"}</h2></div>
             ${workflowBadge(draft.workflow_status || "draft_incomplete")}
           </div>
+          ${radarCandidate ? `<aside class="radar-prefill-notice"><strong>Pre-rellenado desde ${escapeHtml(RADAR_PROVIDER_LABELS[radarCandidate.provider] || radarCandidate.provider)}.</strong><span>Nada se ha guardado, revisado, aprobado, programado ni publicado. Completa y revisa los campos antes de guardar el borrador privado.</span></aside>` : ""}
           ${locked ? '<p class="admin-locked-notice"><strong>Campos esenciales bloqueados:</strong> el mercado ya fue publicado. Utiliza las acciones posteriores seguras.</p>' : ""}
           <fieldset${locked ? " disabled" : ""}>
             <legend>Identidad y pregunta</legend>
@@ -318,11 +387,157 @@
     return `<section class="admin-audit-trail${embedded ? " admin-audit-embedded" : ""}" aria-label="Trazabilidad administrativa"><h3>Auditoría administrativa</h3><ol>${items}</ol></section>`;
   }
 
+  function latestProviderStatus(provider) {
+    return state.radar.providers
+      .filter((item) => item.provider === provider)
+      .sort((left, right) => Date.parse(right.fetched_at || 0) - Date.parse(left.fetched_at || 0))[0] || null;
+  }
+
+  function radarProviderMarkup() {
+    const providers = ["polymarket", "kalshi", "tavily", "gemini"];
+    return `<section class="radar-provider-strip" aria-label="Estado de proveedores">
+      ${providers.map((provider) => {
+        const status = latestProviderStatus(provider);
+        const label = status?.error_code === "PROVIDER_NOT_CONFIGURED" ? "No configurado" : status?.status === "available" ? "Disponible" : status?.status === "cached" ? "En caché" : status?.status === "rate_limited" ? "Límite temporal" : status?.status ? "Con incidencia" : "Sin consultar";
+        return `<article class="radar-provider-card" data-provider-status="${escapeHtml(status?.status || "idle")}">
+          <div><strong>${escapeHtml(RADAR_PROVIDER_LABELS[provider])}</strong><span>${escapeHtml(label)}</span></div>
+          <small>${status ? `${escapeHtml(displayDate(status.fetched_at))} · ${escapeHtml(status.result_count || 0)} candidatas${status.is_cached ? " · caché" : " · nuevos"}` : "Pulsa Actualizar fuentes para consultar."}</small>
+        </article>`;
+      }).join("")}
+    </section>`;
+  }
+
+  function radarFiltersMarkup() {
+    const categoryOptions = RADAR_CATEGORIES.map((category) => `<option value="${escapeHtml(category)}"${state.radar.category === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("");
+    const cooldown = Math.max(0, Math.ceil((state.radar.cooldownUntil - Date.now()) / 1000));
+    return `<form id="radar-filters" class="radar-filters">
+      <label><span>Fuente</span><select name="provider">
+        <option value="all"${state.radar.provider === "all" ? " selected" : ""}>Todas las disponibles</option>
+        <option value="polymarket"${state.radar.provider === "polymarket" ? " selected" : ""}>Polymarket</option>
+        <option value="kalshi"${state.radar.provider === "kalshi" ? " selected" : ""}>Kalshi</option>
+        <option value="tavily"${state.radar.provider === "tavily" ? " selected" : ""}>Ideas gaming</option>
+      </select></label>
+      <label><span>Categoría Atinara</span><select name="category"><option value="">Todas</option>${categoryOptions}</select></label>
+      <label class="radar-query"><span>Buscar</span><input type="search" name="query" value="${valueAttribute(state.radar.query)}" placeholder="Pregunta, juego, empresa o evento"></label>
+      <label><span>Horizonte</span><select name="horizon">
+        <option value="30d"${state.radar.horizon === "30d" ? " selected" : ""}>30 días</option>
+        <option value="90d"${state.radar.horizon === "90d" ? " selected" : ""}>90 días</option>
+        <option value="180d"${state.radar.horizon === "180d" ? " selected" : ""}>180 días</option>
+        <option value="365d"${state.radar.horizon === "365d" ? " selected" : ""}>365 días</option>
+      </select></label>
+      <label><span>Calidad</span><select name="quality">
+        <option value="fit"${state.radar.quality === "fit" ? " selected" : ""}>Solo aptos</option>
+        <option value="review"${state.radar.quality === "review" ? " selected" : ""}>Aptos y revisión necesaria</option>
+        <option value="all"${state.radar.quality === "all" ? " selected" : ""}>Todos los no rechazados</option>
+      </select></label>
+      <label><span>Orden</span><select name="order">
+        <option value="recommended"${state.radar.order === "recommended" ? " selected" : ""}>Recomendados</option>
+        <option value="popularity"${state.radar.order === "popularity" ? " selected" : ""}>Popularidad</option>
+        <option value="closing"${state.radar.order === "closing" ? " selected" : ""}>Cierre próximo</option>
+        <option value="recent"${state.radar.order === "recent" ? " selected" : ""}>Más recientes</option>
+      </select></label>
+      <div class="radar-filter-actions">
+        <button class="secondary-button" type="submit">Aplicar filtros</button>
+        <button class="primary-button" type="button" data-radar-refresh${state.busy || cooldown ? " disabled" : ""}>${state.busy ? "Actualizando…" : cooldown ? `Disponible en ${cooldown} s` : "Actualizar fuentes"}</button>
+      </div>
+    </form>`;
+  }
+
+  function radarCandidateMarkup(candidate) {
+    const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
+    const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
+    const confirmedDuplicate = duplicates.some((match) => match?.status === "confirmed");
+    const prepared = candidate.state === "prepared";
+    const qualityLabel = candidate.quality_status === "fit" ? "Apto" : "Revisión necesaria";
+    return `<article class="radar-candidate-card" data-quality="${escapeHtml(candidate.quality_status)}">
+      <header>
+        <div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><span>${escapeHtml(candidate.atinara_category || "Sin clasificar")}</span></div>
+        <strong class="radar-score" aria-label="Puntuación Atinara ${escapeHtml(candidate.quality_score || 0)} de 100">${escapeHtml(candidate.quality_score || 0)}<small>/100</small></strong>
+      </header>
+      <div class="radar-quality-line"><span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(qualityLabel)}</span>${candidate.is_stale ? '<span class="radar-stale-badge">Caché antigua</span>' : ""}${prepared ? '<span class="radar-state-badge">Ya preparada</span>' : ""}${confirmedDuplicate ? '<span class="radar-duplicate-badge">Duplicada</span>' : ""}</div>
+      <h3>${escapeHtml(candidate.atinara_question_es || candidate.source_question || candidate.source_title)}</h3>
+      ${candidate.atinara_question_es && candidate.source_question !== candidate.atinara_question_es ? `<details><summary>Pregunta original</summary><p>${escapeHtml(candidate.source_question)}</p></details>` : ""}
+      <dl class="radar-card-metrics">
+        <div><dt>Cierre</dt><dd>${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
+        <div><dt>Probabilidad externa de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
+        <div><dt>Volumen externo</dt><dd>${escapeHtml(displayNumber(candidate.source_volume_total))}</dd></div>
+        <div><dt>Liquidez / interés</dt><dd>${escapeHtml(displayNumber(candidate.source_liquidity ?? candidate.source_open_interest))}</dd></div>
+      </dl>
+      ${warnings.length ? `<p class="radar-warning"><strong>${warnings.length} advertencia${warnings.length === 1 ? "" : "s"}.</strong> ${escapeHtml(warnings[0])}</p>` : ""}
+      <footer>
+        ${externalLink(candidate.external_url)}
+        <div>
+          <button class="secondary-button" type="button" data-radar-details="${escapeHtml(candidate.id)}">Ver detalles</button>
+          <button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${prepared || confirmedDuplicate ? " disabled" : ""}>Preparar borrador</button>
+          <button class="text-button" type="button" data-radar-dismiss="${escapeHtml(candidate.id)}"${prepared ? " disabled" : ""}>Descartar</button>
+        </div>
+      </footer>
+    </article>`;
+  }
+
+  function radarDetailMarkup(candidate) {
+    if (!candidate) return "";
+    const scores = candidate.score_breakdown || {};
+    const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
+    const missing = Array.isArray(candidate.missing_fields) ? candidate.missing_fields : [];
+    const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
+    const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
+    return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
+      <header><div><p class="eyebrow">Detalle privado del candidato</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question_es || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
+      <div class="radar-detail-grid">
+        <section><h3>Procedencia</h3><dl>
+          <div><dt>Proveedor</dt><dd>${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</dd></div>
+          <div><dt>ID externo</dt><dd><code>${escapeHtml(candidate.external_id)}</code></dd></div>
+          <div><dt>Título original</dt><dd>${escapeHtml(candidate.source_title || "No disponible")}</dd></div>
+          <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
+          <div><dt>Estado y fechas</dt><dd>${escapeHtml(candidate.source_status || "No disponible")} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
+        </dl>${externalLink(candidate.external_url, "Abrir mercado externo")}</section>
+        <section><h3>Reglas y fuentes</h3><p>${escapeHtml(candidate.source_resolution_rules || "La fuente no ofrece reglas completas.")}</p>${externalLink(candidate.source_resolution_url, "Abrir fuente de resolución")}</section>
+        <section><h3>Métricas externas</h3><dl>
+          <div><dt>Probabilidad de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
+          <div><dt>Volumen 24 h</dt><dd>${escapeHtml(displayNumber(candidate.source_volume_24h))}</dd></div>
+          <div><dt>Volumen total</dt><dd>${escapeHtml(displayNumber(candidate.source_volume_total))}</dd></div>
+          <div><dt>Liquidez</dt><dd>${escapeHtml(displayNumber(candidate.source_liquidity))}</dd></div>
+          <div><dt>Interés abierto</dt><dd>${escapeHtml(displayNumber(candidate.source_open_interest))}</dd></div>
+        </dl><p class="radar-reference-note">Estas métricas son solo referencia administrativa y nunca alteran precios, Karma o participaciones de Atinara.</p></section>
+        <section><h3>Adaptación propuesta</h3><p><strong>Categoría:</strong> ${escapeHtml(candidate.atinara_category || "Requiere revisión")}</p><p>${escapeHtml(candidate.atinara_context_es || "Sin contexto adaptado.")}</p><p><strong>Criterios:</strong> ${escapeHtml(candidate.atinara_resolution_criteria_es || "Requieren revisión humana.")}</p></section>
+        <section><h3>Atinara Score</h3><dl>${Object.entries(scores).map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p>No es una predicción científica: ordena candidatas con criterios transparentes.</p></section>
+        <section><h3>Revisión necesaria</h3>
+          ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Sin advertencias registradas.</p>"}
+          ${missing.length ? `<p><strong>Campos sin información:</strong> ${escapeHtml(missing.join(", "))}</p>` : ""}
+          ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.status)}</strong> · ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : "<p>Sin duplicados deterministas.</p>"}
+          ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
+        </section>
+      </div>
+      <footer><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${candidate.state === "prepared" ? " disabled" : ""}>Preparar borrador</button></footer>
+    </section>`;
+  }
+
+  function radarMarkup() {
+    const cards = state.radar.candidates.length
+      ? `<div class="radar-candidate-grid">${state.radar.candidates.map(radarCandidateMarkup).join("")}</div>`
+      : `<div class="admin-empty-state radar-empty"><strong>No hay candidatas con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
+    const errors = state.radar.errors.length
+      ? `<aside class="radar-partial-error" role="status"><strong>Actualización parcial.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>La creación manual y las demás fuentes siguen disponibles.</span></aside>`
+      : "";
+    return `<section class="market-radar" aria-labelledby="market-radar-title">
+      <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.cached ? "Datos en caché" : "Última consulta disponible"}</span></header>
+      ${radarFiltersMarkup()}
+      ${radarProviderMarkup()}
+      ${errors}
+      <div class="radar-results-heading"><h3>${escapeHtml(state.radar.candidates.length)} candidatas</h3><p>Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
+      ${cards}
+      ${radarDetailMarkup(state.radar.selected)}
+    </section>`;
+  }
+
   function renderWorkspace() {
     root.setAttribute("aria-busy", String(state.busy));
     let content = "";
     if (state.view === "drafts") {
       content = `<div class="admin-market-workspace">${listMarkup()}${formMarkup(state.selected)}</div>`;
+    } else if (state.view === "radar") {
+      content = radarMarkup();
     } else if (state.view === "catalog") {
       content = catalogMarkup();
     } else {
@@ -368,11 +583,15 @@
     state.busy = true;
     renderWorkspace();
     try {
-      const result = await rpc("save_market_draft", {
+      const args = {
         draft_id_input: form.dataset.draftId || null,
         expected_version_input: form.dataset.version ? Number(form.dataset.version) : null,
         draft_input: payload
-      });
+      };
+      const result = state.radarPrefill?.candidateId && !form.dataset.draftId
+        ? await rpc("save_market_draft_from_radar", { candidate_id_input: state.radarPrefill.candidateId, ...args })
+        : await rpc("save_market_draft", args);
+      state.radarPrefill = null;
       await loadDrafts();
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: result.draft.id });
       const issueCount = Array.isArray(result.deterministic_issues) ? result.deterministic_issues.length : 0;
@@ -456,12 +675,129 @@
     }
   }
 
+  function radarRequestPayload(refresh = false) {
+    return {
+      provider: state.radar.provider,
+      category: state.radar.category,
+      query: state.radar.query,
+      horizon: state.radar.horizon,
+      quality: state.radar.quality,
+      order: state.radar.order,
+      refresh
+    };
+  }
+
+  async function loadRadar(refresh = false) {
+    state.busy = true;
+    if (refresh) setNotice("Actualizando fuentes. Los proveedores pueden fallar de forma independiente.", "info");
+    renderWorkspace();
+    try {
+      const data = await invokeRadar("discover", radarRequestPayload(refresh));
+      state.radar.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
+      state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
+      state.radar.cached = data.cached === true;
+      const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
+      state.radar.cooldownUntil = Date.now() + cooldownMs;
+      window.clearTimeout(state.radarCooldownTimer);
+      state.radarCooldownTimer = cooldownMs
+        ? window.setTimeout(() => renderWorkspace(), cooldownMs + 100)
+        : null;
+      state.radar.selected = null;
+      const radarNotice = data.partial
+        ? "Radar actualizado con incidencias parciales. Las fuentes disponibles siguen utilizables."
+        : data.cached
+          ? "Radar cargado desde la caché privada sin consultar proveedores."
+          : "Radar actualizado sin crear ni modificar ningún mercado.";
+      setNotice(radarNotice, data.partial ? "warning" : "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo cargar el Radar. La creación manual sigue disponible."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function openRadarDetails(candidateId) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      const data = await invokeRadar("details", { candidate_id: candidateId });
+      state.radar.selected = data.candidate || null;
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo abrir el detalle del candidato."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector(".radar-candidate-detail")?.focus();
+    }
+  }
+
+  async function prepareRadarCandidate(candidateId) {
+    state.busy = true;
+    setNotice("Comprobando estado y duplicados antes de pre-rellenar…", "info");
+    renderWorkspace();
+    try {
+      const data = await invokeRadar("prepare", { candidate_id: candidateId });
+      const candidate = data.candidate || {};
+      const prefill = data.prefill || {};
+      const fields = prefill.fields || {};
+      const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
+      state.radarPrefill = { candidateId, origins: prefill.origins || {} };
+      state.selected = {
+        draft: {
+          ...fields,
+          id: null,
+          content_version: null,
+          workflow_status: "draft_incomplete",
+          primary_source: fields.primary_source_url ? { url: fields.primary_source_url } : {},
+          alternative_sources: alternatives
+        },
+        deterministic_issues: [],
+        latest_review: null,
+        audit: [],
+        radar_origins: prefill.origins || {},
+        radar_candidate: candidate
+      };
+      state.view = "drafts";
+      setNotice("Formulario pre-rellenado. Revisa y completa la información: todavía no se ha guardado nada.", "warning");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo preparar el borrador. El candidato no se ha modificado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector("#admin-market-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector('#admin-market-form [name="question"]')?.focus({ preventScroll: true });
+    }
+  }
+
+  async function dismissRadarCandidate(candidateId) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      await invokeRadar("dismiss", { candidate_id: candidateId });
+      state.radar.candidates = state.radar.candidates.filter((candidate) => candidate.id !== candidateId);
+      if (state.radar.selected?.id === candidateId) state.radar.selected = null;
+      setNotice("Candidata descartada y registrada en la trazabilidad privada.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo descartar la candidata."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
   async function loadView(view) {
     state.view = view;
     state.busy = true;
     renderWorkspace();
     try {
       if (view === "drafts") await loadDrafts();
+      if (view === "radar") {
+        state.busy = false;
+        await loadRadar(false);
+        return;
+      }
       if (view === "catalog") state.catalog = await rpc("get_admin_market_catalog") || [];
       if (view === "audit") state.audit = await rpc("get_admin_market_audit", { limit_count: 200 }) || [];
       setNotice("", "info");
@@ -556,12 +892,31 @@
     if (target.dataset.requestReview !== undefined) requestReview();
     if (target.dataset.confirmReview !== undefined) confirmReview();
     if (target.dataset.publishDraft !== undefined) publishDraft();
+    if (target.dataset.radarRefresh !== undefined) loadRadar(true);
+    if (target.dataset.radarDetails) openRadarDetails(target.dataset.radarDetails);
+    if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
+    if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);
+    if (target.dataset.radarCloseDetail !== undefined) {
+      const closedCandidateId = state.radar.selected?.id || "";
+      state.radar.selected = null;
+      renderWorkspace();
+      document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
     if (target.dataset.closeEarly) managePublishedMarket(target.dataset.closeEarly, "early", target);
     if (target.dataset.cancelMarket) managePublishedMarket(target.dataset.cancelMarket, "cancel", target);
   });
 
   root.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (event.target.id === "radar-filters") {
+      const data = new FormData(event.target);
+      ["provider", "category", "query", "horizon", "quality", "order"].forEach((name) => {
+        const value = data.get(name);
+        state.radar[name] = typeof value === "string" ? value.trim() : "";
+      });
+      loadRadar(false);
+      return;
+    }
     if (event.target.id === "admin-draft-filters") {
       const data = new FormData(event.target);
       const query = data.get("query");
@@ -585,6 +940,7 @@
   newDraftButton?.addEventListener("click", () => {
     state.view = "drafts";
     state.selected = null;
+    state.radarPrefill = null;
     setNotice("Nuevo borrador privado. Solo el identificador es obligatorio para guardarlo por primera vez.", "info");
     renderWorkspace();
     document.querySelector('[name="market_slug"]')?.focus();
@@ -598,6 +954,15 @@
     state.pendingAction = null;
     state.actionTrigger?.focus({ preventScroll: true });
     state.actionTrigger = null;
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.radar.selected) {
+      const closedCandidateId = state.radar.selected.id || "";
+      state.radar.selected = null;
+      renderWorkspace();
+      document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
   });
 
   async function applyAuth(auth) {

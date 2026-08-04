@@ -11,13 +11,15 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 - `LIVE_MARKET_ECONOMY.md` define el contrato económico aprobado del precio vivo y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` corrige los supuestos anteriores que no deben llegar al diseño definitivo.
 - Antes de editar, hay que leer estos documentos vinculantes y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
 
-## Estado actual · Paso 13.4
+## Estado actual · Paso 13.5
 
 Yol cerró el Paso 13.3 el 3 de agosto de 2026. La identidad oficial de la beta v0.1 es `A3 · Criterio modular` y la dirección cromática definitiva es **Atinara Sunset**. El sistema aprobado se implementa con SVG centralizados en `assets/brand/`, tokens CSS canónicos, cabecera tinta con línea Sunset, superficies claras, `Sí` turquesa, `No` coral y el glifo de Karma después de cada cantidad compacta.
 
-El árbol local del Paso 13.4 añade la administración cotidiana de mercados con puerta automática cerrada, programación protegida, trazabilidad, guardas temporales de resolución, recuperación completa de contraseña, buscador real, accesibilidad y responsive. También conserva íntegros el LMSR vivo, la privacidad y la compatibilidad histórica de `legacy_fixed_v1`.
+El árbol canónico ya contiene la administración cotidiana de mercados con puerta automática cerrada, programación protegida, trazabilidad, guardas temporales de resolución, recuperación completa de contraseña, buscador real, accesibilidad y responsive. También conserva íntegros el LMSR vivo, la privacidad y la compatibilidad histórica de `legacy_fixed_v1`.
 
-Nada de esta entrega local está activo todavía en GitHub Pages o Supabase. La migración nueva y las Edge Functions no se ejecutaron ni desplegaron; no se crearon mercados, predicciones o datos. El estado verificable, las pruebas y el orden de activación manual están en `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`.
+El Paso 13.5 añade localmente un Radar privado dentro de `Gestionar mercados`. Polymarket y Kalshi se consultan mediante endpoints públicos; Tavily y Gemini se reutilizan solo desde la Edge Function cuando sus secretos ya estén configurados. Las candidatas se filtran a gaming, se normalizan, reciben un score transparente, se comparan con mercados y borradores y pueden pre-rellenar el formulario existente. La administradora debe revisar y guardar el borrador; el Radar nunca publica, aprueba, programa, crea participaciones ni altera precios.
+
+Nada específico del Radar está activo todavía en GitHub Pages o Supabase. La migración `20260804194933_add_market_radar.sql` y la Edge Function `market-radar` no se ejecutaron ni desplegaron; no se crearon mercados, predicciones o datos. El modelo, pruebas y orden de activación manual están en `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`.
 
 ## Mercado predictivo vivo · activado en producción
 
@@ -51,6 +53,17 @@ Una nueva comprobación administrativa de Supabase, exclusivamente de lectura, v
 - Las fuentes aprobadas y la explicación quedan visibles en la ficha pública del mercado.
 
 Las claves se configuran únicamente como secretos `GEMINI_API_KEY` y `TAVILY_API_KEY` de las Edge Functions. Nunca deben añadirse al frontend ni al repositorio. Cada análisis normal realiza tres búsquedas básicas de Tavily y una petición de texto a Gemini; los límites gratuitos dependen de cada proveedor.
+
+## Radar administrativo de mercados · Paso 13.5
+
+- `admin-markets.html` conserva `Crear manualmente` y añade una pestaña `Radar de mercados` únicamente para administradoras.
+- `market-radar` centraliza las consultas externas, valida el JWT y `oraklo_admin`, limita hosts, tiempo, tamaño, reintentos y consumo, y conserva resultados parciales cuando una fuente falla.
+- Polymarket usa `GET /public-search`; Kalshi parte de `GET /series` con `Entertainment + Video games` y consulta sus mercados abiertos. No se consultan posiciones, traders, wallets, órdenes o perfiles externos.
+- Tavily busca un máximo de seis fuentes públicas por actualización y Gemini adapta como máximo doce candidatas por lote, solo si sus secretos existentes están disponibles. Sin secretos, la fuente se declara no configurada y la creación manual continúa.
+- El score de 0 a 100 separa popularidad relativa, relevancia gaming, claridad, actualidad, incertidumbre y novedad. Las probabilidades externas son referencia privada y nunca alimentan el LMSR de Atinara.
+- `Preparar borrador` vuelve a comprobar estado y duplicados, muestra el origen de cada campo y rellena el formulario real. Los huecos no fiables permanecen vacíos; solo `Guardar borrador privado` persiste la propuesta y conserva la revisión semántica y confirmación humana existentes.
+- La migración mantiene candidatas, estado de proveedores y procedencia en `private`, con RLS y permisos mínimos. No añade campos públicos a `markets`.
+- IGDB no se activa en esta entrega porque no hay credenciales Twitch configuradas; queda como proveedor futuro documentado, sin exponer controles rotos.
 
 ## Rangos y clasificación
 
