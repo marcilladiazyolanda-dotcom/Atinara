@@ -41,7 +41,7 @@ const authReady = new Promise((resolve) => {
 
 function formatAuthNumber(value) {
   const rounded = Math.round(Number(value) || 0);
-  return String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(rounded);
 }
 
 function mapProfileFromSupabase(row, user) {
@@ -60,11 +60,11 @@ function mapProfileFromSupabase(row, user) {
 
 function escapeAuthHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function getAuthAvatarMark(profile) {
@@ -384,7 +384,8 @@ function setAuthStatus(message, tone = "neutral") {
   const statusNode = document.querySelector("#auth-status");
   if (!statusNode) return;
   statusNode.textContent = message || "";
-  statusNode.className = `auth-status ${tone ? `auth-status-${tone}` : ""}`.trim();
+  const toneClass = tone ? `auth-status-${tone}` : "";
+  statusNode.className = `auth-status ${toneClass}`.trim();
   statusNode.hidden = !message;
 }
 
@@ -460,10 +461,34 @@ function setAuthFormBusy(isBusy) {
   });
 }
 
+function getAuthModeCopy(isSignup, isRecovery) {
+  if (isRecovery) {
+    return { title: "Recuperar contraseña", submit: "Enviar enlace seguro" };
+  }
+  if (isSignup) {
+    return { title: "Crear cuenta", submit: "Crear cuenta" };
+  }
+  return { title: "Iniciar sesión", submit: "Entrar" };
+}
+
+function configureAuthPassword(input, isSignup, isRecovery) {
+  if (!input) return;
+  input.required = !isRecovery;
+  input.autocomplete = isSignup ? "new-password" : "current-password";
+  input.minLength = isSignup ? passwordSecurityClient?.minLength || 12 : 6;
+  input.placeholder = isSignup ? "12 caracteres o más" : "Tu contraseña";
+  const describedBy = isSignup
+    ? "auth-password-requirements auth-password-privacy auth-status"
+    : "auth-status";
+  input.setAttribute("aria-describedby", describedBy);
+  input.removeAttribute("aria-invalid");
+}
+
 function setAuthMode(mode) {
   authMode = mode;
   const isSignup = authMode === "signup";
   const isRecovery = authMode === "recovery";
+  const modeCopy = getAuthModeCopy(isSignup, isRecovery);
   const titleNode = document.querySelector("#auth-modal-title");
   const submitNode = document.querySelector("#auth-submit");
   const usernameGroup = document.querySelector("#auth-username-group");
@@ -477,17 +502,8 @@ function setAuthMode(mode) {
     button.setAttribute("aria-pressed", String(button.dataset.authMode === authMode));
   });
 
-  if (titleNode) {
-    titleNode.textContent = isRecovery
-      ? "Recuperar contraseña"
-      : isSignup ? "Crear cuenta" : "Iniciar sesión";
-  }
-
-  if (submitNode) {
-    submitNode.textContent = isRecovery
-      ? "Enviar enlace seguro"
-      : isSignup ? "Crear cuenta" : "Entrar";
-  }
+  if (titleNode) titleNode.textContent = modeCopy.title;
+  if (submitNode) submitNode.textContent = modeCopy.submit;
 
   if (usernameGroup && usernameInput) {
     usernameGroup.hidden = !isSignup || isRecovery;
@@ -496,25 +512,8 @@ function setAuthMode(mode) {
 
   if (passwordGroup && passwordInput) {
     passwordGroup.hidden = isRecovery;
-    passwordInput.required = !isRecovery;
   }
-
-  if (passwordInput) {
-    passwordInput.autocomplete = isSignup ? "new-password" : "current-password";
-    passwordInput.minLength = isSignup
-      ? passwordSecurityClient?.minLength || 12
-      : 6;
-    passwordInput.placeholder = isSignup
-      ? "12 caracteres o más"
-      : "Tu contraseña";
-    passwordInput.setAttribute(
-      "aria-describedby",
-      isSignup
-        ? "auth-password-requirements auth-password-privacy auth-status"
-        : "auth-status"
-    );
-    passwordInput.removeAttribute("aria-invalid");
-  }
+  configureAuthPassword(passwordInput, isSignup, isRecovery);
 
   if (passwordSecurity) {
     passwordSecurity.hidden = !isSignup || isRecovery;
@@ -628,6 +627,107 @@ function normalizeUsername(username) {
   return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
 }
 
+function logAuthWarning(context, error) {
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  console.warn(`[Atinara] ${context}: ${errorName}`);
+}
+
+async function requestPasswordRecovery(email) {
+  if (!email) {
+    setAuthStatus("Escribe el email asociado a tu cuenta.", "error");
+    document.querySelector("#auth-email")?.focus();
+    return;
+  }
+
+  setAuthFormBusy(true);
+  setAuthStatus("Preparando el enlace seguro…", "info");
+  try {
+    const redirectTo = passwordRecoveryClient?.getRecoveryRedirectUrl(window.location)
+      || new URL("reset-password.html", window.location.href).href;
+    await authClient.auth.resetPasswordForEmail(email, { redirectTo });
+  } catch (error) {
+    // No se revela si un correo existe, pero el fallo técnico queda trazado sin datos personales.
+    logAuthWarning("No se pudo solicitar la recuperación", error);
+  } finally {
+    setAuthStatus(
+      "Si existe una cuenta con ese email, recibirás un enlace para crear una contraseña nueva.",
+      "success"
+    );
+    setAuthFormBusy(false);
+  }
+}
+
+function validateSignupCredentials(username, password) {
+  if (!username) {
+    setAuthStatus("Elige un username para crear la cuenta.", "error");
+    return false;
+  }
+  if (!passwordSecurityClient) {
+    setAuthStatus(
+      "La comprobación segura de contraseñas no está disponible. Recarga la página e inténtalo de nuevo.",
+      "error"
+    );
+    return false;
+  }
+
+  const evaluation = renderPasswordRequirements(password);
+  if (evaluation?.valid) return true;
+  const passwordInput = document.querySelector("#auth-password");
+  passwordInput?.setAttribute("aria-invalid", "true");
+  passwordInput?.focus();
+  setAuthStatus("La contraseña debe cumplir los cinco requisitos indicados.", "error");
+  return false;
+}
+
+async function submitSignup(email, password, username) {
+  let exposureResult;
+  try {
+    exposureResult = await passwordSecurityClient.checkExposure(password);
+  } catch (error) {
+    logAuthWarning("No se pudo comprobar la exposición de la contraseña", error);
+    setAuthStatus(
+      "No hemos podido comprobar la contraseña de forma segura. Inténtalo de nuevo en unos minutos.",
+      "error"
+    );
+    return;
+  }
+
+  if (exposureResult.exposed) {
+    const passwordInput = document.querySelector("#auth-password");
+    passwordInput?.setAttribute("aria-invalid", "true");
+    passwordInput?.focus();
+    setAuthStatus(
+      "Esta contraseña aparece en filtraciones conocidas. Elige otra distinta y no la reutilices.",
+      "error"
+    );
+    return;
+  }
+
+  setAuthStatus("Contraseña segura. Creando cuenta...", "info");
+  const { data, error } = await authClient.auth.signUp({
+    email,
+    password,
+    options: { data: { username } }
+  });
+  if (error) throw error;
+
+  if (!data.session) {
+    setAuthStatus("Cuenta creada. Revisa tu email para confirmar el acceso.", "success");
+    return;
+  }
+  await applySession(data.session);
+  setAuthStatus("Cuenta creada. Ya estás dentro.", "success");
+  window.setTimeout(closeAuthModal, 700);
+}
+
+async function submitLogin(email, password) {
+  const { data, error } = await authClient.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  await applySession(data.session);
+  setAuthStatus("Sesión iniciada.", "success");
+  window.setTimeout(closeAuthModal, 500);
+}
+
 async function handleAuthSubmit(event) {
   event.preventDefault();
   const requestedMode = authMode;
@@ -642,52 +742,12 @@ async function handleAuthSubmit(event) {
   const username = normalizeUsername(document.querySelector("#auth-username")?.value || "");
 
   if (requestedMode === "recovery") {
-    if (!email) {
-      setAuthStatus("Escribe el email asociado a tu cuenta.", "error");
-      document.querySelector("#auth-email")?.focus();
-      return;
-    }
-
-    setAuthFormBusy(true);
-    setAuthStatus("Preparando el enlace seguro…", "info");
-    try {
-      const redirectTo = passwordRecoveryClient?.getRecoveryRedirectUrl(window.location)
-        || new URL("reset-password.html", window.location.href).href;
-      await authClient.auth.resetPasswordForEmail(email, { redirectTo });
-    } catch (_error) {
-      // La respuesta visible debe ser idéntica para correos existentes y no existentes.
-    } finally {
-      setAuthStatus(
-        "Si existe una cuenta con ese email, recibirás un enlace para crear una contraseña nueva.",
-        "success"
-      );
-      setAuthFormBusy(false);
-    }
+    await requestPasswordRecovery(email);
     return;
   }
 
-  if (requestedMode === "signup" && !username) {
-    setAuthStatus("Elige un username para crear la cuenta.", "error");
+  if (requestedMode === "signup" && !validateSignupCredentials(username, password)) {
     return;
-  }
-
-  if (requestedMode === "signup") {
-    if (!passwordSecurityClient) {
-      setAuthStatus(
-        "La comprobación segura de contraseñas no está disponible. Recarga la página e inténtalo de nuevo.",
-        "error"
-      );
-      return;
-    }
-
-    const evaluation = renderPasswordRequirements(password);
-    if (!evaluation?.valid) {
-      const passwordInput = document.querySelector("#auth-password");
-      passwordInput?.setAttribute("aria-invalid", "true");
-      passwordInput?.focus();
-      setAuthStatus("La contraseña debe cumplir los cinco requisitos indicados.", "error");
-      return;
-    }
   }
 
   setAuthFormBusy(true);
@@ -700,53 +760,9 @@ async function handleAuthSubmit(event) {
 
   try {
     if (requestedMode === "signup") {
-      let exposureResult;
-
-      try {
-        exposureResult = await passwordSecurityClient.checkExposure(password);
-      } catch (_error) {
-        setAuthStatus(
-          "No hemos podido comprobar la contraseña de forma segura. Inténtalo de nuevo en unos minutos.",
-          "error"
-        );
-        return;
-      }
-
-      if (exposureResult.exposed) {
-        const passwordInput = document.querySelector("#auth-password");
-        passwordInput?.setAttribute("aria-invalid", "true");
-        passwordInput?.focus();
-        setAuthStatus(
-          "Esta contraseña aparece en filtraciones conocidas. Elige otra distinta y no la reutilices.",
-          "error"
-        );
-        return;
-      }
-
-      setAuthStatus("Contraseña segura. Creando cuenta...", "info");
-      const { data, error } = await authClient.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { username }
-        }
-      });
-
-      if (error) throw error;
-
-      if (data.session) {
-        await applySession(data.session);
-        setAuthStatus("Cuenta creada. Ya estás dentro.", "success");
-        window.setTimeout(closeAuthModal, 700);
-      } else {
-        setAuthStatus("Cuenta creada. Revisa tu email para confirmar el acceso.", "success");
-      }
+      await submitSignup(email, password, username);
     } else {
-      const { data, error } = await authClient.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      await applySession(data.session);
-      setAuthStatus("Sesión iniciada.", "success");
-      window.setTimeout(closeAuthModal, 500);
+      await submitLogin(email, password);
     }
   } catch (error) {
     setAuthStatus(getFriendlyAuthError(error, requestedMode), "error");
@@ -829,7 +845,7 @@ function bindAuthUi() {
         modal.querySelectorAll("button:not([disabled]), input:not([disabled]), a[href]")
       ).filter((item) => !item.hidden && item.offsetParent !== null);
       const first = focusable[0];
-      const last = focusable[focusable.length - 1];
+      const last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last?.focus();

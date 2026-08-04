@@ -78,6 +78,11 @@ function createMarketCommentActionsMarkup(comment, isParent) {
   const isOwn = Boolean(auth?.user?.id && auth.user.id === comment.author_id);
   const canReact = !isOwn && (comment.viewer_can_react || !isAuthenticated);
   const reactionLabel = `${comment.viewer_reacted ? "Retirar" : "Marcar"} Buena lectura`;
+  const reportDisabled = comment.viewer_has_open_report ? " disabled" : "";
+  const reportLabel = comment.viewer_has_open_report ? "Reportado" : "Reportar";
+  const reportMarkup = !isOwn && comment.author_id
+    ? `<button class="social-text-button" type="button" data-comment-report="${comment.comment_id}"${reportDisabled}>${reportLabel}</button>`
+    : "";
 
   return `
     <div class="market-comment-actions">
@@ -95,11 +100,7 @@ function createMarketCommentActionsMarkup(comment, isParent) {
         <button class="social-text-button" type="button" data-comment-edit="${comment.comment_id}">Editar</button>
         <button class="social-text-button social-text-danger" type="button" data-comment-delete="${comment.comment_id}">Eliminar</button>
       ` : ""}
-      ${!isOwn && comment.author_id ? `
-        <button class="social-text-button" type="button" data-comment-report="${comment.comment_id}"${comment.viewer_has_open_report ? " disabled" : ""}>
-          ${comment.viewer_has_open_report ? "Reportado" : "Reportar"}
-        </button>
-      ` : ""}
+      ${reportMarkup}
     </div>
   `;
 }
@@ -197,6 +198,20 @@ function createMarketCommentComposerMarkup() {
 function renderMarketComments() {
   if (!marketCommentsRoot) return;
   const threads = getMarketCommentThreads();
+  let commentsMarkup;
+  if (marketCommentsState.loading) {
+    commentsMarkup = '<div class="social-loading-card"><strong>Cargando debate...</strong><p>Consultando comentarios reales en Supabase.</p></div>';
+  } else if (threads.length) {
+    commentsMarkup = threads.map(createMarketCommentThreadMarkup).join("");
+  } else {
+    commentsMarkup = '<div class="social-empty-card"><strong>Aún no hay comentarios</strong><p>Este debate comenzará cuando alguien comparta su primera lectura.</p></div>';
+  }
+
+  const loadMoreDisabled = marketCommentsState.loadingMore ? " disabled" : "";
+  const loadMoreLabel = marketCommentsState.loadingMore ? "Cargando..." : "Ver comentarios anteriores";
+  const loadMoreMarkup = marketCommentsState.hasMore
+    ? `<button class="secondary-button social-load-more" type="button" data-comments-load-more${loadMoreDisabled}>${loadMoreLabel}</button>`
+    : "";
 
   marketCommentsRoot.innerHTML = `
     <div class="market-comments-heading">
@@ -210,17 +225,9 @@ function renderMarketComments() {
     ${createMarketCommentComposerMarkup()}
     ${marketCommentsState.error ? `<p class="social-status social-status-error">${marketCommentsSocial.escapeHtml(marketCommentsState.error)}</p>` : ""}
     <div class="market-comments-list" aria-live="polite">
-      ${marketCommentsState.loading
-        ? '<div class="social-loading-card"><strong>Cargando debate...</strong><p>Consultando comentarios reales en Supabase.</p></div>'
-        : threads.length
-          ? threads.map(createMarketCommentThreadMarkup).join("")
-          : '<div class="social-empty-card"><strong>Aún no hay comentarios</strong><p>Este debate comenzará cuando alguien comparta su primera lectura.</p></div>'}
+      ${commentsMarkup}
     </div>
-    ${marketCommentsState.hasMore ? `
-      <button class="secondary-button social-load-more" type="button" data-comments-load-more${marketCommentsState.loadingMore ? " disabled" : ""}>
-        ${marketCommentsState.loadingMore ? "Cargando..." : "Ver comentarios anteriores"}
-      </button>
-    ` : ""}
+    ${loadMoreMarkup}
   `;
 }
 
@@ -233,7 +240,7 @@ async function fetchMarketCommentPage(cursor = null) {
   });
   const threads = getMarketCommentThreads(rows || []);
   const visibleThreads = threads.slice(0, MARKET_COMMENT_PAGE_SIZE);
-  const lastThread = visibleThreads[visibleThreads.length - 1] || null;
+  const lastThread = visibleThreads.at(-1) || null;
 
   return {
     rows: visibleThreads.flatMap((thread) => [thread.parent, ...thread.replies]),

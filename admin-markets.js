@@ -54,7 +54,11 @@
       }).formatToParts(date);
       const get = (type) => parts.find((part) => part.type === type)?.value || "";
       return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
-    } catch (_error) {
+    } catch (error) {
+      console.warn(
+        "Atinara: no se pudo representar una fecha administrativa.",
+        error instanceof Error ? error.name : "UnknownError"
+      );
       return "";
     }
   }
@@ -141,16 +145,20 @@
     const deterministic = Array.isArray(payload?.deterministic_issues) ? payload.deterministic_issues : [];
     const semantic = Array.isArray(latest?.semantic_issues) ? latest.semantic_issues : [];
     const issues = [...deterministic, ...semantic];
+    const issueItems = issues.map((issue, issueIndex) => `
+      <li id="admin-issue-${escapeHtml(issue.field)}-${issueIndex}" data-field="${escapeHtml(issue.field)}">
+        <code>${escapeHtml(issue.code)}</code>
+        <strong>${escapeHtml(issue.field || "Revisión")}</strong>
+        <span>${escapeHtml(issue.message)}</span>
+      </li>`).join("");
     const issueMarkup = issues.length
-      ? `<ol class="admin-validation-reasons">${issues.map((issue, issueIndex) => `
-          <li id="admin-issue-${escapeHtml(issue.field)}-${issueIndex}" data-field="${escapeHtml(issue.field)}">
-            <code>${escapeHtml(issue.code)}</code>
-            <strong>${escapeHtml(issue.field || "Revisión")}</strong>
-            <span>${escapeHtml(issue.message)}</span>
-          </li>`).join("")}</ol>`
+      ? `<ol class="admin-validation-reasons">${issueItems}</ol>`
       : '<p class="admin-empty-state">No hay motivos bloqueantes registrados para esta versión.</p>';
+    const noteItems = Array.isArray(latest?.editorial_notes)
+      ? latest.editorial_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
+      : "";
     const notes = Array.isArray(latest?.editorial_notes) && latest.editorial_notes.length
-      ? `<ul>${latest.editorial_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : "";
+      ? `<ul>${noteItems}</ul>` : "";
     const canReview = ["draft_ready", "review_rejected", "review_inconclusive", "review_unavailable"].includes(draft.workflow_status);
     const canConfirm = draft.workflow_status === "review_approved" && draft.review_status === "approved";
     const canPublish = draft.workflow_status === "human_confirmed";
@@ -368,9 +376,11 @@
       await loadDrafts();
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: result.draft.id });
       const issueCount = Array.isArray(result.deterministic_issues) ? result.deterministic_issues.length : 0;
-      setNotice(issueCount
-        ? `Borrador guardado en privado con ${issueCount} motivo${issueCount === 1 ? "" : "s"} pendiente${issueCount === 1 ? "" : "s"}.`
-        : "Borrador guardado. Ya puede solicitarse la revisión automática.", issueCount ? "warning" : "success");
+      const pluralSuffix = issueCount === 1 ? "" : "s";
+      const noticeMessage = issueCount
+        ? `Borrador guardado en privado con ${issueCount} motivo${pluralSuffix} pendiente${pluralSuffix}.`
+        : "Borrador guardado. Ya puede solicitarse la revisión automática.";
+      setNotice(noticeMessage, issueCount ? "warning" : "success");
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo guardar el borrador."), "error");
     } finally {
@@ -543,9 +553,9 @@
     if (!target || target.disabled) return;
     if (target.dataset.adminView) loadView(target.dataset.adminView);
     if (target.dataset.openDraft) openDraft(target.dataset.openDraft);
-    if (target.hasAttribute("data-request-review")) requestReview();
-    if (target.hasAttribute("data-confirm-review")) confirmReview();
-    if (target.hasAttribute("data-publish-draft")) publishDraft();
+    if (target.dataset.requestReview !== undefined) requestReview();
+    if (target.dataset.confirmReview !== undefined) confirmReview();
+    if (target.dataset.publishDraft !== undefined) publishDraft();
     if (target.dataset.closeEarly) managePublishedMarket(target.dataset.closeEarly, "early", target);
     if (target.dataset.cancelMarket) managePublishedMarket(target.dataset.cancelMarket, "cancel", target);
   });
@@ -554,8 +564,10 @@
     event.preventDefault();
     if (event.target.id === "admin-draft-filters") {
       const data = new FormData(event.target);
-      state.query = String(data.get("query") || "").trim();
-      state.status = String(data.get("status") || "").trim();
+      const query = data.get("query");
+      const status = data.get("status");
+      state.query = typeof query === "string" ? query.trim() : "";
+      state.status = typeof status === "string" ? status.trim() : "";
       state.busy = true;
       renderWorkspace();
       loadDrafts({ preserveSelection: false }).then(() => {

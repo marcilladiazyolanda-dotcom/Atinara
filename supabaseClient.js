@@ -63,7 +63,8 @@ function normalizeResolutionSources(value) {
   if (typeof sources === "string") {
     try {
       sources = JSON.parse(sources);
-    } catch (_error) {
+    } catch (error) {
+      console.warn("[Atinara] Fuentes de resolución no válidas", error instanceof Error ? error.name : "UnknownError");
       sources = [];
     }
   }
@@ -121,7 +122,7 @@ function getOrakloMarketTiming(market, now = Date.now()) {
   const fallbackLabel = market?.cierre || market?.close_label || "Sin fecha de cierre";
   const hasCloseDate = closeTimestamp !== null;
   const remainingMs = hasCloseDate ? closeTimestamp - now : null;
-  let label = fallbackLabel;
+  let label;
 
   if (effectiveStatus === "Resuelto") {
     label = resolutionResult ? `Resuelto: ${resolutionResult}` : "Resuelto";

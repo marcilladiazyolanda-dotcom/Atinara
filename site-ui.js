@@ -21,11 +21,11 @@
 
   function escapeHtml(value) {
     return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
   }
 
   function normalizeSearchText(value) {
@@ -39,7 +39,7 @@
   function normalizeCurrentPage(pathname = global.location?.pathname || "") {
     const segments = String(pathname).split("/").filter(Boolean);
     const lastSegment = decodeURIComponent(segments.at(-1) || "").toLocaleLowerCase("es-ES");
-    return !lastSegment || !lastSegment.includes(".") ? "index.html" : lastSegment;
+    return !lastSegment?.includes(".") ? "index.html" : lastSegment;
   }
 
   function getNavigationDestinations(
@@ -82,7 +82,11 @@
       getNavigationDestinations(global.location?.pathname || "", { includeAdmin })
         .forEach((destination) => fragment.appendChild(createNavigationLink(destination)));
       mobilePanel.querySelectorAll(":scope > a").forEach((link) => link.remove());
-      mobilePanel.insertBefore(fragment, firstControl);
+      if (firstControl) {
+        firstControl.before(fragment);
+      } else {
+        mobilePanel.append(fragment);
+      }
     }
   }
 
@@ -98,7 +102,9 @@
       ? formatNumber(number, options.maximumFractionDigits ?? 2)
       : "—";
     const accessible = options.label || `${formatted} Karma`;
-    const signClass = number > 0 ? " is-positive" : number < 0 ? " is-negative" : "";
+    let signClass = "";
+    if (number > 0) signClass = " is-positive";
+    else if (number < 0) signClass = " is-negative";
     return `<span class="karma-amount${signClass}" aria-label="${escapeHtml(accessible)}"><span>${escapeHtml(formatted)}</span><img class="karma-glyph" src="assets/brand/atinara-karma.svg" alt="" aria-hidden="true" width="16" height="16"></span>`;
   }
 
@@ -304,7 +310,9 @@
       if (state.trigger === input && input.value.trim() && !getSearchPanel()?.hidden) {
         renderSearchResults(input.value);
       }
-    } catch (_error) {
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      console.warn(`[Atinara] No se pudo cargar la búsqueda global: ${errorName}`);
       if (input.value.trim()) renderSearchResults(input.value, "error");
     }
   }
@@ -317,7 +325,7 @@
     panel.className = "global-search-results";
     panel.setAttribute("aria-label", "Búsqueda de mercados");
     panel.hidden = true;
-    topbar.insertAdjacentElement("afterend", panel);
+    topbar.after(panel);
     return panel;
   }
 
@@ -462,7 +470,7 @@
     signOutButton.textContent = "Cerrar sesión";
     panel.append(metrics, guestButton, profileButton, signOutButton);
     topbar.appendChild(button);
-    topbar.insertAdjacentElement("afterend", panel);
+    topbar.after(panel);
 
     button.addEventListener("click", () => {
       const open = panel.hidden;

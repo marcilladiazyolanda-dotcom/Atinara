@@ -115,18 +115,21 @@ function getCurrentOptionPrice(prediction, market) {
     : Number(market.porcentajeNo);
 }
 
+function getSignedValueClass(value) {
+  if (value > 0) return "value-positive";
+  if (value < 0) return "value-negative";
+  return "value-neutral";
+}
+
 function createActiveEstimateMarkup(prediction, market, isPending) {
   const entryPrice = getPredictionEntryPrice(prediction);
   const currentPrice = getCurrentOptionPrice(prediction, market);
   const priceMovement = currentPrice - entryPrice;
+  const movementPrefix = priceMovement > 0 ? "+" : "";
   const movementLabel = Number.isFinite(priceMovement)
-    ? `${priceMovement > 0 ? "+" : ""}${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 }).format(priceMovement)} puntos`
+    ? `${movementPrefix}${new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 }).format(priceMovement)} puntos`
     : "—";
-  const movementClass = priceMovement > 0
-    ? "value-positive"
-    : priceMovement < 0
-      ? "value-negative"
-      : "value-neutral";
+  const movementClass = getSignedValueClass(priceMovement);
   const baseReturn = Number(
     prediction.base_return_estimated
       ?? (Number(prediction.karma_risked) || 0) + (Number(prediction.base_benefit_estimated) || 0)
@@ -153,12 +156,8 @@ function createSettlementMarkup(prediction, viewState) {
   const karmaAwarded = Number(prediction.karma_awarded) || 0;
   const balance = karmaAwarded - karmaRisked;
   const prestigeChange = Number(prediction.prestige_change) || 0;
-  const balanceClass = balance > 0 ? "value-positive" : balance < 0 ? "value-negative" : "value-neutral";
-  const prestigeClass = prestigeChange > 0
-    ? "value-positive"
-    : prestigeChange < 0
-      ? "value-negative"
-      : "value-neutral";
+  const balanceClass = getSignedValueClass(balance);
+  const prestigeClass = getSignedValueClass(prestigeChange);
   const annulledNote = viewState.key === "annulled"
     ? '<div class="prediction-wide-row settlement-note settlement-note-annulled"><dt>Anulación</dt><dd>Se devolvió íntegramente el Karma arriesgado y el Prestigio no cambió.</dd></div>'
     : "";
@@ -326,7 +325,11 @@ async function renderMyPredictions() {
 
     const marketsById = await fetchMarketsForPredictions(predictions);
     renderPredictionList(predictions, marketsById);
-  } catch (_error) {
+  } catch (error) {
+    console.warn(
+      "Atinara: no se pudieron cargar las predicciones privadas.",
+      error instanceof Error ? error.name : "UnknownError"
+    );
     renderPredictionsError("No se han podido consultar tus predicciones privadas. Inténtalo de nuevo.");
   }
 }

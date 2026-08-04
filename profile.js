@@ -50,11 +50,11 @@ const predictorProfileState = {
 
 function escapeProfileHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function formatProfileNumber(value) {
@@ -288,6 +288,55 @@ function isViewingOwnProfile(profile = predictorProfileState.profile) {
   );
 }
 
+function getProfileFollowLabel(social, followBusy) {
+  if (followBusy) return "Actualizando...";
+  return social.viewer_is_following ? "Siguiendo" : "Seguir";
+}
+
+function getProfileMuteLabel(social, muteBusy) {
+  if (muteBusy) return "Actualizando...";
+  return social.viewer_has_muted ? "Dejar de silenciar" : "Silenciar";
+}
+
+function createProfileSocialActionsMarkup(social, isOwnProfile) {
+  if (isOwnProfile) {
+    return '<a class="secondary-button profile-community-link" href="community.html">Abrir mi comunidad</a>';
+  }
+
+  const followBusy = predictorProfileState.socialBusy === "follow";
+  const muteBusy = predictorProfileState.socialBusy === "mute";
+  const followDisabled = followBusy || (social.viewer_has_muted && !social.viewer_is_following);
+  const followClass = social.viewer_is_following ? "secondary-button" : "primary-button";
+  const mutedTitle = social.viewer_has_muted
+    ? "Deja de silenciar este perfil para poder seguirlo"
+    : "";
+  const openReportDisabled = social.viewer_has_open_report ? " disabled" : "";
+  const reportLabel = social.viewer_has_open_report ? "Perfil reportado" : "Reportar perfil";
+
+  return `
+    <div class="profile-social-actions">
+      <button class="${followClass}" id="profile-follow-button" type="button"
+        aria-pressed="${Boolean(social.viewer_is_following)}"${followDisabled ? " disabled" : ""}
+        title="${mutedTitle}">
+        ${getProfileFollowLabel(social, followBusy)}
+      </button>
+      <button class="secondary-button" id="profile-mute-button" type="button" aria-pressed="${Boolean(social.viewer_has_muted)}"${muteBusy ? " disabled" : ""}>
+        ${getProfileMuteLabel(social, muteBusy)}
+      </button>
+      <button class="profile-report-button" id="profile-report-button" type="button"${openReportDisabled}>
+        ${reportLabel}
+      </button>
+    </div>
+  `;
+}
+
+function createProfileSocialStatusMarkup() {
+  if (!predictorProfileState.socialStatusMessage) return "";
+  const tone = escapeProfileHtml(predictorProfileState.socialStatusTone);
+  const message = escapeProfileHtml(predictorProfileState.socialStatusMessage);
+  return `<p class="social-status social-status-${tone}">${message}</p>`;
+}
+
 function createProfileSocialMarkup(profile, isOwnProfile) {
   if (!predictorProfileState.socialAvailable || !predictorProfileState.social) {
     return `
@@ -299,36 +348,20 @@ function createProfileSocialMarkup(profile, isOwnProfile) {
   }
 
   const social = predictorProfileState.social;
-  const followBusy = predictorProfileState.socialBusy === "follow";
-  const muteBusy = predictorProfileState.socialBusy === "mute";
-  const followDisabled = followBusy || (social.viewer_has_muted && !social.viewer_is_following);
 
   return `
     <dl class="profile-social-counts" aria-label="Comunidad del perfil">
       <div><dt>Seguidores</dt><dd>${formatProfileNumber(social.follower_count)}</dd></div>
       <div><dt>Siguiendo</dt><dd>${formatProfileNumber(social.following_count)}</dd></div>
     </dl>
-    ${isOwnProfile ? `
-      <a class="secondary-button profile-community-link" href="community.html">Abrir mi comunidad</a>
-    ` : `
-      <div class="profile-social-actions">
-        <button class="${social.viewer_is_following ? "secondary-button" : "primary-button"}" id="profile-follow-button" type="button"
-          aria-pressed="${Boolean(social.viewer_is_following)}"${followDisabled ? " disabled" : ""}
-          title="${social.viewer_has_muted ? "Deja de silenciar este perfil para poder seguirlo" : ""}">
-          ${followBusy ? "Actualizando..." : social.viewer_is_following ? "Siguiendo" : "Seguir"}
-        </button>
-        <button class="secondary-button" id="profile-mute-button" type="button" aria-pressed="${Boolean(social.viewer_has_muted)}"${muteBusy ? " disabled" : ""}>
-          ${muteBusy ? "Actualizando..." : social.viewer_has_muted ? "Dejar de silenciar" : "Silenciar"}
-        </button>
-        <button class="profile-report-button" id="profile-report-button" type="button"${social.viewer_has_open_report ? " disabled" : ""}>
-          ${social.viewer_has_open_report ? "Perfil reportado" : "Reportar perfil"}
-        </button>
-      </div>
-    `}
-    ${predictorProfileState.socialStatusMessage ? `
-      <p class="social-status social-status-${escapeProfileHtml(predictorProfileState.socialStatusTone)}">${escapeProfileHtml(predictorProfileState.socialStatusMessage)}</p>
-    ` : ""}
+    ${createProfileSocialActionsMarkup(social, isOwnProfile)}
+    ${createProfileSocialStatusMarkup()}
   `;
+}
+
+function logProfileWarning(context, error) {
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  console.warn(`[Atinara] ${context}: ${errorName}`);
 }
 
 async function refreshProfileSocialData({ render = true } = {}) {
@@ -340,7 +373,8 @@ async function refreshProfileSocialData({ render = true } = {}) {
     });
     predictorProfileState.social = window.orakloSocial.normalizeRow(data);
     predictorProfileState.socialAvailable = Boolean(predictorProfileState.social);
-  } catch (_error) {
+  } catch (error) {
+    logProfileWarning("No se pudieron cargar los datos sociales", error);
     predictorProfileState.social = null;
     predictorProfileState.socialAvailable = false;
   }
@@ -644,15 +678,17 @@ function createSeasonMarkup(profile) {
   `;
 }
 
+function getProfileValueClass(value) {
+  if (value > 0) return "value-positive";
+  if (value < 0) return "value-negative";
+  return "value-neutral";
+}
+
 function createHistoryCardMarkup(historyItem) {
   const result = getHistoryResult(historyItem);
   const balance = (Number(historyItem.karma_awarded) || 0) - (Number(historyItem.karma_risked) || 0);
-  const balanceClass = balance > 0 ? "value-positive" : balance < 0 ? "value-negative" : "value-neutral";
-  const prestigeClass = Number(historyItem.prestige_change) > 0
-    ? "value-positive"
-    : Number(historyItem.prestige_change) < 0
-      ? "value-negative"
-      : "value-neutral";
+  const balanceClass = getProfileValueClass(balance);
+  const prestigeClass = getProfileValueClass(Number(historyItem.prestige_change));
 
   return `
     <article class="public-history-card public-history-${result.key}">
@@ -677,6 +713,14 @@ function createHistoryCardMarkup(historyItem) {
       <a class="secondary-button" href="market-detail.html?id=${encodeURIComponent(historyItem.market_id)}">Ver resolución y fuentes</a>
     </article>
   `;
+}
+
+function getProfileBio(profile, isOwnProfile) {
+  if (profile.bio) return escapeProfileHtml(profile.bio);
+  if (isOwnProfile) {
+    return "Añade una biografía para contar cómo analizas el futuro del gaming.";
+  }
+  return "Construyendo su trayectoria como predictor en Atinara.";
 }
 
 function renderPublicHistory() {
@@ -732,11 +776,7 @@ function renderPredictorProfile() {
   const avatar = getProfileAvatar(profile);
   const theme = getProfileTheme(profile);
   const unlockedBadges = badges.filter((badge) => badge.unlocked).length;
-  const profileBio = profile.bio
-    ? escapeProfileHtml(profile.bio)
-    : isOwnProfile
-      ? "Añade una biografía para contar cómo analizas el futuro del gaming."
-      : "Construyendo su trayectoria como predictor en Atinara.";
+  const profileBio = getProfileBio(profile, isOwnProfile);
 
   document.title = `${profile.username || "Perfil"} | Atinara`;
 
@@ -931,7 +971,7 @@ async function fetchProfileHistory(cursor = null) {
 
   const rows = data || [];
   const visibleRows = rows.slice(0, PROFILE_HISTORY_PAGE_SIZE);
-  const lastVisible = visibleRows[visibleRows.length - 1] || null;
+  const lastVisible = visibleRows.at(-1) || null;
 
   return {
     rows: visibleRows,
@@ -957,7 +997,8 @@ async function loadMoreProfileHistory() {
     predictorProfileState.history.push(...nextPage.rows);
     predictorProfileState.hasMoreHistory = nextPage.hasMore;
     predictorProfileState.historyCursor = nextPage.cursor;
-  } catch (_error) {
+  } catch (error) {
+    logProfileWarning("No se pudo cargar más historial público", error);
     predictorProfileState.historyLoadError = "No se ha podido cargar la siguiente parte del historial. Puedes reintentarlo.";
   } finally {
     predictorProfileState.loadingMore = false;

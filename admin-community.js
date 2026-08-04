@@ -49,7 +49,8 @@ function normalizeAdminSnapshot(value) {
   if (typeof value === "object") return value;
   try {
     return JSON.parse(value);
-  } catch (_error) {
+  } catch (error) {
+    console.warn("[Atinara] Instantánea de moderación no válida", error instanceof Error ? error.name : "UnknownError");
     return {};
   }
 }
@@ -126,11 +127,30 @@ function createAdminReportActionForm(report) {
 
 function createAdminReportCard(report) {
   const isPending = report.status === "Pendiente";
+  let statusClass = "status-annulled";
+  if (isPending) statusClass = "status-closed";
+  else if (report.status === "Actuado") statusClass = "status-resolved";
+
+  const reviewNote = report.review_note
+    ? `<p>${adminCommunitySocial.escapeHtml(report.review_note)}</p>`
+    : "";
+  const reviewedAt = report.reviewed_at
+    ? `Revisado ${adminCommunitySocial.escapeHtml(adminCommunitySocial.formatDate(report.reviewed_at))}`
+    : "";
+  const reviewedBy = report.reviewed_by_username
+    ? ` por ${adminCommunitySocial.escapeHtml(report.reviewed_by_username)}`
+    : "";
+  const completedReviewMarkup = `
+    <div class="admin-report-decision">
+      <strong>${adminCommunitySocial.escapeHtml(ADMIN_DECISION_LABELS[report.decision] || "Revisión completada")}</strong>
+      ${reviewNote}
+      <small>${reviewedAt}${reviewedBy}</small>
+    </div>`;
   return `
     <article class="admin-report-card">
       <header>
         <div>
-          <span class="status ${isPending ? "status-closed" : report.status === "Actuado" ? "status-resolved" : "status-annulled"}">${adminCommunitySocial.escapeHtml(report.status)}</span>
+          <span class="status ${statusClass}">${adminCommunitySocial.escapeHtml(report.status)}</span>
           <strong>${adminCommunitySocial.escapeHtml(ADMIN_REPORT_REASON_LABELS[report.reason] || report.reason)}</strong>
         </div>
         <time datetime="${adminCommunitySocial.escapeHtml(report.created_at)}">${adminCommunitySocial.escapeHtml(adminCommunitySocial.formatDate(report.created_at))}</time>
@@ -142,13 +162,7 @@ function createAdminReportCard(report) {
       </dl>
       ${report.detail ? `<div class="admin-report-detail"><strong>Contexto del reporte</strong><p>${adminCommunitySocial.escapeHtml(report.detail)}</p></div>` : ""}
       ${createAdminReportTargetMarkup(report)}
-      ${isPending ? createAdminReportActionForm(report) : `
-        <div class="admin-report-decision">
-          <strong>${adminCommunitySocial.escapeHtml(ADMIN_DECISION_LABELS[report.decision] || "Revisión completada")}</strong>
-          ${report.review_note ? `<p>${adminCommunitySocial.escapeHtml(report.review_note)}</p>` : ""}
-          <small>${report.reviewed_at ? `Revisado ${adminCommunitySocial.escapeHtml(adminCommunitySocial.formatDate(report.reviewed_at))}` : ""}${report.reviewed_by_username ? ` por ${adminCommunitySocial.escapeHtml(report.reviewed_by_username)}` : ""}</small>
-        </div>
-      `}
+      ${isPending ? createAdminReportActionForm(report) : completedReviewMarkup}
     </article>
   `;
 }
@@ -203,6 +217,32 @@ function renderAdminCommunityAccess(auth) {
   `;
 }
 
+function createAdminCommunityListMarkup(config) {
+  let listMarkup = "";
+  if (config.type === "reports") listMarkup = adminCommunityState.rows.map(createAdminReportCard).join("");
+  if (config.type === "hidden") listMarkup = adminCommunityState.rows.map(createAdminHiddenCommentCard).join("");
+  if (config.type === "restrictions") listMarkup = adminCommunityState.rows.map(createAdminRestrictionCard).join("");
+  return listMarkup;
+}
+
+function createAdminCommunityContentMarkup(config, listMarkup) {
+  if (adminCommunityState.loading) {
+    return '<div class="social-loading-card"><strong>Cargando cola...</strong><p>Consultando decisiones y reportes privados.</p></div>';
+  }
+  if (adminCommunityState.error) {
+    return `<div class="social-empty-card social-error-card"><strong>No se ha podido cargar esta cola</strong><p>${adminCommunitySocial.escapeHtml(adminCommunityState.error)}</p><button class="secondary-button" type="button" data-admin-community-retry>Reintentar</button></div>`;
+  }
+  if (listMarkup) return `<div class="admin-report-list">${listMarkup}</div>`;
+  return `<div class="social-empty-card"><strong>No hay elementos en ${config.label.toLowerCase()}</strong><p>La cola se alimenta únicamente con actividad real de Supabase.</p></div>`;
+}
+
+function createAdminCommunityMoreMarkup() {
+  if (!adminCommunityState.hasMore || adminCommunityState.loading) return "";
+  const disabled = adminCommunityState.loadingMore ? " disabled" : "";
+  const label = adminCommunityState.loadingMore ? "Cargando..." : "Ver elementos anteriores";
+  return `<button class="secondary-button social-load-more" type="button" data-admin-community-more${disabled}>${label}</button>`;
+}
+
 function renderAdminCommunity() {
   if (!adminCommunityRoot) return;
   const auth = window.orakloAuth?.getState?.();
@@ -212,10 +252,8 @@ function renderAdminCommunity() {
   }
 
   const config = getAdminCommunityViewConfig();
-  let listMarkup = "";
-  if (config.type === "reports") listMarkup = adminCommunityState.rows.map(createAdminReportCard).join("");
-  if (config.type === "hidden") listMarkup = adminCommunityState.rows.map(createAdminHiddenCommentCard).join("");
-  if (config.type === "restrictions") listMarkup = adminCommunityState.rows.map(createAdminRestrictionCard).join("");
+  const listMarkup = createAdminCommunityListMarkup(config);
+  const contentMarkup = createAdminCommunityContentMarkup(config, listMarkup);
 
   adminCommunityRoot.innerHTML = `
     <div class="admin-community-toolbar">
@@ -226,14 +264,8 @@ function renderAdminCommunity() {
       ${createAdminCommunityTabs()}
     </div>
     ${adminCommunityState.actionMessage ? `<p class="social-status social-status-${adminCommunityState.actionTone}">${adminCommunitySocial.escapeHtml(adminCommunityState.actionMessage)}</p>` : ""}
-    ${adminCommunityState.loading
-      ? '<div class="social-loading-card"><strong>Cargando cola...</strong><p>Consultando decisiones y reportes privados.</p></div>'
-      : adminCommunityState.error
-        ? `<div class="social-empty-card social-error-card"><strong>No se ha podido cargar esta cola</strong><p>${adminCommunitySocial.escapeHtml(adminCommunityState.error)}</p><button class="secondary-button" type="button" data-admin-community-retry>Reintentar</button></div>`
-        : listMarkup
-          ? `<div class="admin-report-list">${listMarkup}</div>`
-          : `<div class="social-empty-card"><strong>No hay elementos en ${config.label.toLowerCase()}</strong><p>La cola se alimenta únicamente con actividad real de Supabase.</p></div>`}
-    ${adminCommunityState.hasMore && !adminCommunityState.loading ? `<button class="secondary-button social-load-more" type="button" data-admin-community-more${adminCommunityState.loadingMore ? " disabled" : ""}>${adminCommunityState.loadingMore ? "Cargando..." : "Ver elementos anteriores"}</button>` : ""}
+    ${contentMarkup}
+    ${createAdminCommunityMoreMarkup()}
   `;
 }
 
@@ -263,9 +295,11 @@ async function fetchAdminCommunityPage(cursor = null) {
   }
 
   const visibleRows = (rows || []).slice(0, ADMIN_COMMUNITY_PAGE_SIZE);
-  const last = visibleRows[visibleRows.length - 1] || null;
+  const last = visibleRows.at(-1) || null;
   const date = config.type === "hidden" ? last?.moderated_at : last?.created_at;
-  const id = config.type === "reports" ? last?.report_id : config.type === "hidden" ? last?.comment_id : last?.restriction_id;
+  let id = last?.restriction_id;
+  if (config.type === "reports") id = last?.report_id;
+  else if (config.type === "hidden") id = last?.comment_id;
   return {
     rows: visibleRows,
     hasMore: (rows || []).length > ADMIN_COMMUNITY_PAGE_SIZE,

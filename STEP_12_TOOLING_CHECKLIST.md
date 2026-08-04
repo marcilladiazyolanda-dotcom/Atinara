@@ -16,10 +16,12 @@ Ninguna herramienta sustituye Supabase, GitHub Pages, Gemini o Pwned Passwords. 
 ### Configuración versionada
 
 - `.sonarcloud.properties` excluye únicamente dependencias y resultados generados.
+- Las migraciones aplicadas continúan analizándose; solo se omite `plsql:S1192`
+  dentro de `supabase/migrations/**` porque ese historial no debe reescribirse.
 - `tests/` y `checks/` se identifican como código de prueba.
 - Se usa el análisis automático del repositorio público.
 - No existe `SONAR_TOKEN` en GitHub ni en el frontend.
-- El script externo de Supabase está fijado en `2.111.0` y protegido en los ocho HTML con SRI SHA-384 y `crossorigin="anonymous"`.
+- El script externo de Supabase está fijado en `2.111.0` y protegido en los diez HTML con SRI SHA-384 y `crossorigin="anonymous"`.
 - `tests/html-security.test.js` evita que se vuelva a usar una versión móvil del CDN o se retiren los atributos de integridad.
 
 ### Activación externa
@@ -31,6 +33,13 @@ Ninguna herramienta sustituye Supabase, GitHub Pages, Gemini o Pwned Passwords. 
 - [x] Tras publicar el Paso 12, comprobar el segundo análisis: Security A, cero vulnerabilidades y Quality Gate calculado.
 
 El primer análisis de `main` en `c18e04e` encontró ocho instancias de `Web:S5725`, una por cada HTML, todas de impacto bajo y cinco minutos de esfuerzo. La causa común era cargar `@supabase/supabase-js@2` desde jsDelivr sin `integrity` ni CORS anónimo. La corrección se verificó contra el contenido exacto servido por jsDelivr antes de fijar el hash.
+
+El análisis del 4 de agosto de 2026 sobre `c7469c4` conservó el Quality Gate
+verde y 0 bugs, vulnerabilidades y hotspots, pero mostró 347 `CODE_SMELL`
+activos. Se corrigieron semántica HTML, contraste, selectores CSS, APIs antiguas,
+excepciones ignoradas, ternarios anidados y complejidad en frontend y Edge
+Functions. Las causas y reglas preventivas quedan en
+`SONARQUBE_QUALITY_GUIDELINES.md`.
 
 ## 2. GitGuardian
 
@@ -134,8 +143,9 @@ npm run validate
 
 Además:
 
-- [x] Los ocho HTML cargan `observability-config.js` y `monitoring.js`.
-- [x] Todos los recursos locales usan la versión coordinada vigente; tras el cambio de marca pública es `20260731-brand1`.
+- [x] Los diez HTML cargan `observability-config.js` y `monitoring.js`.
+- [x] Todos los recursos locales usan la versión coordinada vigente;
+  para la corrección de Sonar es `20260804-sonar1`.
 - [x] No hay tokens ni API keys privadas dentro del repositorio; el único identificador
   versionado de Sentry es su DSN público de ingestión.
 - [x] `git diff --check` no encuentra errores.

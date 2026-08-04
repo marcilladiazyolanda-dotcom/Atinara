@@ -76,6 +76,11 @@ function createCommunityCardActions(event) {
   const isAuthenticated = Boolean(auth?.isAuthenticated);
   const isOwn = Boolean(auth?.user?.id && auth.user.id === event.author_id);
   const canReact = !isOwn && (event.viewer_can_react || !isAuthenticated);
+  const reportDisabled = event.viewer_has_open_report ? " disabled" : "";
+  const reportLabel = event.viewer_has_open_report ? "Reportado" : "Reportar";
+  const reportMarkup = event.event_type === "comment" && !isOwn
+    ? `<button class="social-text-button" type="button" data-community-report="${event.event_id}"${reportDisabled}>${reportLabel}</button>`
+    : "";
 
   return `
     <div class="community-card-actions">
@@ -92,20 +97,17 @@ function createCommunityCardActions(event) {
       <a class="social-text-button" href="market-detail.html?id=${encodeURIComponent(event.market_id)}${event.event_type === "comment" ? "#market-comments-section" : ""}">
         ${event.event_type === "comment" ? "Abrir debate" : "Ver resolución"}
       </a>
-      ${event.event_type === "comment" && !isOwn ? `
-        <button class="social-text-button" type="button" data-community-report="${event.event_id}"${event.viewer_has_open_report ? " disabled" : ""}>
-          ${event.viewer_has_open_report ? "Reportado" : "Reportar"}
-        </button>
-      ` : ""}
+      ${reportMarkup}
     </div>
   `;
 }
 
 function createCommunityCard(event) {
   const profileUrl = `profile.html?id=${encodeURIComponent(event.author_id)}`;
-  const typeLabel = event.event_type === "comment"
-    ? event.comment_is_reply ? "respondió en un debate" : "comentó en un mercado"
-    : "cerró una predicción";
+  let typeLabel = "cerró una predicción";
+  if (event.event_type === "comment") {
+    typeLabel = event.comment_is_reply ? "respondió en un debate" : "comentó en un mercado";
+  }
   const exactDate = communitySocial.formatDate(event.event_at);
 
   return `
@@ -134,9 +136,7 @@ function createCommunityCard(event) {
   `;
 }
 
-function renderCommunityFeed() {
-  if (!communityRoot) return;
-  const auth = window.orakloAuth?.getState?.();
+function updateCommunityModeControls() {
   const feedNote = document.querySelector("#community-feed-note");
   if (feedNote) {
     feedNote.textContent = communityState.mode === "following"
@@ -149,6 +149,40 @@ function renderCommunityFeed() {
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
   });
+}
+
+function createEmptyFeedMarkup() {
+  const followingEmpty = communityState.mode === "following";
+  const title = followingEmpty
+    ? "Tu feed de Siguiendo está vacío"
+    : "La comunidad aún no tiene actividad pública";
+  const copy = followingEmpty
+    ? "Sigue perfiles desde la clasificación o desde sus currículums predictivos para construir este feed."
+    : "Aquí aparecerán comentarios reales y predicciones después de que sus mercados se liquiden.";
+  const action = followingEmpty
+    ? '<a class="primary-button" href="ranking.html">Descubrir predictores</a>'
+    : "";
+  return `<div class="social-empty-card"><strong>${title}</strong><p>${copy}</p>${action}</div>`;
+}
+
+function createCommunityRowsMarkup() {
+  const loadMoreDisabled = communityState.loadingMore ? " disabled" : "";
+  const loadMoreLabel = communityState.loadingMore ? "Cargando..." : "Ver actividad anterior";
+  const loadMoreMarkup = communityState.hasMore
+    ? `<button class="secondary-button social-load-more" type="button" data-community-load-more${loadMoreDisabled}>${loadMoreLabel}</button>`
+    : "";
+  return `<div class="community-card-list">${communityState.rows.map(createCommunityCard).join("")}</div>${loadMoreMarkup}`;
+}
+
+function renderCommunityFeed() {
+  if (!communityRoot) return;
+  const auth = window.orakloAuth?.getState?.();
+  updateCommunityModeControls();
+
+  if (communityState.mode === "following" && !auth?.isAuthenticated) {
+    communityRoot.innerHTML = '<div class="social-empty-card"><strong>Inicia sesión para abrir tu feed</strong><button class="primary-button" type="button" data-auth-open>Iniciar sesión</button></div>';
+    return;
+  }
 
   if (communityState.loading) {
     communityRoot.innerHTML = '<div class="social-loading-card"><strong>Cargando comunidad...</strong><p>Consultando actividad pública real en Supabase.</p></div>';
@@ -167,33 +201,11 @@ function renderCommunityFeed() {
   }
 
   if (!communityState.rows.length) {
-    const followingEmpty = communityState.mode === "following";
-    communityRoot.innerHTML = `
-      <div class="social-empty-card">
-        <strong>${followingEmpty ? "Tu feed de Siguiendo está vacío" : "La comunidad aún no tiene actividad pública"}</strong>
-        <p>${followingEmpty
-          ? "Sigue perfiles desde la clasificación o desde sus currículums predictivos para construir este feed."
-          : "Aquí aparecerán comentarios reales y predicciones después de que sus mercados se liquiden."}</p>
-        ${followingEmpty ? '<a class="primary-button" href="ranking.html">Descubrir predictores</a>' : ""}
-      </div>
-    `;
+    communityRoot.innerHTML = createEmptyFeedMarkup();
     return;
   }
 
-  communityRoot.innerHTML = `
-    <div class="community-card-list">
-      ${communityState.rows.map(createCommunityCard).join("")}
-    </div>
-    ${communityState.hasMore ? `
-      <button class="secondary-button social-load-more" type="button" data-community-load-more${communityState.loadingMore ? " disabled" : ""}>
-        ${communityState.loadingMore ? "Cargando..." : "Ver actividad anterior"}
-      </button>
-    ` : ""}
-  `;
-
-  if (communityState.mode === "following" && !auth?.isAuthenticated) {
-    communityRoot.innerHTML = '<div class="social-empty-card"><strong>Inicia sesión para abrir tu feed</strong><button class="primary-button" type="button" data-auth-open>Iniciar sesión</button></div>';
-  }
+  communityRoot.innerHTML = createCommunityRowsMarkup();
 }
 
 function createFollowingRow(profile) {

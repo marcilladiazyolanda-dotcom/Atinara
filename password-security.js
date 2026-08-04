@@ -17,7 +17,7 @@ function evaluateOrakloPassword(password = "") {
     length: value.length >= ORAKLO_PASSWORD_MIN_LENGTH,
     lowercase: /[a-z]/.test(value),
     uppercase: /[A-Z]/.test(value),
-    number: /[0-9]/.test(value),
+    number: /\d/.test(value),
     symbol: Array.from(value).some((character) => ORAKLO_PASSWORD_SYMBOLS.includes(character))
   };
 

@@ -34,6 +34,11 @@ const MONTHS: Record<string, number> = {
   diciembre: 11,
 };
 
+const DURING_MONTH_PATTERN = /\bdurante\s+(?:el\s+mes\s+de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b/;
+const RELATIVE_DATE_PATTERN = /\b(proximo|proxima|ultimo|ultima|pronto)\b/;
+const ISO_DATE_PATTERN = /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/;
+const SPANISH_DATE_PATTERN = /\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+20\d{2}\b/;
+
 function lastDayOfMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
@@ -101,9 +106,7 @@ export function getTemporalDefinitionIssues(market: MarketRecord): DefinitionIss
     });
   }
 
-  const duringMonth = definingText.match(
-    /\bdurante\s+(?:el\s+mes\s+de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b/,
-  );
+  const duringMonth = DURING_MONTH_PATTERN.exec(definingText);
   if (duringMonth && evaluationEnd !== null) {
     const localDate = localDateParts(
       evaluationEnd,
@@ -120,8 +123,9 @@ export function getTemporalDefinitionIssues(market: MarketRecord): DefinitionIss
     }
   }
 
-  const relative = definingText.match(/\b(proximo|proxima|ultimo|ultima|pronto)\b/)?.[1];
-  const hasDate = /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+20\d{2}\b/.test(definingText);
+  const relative = RELATIVE_DATE_PATTERN.exec(definingText)?.[1];
+  const hasDate = ISO_DATE_PATTERN.test(definingText)
+    || SPANISH_DATE_PATTERN.test(definingText);
   if (relative && !hasDate) {
     issues.push({
       code: "RELATIVE_EVENT_UNRESOLVED",

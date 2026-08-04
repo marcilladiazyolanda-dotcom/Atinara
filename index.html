@@ -14,10 +14,10 @@
   <meta property="og:image:alt" content="Símbolo A3 de Atinara">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260804-theme1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260804-theme1">
-  <script src="observability-config.js?v=20260804-theme1"></script>
-  <script src="monitoring.js?v=20260804-theme1"></script>
+  <script src="theme.js?v=20260804-sonar1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260804-sonar1">
+  <script src="observability-config.js?v=20260804-sonar1"></script>
+  <script src="monitoring.js?v=20260804-sonar1"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -34,22 +34,25 @@
 
       <nav class="primary-navigation" data-primary-navigation aria-label="Navegación principal"></nav>
 
-      <div class="topbar-actions" role="group" aria-label="Estado del usuario">
-        <span class="karma-pill" role="status" aria-label="Karma disponible" data-auth-private hidden>
+      <nav class="topbar-actions" aria-label="Cuenta y estado del usuario">
+        <output class="karma-pill" aria-label="Karma disponible" data-auth-private hidden>
           <span class="karma-symbol" aria-hidden="true">K</span>
           <strong data-profile-karma>—</strong>
-        </span>
+        </output>
         <span class="user-stat-pill" data-auth-private hidden>Prestigio: <strong data-profile-prestige>—</strong></span>
         <span class="user-stat-pill" data-auth-private hidden>Rango: <strong data-profile-rank>—</strong></span>
         <button class="profile-button" type="button" data-auth-open data-auth-state="guest" data-profile-username aria-label="Entrar en Atinara">Entrar</button>
         <button class="profile-button" type="button" data-auth-state="user" data-profile-username hidden aria-label="Usuario @Usuario">@Usuario</button>
         <button class="logout-button" type="button" data-auth-signout data-auth-state="user" hidden>Salir</button>
-      </div>
+      </nav>
     </header>
 
     <main class="explore-page">
       <nav class="category-navigation" aria-label="Categorías de mercados">
-        <div class="chip-group" id="category-filters" role="group" aria-label="Filtrar por categoría"></div>
+        <fieldset class="filter-fieldset">
+          <legend class="sr-only">Filtrar por categoría</legend>
+          <div class="chip-group" id="category-filters"></div>
+        </fieldset>
       </nav>
 
       <header class="explore-heading" aria-labelledby="page-title">
@@ -61,7 +64,10 @@
       </header>
 
       <section class="filters explore-filters" aria-label="Estado y orden de mercados">
-        <div class="chip-group" id="state-filters" role="group" aria-label="Filtrar por estado u orden"></div>
+        <fieldset class="filter-fieldset">
+          <legend class="sr-only">Filtrar por estado u orden</legend>
+          <div class="chip-group" id="state-filters"></div>
+        </fieldset>
         <button class="clear-button" id="clear-filters" type="button">Limpiar filtros</button>
       </section>
 
@@ -93,9 +99,9 @@
         <article class="side-card activity-card" id="public-activity-panel"><p class="eyebrow">Actividad</p><h2>Ahora en Atinara</h2><p>Conectando con la actividad pública de Supabase…</p></article>
         <article class="side-card">
           <p class="eyebrow">Tu progreso</p>
-          <div class="season-snapshot" id="competition-snapshot" role="status" aria-label="Resumen competitivo">
+          <output class="season-snapshot" id="competition-snapshot" aria-label="Resumen competitivo">
             <span id="competition-snapshot-label">Tu progreso</span><strong id="competition-current-rank">Inicia sesión</strong><small id="competition-current-prestige" hidden></small><small class="prestige-note" id="rank-progress-note">Consulta tu Prestigio, rango y progreso.</small><a class="season-snapshot-link" href="ranking.html">Ver clasificación</a>
-          </div>
+          </output>
         </article>
       </section>
     </main>
@@ -106,11 +112,11 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260804-theme1"></script>
-  <script src="password-security.js?v=20260804-theme1"></script>
-  <script src="password-recovery.js?v=20260804-theme1"></script>
-  <script src="site-ui.js?v=20260804-theme1"></script>
-  <script src="auth.js?v=20260804-theme1"></script>
-  <script src="script.js?v=20260804-theme1"></script>
+  <script src="supabaseClient.js?v=20260804-sonar1"></script>
+  <script src="password-security.js?v=20260804-sonar1"></script>
+  <script src="password-recovery.js?v=20260804-sonar1"></script>
+  <script src="site-ui.js?v=20260804-sonar1"></script>
+  <script src="auth.js?v=20260804-sonar1"></script>
+  <script src="script.js?v=20260804-sonar1"></script>
 </body>
 </html>

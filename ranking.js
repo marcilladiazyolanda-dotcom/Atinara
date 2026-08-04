@@ -44,11 +44,11 @@ const rankLadderNode = document.querySelector("#rank-ladder");
 
 function escapeRankingHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function formatRankingNumber(value) {
@@ -395,7 +395,8 @@ function renderRankingPage() {
 async function refreshMySummary() {
   try {
     rankingState.mySummary = await loadMyCompetitionSummary();
-  } catch (_error) {
+  } catch (error) {
+    console.warn("[Atinara] No se pudo actualizar el resumen propio", error instanceof Error ? error.name : "UnknownError");
     rankingState.mySummary = null;
   }
   renderMySummary();

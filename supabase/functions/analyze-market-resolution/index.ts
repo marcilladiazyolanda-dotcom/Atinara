@@ -173,7 +173,7 @@ function hasExplicitDateAnchor(value: string): boolean {
   const month =
     "enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre";
 
-  return new RegExp(`\\b\\d{1,2}\\s+de\\s+(?:${month})\\s+de\\s+20\\d{2}\\b`)
+  return new RegExp(String.raw`\b\d{1,2}\s+de\s+(?:${month})\s+de\s+20\d{2}\b`)
     .test(normalized) ||
     /\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/.test(normalized) ||
     /\b\d{1,2}[/.-]\d{1,2}[/.-]20\d{2}\b/.test(normalized);
@@ -184,9 +184,8 @@ function getMarketDefinitionIssues(market: JsonRecord): string[] {
   const description = getText(market.description);
   const definingText = `${question} ${description}`;
   const normalized = normalizeForMatch(definingText);
-  const relativeReference = normalized.match(
-    /\b(ultimo|ultima|ultimos|ultimas|proximo|proxima|proximos|proximas)\b/,
-  )?.[0];
+  const relativeReference = /\b(ultimo|ultima|ultimos|ultimas|proximo|proxima|proximos|proximas)\b/
+    .exec(normalized)?.[0];
 
   if (!relativeReference || hasExplicitDateAnchor(definingText)) return [];
 
@@ -384,10 +383,13 @@ ${JSON.stringify(verifiedSources, null, 2)}`;
 }
 
 function parseJsonObject(text: string): JsonRecord | null {
-  const cleaned = text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
+  let cleaned = text.trim();
+  if (/^```(?:json)?/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^```(?:json)?/i, "").trimStart();
+  }
+  if (cleaned.endsWith("```")) {
+    cleaned = cleaned.slice(0, -3).trimEnd();
+  }
 
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -465,87 +467,94 @@ function normalizeAnalysis(
   };
 }
 
+function getInteractionSteps(payload: JsonRecord): unknown[] {
+  if (Array.isArray(payload.steps)) return payload.steps;
+  return Array.isArray(payload.outputs) ? payload.outputs : [];
+}
+
+function collectInteractionQueries(
+  step: JsonRecord,
+  searchQueries: Set<string>,
+): void {
+  if (step.type !== "google_search_call" || !isRecord(step.arguments)) return;
+  const queries = Array.isArray(step.arguments.queries)
+    ? step.arguments.queries
+    : [];
+  queries.map(getText).filter(Boolean).forEach((query) => searchQueries.add(query));
+}
+
+function collectInteractionSearchResult(
+  step: JsonRecord,
+  sources: Map<string, JsonRecord>,
+): void {
+  if (step.type !== "google_search_result" || !isRecord(step.result)) return;
+  const resultUrl = getText(step.result.url);
+  if (!/^https?:\/\//i.test(resultUrl) || sources.has(resultUrl)) return;
+  sources.set(resultUrl, {
+    title: getHostname(resultUrl),
+    url: resultUrl,
+    cited_text: "",
+  });
+}
+
+function getInteractionBlocks(step: JsonRecord): unknown[] {
+  if (step.type === "model_output" && Array.isArray(step.content)) {
+    return step.content;
+  }
+  return step.type === "text" ? [step] : [];
+}
+
+function getCitedText(annotation: JsonRecord, blockText: string): string {
+  const start = Number(annotation.start_index ?? annotation.startIndex);
+  const end = Number(annotation.end_index ?? annotation.endIndex);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) return "";
+  return blockText.slice(start, end);
+}
+
+function collectInteractionAnnotation(
+  annotationValue: unknown,
+  blockText: string,
+  sources: Map<string, JsonRecord>,
+): void {
+  if (!isRecord(annotationValue)) return;
+  if (annotationValue.type !== "url_citation" && !annotationValue.source) return;
+  const url = getText(annotationValue.url) || getText(annotationValue.source);
+  if (!/^https?:\/\//i.test(url) || sources.has(url)) return;
+  sources.set(url, {
+    title: getText(annotationValue.title) || getHostname(url),
+    url,
+    cited_text: getCitedText(annotationValue, blockText),
+  });
+}
+
+function collectInteractionBlock(
+  blockValue: unknown,
+  textParts: string[],
+  sources: Map<string, JsonRecord>,
+): void {
+  if (!isRecord(blockValue) || blockValue.type !== "text") return;
+  const blockText = getText(blockValue.text);
+  if (blockText) textParts.push(blockText);
+  const annotations = Array.isArray(blockValue.annotations)
+    ? blockValue.annotations
+    : [];
+  annotations.forEach((annotation) => {
+    collectInteractionAnnotation(annotation, blockText, sources);
+  });
+}
+
 function extractInteractionsOutput(payload: JsonRecord): EvidenceOutput {
   const textParts: string[] = [];
   const searchQueries = new Set<string>();
   const sources = new Map<string, JsonRecord>();
-  const steps = Array.isArray(payload.steps)
-    ? payload.steps
-    : Array.isArray(payload.outputs)
-    ? payload.outputs
-    : [];
 
-  for (const stepValue of steps) {
+  for (const stepValue of getInteractionSteps(payload)) {
     if (!isRecord(stepValue)) continue;
-
-    if (
-      stepValue.type === "google_search_call" && isRecord(stepValue.arguments)
-    ) {
-      const queries = Array.isArray(stepValue.arguments.queries)
-        ? stepValue.arguments.queries
-        : [];
-      queries.map(getText).filter(Boolean).forEach((query) =>
-        searchQueries.add(query)
-      );
-    }
-
-    if (
-      stepValue.type === "google_search_result" && isRecord(stepValue.result)
-    ) {
-      const resultUrl = getText(stepValue.result.url);
-      if (/^https?:\/\//i.test(resultUrl) && !sources.has(resultUrl)) {
-        sources.set(resultUrl, {
-          title: getHostname(resultUrl),
-          url: resultUrl,
-          cited_text: "",
-        });
-      }
-    }
-
-    const blocks =
-      stepValue.type === "model_output" && Array.isArray(stepValue.content)
-        ? stepValue.content
-        : stepValue.type === "text"
-        ? [stepValue]
-        : [];
-
-    for (const blockValue of blocks) {
-      if (!isRecord(blockValue) || blockValue.type !== "text") continue;
-      const blockText = getText(blockValue.text);
-      if (blockText) textParts.push(blockText);
-
-      const annotations = Array.isArray(blockValue.annotations)
-        ? blockValue.annotations
-        : [];
-      for (const annotationValue of annotations) {
-        if (
-          !isRecord(annotationValue) ||
-          (annotationValue.type !== "url_citation" && !annotationValue.source)
-        ) continue;
-        const url = getText(annotationValue.url) ||
-          getText(annotationValue.source);
-        if (!/^https?:\/\//i.test(url)) continue;
-
-        const start = Number(
-          annotationValue.start_index ?? annotationValue.startIndex,
-        );
-        const end = Number(
-          annotationValue.end_index ?? annotationValue.endIndex,
-        );
-        const citedText =
-          Number.isInteger(start) && Number.isInteger(end) && end > start
-            ? blockText.slice(start, end)
-            : "";
-
-        if (!sources.has(url)) {
-          sources.set(url, {
-            title: getText(annotationValue.title) || getHostname(url),
-            url,
-            cited_text: citedText,
-          });
-        }
-      }
-    }
+    collectInteractionQueries(stepValue, searchQueries);
+    collectInteractionSearchResult(stepValue, sources);
+    getInteractionBlocks(stepValue).forEach((block) => {
+      collectInteractionBlock(block, textParts, sources);
+    });
   }
 
   // Compatibility fallback in case the API also provides a convenience output field.
@@ -560,94 +569,109 @@ function extractInteractionsOutput(payload: JsonRecord): EvidenceOutput {
   };
 }
 
+function getCandidateMetadata(candidate: JsonRecord): JsonRecord {
+  if (isRecord(candidate.groundingMetadata)) return candidate.groundingMetadata;
+  return isRecord(candidate.grounding_metadata) ? candidate.grounding_metadata : {};
+}
+
+function getMetadataArray(
+  metadata: JsonRecord,
+  primaryKey: string,
+  fallbackKey: string,
+): unknown[] {
+  if (Array.isArray(metadata[primaryKey])) return metadata[primaryKey] as unknown[];
+  return Array.isArray(metadata[fallbackKey])
+    ? metadata[fallbackKey] as unknown[]
+    : [];
+}
+
+function collectCandidateText(candidate: JsonRecord, textParts: string[]): void {
+  const content = isRecord(candidate.content) ? candidate.content : {};
+  const parts = Array.isArray(content.parts) ? content.parts : [];
+  for (const partValue of parts) {
+    if (!isRecord(partValue)) continue;
+    const partText = getText(partValue.text);
+    if (partText) textParts.push(partText);
+  }
+}
+
+function collectGroundingSupport(
+  supportValue: unknown,
+  citedTextByChunk: Map<number, Set<string>>,
+): void {
+  if (!isRecord(supportValue)) return;
+  const segment = isRecord(supportValue.segment) ? supportValue.segment : {};
+  const segmentText = getText(segment.text);
+  if (!segmentText) return;
+  const indices = getMetadataArray(
+    supportValue,
+    "groundingChunkIndices",
+    "grounding_chunk_indices",
+  );
+
+  for (const indexValue of indices) {
+    const index = Number(indexValue);
+    if (!Number.isInteger(index) || index < 0) continue;
+    if (!citedTextByChunk.has(index)) citedTextByChunk.set(index, new Set());
+    citedTextByChunk.get(index)?.add(segmentText);
+  }
+}
+
+function getGroundingWeb(chunk: JsonRecord): JsonRecord {
+  if (isRecord(chunk.web)) return chunk.web;
+  return isRecord(chunk.retrievedContext) ? chunk.retrievedContext : {};
+}
+
+function collectGroundingChunk(
+  chunkValue: unknown,
+  index: number,
+  citedTextByChunk: Map<number, Set<string>>,
+  sources: Map<string, JsonRecord>,
+): void {
+  if (!isRecord(chunkValue)) return;
+  const web = getGroundingWeb(chunkValue);
+  const url = getText(web.uri) || getText(web.url);
+  if (!/^https?:\/\//i.test(url) || sources.has(url)) return;
+  sources.set(url, {
+    title: getText(web.title) || getHostname(url),
+    url,
+    cited_text: [...(citedTextByChunk.get(index) ?? [])].join(" ").slice(0, 1000),
+  });
+}
+
+function collectCandidateGrounding(
+  candidate: JsonRecord,
+  searchQueries: Set<string>,
+  sources: Map<string, JsonRecord>,
+): void {
+  const metadata = getCandidateMetadata(candidate);
+  const queries = getMetadataArray(metadata, "webSearchQueries", "web_search_queries");
+  queries.map(getText).filter(Boolean).forEach((query) => searchQueries.add(query));
+
+  const supports = getMetadataArray(
+    metadata,
+    "groundingSupports",
+    "grounding_supports",
+  );
+  const citedTextByChunk = new Map<number, Set<string>>();
+  supports.forEach((support) => collectGroundingSupport(support, citedTextByChunk));
+
+  const chunks = getMetadataArray(metadata, "groundingChunks", "grounding_chunks");
+  chunks.forEach((chunk, index) => {
+    collectGroundingChunk(chunk, index, citedTextByChunk, sources);
+  });
+}
+
 function extractGenerateContentOutput(payload: JsonRecord): EvidenceOutput {
   const textParts: string[] = [];
   const searchQueries = new Set<string>();
   const sources = new Map<string, JsonRecord>();
-  const candidates = Array.isArray(payload.candidates)
-    ? payload.candidates
-    : [];
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
 
   for (const candidateValue of candidates) {
     if (!isRecord(candidateValue)) continue;
-
-    const content = isRecord(candidateValue.content)
-      ? candidateValue.content
-      : {};
-    const parts = Array.isArray(content.parts) ? content.parts : [];
-    for (const partValue of parts) {
-      if (!isRecord(partValue)) continue;
-      const partText = getText(partValue.text);
-      if (partText) textParts.push(partText);
-    }
-
-    const metadata = isRecord(candidateValue.groundingMetadata)
-      ? candidateValue.groundingMetadata
-      : isRecord(candidateValue.grounding_metadata)
-      ? candidateValue.grounding_metadata
-      : {};
-    const queries = Array.isArray(metadata.webSearchQueries)
-      ? metadata.webSearchQueries
-      : Array.isArray(metadata.web_search_queries)
-      ? metadata.web_search_queries
-      : [];
-    queries.map(getText).filter(Boolean).forEach((query) =>
-      searchQueries.add(query)
-    );
-
-    const chunks = Array.isArray(metadata.groundingChunks)
-      ? metadata.groundingChunks
-      : Array.isArray(metadata.grounding_chunks)
-      ? metadata.grounding_chunks
-      : [];
-    const supports = Array.isArray(metadata.groundingSupports)
-      ? metadata.groundingSupports
-      : Array.isArray(metadata.grounding_supports)
-      ? metadata.grounding_supports
-      : [];
-    const citedTextByChunk = new Map<number, Set<string>>();
-
-    for (const supportValue of supports) {
-      if (!isRecord(supportValue)) continue;
-      const segment = isRecord(supportValue.segment)
-        ? supportValue.segment
-        : {};
-      const segmentText = getText(segment.text);
-      const indices = Array.isArray(supportValue.groundingChunkIndices)
-        ? supportValue.groundingChunkIndices
-        : Array.isArray(supportValue.grounding_chunk_indices)
-        ? supportValue.grounding_chunk_indices
-        : [];
-
-      for (const indexValue of indices) {
-        const index = Number(indexValue);
-        if (!Number.isInteger(index) || index < 0 || !segmentText) continue;
-        if (!citedTextByChunk.has(index)) {
-          citedTextByChunk.set(index, new Set());
-        }
-        citedTextByChunk.get(index)?.add(segmentText);
-      }
-    }
-
-    chunks.forEach((chunkValue, index) => {
-      if (!isRecord(chunkValue)) return;
-      const web = isRecord(chunkValue.web)
-        ? chunkValue.web
-        : isRecord(chunkValue.retrievedContext)
-        ? chunkValue.retrievedContext
-        : {};
-      const url = getText(web.uri) || getText(web.url);
-      if (!/^https?:\/\//i.test(url) || sources.has(url)) return;
-
-      sources.set(url, {
-        title: getText(web.title) || getHostname(url),
-        url,
-        cited_text: [...(citedTextByChunk.get(index) ?? [])].join(" ").slice(
-          0,
-          1000,
-        ),
-      });
-    });
+    collectCandidateText(candidateValue, textParts);
+    collectCandidateGrounding(candidateValue, searchQueries, sources);
   }
 
   return {
@@ -781,14 +805,46 @@ function getFriendlyTavilyFailure(result: TavilyProviderResult): {
 }
 
 function normalizeHttpsUrl(value: unknown): string {
-  try {
-    const url = new URL(getText(value));
-    if (url.protocol !== "https:") return "";
-    url.hash = "";
-    return url.href.length <= 2_048 ? url.href : "";
-  } catch {
-    return "";
-  }
+  const rawUrl = getText(value);
+  if (!URL.canParse(rawUrl)) return "";
+  const url = new URL(rawUrl);
+  if (url.protocol !== "https:") return "";
+  url.hash = "";
+  return url.href.length <= 2_048 ? url.href : "";
+}
+
+function collectTavilyResult(
+  resultValue: unknown,
+  sourceByUrl: Map<string, { source: JsonRecord; score: number }>,
+): void {
+  if (!isRecord(resultValue)) return;
+  const url = normalizeHttpsUrl(resultValue.url);
+  const citedText = getText(resultValue.content).slice(0, 1_200);
+  if (!url || !citedText) return;
+
+  const title = getText(resultValue.title).slice(0, 200) || getHostname(url);
+  const scoreValue = Number(resultValue.score);
+  const score = Number.isFinite(scoreValue) ? scoreValue : 0;
+  const previous = sourceByUrl.get(url);
+  if (previous && score <= previous.score) return;
+  sourceByUrl.set(url, {
+    source: { title, url, cited_text: citedText },
+    score,
+  });
+}
+
+function collectTavilyResponse(
+  response: TavilyProviderResult,
+  sourceByUrl: Map<string, { source: JsonRecord; score: number }>,
+  executedQueries: Set<string>,
+): void {
+  if (!response.payload) return;
+  const executedQuery = getText(response.payload.query);
+  if (executedQuery) executedQueries.add(executedQuery);
+  const results = Array.isArray(response.payload.results)
+    ? response.payload.results
+    : [];
+  results.forEach((result) => collectTavilyResult(result, sourceByUrl));
 }
 
 async function researchWithTavily(
@@ -829,33 +885,9 @@ async function researchWithTavily(
   >();
   const executedQueries = new Set<string>();
 
-  for (const response of successfulResponses) {
-    const payload = response.payload as JsonRecord;
-    const executedQuery = getText(payload.query);
-    if (executedQuery) executedQueries.add(executedQuery);
-
-    const results = Array.isArray(payload.results) ? payload.results : [];
-    for (const resultValue of results) {
-      if (!isRecord(resultValue)) continue;
-
-      const url = normalizeHttpsUrl(resultValue.url);
-      const citedText = getText(resultValue.content).slice(0, 1_200);
-      if (!url || !citedText) continue;
-
-      const title = getText(resultValue.title).slice(0, 200) ||
-        getHostname(url);
-      const scoreValue = Number(resultValue.score);
-      const score = Number.isFinite(scoreValue) ? scoreValue : 0;
-      const previous = sourceByUrl.get(url);
-
-      if (!previous || score > previous.score) {
-        sourceByUrl.set(url, {
-          source: { title, url, cited_text: citedText },
-          score,
-        });
-      }
-    }
-  }
+  successfulResponses.forEach((response) => {
+    collectTavilyResponse(response, sourceByUrl, executedQueries);
+  });
 
   const sources = [...sourceByUrl.values()]
     .sort((left, right) => right.score - left.score)
@@ -1155,40 +1187,233 @@ async function analyzeWithGemini(
   };
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+type AnalysisEnvironment = {
+  supabaseUrl: string;
+  publishableKey: string;
+  geminiApiKey: string;
+  tavilyApiKey: string;
+};
 
+function getAnalysisEnvironment(): AnalysisEnvironment | null {
+  const environment = {
+    supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "",
+    publishableKey: getPublishableKey(),
+    geminiApiKey: Deno.env.get("GEMINI_API_KEY") ?? "",
+    tavilyApiKey: Deno.env.get("TAVILY_API_KEY") ?? "",
+  };
+  return Object.values(environment).every(Boolean) ? environment : null;
+}
+
+function getRequestRejection(req: Request): Response | null {
   if (req.method !== "POST") {
     return jsonResponse({
       error: "METHOD_NOT_ALLOWED",
       message: "Usa una peticion POST.",
     }, 405);
   }
-
-  const contentLength = Number(req.headers.get("content-length") ?? 0);
-  if (contentLength > MAX_REQUEST_BYTES) {
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) {
     return jsonResponse({
       error: "REQUEST_TOO_LARGE",
       message: "La peticion es demasiado grande.",
     }, 413);
   }
-
-  const authorization = req.headers.get("authorization") ?? "";
-  if (!authorization.startsWith("Bearer ")) {
+  if (!(req.headers.get("authorization") ?? "").startsWith("Bearer ")) {
     return jsonResponse({
       error: "AUTH_REQUIRED",
       message: "Inicia sesion para continuar.",
     }, 401);
   }
+  return null;
+}
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const publishableKey = getPublishableKey();
-  const geminiApiKey = Deno.env.get("GEMINI_API_KEY") ?? "";
-  const tavilyApiKey = Deno.env.get("TAVILY_API_KEY") ?? "";
+async function authenticateResolutionAdmin(
+  environment: AnalysisEnvironment,
+  authorization: string,
+): Promise<Response | null> {
+  const userResponse = await fetch(`${environment.supabaseUrl}/auth/v1/user`, {
+    headers: {
+      Authorization: authorization,
+      apikey: environment.publishableKey,
+    },
+  });
+  if (!userResponse.ok) {
+    return jsonResponse({
+      error: "AUTH_REQUIRED",
+      message: "Tu sesion no es valida.",
+    }, 401);
+  }
 
-  if (!supabaseUrl || !publishableKey || !geminiApiKey || !tavilyApiKey) {
+  const user = await userResponse.json() as JsonRecord;
+  const appMetadata = isRecord(user.app_metadata) ? user.app_metadata : {};
+  if (appMetadata.oraklo_admin === true) return null;
+  return jsonResponse({
+    error: "ADMIN_REQUIRED",
+    message: "Esta herramienta es solo para administracion.",
+  }, 403);
+}
+
+async function loadResolutionMarket(
+  environment: AnalysisEnvironment,
+  authorization: string,
+  marketId: string,
+): Promise<{ market: JsonRecord | null; errorResponse: Response | null }> {
+  const marketResponse = await fetch(
+    `${environment.supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        apikey: environment.publishableKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ market_id_input: marketId }),
+    },
+  );
+  if (!marketResponse.ok) {
+    console.error("Market RPC failed", marketResponse.status);
+    return {
+      market: null,
+      errorResponse: jsonResponse({
+        error: "MARKET_LOOKUP_FAILED",
+        message: "No se ha podido consultar el mercado.",
+      }, 502),
+    };
+  }
+  const market = normalizeMarket(await marketResponse.json());
+  const errorResponse = market
+    ? null
+    : jsonResponse({
+      error: "MARKET_NOT_FOUND",
+      message: "No se ha encontrado el mercado.",
+    }, 404);
+  return { market, errorResponse };
+}
+
+function getDefinitionIssues(market: JsonRecord): string[] {
+  const temporalIssues = getTemporalDefinitionIssues(market)
+    .map((issue) => issue.message);
+  return [...temporalIssues, ...getMarketDefinitionIssues(market)];
+}
+
+function buildSuccessfulAnalysisResponse(
+  market: JsonRecord,
+  research: EvidenceOutput,
+  geminiAnalysis: {
+    analysis: JsonRecord;
+    analysisProvider: GeminiProviderResult["provider"];
+  },
+): Response {
+  const evidenceWarning = research.sources.length
+    ? "Comprueba las fuentes y sus fechas antes de aprobar la resolucion."
+    : "La IA no ha devuelto fuentes verificables. No apruebes esta propuesta.";
+  return jsonResponse({
+    ok: true,
+    market: getMarketSummary(market),
+    analysis_kind: "evidence_analysis",
+    analysis: geminiAnalysis.analysis,
+    sources: research.sources,
+    search_queries: research.searchQueries,
+    evidence_warning: evidenceWarning,
+    model: GEMINI_ANALYSIS_MODEL,
+    research_model: "tavily-search-basic",
+    provider_api: `research:tavily;analysis:${geminiAnalysis.analysisProvider}`,
+    generated_at: new Date().toISOString(),
+    can_resolve_market: true,
+  });
+}
+
+async function runResolutionAnalysis(
+  req: Request,
+  environment: AnalysisEnvironment,
+  authorization: string,
+): Promise<Response> {
+  const authError = await authenticateResolutionAdmin(environment, authorization);
+  if (authError) return authError;
+
+  const requestBody = await req.json() as JsonRecord;
+  const marketId = getText(requestBody.market_id);
+  if (!/^[a-z0-9][a-z0-9_-]{0,119}$/i.test(marketId)) {
+    return jsonResponse({
+      error: "INVALID_MARKET_ID",
+      message: "El identificador del mercado no es valido.",
+    }, 400);
+  }
+
+  const { market, errorResponse } = await loadResolutionMarket(
+    environment,
+    authorization,
+    marketId,
+  );
+  if (errorResponse || !market) return errorResponse as Response;
+  if (!isMarketClosed(market)) {
+    return jsonResponse({
+      error: "MARKET_NOT_CLOSED",
+      message: "El mercado todavia no esta cerrado.",
+    }, 409);
+  }
+
+  const definitionIssues = getDefinitionIssues(market);
+  if (definitionIssues.length) {
+    console.log(
+      "Market definition check proposed annulment",
+      JSON.stringify({
+        market_id: getText(market.id),
+        issues: definitionIssues.length,
+      }),
+    );
+    return jsonResponse(buildDefinitionIssueResponse(market, definitionIssues));
+  }
+
+  const tavilyResearch = await researchWithTavily(environment.tavilyApiKey, market);
+  if (!tavilyResearch.ok) {
+    if (tavilyResearch.failure.error === "SEARCH_NO_EVIDENCE") {
+      return jsonResponse(buildNoEvidenceResponse(market));
+    }
+    return jsonResponse({
+      error: tavilyResearch.failure.error,
+      message: tavilyResearch.failure.message,
+    }, tavilyResearch.failure.status);
+  }
+
+  const geminiAnalysis = await analyzeWithGemini(
+    environment.geminiApiKey,
+    market,
+    tavilyResearch.research,
+  );
+  if (!geminiAnalysis.ok) {
+    return jsonResponse({
+      error: geminiAnalysis.failure.error,
+      message: geminiAnalysis.failure.message,
+    }, geminiAnalysis.failure.status);
+  }
+  return buildSuccessfulAnalysisResponse(
+    market,
+    tavilyResearch.research,
+    geminiAnalysis,
+  );
+}
+
+function buildAnalysisFailure(error: unknown): Response {
+  const isTimeout = error instanceof DOMException && error.name === "TimeoutError";
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  console.error("Resolution analysis failed", isTimeout ? "timeout" : errorName);
+  return jsonResponse({
+    error: isTimeout ? "AI_TIMEOUT" : "ANALYSIS_FAILED",
+    message: isTimeout
+      ? "La busqueda ha tardado demasiado. Intentalo de nuevo."
+      : "No se ha podido completar el analisis.",
+  }, isTimeout ? 504 : 500);
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  const requestRejection = getRequestRejection(req);
+  if (requestRejection) return requestRejection;
+
+  const environment = getAnalysisEnvironment();
+  if (!environment) {
     console.error("Missing required Edge Function environment variables.");
     return jsonResponse({
       error: "SERVER_NOT_CONFIGURED",
@@ -1197,141 +1422,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: {
-        Authorization: authorization,
-        apikey: publishableKey,
-      },
-    });
-
-    if (!userResponse.ok) {
-      return jsonResponse({
-        error: "AUTH_REQUIRED",
-        message: "Tu sesion no es valida.",
-      }, 401);
-    }
-
-    const user = await userResponse.json() as JsonRecord;
-    const appMetadata = isRecord(user.app_metadata) ? user.app_metadata : {};
-    if (appMetadata.oraklo_admin !== true) {
-      return jsonResponse({
-        error: "ADMIN_REQUIRED",
-        message: "Esta herramienta es solo para administracion.",
-      }, 403);
-    }
-
-    const requestBody = await req.json() as JsonRecord;
-    const marketId = getText(requestBody.market_id);
-    if (!/^[a-z0-9][a-z0-9_-]{0,119}$/i.test(marketId)) {
-      return jsonResponse({
-        error: "INVALID_MARKET_ID",
-        message: "El identificador del mercado no es valido.",
-      }, 400);
-    }
-
-    const marketResponse = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: authorization,
-          apikey: publishableKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ market_id_input: marketId }),
-      },
-    );
-
-    if (!marketResponse.ok) {
-      console.error("Market RPC failed", marketResponse.status);
-      return jsonResponse({
-        error: "MARKET_LOOKUP_FAILED",
-        message: "No se ha podido consultar el mercado.",
-      }, 502);
-    }
-
-    const market = normalizeMarket(await marketResponse.json());
-    if (!market) {
-      return jsonResponse({
-        error: "MARKET_NOT_FOUND",
-        message: "No se ha encontrado el mercado.",
-      }, 404);
-    }
-
-    if (!isMarketClosed(market)) {
-      return jsonResponse({
-        error: "MARKET_NOT_CLOSED",
-        message: "El mercado todavia no esta cerrado.",
-      }, 409);
-    }
-
-    const temporalIssues = getTemporalDefinitionIssues(market).map((issue) => issue.message);
-    const definitionIssues = [
-      ...temporalIssues,
-      ...getMarketDefinitionIssues(market),
-    ];
-    if (definitionIssues.length) {
-      console.log(
-        "Market definition check proposed annulment",
-        JSON.stringify({
-          market_id: getText(market.id),
-          issues: definitionIssues.length,
-        }),
-      );
-      return jsonResponse(buildDefinitionIssueResponse(market, definitionIssues));
-    }
-
-    const tavilyResearch = await researchWithTavily(tavilyApiKey, market);
-    if (!tavilyResearch.ok) {
-      if (tavilyResearch.failure.error === "SEARCH_NO_EVIDENCE") {
-        return jsonResponse(buildNoEvidenceResponse(market));
-      }
-
-      return jsonResponse({
-        error: tavilyResearch.failure.error,
-        message: tavilyResearch.failure.message,
-      }, tavilyResearch.failure.status);
-    }
-
-    const research = tavilyResearch.research;
-
-    const geminiAnalysis = await analyzeWithGemini(
-      geminiApiKey,
-      market,
-      research,
-    );
-    if (!geminiAnalysis.ok) {
-      return jsonResponse({
-        error: geminiAnalysis.failure.error,
-        message: geminiAnalysis.failure.message,
-      }, geminiAnalysis.failure.status);
-    }
-
-    return jsonResponse({
-      ok: true,
-      market: getMarketSummary(market),
-      analysis_kind: "evidence_analysis",
-      analysis: geminiAnalysis.analysis,
-      sources: research.sources,
-      search_queries: research.searchQueries,
-      evidence_warning: research.sources.length
-        ? "Comprueba las fuentes y sus fechas antes de aprobar la resolucion."
-        : "La IA no ha devuelto fuentes verificables. No apruebes esta propuesta.",
-      model: GEMINI_ANALYSIS_MODEL,
-      research_model: "tavily-search-basic",
-      provider_api: `research:tavily;analysis:${geminiAnalysis.analysisProvider}`,
-      generated_at: new Date().toISOString(),
-      can_resolve_market: true,
-    });
+    const authorization = req.headers.get("authorization") ?? "";
+    return await runResolutionAnalysis(req, environment, authorization);
   } catch (error) {
-    const isTimeout = error instanceof DOMException &&
-      error.name === "TimeoutError";
-    console.error("Resolution analysis failed", isTimeout ? "timeout" : error);
-    return jsonResponse({
-      error: isTimeout ? "AI_TIMEOUT" : "ANALYSIS_FAILED",
-      message: isTimeout
-        ? "La busqueda ha tardado demasiado. Intentalo de nuevo."
-        : "No se ha podido completar el analisis.",
-    }, isTimeout ? 504 : 500);
+    return buildAnalysisFailure(error);
   }
 });

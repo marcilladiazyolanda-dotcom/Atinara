@@ -49,17 +49,13 @@
 
   function normalizeUrl(value) {
     const raw = String(value || "").trim();
-    if (!raw) return "";
-    try {
-      const url = new URL(raw);
-      return url.protocol === "https:" ? url.href : "";
-    } catch (_error) {
-      return "";
-    }
+    if (!raw || !URL.canParse(raw)) return "";
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.href : "";
   }
 
   function toIsoOrEmpty(value, timeZone = "Europe/Madrid") {
-    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || ""));
     if (!match) return "";
     const requestedUtc = Date.UTC(
       Number(match[1]), Number(match[2]) - 1, Number(match[3]),
@@ -83,7 +79,9 @@
       );
       const result = new Date(requestedUtc - (representedUtc - requestedUtc));
       return Number.isFinite(result.getTime()) ? result.toISOString() : "";
-    } catch (_error) {
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      console.warn(`[Atinara] Zona horaria no válida: ${errorName}`);
       return "";
     }
   }

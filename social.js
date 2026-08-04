@@ -27,11 +27,11 @@ const socialReportState = {
 
 function escapeSocialHtml(value) {
   return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function normalizeSocialRow(value) {
@@ -88,71 +88,33 @@ function getSocialErrorKey(error) {
   return `${error?.code || ""} ${error?.message || ""} ${error?.details || ""}`.toUpperCase();
 }
 
+const SOCIAL_ERROR_MESSAGES = [
+  [["PGRST202", "SCHEMA CACHE", "FUNCTION PUBLIC."], "Las funciones sociales todavía no están activadas en Supabase. Aplica la migración del Paso 11 y recarga la página."],
+  [["AUTH_REQUIRED", "28000"], "Inicia sesión para participar en la comunidad."],
+  [["ADMIN_REQUIRED"], "Tu cuenta no tiene permiso para realizar esta acción."],
+  [["COMMUNITY_RESTRICTED"], "Tu participación social está restringida temporalmente. Puedes seguir leyendo, dejar de seguir, silenciar o borrar contenido propio."],
+  [["COMMENT_RATE_LIMIT"], "Has publicado varios mensajes seguidos. Espera un minuto antes de volver a comentar."],
+  [["REPORT_ALREADY_OPEN"], "Ya has enviado un reporte pendiente sobre este contenido."],
+  [["REPORT_RATE_LIMIT"], "Has enviado varios reportes en poco tiempo. Espera una hora antes de volver a reportar."],
+  [["DUPLICATE_COMMENT"], "Ese contenido ya se ha enviado. Espera unos segundos antes de repetirlo."],
+  [["INVALID_COMMENT_LENGTH"], "El comentario debe tener entre 1 y 500 caracteres."],
+  [["INVALID_COMMENT_PARENT"], "Ya no se puede responder a ese comentario. Actualiza el debate e inténtalo de nuevo."],
+  [["COMMENT_NOT_EDITABLE", "COMMENT_NOT_OWNED"], "Solo puedes modificar tus propios comentarios visibles."],
+  [["PROFILE_IS_MUTED"], "Primero deja de silenciar este perfil para poder seguirlo."],
+  [["CANNOT_FOLLOW_SELF", "CANNOT_MUTE_SELF"], "Esta acción no está disponible en tu propio perfil."],
+  [["CANNOT_REACT_TO_OWN_CONTENT"], "“Buena lectura” está reservada para el contenido de otras personas."],
+  [["CANNOT_REPORT_OWN_CONTENT"], "No puedes reportar tu propio contenido."],
+  [["REPORT_ALREADY_REVIEWED"], "Otra revisión ya ha resuelto este reporte. Actualiza la cola."],
+  [["COMMENT_NOT_ACTIONABLE"], "El comentario ya no está visible y no puede volver a ocultarse."],
+  [["PROFILE_CANNOT_BE_HIDDEN"], "Los perfiles no se ocultan en este MVP. Puedes descartar el reporte o aplicar una restricción social."],
+  [["ADMIN_CANNOT_BE_RESTRICTED"], "No se puede restringir una cuenta administrativa desde esta cola."],
+  [["NOT_FOUND", "P0002"], "El contenido ya no está disponible. Actualiza la página."]
+];
+
 function getSocialErrorMessage(error, fallback = "No se ha podido completar la acción. Inténtalo de nuevo.") {
   const details = getSocialErrorKey(error);
-
-  if (details.includes("PGRST202") || details.includes("SCHEMA CACHE") || details.includes("FUNCTION PUBLIC.")) {
-    return "Las funciones sociales todavía no están activadas en Supabase. Aplica la migración del Paso 11 y recarga la página.";
-  }
-  if (details.includes("AUTH_REQUIRED") || details.includes("28000")) {
-    return "Inicia sesión para participar en la comunidad.";
-  }
-  if (details.includes("ADMIN_REQUIRED")) {
-    return "Tu cuenta no tiene permiso para realizar esta acción.";
-  }
-  if (details.includes("COMMUNITY_RESTRICTED")) {
-    return "Tu participación social está restringida temporalmente. Puedes seguir leyendo, dejar de seguir, silenciar o borrar contenido propio.";
-  }
-  if (details.includes("COMMENT_RATE_LIMIT")) {
-    return "Has publicado varios mensajes seguidos. Espera un minuto antes de volver a comentar.";
-  }
-  if (details.includes("REPORT_ALREADY_OPEN")) {
-    return "Ya has enviado un reporte pendiente sobre este contenido.";
-  }
-  if (details.includes("REPORT_RATE_LIMIT")) {
-    return "Has enviado varios reportes en poco tiempo. Espera una hora antes de volver a reportar.";
-  }
-  if (details.includes("DUPLICATE_COMMENT")) {
-    return "Ese contenido ya se ha enviado. Espera unos segundos antes de repetirlo.";
-  }
-  if (details.includes("INVALID_COMMENT_LENGTH")) {
-    return "El comentario debe tener entre 1 y 500 caracteres.";
-  }
-  if (details.includes("INVALID_COMMENT_PARENT")) {
-    return "Ya no se puede responder a ese comentario. Actualiza el debate e inténtalo de nuevo.";
-  }
-  if (details.includes("COMMENT_NOT_EDITABLE") || details.includes("COMMENT_NOT_OWNED")) {
-    return "Solo puedes modificar tus propios comentarios visibles.";
-  }
-  if (details.includes("PROFILE_IS_MUTED")) {
-    return "Primero deja de silenciar este perfil para poder seguirlo.";
-  }
-  if (details.includes("CANNOT_FOLLOW_SELF") || details.includes("CANNOT_MUTE_SELF")) {
-    return "Esta acción no está disponible en tu propio perfil.";
-  }
-  if (details.includes("CANNOT_REACT_TO_OWN_CONTENT")) {
-    return "“Buena lectura” está reservada para el contenido de otras personas.";
-  }
-  if (details.includes("CANNOT_REPORT_OWN_CONTENT")) {
-    return "No puedes reportar tu propio contenido.";
-  }
-  if (details.includes("REPORT_ALREADY_REVIEWED")) {
-    return "Otra revisión ya ha resuelto este reporte. Actualiza la cola.";
-  }
-  if (details.includes("COMMENT_NOT_ACTIONABLE")) {
-    return "El comentario ya no está visible y no puede volver a ocultarse.";
-  }
-  if (details.includes("PROFILE_CANNOT_BE_HIDDEN")) {
-    return "Los perfiles no se ocultan en este MVP. Puedes descartar el reporte o aplicar una restricción social.";
-  }
-  if (details.includes("ADMIN_CANNOT_BE_RESTRICTED")) {
-    return "No se puede restringir una cuenta administrativa desde esta cola.";
-  }
-  if (details.includes("NOT_FOUND") || details.includes("P0002")) {
-    return "El contenido ya no está disponible. Actualiza la página.";
-  }
-
-  return fallback;
+  const match = SOCIAL_ERROR_MESSAGES.find(([tokens]) => tokens.some((token) => details.includes(token)));
+  return match?.[1] || fallback;
 }
 
 async function socialRpc(functionName, params = {}) {

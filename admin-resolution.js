@@ -40,12 +40,10 @@ function escapeAdminHtml(value) {
 }
 
 function getSafeAdminUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    return url.protocol === "https:" ? url.href : "";
-  } catch (_error) {
-    return "";
-  }
+  const raw = String(value || "");
+  if (!URL.canParse(raw)) return "";
+  const url = new URL(raw);
+  return url.protocol === "https:" ? url.href : "";
 }
 
 function formatAdminDate(value) {
@@ -73,8 +71,11 @@ async function readFunctionError(error, fallbackMessage) {
     try {
       const payload = await response.clone().json();
       if (payload?.message) return payload.message;
-    } catch (_error) {
-      // Keep the friendly fallback below.
+    } catch (parseError) {
+      console.warn(
+        "Atinara: la función administrativa devolvió una respuesta no estructurada.",
+        parseError instanceof Error ? parseError.name : "UnknownError"
+      );
     }
   }
 
@@ -117,6 +118,25 @@ function renderAdminWorkspace() {
       ${escapeAdminHtml(getMarketStatusLabel(market))} · ${escapeAdminHtml(market.question)}
     </option>
   `).join("");
+  let analyzeLabel = "Analizar con IA";
+  if (adminResolutionState.analyzing) analyzeLabel = "Investigando fuentes...";
+  else if (selected?.resolution_result) analyzeLabel = "Auditar con IA";
+
+  let manualButtonMarkup = "";
+  if (!selected?.resolution_result) {
+    const manualDisabled = adminResolutionState.analyzing || adminResolutionState.approving ? " disabled" : "";
+    const manualLabel = adminResolutionState.manualMode
+      ? "Volver al análisis con IA"
+      : "Resolver manualmente con fuentes";
+    manualButtonMarkup = `<button class="secondary-button admin-manual-button" id="admin-toggle-manual" type="button"${manualDisabled}>${manualLabel}</button>`;
+  }
+
+  let analysisMarkup = createAdminAnalysisEmptyMarkup();
+  if (adminResolutionState.analysisResponse) {
+    analysisMarkup = createAdminAnalysisMarkup(adminResolutionState.analysisResponse, selected);
+  } else if (adminResolutionState.manualMode) {
+    analysisMarkup = createManualApprovalMarkup();
+  }
 
   adminResolutionRoot.innerHTML = `
     ${createAdminStatusMarkup()}
@@ -130,22 +150,14 @@ function renderAdminWorkspace() {
         </label>
         ${selected ? createAdminMarketSummary(selected) : ""}
         <button class="primary-button admin-analyze-button" id="admin-analyze-market" type="button"${adminResolutionState.analyzing ? " disabled" : ""}>
-          ${adminResolutionState.analyzing ? "Investigando fuentes..." : selected?.resolution_result ? "Auditar con IA" : "Analizar con IA"}
+          ${analyzeLabel}
         </button>
-        ${selected?.resolution_result ? "" : `
-          <button class="secondary-button admin-manual-button" id="admin-toggle-manual" type="button"${adminResolutionState.analyzing || adminResolutionState.approving ? " disabled" : ""}>
-            ${adminResolutionState.manualMode ? "Volver al análisis con IA" : "Resolver manualmente con fuentes"}
-          </button>
-        `}
+        ${manualButtonMarkup}
         <p class="admin-action-help">El análisis no modifica el mercado ni los saldos.</p>
       </section>
 
       <section class="admin-analysis-panel" id="admin-analysis-panel">
-        ${adminResolutionState.analysisResponse
-          ? createAdminAnalysisMarkup(adminResolutionState.analysisResponse, selected)
-          : adminResolutionState.manualMode
-          ? createManualApprovalMarkup()
-          : createAdminAnalysisEmptyMarkup()}
+        ${analysisMarkup}
       </section>
     </div>
   `;
@@ -253,21 +265,26 @@ function createAdminAnalysisMarkup(response, market) {
     : "";
   const resolutionBlocked = response.can_resolve_market === false;
   const isAlreadyResolved = Boolean(market?.resolution_result);
-  const proposalEyebrow = response.analysis_kind === "definition_check"
-    ? "2 · Control de definición"
-    : response.analysis_kind === "no_evidence"
-    ? "2 · Evidencia insuficiente"
-    : "2 · Propuesta de la IA";
+  let proposalEyebrow = "2 · Propuesta de la IA";
+  if (response.analysis_kind === "definition_check") proposalEyebrow = "2 · Control de definición";
+  else if (response.analysis_kind === "no_evidence") proposalEyebrow = "2 · Evidencia insuficiente";
 
   const reasonItems = reasons.length
     ? reasons.map((reason) => `<li>${escapeAdminHtml(reason)}</li>`).join("")
     : "<li>La IA no ha devuelto motivos estructurados.</li>";
+  const caveatItems = caveats.map((item) => `<li>${escapeAdminHtml(item)}</li>`).join("");
   const caveatMarkup = caveats.length
-    ? `<div class="admin-caveats"><h3>Dudas que debes revisar</h3><ul>${caveats.map((item) => `<li>${escapeAdminHtml(item)}</li>`).join("")}</ul></div>`
+    ? `<div class="admin-caveats"><h3>Dudas que debes revisar</h3><ul>${caveatItems}</ul></div>`
     : "";
   const sourceMarkup = sources.length
     ? sources.map((source, index) => createAdminSourceMarkup(source, index, isAlreadyResolved)).join("")
     : '<p class="admin-no-sources">No se recibieron fuentes verificables. No resuelvas el mercado.</p>';
+  let resolutionActionMarkup = createAdminApprovalMarkup(response, proposedResult, sources.length);
+  if (isAlreadyResolved) {
+    resolutionActionMarkup = '<div class="admin-audit-notice"><strong>Mercado ya resuelto.</strong><p>Este análisis es únicamente una auditoría y no permite volver a repartir Karma.</p></div>';
+  } else if (resolutionBlocked) {
+    resolutionActionMarkup = '<div class="admin-audit-notice" role="alert"><strong>Resolución bloqueada.</strong><p>No se ha preseleccionado ningún resultado. Corrige la definición o reúne evidencia suficiente antes de intentar una resolución manual protegida.</p></div>';
+  }
 
   return `
     <div class="admin-analysis-result">
@@ -299,11 +316,7 @@ function createAdminAnalysisMarkup(response, market) {
         <div class="admin-source-list">${sourceMarkup}</div>
       </div>
 
-      ${isAlreadyResolved
-        ? '<div class="admin-audit-notice"><strong>Mercado ya resuelto.</strong><p>Este análisis es únicamente una auditoría y no permite volver a repartir Karma.</p></div>'
-        : resolutionBlocked
-        ? '<div class="admin-audit-notice" role="alert"><strong>Resolución bloqueada.</strong><p>No se ha preseleccionado ningún resultado. Corrige la definición o reúne evidencia suficiente antes de intentar una resolución manual protegida.</p></div>'
-        : createAdminApprovalMarkup(response, proposedResult, sources.length)}
+      ${resolutionActionMarkup}
     </div>
   `;
 }
@@ -634,7 +647,11 @@ async function initializeAdminResolution(authState) {
     }
 
     await loadAdminMarkets();
-  } catch (_error) {
+  } catch (error) {
+    console.warn(
+      "Atinara: no se pudo inicializar el panel de resolución.",
+      error instanceof Error ? error.name : "UnknownError"
+    );
     adminResolutionRoot.innerHTML = `
       <article class="admin-access-card">
         <p class="eyebrow">Error de conexión</p>

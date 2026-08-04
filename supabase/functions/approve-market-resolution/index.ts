@@ -158,39 +158,243 @@ function friendlyDatabaseError(message: string): {
   };
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+type ApprovalEnvironment = {
+  supabaseUrl: string;
+  publishableKey: string;
+  secretKey: string;
+};
 
+type ApprovalInput = {
+  marketId: string;
+  result: string;
+  note: string;
+  sources: JsonRecord[];
+  model: string | null;
+  generatedAt: string | null;
+};
+
+function getApprovalEnvironment(): ApprovalEnvironment | null {
+  const environment = {
+    supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "",
+    publishableKey: getPublishableKey(),
+    secretKey: getSecretKey(),
+  };
+  return Object.values(environment).every(Boolean) ? environment : null;
+}
+
+function getApprovalRequestRejection(req: Request): Response | null {
   if (req.method !== "POST") {
     return jsonResponse({
       error: "METHOD_NOT_ALLOWED",
       message: "Usa una peticion POST.",
     }, 405);
   }
-
-  const contentLength = Number(req.headers.get("content-length") ?? 0);
-  if (contentLength > MAX_REQUEST_BYTES) {
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) {
     return jsonResponse({
       error: "REQUEST_TOO_LARGE",
       message: "La peticion es demasiado grande.",
     }, 413);
   }
-
-  const authorization = req.headers.get("authorization") ?? "";
-  if (!authorization.startsWith("Bearer ")) {
+  if (!(req.headers.get("authorization") ?? "").startsWith("Bearer ")) {
     return jsonResponse({
       error: "AUTH_REQUIRED",
       message: "Inicia sesion para continuar.",
     }, 401);
   }
+  return null;
+}
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const publishableKey = getPublishableKey();
-  const secretKey = getSecretKey();
+async function authenticateApprovalAdmin(
+  environment: ApprovalEnvironment,
+  authorization: string,
+): Promise<{ userId: string; errorResponse: null } | {
+  userId: null;
+  errorResponse: Response;
+}> {
+  const userResponse = await fetch(`${environment.supabaseUrl}/auth/v1/user`, {
+    headers: {
+      Authorization: authorization,
+      apikey: environment.publishableKey,
+    },
+  });
+  if (!userResponse.ok) {
+    return {
+      userId: null,
+      errorResponse: jsonResponse({
+        error: "AUTH_REQUIRED",
+        message: "Tu sesion no es valida.",
+      }, 401),
+    };
+  }
 
-  if (!supabaseUrl || !publishableKey || !secretKey) {
+  const user = await userResponse.json() as JsonRecord;
+  const userId = getText(user.id);
+  const appMetadata = isRecord(user.app_metadata) ? user.app_metadata : {};
+  if (userId && appMetadata.oraklo_admin === true) {
+    return { userId, errorResponse: null };
+  }
+  return {
+    userId: null,
+    errorResponse: jsonResponse({
+      error: "ADMIN_REQUIRED",
+      message: "Esta herramienta es solo para administracion.",
+    }, 403),
+  };
+}
+
+function normalizeGeneratedAt(value: unknown): string | null {
+  const text = getText(value);
+  return Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null;
+}
+
+function parseApprovalInput(requestBody: JsonRecord): {
+  input: ApprovalInput | null;
+  errorResponse: Response | null;
+} {
+  const marketId = getText(requestBody.market_id);
+  const result = normalizeResult(requestBody.result);
+  const note = getText(requestBody.resolution_note);
+  const sources = normalizeSources(requestBody.sources);
+
+  if (!/^[a-z0-9][a-z0-9_-]{0,119}$/i.test(marketId)) {
+    return { input: null, errorResponse: jsonResponse({
+      error: "INVALID_MARKET_ID",
+      message: "El identificador del mercado no es valido.",
+    }, 400) };
+  }
+  if (!result) {
+    return { input: null, errorResponse: jsonResponse({
+      error: "INVALID_RESOLUTION_RESULT",
+      message: "El resultado debe ser Si, No o Anulado.",
+    }, 400) };
+  }
+  if (note.length < 10 || note.length > 4000) {
+    return { input: null, errorResponse: jsonResponse({
+      error: "INVALID_RESOLUTION_NOTE",
+      message: "Escribe una explicacion de entre 10 y 4.000 caracteres.",
+    }, 400) };
+  }
+  if (!sources) {
+    return { input: null, errorResponse: jsonResponse({
+      error: "INVALID_RESOLUTION_SOURCES",
+      message: "Selecciona entre 1 y 12 fuentes HTTPS validas.",
+    }, 400) };
+  }
+
+  return {
+    input: {
+      marketId,
+      result,
+      note,
+      sources,
+      model: getText(requestBody.ai_model).slice(0, 100) || null,
+      generatedAt: normalizeGeneratedAt(requestBody.ai_generated_at),
+    },
+    errorResponse: null,
+  };
+}
+
+async function verifyMarketForApproval(
+  environment: ApprovalEnvironment,
+  authorization: string,
+  marketId: string,
+): Promise<Response | null> {
+  const marketResponse = await fetch(
+    `${environment.supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
+    {
+      method: "POST",
+      headers: restHeaders(environment.publishableKey, authorization),
+      body: JSON.stringify({ market_id_input: marketId }),
+    },
+  );
+  const market = await marketResponse.json().catch(() => ({})) as JsonRecord;
+  if (!marketResponse.ok) {
+    return jsonResponse({
+      error: "MARKET_LOOKUP_FAILED",
+      message: "No se ha podido volver a comprobar el mercado.",
+    }, 502);
+  }
+  if (!isReadyForResolution(market)) {
+    return jsonResponse({
+      error: "MARKET_PERIOD_NOT_COMPLETE",
+      message: "El periodo original que debe investigarse todavía no ha terminado.",
+    }, 409);
+  }
+  const definitionIssues = getTemporalDefinitionIssues(market);
+  if (!definitionIssues.length) return null;
+  return jsonResponse({
+    error: "MARKET_DEFINITION_BLOCKED",
+    message: "La definición temporal es incoherente. El mercado no se ha liquidado.",
+    blocking_reasons: definitionIssues,
+  }, 409);
+}
+
+async function resolveApprovedMarket(
+  environment: ApprovalEnvironment,
+  input: ApprovalInput,
+  userId: string,
+): Promise<Response> {
+  const resolutionResponse = await fetch(
+    `${environment.supabaseUrl}/rest/v1/rpc/resolve_market_with_evidence`,
+    {
+      method: "POST",
+      headers: restHeaders(environment.secretKey),
+      body: JSON.stringify({
+        market_id_input: input.marketId,
+        result_input: input.result,
+        resolution_note_input: input.note,
+        resolution_sources_input: input.sources,
+        reviewed_by_input: userId,
+        ai_model_input: input.model,
+        ai_generated_at_input: input.generatedAt,
+      }),
+    },
+  );
+  if (!resolutionResponse.ok) {
+    const errorPayload = await resolutionResponse.json().catch(() => ({})) as JsonRecord;
+    const databaseMessage = getText(errorPayload.message);
+    console.error("Resolution RPC failed", resolutionResponse.status, databaseMessage);
+    const friendly = friendlyDatabaseError(databaseMessage);
+    return jsonResponse(
+      { error: friendly.error, message: friendly.message },
+      friendly.status,
+    );
+  }
+  const resolution = await resolutionResponse.json();
+  return jsonResponse({
+    ok: true,
+    resolution,
+    message: "Mercado resuelto con aprobacion humana y fuentes verificables.",
+  });
+}
+
+async function runApproval(
+  req: Request,
+  environment: ApprovalEnvironment,
+  authorization: string,
+): Promise<Response> {
+  const admin = await authenticateApprovalAdmin(environment, authorization);
+  if (admin.errorResponse) return admin.errorResponse;
+  const parsed = parseApprovalInput(await req.json() as JsonRecord);
+  if (parsed.errorResponse || !parsed.input) return parsed.errorResponse as Response;
+  const marketError = await verifyMarketForApproval(
+    environment,
+    authorization,
+    parsed.input.marketId,
+  );
+  if (marketError) return marketError;
+  return resolveApprovedMarket(environment, parsed.input, admin.userId);
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  const requestRejection = getApprovalRequestRejection(req);
+  if (requestRejection) return requestRejection;
+
+  const environment = getApprovalEnvironment();
+  if (!environment) {
     console.error("Missing required Supabase Edge Function variables.");
     return jsonResponse({
       error: "SERVER_NOT_CONFIGURED",
@@ -199,149 +403,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: {
-        Authorization: authorization,
-        apikey: publishableKey,
-      },
-    });
-
-    if (!userResponse.ok) {
-      return jsonResponse({
-        error: "AUTH_REQUIRED",
-        message: "Tu sesion no es valida.",
-      }, 401);
-    }
-
-    const user = await userResponse.json() as JsonRecord;
-    const userId = getText(user.id);
-    const appMetadata = isRecord(user.app_metadata) ? user.app_metadata : {};
-    if (!userId || appMetadata.oraklo_admin !== true) {
-      return jsonResponse({
-        error: "ADMIN_REQUIRED",
-        message: "Esta herramienta es solo para administracion.",
-      }, 403);
-    }
-
-    const requestBody = await req.json() as JsonRecord;
-    const marketId = getText(requestBody.market_id);
-    const result = normalizeResult(requestBody.result);
-    const note = getText(requestBody.resolution_note);
-    const sources = normalizeSources(requestBody.sources);
-    const model = getText(requestBody.ai_model).slice(0, 100) || null;
-    const generatedAtText = getText(requestBody.ai_generated_at);
-    const generatedAt = Number.isFinite(Date.parse(generatedAtText))
-      ? new Date(generatedAtText).toISOString()
-      : null;
-
-    if (!/^[a-z0-9][a-z0-9_-]{0,119}$/i.test(marketId)) {
-      return jsonResponse({
-        error: "INVALID_MARKET_ID",
-        message: "El identificador del mercado no es valido.",
-      }, 400);
-    }
-
-    if (!result) {
-      return jsonResponse({
-        error: "INVALID_RESOLUTION_RESULT",
-        message: "El resultado debe ser Si, No o Anulado.",
-      }, 400);
-    }
-
-    if (note.length < 10 || note.length > 4000) {
-      return jsonResponse({
-        error: "INVALID_RESOLUTION_NOTE",
-        message: "Escribe una explicacion de entre 10 y 4.000 caracteres.",
-      }, 400);
-    }
-
-    if (!sources) {
-      return jsonResponse({
-        error: "INVALID_RESOLUTION_SOURCES",
-        message: "Selecciona entre 1 y 12 fuentes HTTPS validas.",
-      }, 400);
-    }
-
-    const marketResponse = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/get_admin_market_for_resolution`,
-      {
-        method: "POST",
-        headers: restHeaders(publishableKey, authorization),
-        body: JSON.stringify({ market_id_input: marketId }),
-      },
-    );
-    const market = await marketResponse.json().catch(() => ({})) as JsonRecord;
-    if (!marketResponse.ok) {
-      return jsonResponse({
-        error: "MARKET_LOOKUP_FAILED",
-        message: "No se ha podido volver a comprobar el mercado.",
-      }, 502);
-    }
-    if (!isReadyForResolution(market)) {
-      return jsonResponse({
-        error: "MARKET_PERIOD_NOT_COMPLETE",
-        message: "El periodo original que debe investigarse todavía no ha terminado.",
-      }, 409);
-    }
-    const definitionIssues = getTemporalDefinitionIssues(market);
-    if (definitionIssues.length) {
-      return jsonResponse({
-        error: "MARKET_DEFINITION_BLOCKED",
-        message: "La definición temporal es incoherente. El mercado no se ha liquidado.",
-        blocking_reasons: definitionIssues,
-      }, 409);
-    }
-
-    const headers: Record<string, string> = {
-      apikey: secretKey,
-      "Content-Type": "application/json",
-    };
-    if (!secretKey.startsWith("sb_secret_")) {
-      headers.Authorization = `Bearer ${secretKey}`;
-    }
-
-    const resolutionResponse = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/resolve_market_with_evidence`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          market_id_input: marketId,
-          result_input: result,
-          resolution_note_input: note,
-          resolution_sources_input: sources,
-          reviewed_by_input: userId,
-          ai_model_input: model,
-          ai_generated_at_input: generatedAt,
-        }),
-      },
-    );
-
-    if (!resolutionResponse.ok) {
-      const errorPayload = await resolutionResponse.json().catch(
-        () => ({}),
-      ) as JsonRecord;
-      const databaseMessage = getText(errorPayload.message);
-      console.error(
-        "Resolution RPC failed",
-        resolutionResponse.status,
-        databaseMessage,
-      );
-      const friendly = friendlyDatabaseError(databaseMessage);
-      return jsonResponse(
-        { error: friendly.error, message: friendly.message },
-        friendly.status,
-      );
-    }
-
-    const resolution = await resolutionResponse.json();
-    return jsonResponse({
-      ok: true,
-      resolution,
-      message: "Mercado resuelto con aprobacion humana y fuentes verificables.",
-    });
+    const authorization = req.headers.get("authorization") ?? "";
+    return await runApproval(req, environment, authorization);
   } catch (error) {
-    console.error("Approval failed", error);
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error("Approval failed", errorName);
     return jsonResponse({
       error: "APPROVAL_FAILED",
       message: "No se ha podido completar la aprobacion.",

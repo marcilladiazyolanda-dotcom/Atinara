@@ -13,7 +13,8 @@
   function readStoredTheme() {
     try {
       return normalizeTheme(global.localStorage?.getItem(STORAGE_KEY));
-    } catch (_error) {
+    } catch (error) {
+      console.info("[Atinara] El tema guardado no está disponible", error instanceof Error ? error.name : "UnknownError");
       return LIGHT_THEME;
     }
   }
@@ -21,8 +22,9 @@
   function persistTheme(theme) {
     try {
       global.localStorage?.setItem(STORAGE_KEY, theme);
-    } catch (_error) {
+    } catch (error) {
       // La preferencia sigue activa durante la visita aunque el almacenamiento falle.
+      console.info("[Atinara] No se pudo guardar el tema", error instanceof Error ? error.name : "UnknownError");
     }
   }
 

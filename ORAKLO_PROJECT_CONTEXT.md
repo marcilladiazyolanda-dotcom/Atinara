@@ -4,15 +4,26 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026. `A3 · Criterio modular`, sus activos vectoriales y la paleta Atinara Sunset son definitivos para la beta v0.1. La corrección 13.4.1 ya está publicada en `origin/main = 26685e203715c06df55f743c4be536e3e83cd219`. El Paso 13.4.2 corrige localmente dos estados visuales residuales y añade el tema claro/oscuro global; queda pendiente de la subida manual de Yol. No modifica Supabase, la economía, mercados, predicciones ni datos reales.
+> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026.
+> `A3 · Criterio modular`, sus activos vectoriales y Atinara Sunset son
+> definitivos para la beta v0.1. El backend del Paso 13.4 y su fuente coordinada
+> están activados, incluida `publish-scheduled-markets` v2; todavía falta la
+> aceptación funcional final de Yol. La base canónica revisada para la
+> corrección de SonarQube es `origin/main = c7469c449ac7db44f9f8cfdbc4509ab87e76a12c`.
 
-### Paso 13.4.2 · corrección de contraste y tema global
+### Corrección de incidencias SonarQube · 4 de agosto de 2026
 
-- Base canónica comprobada: `origin/main = 26685e203715c06df55f743c4be536e3e83cd219` (`fix(ui): unify headers and restore interface contrast`).
-- Se ha preparado localmente un tema claro/oscuro global, persistente mediante `atinara-theme`, con primera visita clara y sin depender de la preferencia del sistema operativo.
-- Las diez páginas cargan `theme.js` antes de `styles.css` con la versión coordinada `v=20260804-theme1`; la cabecera Atinara Sunset permanece cromáticamente estable en ambos temas.
-- Se corrigieron en origen el `hover`/`focus-within` oscuro heredado de `Mis predicciones` y las superficies oscuras residuales de `Resolver mercados`.
-- La entrega de esta subfase es exclusivamente un ZIP local con los archivos nuevos o modificados. GitHub, GitHub Pages, Supabase, autenticación, permisos, mercados, predicciones, comentarios, economía y datos reales permanecen sin cambios.
+- El análisis de `c7469c4` tenía Quality Gate verde, calificaciones A y cero bugs,
+  vulnerabilidades y hotspots, pero conservaba 347 `CODE_SMELL` activos.
+- La corrección local trata HTML semántico, contraste y duplicación CSS,
+  complejidad y APIs de JavaScript/TypeScript y una excepción mínima para
+  literales repetidos en migraciones aplicadas.
+- Las diez páginas usan la versión coordinada `v=20260804-sonar1` para evitar
+  mezclar recursos antiguos en GitHub Pages.
+- Las causas y pautas preventivas están en `SONARQUBE_QUALITY_GUIDELINES.md`.
+- Esta entrega no despliega Edge Functions ni modifica Supabase, Cron, Vault,
+  autenticación, permisos, mercados, predicciones, comentarios, economía o datos
+  reales. Queda pendiente de la subida manual de Yol y del nuevo análisis.
 
 ## 1. Objetivo del producto
 
@@ -343,7 +354,15 @@ Checklist: `STEP_11C_PASSWORD_SECURITY_CHECKLIST.md`.
 
 La usuaria aprobó y completó el 30 de julio de 2026 la incorporación de cuatro herramientas gratuitas:
 
-- **SonarQube Cloud:** activo sobre el repositorio público mediante su aplicación oficial de GitHub. `.sonarcloud.properties` separa pruebas y excluye solo dependencias/resultados generados. El primer análisis de `main` en `c18e04e` encontró ocho vulnerabilidades bajas `Web:S5725`; se corrigieron fijando `@supabase/supabase-js@2.111.0`, su SRI SHA-384 y `crossorigin="anonymous"` en los ocho HTML. El segundo análisis confirmó Security A, cero vulnerabilidades y Quality Gate calculado.
+- **SonarQube Cloud:** activo sobre el repositorio público mediante su aplicación
+  oficial de GitHub. `.sonarcloud.properties` separa pruebas, excluye solo
+  dependencias/resultados generados y omite únicamente `plsql:S1192` en
+  migraciones aplicadas, que siguen analizándose para el resto de reglas. El
+  primer análisis de `main` en `c18e04e` encontró ocho vulnerabilidades bajas
+  `Web:S5725`; se corrigieron fijando `@supabase/supabase-js@2.111.0`, su SRI
+  SHA-384 y `crossorigin="anonymous"`. El análisis de `c7469c4` confirmó 0 bugs,
+  vulnerabilidades y hotspots, pero dejó 347 code smells; su corrección está
+  preparada localmente y documentada en `SONARQUBE_QUALITY_GUIDELINES.md`.
 - **GitGuardian:** aplicación oficial de GitHub con lectura limitada al repositorio de Oraklo, escaneo histórico y vigilancia de commits nuevos. No se concederán permisos de escritura.
 - **Checkly:** dos URL monitors —portada cada 10 minutos y Comunidad cada 30— y un recorrido Playwright público cada hora desde `eu-central-1`. El recorrido no inicia sesión ni modifica datos. El presupuesto previsto es de unas 720 ejecuciones mensuales de navegador.
 - **Sentry:** errores JavaScript únicamente en producción, sin Replay, sin Performance, sin breadcrumbs y con `sendDefaultPii: false`. Antes del envío elimina `user`, `request`, extras y campos sensibles; además redacta correos, UUID, JWT, tokens y query strings.
@@ -383,7 +402,10 @@ Orden actual:
 7. `20260718143106_add_social_community_mvp.sql`
 8. `20260718182915_expose_real_market_comment_counts.sql`
 9. `20260801172543_add_live_prediction_market_model.sql` — aplicada una sola vez en producción el 1 de agosto de 2026; registrada remotamente como `20260801184105_add_live_prediction_market_model`. No repetir.
-10. `20260803143000_add_market_administration_gate.sql` — preparada localmente para el Paso 13.4; **no ejecutada**. Añade borradores privados, revisión, confirmación humana, programación, auditoría, coherencia temporal y permisos mínimos.
+10. `20260803143000_add_market_administration_gate.sql` — aplicada una sola vez
+    en producción el 3 de agosto de 2026. Añade borradores privados, revisión,
+    confirmación humana, programación, auditoría, coherencia temporal y permisos
+    mínimos. No repetir.
 
 No debe suponerse que toda función antigua del Supabase vivo está versionada aquí. Antes de escribir SQL nuevo, inspeccionar esquema, firmas, políticas, permisos y migraciones existentes.
 
@@ -396,7 +418,9 @@ No debe suponerse que toda función antigua del Supabase vivo está versionada a
 - Paso 11C: protección gratuita de contraseñas — terminado, publicado y validado.
 - Paso 12: SonarQube Cloud, GitGuardian, Checkly y Sentry — terminado, publicado y validado.
 - Cambio de marca pública: Atinara sustituye a Oraklo y está publicada en `main`; antes de cerrar su aceptación hay que completar los puntos manuales restantes de `STEP_PUBLIC_BRAND_ATINARA_CHECKLIST.md`.
-- Paso 13: preparación de la beta cerrada — 13.1 cerrado y 13.2 aprobado con correcciones; el alcance vinculante está en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`.
+- Paso 13: preparación de la beta cerrada — 13.1 cerrado, 13.2 aprobado y 13.4
+  activado técnicamente; todavía falta la aceptación funcional final de Yol. El
+  alcance vinculante está en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`.
 
 Orden acordado para el Paso 13:
 
@@ -404,7 +428,10 @@ Orden acordado para el Paso 13:
 2. **13.1 · Auditoría funcional:** revisar recorridos completos de invitada, usuaria y administradora y clasificar cada punto como terminado, parcial, sin comprobar, ausente o aplazado.
 3. **13.2 · Definición de soluciones:** terminado y aprobado. `P0`, `P1` y `P2` indican orden, pero todos deben completarse antes de la beta.
 4. **13.3 · Diseño en Penpot:** cerrado y aprobado por Yol el 3 de agosto de 2026. A3 y Atinara Sunset son definitivos para beta v0.1.
-5. **13.4 · Implementación:** preparada en local; pendiente de activación manual y aceptación de Yol. No está publicada.
+5. **13.4 · Implementación:** backend administrativo, cuatro Edge Functions,
+   Vault y Cron activados; frontend y sincronización de
+   `publish-scheduled-markets` v2 subidos a `main`. Pendiente de aceptación
+   funcional final de Yol; no declarar el paso cerrado todavía.
 6. **13.5 · Radar y catálogo:** siguiente fase definida por `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`; no se implementa dentro de 13.4.
 7. **13.6 · QA integral y beta:** aceptación completa después de activar el árbol coordinado.
 
@@ -412,7 +439,11 @@ El alcance aprobado incluye recuperación completa de contraseña; administraci�
 
 Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: seguir el orden manual de `STEP_13_4_IMPLEMENTATION_CHECKLIST.md`, activar primero la capa aditiva de Supabase y sus Edge Functions, configurar Auth/SMTP y solo después publicar el frontend coordinado. El mercado antiguo de julio continúa sin aprobar ni liquidar. Tras aceptar 13.4 se abre 13.5; no ampliar todavía chat, GIF, feed algorítmico, temporadas, monetización, dinero real, Radar ni compraventa secundaria dentro de esta entrega.
+Siguiente paso operativo: publicar la corrección local de SonarQube, esperar el
+nuevo análisis automático y completar la aceptación funcional del Paso 13.4. El
+mercado antiguo de julio continúa sin aprobar ni liquidar. Tras aceptar 13.4 se
+abre 13.5; no ampliar todavía chat, GIF, feed algorítmico, temporadas,
+monetización, dinero real, Radar ni compraventa secundaria dentro de esta entrega.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 
@@ -466,6 +497,9 @@ No implementar sin autorización expresa:
 - No confundir precio con porcentaje de personas: desde el modelo vivo el precio depende del Karma y del impacto LMSR; participantes y precio son métricas distintas.
 - No desplegar por separado la nueva firma SQL y el frontend que la consume. Seguir la activación coordinada y minimizar la ventana entre ambos.
 - No describir la beta como un clon económico exacto de Polymarket o Kalshi: comparte el pago por contrato, pero usa LMSR sin libro de órdenes ni venta.
+- No reescribir migraciones aplicadas para reducir avisos de mantenibilidad de
+  Sonar. Mantenerlas analizadas y usar únicamente excepciones por regla y ruta,
+  según `SONARQUBE_QUALITY_GUIDELINES.md`.
 
 ## 10. Requisitos visuales previos a beta
 
@@ -483,6 +517,8 @@ No implementar sin autorización expresa:
 - `node --test tests/password-security.test.js` cuando se modifique el control de contraseñas.
 - `npm run validate` cuando exista `package.json`; incluye sintaxis, todas las pruebas unitarias y tipado de Checkly.
 - `git diff --check`.
+- Ejecutar `tests/sonarqube-quality.test.js` como parte de `npm run validate`
+  cuando cambien HTML, CSS, lógica administrativa o configuración de Sonar.
 - Comprobar que todos los recursos locales existen y comparten una versión de caché coherente.
 - Probar sesión invitada y autenticada cuando afecte a Auth/cabecera.
 - Probar permisos normales y administrativos cuando afecte a resolución.
