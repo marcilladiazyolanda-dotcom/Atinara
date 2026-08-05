@@ -5961,9 +5961,10 @@ body .admin-status-error {
 
 /* Modo compacto y tablas intermedias */
 @media (max-width: 1180px) {
-  .topbar {
+  body .topbar {
     grid-template-columns: 150px minmax(220px, 1fr) 44px 44px;
     grid-template-areas: "brand search theme toggle";
+    row-gap: 0;
     min-height: 76px;
   }
 
@@ -5981,7 +5982,7 @@ body .admin-status-error {
     top: 78px;
   }
 
-  .market-grid {
+  body .market-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -6001,6 +6002,7 @@ body .admin-status-error {
 
   body .topbar {
     grid-template-columns: 132px minmax(0, 1fr) 44px 44px;
+    grid-template-areas: "brand search theme toggle";
     gap: 12px;
     min-height: 70px;
     padding: 11px 14px;
@@ -6034,7 +6036,10 @@ body .admin-status-error {
     top: 67px;
   }
 
-  .market-grid,
+  body .market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .home-secondary-grid {
     grid-template-columns: 1fr;
   }
@@ -6063,15 +6068,19 @@ body .admin-status-error {
   }
 
   body .topbar {
-    grid-template-columns: minmax(76px, 96px) minmax(0, 1fr) 44px 44px;
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+    grid-template-areas:
+      "brand theme toggle"
+      "search search search";
     gap: 8px;
     margin: 0 -12px;
-    padding: 10px 12px;
+    min-height: 118px;
+    padding: 10px 12px 12px;
   }
 
   .brand-logo {
-    width: 106px;
-    height: 30px;
+    width: 124px;
+    height: 32px;
   }
 
   .topbar .search input {
@@ -6081,6 +6090,20 @@ body .admin-status-error {
     background-size: 18px;
   }
 
+  .global-search-results {
+    top: 122px;
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 134px);
+  }
+
+  .mobile-menu-panel {
+    top: 122px;
+    right: 12px;
+    left: 12px;
+    max-height: calc(100dvh - 134px);
+    overflow-y: auto;
+  }
+
   .explore-heading {
     align-items: start;
     flex-direction: column;
@@ -6088,13 +6111,30 @@ body .admin-status-error {
   }
 
   .explore-heading h1 {
-    font-size: 2rem;
+    font-size: clamp(1.75rem, 8vw, 2rem);
+    overflow-wrap: anywhere;
   }
 
   .category-navigation {
     margin: 0 -12px;
     padding-right: 12px;
     padding-left: 12px;
+    overflow-x: visible;
+  }
+
+  .category-navigation .chip-group {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .category-navigation .chip {
+    min-width: 0;
+    flex: 1 1 108px;
+    padding-right: 7px;
+    padding-left: 7px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
   }
 
   .explore-filters {
@@ -6104,18 +6144,35 @@ body .admin-status-error {
     margin-left: 2px;
   }
 
+  .explore-filters .filter-fieldset {
+    width: 100%;
+  }
+
   .explore-filters .chip-group {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 4px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    padding: 0;
+    overflow: visible;
   }
 
   .explore-filters .chip {
-    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    padding-right: 10px;
+    padding-left: 10px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
+  .explore-filters .chip:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 
   .clear-button {
-    align-self: start;
+    align-self: stretch;
+    width: 100%;
+    margin-top: 2px;
   }
 
   .markets-section,
@@ -6123,9 +6180,46 @@ body .admin-status-error {
     padding: 0 2px;
   }
 
-  .market-card {
-    min-height: 290px;
+  body .market-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  body .market-card {
+    min-height: 0;
     padding: 16px;
+  }
+
+  body .market-card-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .market-card .tag,
+  .market-card .status {
+    max-width: 100%;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  body .market-card h3 {
+    display: block;
+    min-height: 0;
+    margin-top: 8px;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    -webkit-line-clamp: unset;
+  }
+
+  .market-price {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .market-movement-state {
+    min-height: 0;
   }
 
   .home-community-callout {
@@ -6193,23 +6287,21 @@ body .admin-status-error {
 
 @media (max-width: 390px) {
   body .topbar {
-    grid-template-columns: 64px minmax(0, 1fr) 44px 44px;
-    gap: 6px;
-    padding-right: 6px;
-    padding-left: 6px;
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+    grid-template-areas:
+      "brand theme toggle"
+      "search search search";
+    gap: 8px;
+    padding-right: 10px;
+    padding-left: 10px;
   }
 
   body .brand-logo {
-    width: 64px;
+    width: 118px;
   }
 
   .topbar .search input {
-    font-size: 0.86rem;
-  }
-
-  .market-price {
-    align-items: start;
-    flex-direction: column;
+    font-size: 0.9rem;
   }
 }
 

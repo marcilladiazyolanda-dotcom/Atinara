@@ -21,6 +21,15 @@ El Paso 13.5 incorpora un Radar privado dentro de `Gestionar mercados`. Polymark
 
 El Radar está activo y aceptado técnicamente. GitHub Pages sirve `v=20260804-radar1`; Supabase registra `add_market_radar` como `20260804213111` y `market-radar` está activa como versión 4 con JWT obligatorio. La comprobación real del 5 de agosto dejó Polymarket disponible con 22 candidatas, Kalshi e Ideas gaming disponibles sin resultados actuales y Gemini disponible con 12 adaptaciones. No creó borradores ni modificó mercados, predicciones, perfiles, Karma o Prestigio. El contrato y el registro de activación están en `STEP_13_5_MARKET_RADAR_AND_CATALOG.md`.
 
+La corrección frontend preparada como `v=20260805-mobile1` resuelve una regresión
+de especificidad que mantenía la cabecera y las tres columnas de escritorio en
+teléfonos. En 320–620 px la cabecera usa dos filas ordenadas, las categorías y
+filtros se agrupan sin desplazamiento horizontal y el catálogo muestra una
+tarjeta completa por fila. La validación local cubre las diez páginas a 320,
+360, 375, 390 y 768 px sin desbordamiento global. No requiere SQL, secretos ni
+despliegues de Edge Functions; queda pendiente únicamente de publicación en
+GitHub Pages.
+
 ## Mercado predictivo vivo · activado en producción
 
 Atinara usa en producción un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez el 1 de agosto de 2026 y el frontend coordinado se publicó inicialmente en `f7aac42`. No se debe repetir la migración.

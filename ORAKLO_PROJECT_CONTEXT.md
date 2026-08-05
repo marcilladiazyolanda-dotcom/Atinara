@@ -10,6 +10,31 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`;
 > la migración y la Edge Function están desplegadas y no deben repetirse.
 
+### Corrección responsive móvil · 5 de agosto de 2026
+
+- Las capturas reales de un teléfono de 360 CSS px mostraron tres columnas de
+  tarjetas comprimidas, la cabecera descompuesta, textos ilegibles y scroll
+  horizontal global.
+- La causa era una regresión de especificidad: las reglas A3 de escritorio
+  `body .topbar` y `body .market-grid` prevalecían sobre media queries móviles
+  escritos como `.topbar` y `.market-grid`. La cabecera conservaba además las
+  áreas de dos filas de escritorio mientras el botón móvil intentaba ocupar un
+  área `toggle` inexistente.
+- `v=20260805-mobile1` iguala la especificidad en los breakpoints, usa una
+  cabecera móvil deliberada de dos filas, agrupa categorías y filtros sin
+  carruseles horizontales y muestra una tarjeta completa por fila hasta 620 px.
+  Las preguntas dejan de truncarse en móvil; precios y acciones siguen en dos
+  columnas táctiles legibles.
+- La comprobación real con Chromium superó 320, 360, 375, 390, 768, 1024 y
+  1280 px en claro y oscuro. `scrollWidth` coincide con el viewport y no hay
+  nodos fuera de límites; el catálogo usa respectivamente 1, 2 y 3 columnas.
+- La cabecera y el panel móvil se comprobaron además en las diez páginas a 320,
+  360, 375, 390 y 768 px: 50 combinaciones sin desbordamiento global. Las 91
+  pruebas unitarias, la sintaxis de 37 JavaScript y el tipado estricto pasan.
+- No cambia JavaScript funcional, SQL, migraciones, Edge Functions, Supabase,
+  Radar, mercados, predicciones, perfiles, Karma, Prestigio ni datos reales. La
+  corrección queda pendiente de la subida manual del ZIP completo a `main`.
+
 ### Activación y corrección de Gemini en el Radar · 5 de agosto de 2026
 
 - La migración local `20260804194933_add_market_radar.sql` fue la única alta
