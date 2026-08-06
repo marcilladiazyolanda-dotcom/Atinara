@@ -1,0 +1,91 @@
+ATINARA · PASO 13.5.1 · MANIFIESTO DE ENTREGA
+Fecha: 2026-08-06
+Base canónica: origin/main b10f0eb146dff5043a32c11978f1a9ec3101d7c1
+Rama local: codex/paso-13-5-1
+Estado: implementado localmente; pendiente de activación manual y aceptación de Yol.
+
+ARCHIVOS NUEVOS
+- ATINARA_PASO_13_5_1_MANIFEST.txt
+- STEP_13_5_1_RADAR_QUALITY_CHECKLIST.md
+- supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql
+
+ARCHIVOS MODIFICADOS
+- AGENTS.md
+- ORAKLO_PROJECT_CONTEXT.md
+- README.md
+- STEP_13_5_MARKET_RADAR_AND_CATALOG.md
+- admin-community.html
+- admin-markets.html
+- admin-markets.js
+- admin-resolution.html
+- community.html
+- index.html
+- market-detail.html
+- my-predictions.html
+- profile.html
+- ranking.html
+- reset-password.html
+- styles.css
+- supabase/functions/_shared/market-radar.mjs
+- supabase/functions/market-radar/index.ts
+- tests/market-radar.test.js
+- tests/public-brand.test.js
+- tests/sonarqube-quality.test.js
+- tests/theme.test.js
+
+ARCHIVOS ELIMINADOS
+- Ninguno.
+
+CONTRATO IMPLEMENTADO
+- Normalizador atinara-radar-v2; la caché v1 no preparada queda invalidada.
+- Evento padre y mercado hijo conservan identidad, slug y URL por separado.
+- Una tarjeta por evento y hasta tres opciones hijas prioritarias.
+- Mercado original, evento original y fuente de resolución son enlaces distintos.
+- Candidate Eligibility Gate determinista + Tavily agrupado + Gemini estructurado.
+- Estados verified_open, needs_review y rejected_* con motivos estables y auditoría.
+- Cualquier rechazo factual, caducidad o fallo automático bloquea la preparación.
+- Preparar vuelve a comprobar proveedor, cierre, versión, duplicados y hechos críticos.
+- La UI muestra grupos, opciones hijas, evidencias y descartes; no mezcla rechazados
+  con candidatas preparables.
+
+EVIDENCIA PÚBLICA DE SOLO LECTURA (2026-08-06)
+- Polymarket: 3 eventos gaming devueltos; 3/3 URLs canónicas respondieron 200;
+  0 enlaces 404; 74 mercados hijos en esos eventos.
+- Kalshi: taxonomía Entertainment / Video games; 108 series descubiertas;
+  25 consultadas con concurrencia 4; 4 eventos abiertos; 28 hijos binarios;
+  0 fallos de serie.
+- La página HTML pública de Kalshi aplicó temporalmente un 429. La existencia
+  del evento se comprueba mediante la API oficial y el 429 no vacía el catálogo.
+- No se usaron credenciales ni se escribió en APIs, GitHub, Supabase o producción.
+
+REGRESIONES AUTOMATIZADAS
+- EA Sports FC 27 ya revelado: EVENT_ALREADY_RESOLVED.
+- Fable GOTY 2026 con lanzamiento posterior: EVENT_OUTSIDE_CONTRACT.
+- Half-Life 3 no anunciado como lanzamiento/review/premio: SUBJECT_NOT_ANNOUNCED.
+- URL no validada, proveedor cerrado, evento archivado, órdenes desactivadas,
+  cierre vencido, mercado no binario, duplicado y verificación caducada.
+
+VALIDACIÓN LOCAL
+- npm run validate: 37 JavaScript con sintaxis válida; 98/98 pruebas unitarias;
+  TypeScript de Checkly correcto.
+- TypeScript de market-radar/index.ts: transpile de sintaxis correcto.
+- git diff --check: correcto.
+- 10 HTML coordinados con v=20260806-radar2 (104 referencias).
+- Sin referencias ejecutables a data.js, secretos literales, .env, ZIP, capturas
+  o node_modules.
+- El diseño responsive y ambos temas tienen cobertura automatizada. La captura
+  autenticada final queda para la QA manual posterior a la activación coordinada.
+
+ORDEN MANUAL SEGURO
+1. Descomprimir el ZIP y subir su contenido completo a la raíz de main.
+2. Aplicar una sola vez, y solo después del frontend versionado, la migración:
+   supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql
+3. Desplegar únicamente supabase/functions/market-radar con verificación JWT.
+4. Esperar a que GitHub Pages sirva v=20260806-radar2 en los diez HTML.
+5. Ejecutar la QA administrativa descrita en STEP_13_5_1_RADAR_QUALITY_CHECKLIST.md.
+
+NO EJECUTAR
+- No repetir ni editar 20260804194933_add_market_radar.sql.
+- No repetir la migración LMSR.
+- No cambiar secretos, Auth, Cron, mercados, predicciones, Karma o Prestigio.
+- No activar IGDB, Twitch o YouTube en este paso.

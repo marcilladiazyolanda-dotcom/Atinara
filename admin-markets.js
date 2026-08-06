@@ -25,6 +25,8 @@
     actionTrigger: null,
     radar: {
       candidates: [],
+      groups: [],
+      rejected: { total: 0, counts: {}, items: [] },
       providers: [],
       errors: [],
       selected: null,
@@ -105,8 +107,9 @@
 
   function displayProbability(value) {
     const number = Number(value);
-    return Number.isFinite(number) && number >= 0 && number <= 1
-      ? new Intl.NumberFormat("es-ES", { style: "percent", maximumFractionDigits: 1 }).format(number)
+    const normalized = number > 1 && number <= 100 ? number / 100 : number;
+    return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1
+      ? new Intl.NumberFormat("es-ES", { style: "percent", maximumFractionDigits: 1 }).format(normalized)
       : "No disponible";
   }
 
@@ -415,7 +418,6 @@
         <option value="all"${state.radar.provider === "all" ? " selected" : ""}>Todas las disponibles</option>
         <option value="polymarket"${state.radar.provider === "polymarket" ? " selected" : ""}>Polymarket</option>
         <option value="kalshi"${state.radar.provider === "kalshi" ? " selected" : ""}>Kalshi</option>
-        <option value="tavily"${state.radar.provider === "tavily" ? " selected" : ""}>Ideas gaming</option>
       </select></label>
       <label><span>Categoría Atinara</span><select name="category"><option value="">Todas</option>${categoryOptions}</select></label>
       <label class="radar-query"><span>Buscar</span><input type="search" name="query" value="${valueAttribute(state.radar.query)}" placeholder="Pregunta, juego, empresa o evento"></label>
@@ -429,6 +431,7 @@
         <option value="fit"${state.radar.quality === "fit" ? " selected" : ""}>Solo aptos</option>
         <option value="review"${state.radar.quality === "review" ? " selected" : ""}>Aptos y revisión necesaria</option>
         <option value="all"${state.radar.quality === "all" ? " selected" : ""}>Todos los no rechazados</option>
+        <option value="rejected"${state.radar.quality === "rejected" ? " selected" : ""}>Auditoría de rechazados</option>
       </select></label>
       <label><span>Orden</span><select name="order">
         <option value="recommended"${state.radar.order === "recommended" ? " selected" : ""}>Recomendados</option>
@@ -443,36 +446,72 @@
     </form>`;
   }
 
-  function radarCandidateMarkup(candidate) {
-    const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
-    const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
-    const confirmedDuplicate = duplicates.some((match) => match?.status === "confirmed");
-    const prepared = candidate.state === "prepared";
-    const qualityLabel = candidate.quality_status === "fit" ? "Apto" : "Revisión necesaria";
-    return `<article class="radar-candidate-card" data-quality="${escapeHtml(candidate.quality_status)}">
+  function radarCandidateReady(candidate) {
+    const expiresAt = Date.parse(candidate.verification_expires_at || "");
+    return candidate.state === "available"
+      && candidate.verification_status === "verified_open"
+      && Number.isFinite(expiresAt)
+      && expiresAt > Date.now()
+      && !candidate.is_stale
+      && !(Array.isArray(candidate.duplicate_matches) && candidate.duplicate_matches.length);
+  }
+
+  function radarChildMarkup(candidate) {
+    const ready = radarCandidateReady(candidate);
+    const status = candidate.verification_status === "verified_open" ? "Verificado"
+      : candidate.verification_status === "needs_review" ? "Revisión necesaria"
+        : "No preparable";
+    return `<li class="radar-event-option">
+      <div class="radar-event-option-copy">
+        <strong>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</strong>
+        <span>${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · ${escapeHtml(displayDate(candidate.source_close_at))}</span>
+      </div>
+      <div class="radar-event-option-actions">
+        <span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(status)}</span>
+        <button class="secondary-button" type="button" data-radar-details="${escapeHtml(candidate.id)}">Detalles</button>
+        <button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${ready ? "" : " disabled"}>Preparar</button>
+      </div>
+    </li>`;
+  }
+
+  function radarGroupMarkup(group) {
+    const candidates = Array.isArray(group.top_candidates) && group.top_candidates.length
+      ? group.top_candidates
+      : Array.isArray(group.candidates) ? group.candidates.slice(0, 3) : [];
+    const hiddenCount = Math.max(0, Number(group.child_count || group.candidates?.length || 0) - candidates.length);
+    return `<article class="radar-candidate-card radar-event-card" data-verification="${escapeHtml(group.verification_status)}">
       <header>
-        <div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><span>${escapeHtml(candidate.atinara_category || "Sin clasificar")}</span></div>
-        <strong class="radar-score" aria-label="Puntuación Atinara ${escapeHtml(candidate.quality_score || 0)} de 100">${escapeHtml(candidate.quality_score || 0)}<small>/100</small></strong>
+        <div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[group.provider] || group.provider)}</span><span>${escapeHtml(group.category || "Sin clasificar")}</span></div>
+        <strong class="radar-score" aria-label="Puntuación Atinara ${escapeHtml(group.quality_score || 0)} de 100">${escapeHtml(group.quality_score || 0)}<small>/100</small></strong>
       </header>
-      <div class="radar-quality-line"><span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(qualityLabel)}</span>${candidate.is_stale ? '<span class="radar-stale-badge">Caché antigua</span>' : ""}${prepared ? '<span class="radar-state-badge">Ya preparada</span>' : ""}${confirmedDuplicate ? '<span class="radar-duplicate-badge">Duplicada</span>' : ""}</div>
-      <h3>${escapeHtml(candidate.atinara_question_es || candidate.source_question || candidate.source_title)}</h3>
-      ${candidate.atinara_question_es && candidate.source_question !== candidate.atinara_question_es ? `<details><summary>Pregunta original</summary><p>${escapeHtml(candidate.source_question)}</p></details>` : ""}
-      <dl class="radar-card-metrics">
-        <div><dt>Cierre</dt><dd>${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
-        <div><dt>Probabilidad externa de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
-        <div><dt>Volumen externo</dt><dd>${escapeHtml(displayNumber(candidate.source_volume_total))}</dd></div>
-        <div><dt>Liquidez / interés</dt><dd>${escapeHtml(displayNumber(candidate.source_liquidity ?? candidate.source_open_interest))}</dd></div>
-      </dl>
-      ${warnings.length ? `<p class="radar-warning"><strong>${warnings.length} advertencia${warnings.length === 1 ? "" : "s"}.</strong> ${escapeHtml(warnings[0])}</p>` : ""}
-      <footer>
-        ${externalLink(candidate.external_url)}
-        <div>
-          <button class="secondary-button" type="button" data-radar-details="${escapeHtml(candidate.id)}">Ver detalles</button>
-          <button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${prepared || confirmedDuplicate ? " disabled" : ""}>Preparar borrador</button>
-          <button class="text-button" type="button" data-radar-dismiss="${escapeHtml(candidate.id)}"${prepared ? " disabled" : ""}>Descartar</button>
-        </div>
-      </footer>
+      <h3>${escapeHtml(group.title || "Evento externo")}</h3>
+      <p class="radar-event-summary">${escapeHtml(group.child_count || candidates.length)} opciones del mismo evento. Se muestran las tres más relevantes.</p>
+      <ul class="radar-event-options">${candidates.map(radarChildMarkup).join("")}</ul>
+      ${hiddenCount ? `<p class="radar-event-more">${escapeHtml(hiddenCount)} opciones adicionales disponibles en el detalle de sus candidatas.</p>` : ""}
+      <footer>${externalLink(group.external_event_url, "Abrir evento original")}</footer>
     </article>`;
+  }
+
+  function radarRejectionMarkup(candidate) {
+    const evidence = Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence : [];
+    return `<article class="radar-rejection-card">
+      <header><div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><strong>${escapeHtml(candidate.verification_reason_code || "REJECTED")}</strong></div><time>${escapeHtml(displayDate(candidate.verified_at))}</time></header>
+      <h4>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</h4>
+      <p>${escapeHtml(candidate.verification_reason || "La candidata no cumple las condiciones de preparación.")}</p>
+      <div class="radar-rejection-links">${externalLink(candidate.external_event_url || candidate.external_market_url, "Abrir mercado original")}${evidence.slice(0, 2).map((item) => externalLink(item.url, item.title || "Abrir evidencia")).join("")}</div>
+    </article>`;
+  }
+
+  function radarRejectionsMarkup() {
+    const rejected = state.radar.rejected || { total: 0, counts: {}, items: [] };
+    const items = Array.isArray(rejected.items) ? rejected.items : [];
+    if (!items.length) return "";
+    const counts = Object.entries(rejected.counts || {}).map(([code, count]) => `<li><code>${escapeHtml(code)}</code><strong>${escapeHtml(count)}</strong></li>`).join("");
+    return `<section class="radar-rejections" aria-labelledby="radar-rejections-title">
+      <header><div><p class="eyebrow">Auditoría factual</p><h3 id="radar-rejections-title">${escapeHtml(rejected.total || items.length)} candidatas rechazadas</h3></div><p>No pueden preparar borradores. Se conserva el motivo y la evidencia para revisión administrativa.</p></header>
+      <ul class="radar-rejection-counts">${counts}</ul>
+      <div class="radar-rejection-grid">${items.map(radarRejectionMarkup).join("")}</div>
+    </section>`;
   }
 
   function radarDetailMarkup(candidate) {
@@ -483,7 +522,7 @@
     const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
     return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
-      <header><div><p class="eyebrow">Detalle privado del candidato</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question_es || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
+      <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
       <div class="radar-detail-grid">
         <section><h3>Procedencia</h3><dl>
           <div><dt>Proveedor</dt><dd>${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</dd></div>
@@ -491,7 +530,7 @@
           <div><dt>Título original</dt><dd>${escapeHtml(candidate.source_title || "No disponible")}</dd></div>
           <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
           <div><dt>Estado y fechas</dt><dd>${escapeHtml(candidate.source_status || "No disponible")} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
-        </dl>${externalLink(candidate.external_url, "Abrir mercado externo")}</section>
+        </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original")}${externalLink(candidate.external_market_url, "Abrir mercado original")}</div></section>
         <section><h3>Reglas y fuentes</h3><p>${escapeHtml(candidate.source_resolution_rules || "La fuente no ofrece reglas completas.")}</p>${externalLink(candidate.source_resolution_url, "Abrir fuente de resolución")}</section>
         <section><h3>Métricas externas</h3><dl>
           <div><dt>Probabilidad de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
@@ -500,7 +539,13 @@
           <div><dt>Liquidez</dt><dd>${escapeHtml(displayNumber(candidate.source_liquidity))}</dd></div>
           <div><dt>Interés abierto</dt><dd>${escapeHtml(displayNumber(candidate.source_open_interest))}</dd></div>
         </dl><p class="radar-reference-note">Estas métricas son solo referencia administrativa y nunca alteran precios, Karma o participaciones de Atinara.</p></section>
-        <section><h3>Adaptación propuesta</h3><p><strong>Categoría:</strong> ${escapeHtml(candidate.atinara_category || "Requiere revisión")}</p><p>${escapeHtml(candidate.atinara_context_es || "Sin contexto adaptado.")}</p><p><strong>Criterios:</strong> ${escapeHtml(candidate.atinara_resolution_criteria_es || "Requieren revisión humana.")}</p></section>
+        <section><h3>Adaptación propuesta</h3><p><strong>Categoría:</strong> ${escapeHtml(candidate.atinara_category || "Requiere revisión")}</p><p>${escapeHtml(candidate.source_description || "Sin contexto adaptado.")}</p><p><strong>Criterios:</strong> ${escapeHtml(candidate.atinara_resolution_criteria || "Requieren revisión humana.")}</p></section>
+        <section><h3>Verificación factual</h3><dl>
+          <div><dt>Estado</dt><dd>${escapeHtml(candidate.verification_status || "pending")}</dd></div>
+          <div><dt>Código</dt><dd><code>${escapeHtml(candidate.verification_reason_code || "VERIFICATION_REQUIRED")}</code></dd></div>
+          <div><dt>Verificada</dt><dd>${escapeHtml(displayDate(candidate.verified_at))}</dd></div>
+          <div><dt>Caduca</dt><dd>${escapeHtml(displayDate(candidate.verification_expires_at))}</dd></div>
+        </dl><p>${escapeHtml(candidate.verification_reason || "Pendiente de verificación factual.")}</p>${Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence.map((item) => externalLink(item.url, item.title || "Abrir evidencia")).join("") : ""}</section>
         <section><h3>Atinara Score</h3><dl>${Object.entries(scores).map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p>No es una predicción científica: ordena candidatas con criterios transparentes.</p></section>
         <section><h3>Revisión necesaria</h3>
           ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Sin advertencias registradas.</p>"}
@@ -509,14 +554,15 @@
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
         </section>
       </div>
-      <footer><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${candidate.state === "prepared" ? " disabled" : ""}>Preparar borrador</button></footer>
+      <footer><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
     </section>`;
   }
 
   function radarMarkup() {
-    const cards = state.radar.candidates.length
-      ? `<div class="radar-candidate-grid">${state.radar.candidates.map(radarCandidateMarkup).join("")}</div>`
-      : `<div class="admin-empty-state radar-empty"><strong>No hay candidatas con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
+    const groups = Array.isArray(state.radar.groups) ? state.radar.groups : [];
+    const cards = groups.length
+      ? `<div class="radar-candidate-grid">${groups.map(radarGroupMarkup).join("")}</div>`
+      : `<div class="admin-empty-state radar-empty"><strong>No hay eventos con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
     const errors = state.radar.errors.length
       ? `<aside class="radar-partial-error" role="status"><strong>Actualización parcial.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>La creación manual y las demás fuentes siguen disponibles.</span></aside>`
       : "";
@@ -525,8 +571,9 @@
       ${radarFiltersMarkup()}
       ${radarProviderMarkup()}
       ${errors}
-      <div class="radar-results-heading"><h3>${escapeHtml(state.radar.candidates.length)} candidatas</h3><p>Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
+      <div class="radar-results-heading"><h3>${escapeHtml(groups.length)} eventos · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
       ${cards}
+      ${radarRejectionsMarkup()}
       ${radarDetailMarkup(state.radar.selected)}
     </section>`;
   }
@@ -687,6 +734,31 @@
     };
   }
 
+  function fallbackRadarGroups(candidates) {
+    const groups = new Map();
+    candidates.forEach((candidate) => {
+      const key = candidate.event_group_key || `${candidate.provider || "external"}:${candidate.external_event_id || candidate.external_id}`;
+      const current = groups.get(key) || {
+        event_group_key: key,
+        provider: candidate.provider,
+        title: candidate.source_title || candidate.source_question,
+        category: candidate.atinara_category || candidate.source_category,
+        external_event_url: candidate.external_event_url || candidate.external_url,
+        verification_status: candidate.verification_status || "needs_review",
+        quality_score: Number(candidate.quality_score) || 0,
+        candidates: []
+      };
+      current.candidates.push(candidate);
+      current.quality_score = Math.max(current.quality_score, Number(candidate.quality_score) || 0);
+      groups.set(key, current);
+    });
+    return [...groups.values()].map((group) => ({
+      ...group,
+      child_count: group.candidates.length,
+      top_candidates: group.candidates.slice().sort((left, right) => (Number(right.quality_score) || 0) - (Number(left.quality_score) || 0)).slice(0, 3)
+    }));
+  }
+
   async function loadRadar(refresh = false) {
     state.busy = true;
     if (refresh) setNotice("Actualizando fuentes. Los proveedores pueden fallar de forma independiente.", "info");
@@ -694,6 +766,12 @@
     try {
       const data = await invokeRadar("discover", radarRequestPayload(refresh));
       state.radar.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      state.radar.groups = Array.isArray(data.groups) && data.groups.length
+        ? data.groups
+        : fallbackRadarGroups(state.radar.candidates);
+      state.radar.rejected = data.rejected && typeof data.rejected === "object"
+        ? data.rejected
+        : { total: 0, counts: {}, items: [] };
       state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
       state.radar.cached = data.cached === true;
@@ -777,6 +855,11 @@
     try {
       await invokeRadar("dismiss", { candidate_id: candidateId });
       state.radar.candidates = state.radar.candidates.filter((candidate) => candidate.id !== candidateId);
+      state.radar.groups = state.radar.groups.map((group) => {
+        const candidates = Array.isArray(group.candidates) ? group.candidates.filter((candidate) => candidate.id !== candidateId) : [];
+        const topCandidates = Array.isArray(group.top_candidates) ? group.top_candidates.filter((candidate) => candidate.id !== candidateId) : [];
+        return { ...group, candidates, top_candidates: topCandidates, child_count: candidates.length };
+      }).filter((group) => group.candidates.length);
       if (state.radar.selected?.id === candidateId) state.radar.selected = null;
       setNotice("Candidata descartada y registrada en la trazabilidad privada.", "success");
     } catch (error) {

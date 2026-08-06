@@ -140,3 +140,86 @@ La comprobación pública se hizo sin credenciales y sin persistir datos. Polyma
 Estado correcto después de la aceptación y de la corrección de Gemini:
 
 `Paso 13.5 activado y aceptado técnicamente; market-radar v4 activa con JWT y Gemini disponible`.
+
+## 13. Paso 13.5.1 · corrección profesional preparada localmente
+
+Estado: **implementado localmente y pendiente de activación manual de Yol**.
+Este apartado no modifica el registro histórico anterior: producción continúa
+con la migración y Edge Function ya activadas hasta completar el orden manual.
+
+### Cambios de contrato
+
+- El normalizador pasa a `atinara-radar-v2` y conserva por separado evento padre,
+  mercado hijo, slugs, URL canónica del evento, URL canónica del mercado y fuente
+  pública de resolución.
+- Polymarket valida el evento con Gamma `/events/slug/{event.slug}` y la
+  pertenencia de cada mercado hijo. La URL pública usa siempre el slug padre.
+- Kalshi obtiene la categoría y etiqueta exactas desde
+  `/search/tags_by_categories`, ordena hasta 25 series por relevancia, volumen y
+  actualidad, y pagina `/events` con `with_nested_markets=true`. Los mercados
+  `active` son abiertos; no se reducen a un catálogo fijo de cuatro series.
+- Una tarjeta representa un evento padre. Muestra hasta tres mercados hijos y
+  cada hijo conserva su propia probabilidad, fecha, verificación y acción.
+- El estado factual es independiente del score: `verified_open`, `needs_review`
+  o uno de los estados `rejected_*`. Un rechazo, caducidad o revisión pendiente
+  nunca puede habilitar la preparación.
+- Tavily usa búsquedas básicas agrupadas por evento. Gemini recibe únicamente
+  datos públicos y evidencia estructurada. Las comprobaciones deterministas
+  prevalecen y cualquier fallo o conclusión insuficiente mantiene el flujo
+  cerrado.
+
+### Fotografía pública de cobertura del 6 de agosto de 2026
+
+La comprobación de solo lectura de la API oficial de Kalshi descubrió exactamente
+`Entertainment / Video games`, 108 series en el catálogo y consultó las 25 de
+mayor prioridad con concurrencia 4. Cuatro series contenían eventos abiertos:
+`KXGAMEAWARDS`, `KXGTA6`, `KXGTATRAILER` y `KXPS6`; en total fueron 4 eventos y
+28 mercados hijos binarios abiertos, sin fallos de serie. Esta evidencia sustituye
+el cero histórico de la fotografía del 4 de agosto, pero no altera ni persiste
+datos remotos. La página HTML pública de Kalshi respondió temporalmente con
+limitación `429`; por ello el contrato valida existencia y pertenencia mediante
+la API oficial y no convierte ese límite del sitio en un catálogo vacío.
+
+La consulta pública equivalente de Polymarket devolvió 3 eventos gaming activos.
+Se validaron los tres por slug en Gamma y se abrieron sus URLs canónicas de evento:
+`mlb-the-show-27-cover-athlete` (30 hijos), `madden-nfl-27-cover-athlete`
+(21 hijos) y `ea-sports-fc27-cover-athlete` (23 hijos). Las tres respondieron
+`200`; ninguna devolvió `404`. Los slugs de los mercados hijos no se utilizaron
+como rutas de evento.
+
+### Regresiones cubiertas
+
+- EA Sports FC 27 ya revelado el 23 de julio de 2026:
+  `rejected_resolved`.
+- Fable candidato a GOTY 2026 con lanzamiento en febrero de 2027:
+  `rejected_ineligible`.
+- Half-Life 3 tratado como lanzamiento, review o premio sin anuncio oficial:
+  `rejected_unannounced`. Una pregunta explícita sobre si será anunciado puede
+  continuar en revisión.
+- Una URL inexistente o no canónica: `rejected_invalid_source`.
+- Un mercado caducado, cerrado o duplicado no puede preparar un borrador.
+
+### Migración y activación pendiente
+
+La migración nueva es:
+
+`supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql`
+
+Debe aplicarse una sola vez. Añade verificación, motivo, caducidad, evidencia,
+agrupación y URLs separadas; reemplaza las RPC necesarias con permisos mínimos;
+invalida candidatas v1 no preparadas; y conserva `prepared`, `dismissed` y todos
+los borradores. No ejecuta ni copia `20260804194933_add_market_radar.sql`, no
+modifica LMSR y no toca datos de mercados, predicciones, Karma o Prestigio.
+
+Orden manual seguro tras subir el árbol:
+
+1. Aplicar únicamente la migración nueva `20260806183627...`.
+2. Volver a desplegar únicamente `market-radar` con verificación JWT.
+3. Publicar el frontend coordinado `v=20260806-radar2`.
+4. Probar como administradora actualización, evento agrupado, detalle, rechazo,
+   bloqueo de revisión/caducidad y preparación de una candidata verificada sin
+   guardar un borrador real si no se desea persistir datos.
+
+No hay que crear ni cambiar secretos. Si Tavily o Gemini no existen o fallan,
+la candidata permanece privada y bloqueada. IGDB, Twitch y YouTube continúan
+fuera de alcance.

@@ -2,13 +2,16 @@
 
 ## Estado vigente · 5 de agosto de 2026
 
+- Paso 13.5.1 preparado localmente el 6 de agosto sobre `origin/main = b10f0eb146dff5043a32c11978f1a9ec3101d7c1`. No está desplegado. La corrección usa `atinara-radar-v2`, una tarjeta por evento padre, URLs canónicas separadas, taxonomía dinámica de Kalshi, verificación factual cerrada y auditoría de rechazados. La nueva migración `20260806183627_harden_market_radar_quality_sources.sql` debe aplicarse una sola vez **después** de subir el árbol y **antes** de desplegar la Edge Function actualizada. No editar ni repetir `20260804194933_add_market_radar.sql`.
+- `TAVILY_API_KEY` y `GEMINI_API_KEY` se reutilizan únicamente si ya existen en Supabase. Si faltan o fallan, el Radar v2 deja la candidata en revisión y bloquea preparar; no se piden credenciales ni se degrada a datos inventados. IGDB/Twitch/YouTube continúan fuera de esta entrega.
+
 - La corrección responsive `v=20260805-mobile1` elimina la regresión móvil de
   la portada y de la cabecera compartida. A 320–620 px la cabecera distribuye
   marca, tema y menú en una primera fila y el buscador en una segunda; categorías
   y filtros se agrupan sin desplazamiento horizontal y el catálogo usa una sola
   tarjeta legible por fila. La validación local no detecta desbordamiento global
   en las diez páginas a 320, 360, 375, 390 y 768 px. Esta corrección es solo de
-  frontend y queda pendiente de la subida manual de Yol.
+  frontend y ya forma parte de la base canónica `b10f0eb`.
 - Yol cerró y aprobó el Paso 13.3. `A3 · Criterio modular`, el logotipo, símbolo, favicon, glifo vectorial de Karma, doce glifos, las composiciones 13.3D y la paleta **Atinara Sunset** son la fuente visual oficial de la beta v0.1.
 - El Paso 13.5 está activado y aceptado técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`; la migración local `20260804194933_add_market_radar.sql` consta remotamente como `20260804213111 · add_market_radar` y no debe repetirse.
 - `market-radar` está activa en Supabase como versión 4 con `verify_jwt=true`. La corrección del 5 de agosto compacta la entrada de Gemini, limita su salida, usa razonamiento mínimo y amplía su timeout interno a 35 s. La aceptación real terminó con Gemini disponible y 12 adaptaciones, sin borradores ni cambios públicos.

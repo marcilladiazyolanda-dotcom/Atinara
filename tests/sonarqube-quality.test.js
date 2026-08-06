@@ -120,6 +120,6 @@ test("la corrección de calidad usa una única versión de caché pública", () 
   htmlFiles.forEach((fileName) => {
     const versions = [...read(fileName).matchAll(/[?&]v=([a-zA-Z0-9-]+)/g)]
       .map((match) => match[1]);
-    assert.deepEqual([...new Set(versions)], ["20260805-mobile1"]);
+    assert.deepEqual([...new Set(versions)], ["20260806-radar2"]);
   });
 });

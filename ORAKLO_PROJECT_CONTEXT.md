@@ -1,6 +1,6 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 5 de agosto de 2026.
+Última actualización del contexto: 6 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
@@ -8,7 +8,34 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `A3 · Criterio modular`, sus activos vectoriales y Atinara Sunset son
 > definitivos para la beta v0.1. El Paso 13.5 está activado y aceptado
 > técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`;
-> la migración y la Edge Function están desplegadas y no deben repetirse.
+> la migración y la Edge Function v4 descritas en el registro histórico están
+> desplegadas y no deben repetirse. El Paso 13.5.1 está implementado solo en
+> local sobre `origin/main = b10f0eb146dff5043a32c11978f1a9ec3101d7c1` y
+> pendiente de activación manual; su nueva migración todavía no se ha aplicado.
+
+### Paso 13.5.1 · corrección profesional del Radar · 6 de agosto de 2026
+
+- Normalizador `atinara-radar-v2`: evento padre, mercado hijo, URL del evento,
+  URL del mercado y fuente de resolución quedan separados y trazables.
+- Polymarket valida `/events/slug/{event.slug}`, comprueba que cada hijo
+  pertenece al evento y usa como enlace público `/event/{event.slug}`, sin
+  prefijo de idioma ni slugs hijos convertidos en rutas inexistentes.
+- Kalshi descubre la taxonomía real con `search/tags_by_categories`, obtiene
+  hasta 25 series relevantes, pagina `/events` con mercados anidados y admite
+  los estados públicos `open` y `active`. No consulta cuentas, órdenes ni
+  posiciones.
+- Tavily investiga por evento padre y Gemini solo clasifica con los datos y la
+  evidencia recibidos. Si faltan secretos, el servicio falla o el análisis no
+  concluye, la candidata permanece en revisión y no se puede preparar.
+- La migración nueva `20260806183627_harden_market_radar_quality_sources.sql`
+  añade estados factuales, motivos, caducidad, evidencia y agrupación. Invalida
+  candidatas v1 no preparadas, pero conserva estados `prepared`, `dismissed` y
+  sus borradores. No modifica LMSR ni la migración ya aplicada del Radar v1.
+- La interfaz presenta una tarjeta por evento, tres opciones hijas prioritarias,
+  detalle por opción y auditoría separada de rechazados. Una candidata caducada,
+  rechazada o pendiente nunca habilita `Preparar`.
+- Recursos coordinados como `v=20260806-radar2`. GitHub, GitHub Pages, Supabase,
+  secretos y datos reales siguen sin cambios en esta entrega local.
 
 ### Corrección responsive móvil · 5 de agosto de 2026
 
@@ -31,9 +58,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - La cabecera y el panel móvil se comprobaron además en las diez páginas a 320,
   360, 375, 390 y 768 px: 50 combinaciones sin desbordamiento global. Las 91
   pruebas unitarias, la sintaxis de 37 JavaScript y el tipado estricto pasan.
-- No cambia JavaScript funcional, SQL, migraciones, Edge Functions, Supabase,
+- No cambió JavaScript funcional, SQL, migraciones, Edge Functions, Supabase,
   Radar, mercados, predicciones, perfiles, Karma, Prestigio ni datos reales. La
-  corrección queda pendiente de la subida manual del ZIP completo a `main`.
+  corrección ya forma parte de la base canónica `b10f0eb`.
 
 ### Activación y corrección de Gemini en el Radar · 5 de agosto de 2026
 

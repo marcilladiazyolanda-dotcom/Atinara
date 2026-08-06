@@ -13,6 +13,10 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
 ## Estado actual · Paso 13.5
 
+El Paso 13.5.1 está implementado **solo en local** sobre `origin/main = b10f0eb146dff5043a32c11978f1a9ec3101d7c1` y pendiente de activación manual de Yol. Corrige la calidad profesional del Radar sin modificar producción: Polymarket valida la URL canónica del evento padre y la pertenencia de cada mercado hijo; Kalshi descubre dinámicamente `Entertainment / Video games`, admite mercados `active`, pagina eventos anidados y elimina el límite arbitrario de cuatro series. La interfaz agrupa por evento, conserva las opciones hijas y separa claramente mercado original, fuente de resolución y evidencia factual.
+
+La nueva migración local `20260806183627_harden_market_radar_quality_sources.sql` añade estados de verificación, motivos estables, caducidad, evidencia, agrupación y URLs separadas. Invalida únicamente candidatas v1 no preparadas y conserva `prepared`, `dismissed` y borradores. No se ha aplicado en Supabase. La Edge Function local falla de forma cerrada si Tavily o Gemini no están configurados o no concluyen; no se han solicitado ni cambiado credenciales. La versión de recursos preparada es `v=20260806-radar2`.
+
 Yol cerró el Paso 13.3 el 3 de agosto de 2026. La identidad oficial de la beta v0.1 es `A3 · Criterio modular` y la dirección cromática definitiva es **Atinara Sunset**. El sistema aprobado se implementa con SVG centralizados en `assets/brand/`, tokens CSS canónicos, cabecera tinta con línea Sunset, superficies claras, `Sí` turquesa, `No` coral y el glifo de Karma después de cada cantidad compacta.
 
 El árbol canónico ya contiene la administración cotidiana de mercados con puerta automática cerrada, programación protegida, trazabilidad, guardas temporales de resolución, recuperación completa de contraseña, buscador real, accesibilidad y responsive. También conserva íntegros el LMSR vivo, la privacidad y la compatibilidad histórica de `legacy_fixed_v1`.
@@ -25,10 +29,9 @@ La corrección frontend preparada como `v=20260805-mobile1` resuelve una regresi
 de especificidad que mantenía la cabecera y las tres columnas de escritorio en
 teléfonos. En 320–620 px la cabecera usa dos filas ordenadas, las categorías y
 filtros se agrupan sin desplazamiento horizontal y el catálogo muestra una
-tarjeta completa por fila. La validación local cubre las diez páginas a 320,
-360, 375, 390 y 768 px sin desbordamiento global. No requiere SQL, secretos ni
-despliegues de Edge Functions; queda pendiente únicamente de publicación en
-GitHub Pages.
+tarjeta completa por fila. La validación cubre las diez páginas a 320, 360,
+375, 390 y 768 px sin desbordamiento global. Esa corrección ya forma parte de
+la base canónica `b10f0eb` usada para el Paso 13.5.1.
 
 ## Mercado predictivo vivo · activado en producción
 
