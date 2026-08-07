@@ -531,7 +531,7 @@
           <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
           <div><dt>Estado y fechas</dt><dd>${escapeHtml(candidate.source_status || "No disponible")} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
         </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original")}${externalLink(candidate.external_market_url, "Abrir mercado original")}</div></section>
-        <section><h3>Reglas y fuentes</h3><p>${escapeHtml(candidate.source_resolution_rules || "La fuente no ofrece reglas completas.")}</p>${externalLink(candidate.source_resolution_url, "Abrir fuente de resolución")}</section>
+        <section><h3>Reglas y fuentes</h3><p>${escapeHtml(candidate.source_resolution_rules || "La fuente no ofrece reglas completas.")}</p>${externalLink(candidate.atinara_resolution_source_url || candidate.source_resolution_url, "Abrir fuente de resolución")}</section>
         <section><h3>Métricas externas</h3><dl>
           <div><dt>Probabilidad de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
           <div><dt>Volumen 24 h</dt><dd>${escapeHtml(displayNumber(candidate.source_volume_24h))}</dd></div>

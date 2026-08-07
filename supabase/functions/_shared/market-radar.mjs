@@ -214,7 +214,7 @@ function parsePolymarketOutcomes(record) {
 }
 
 function verificationExpiry(now, minutes = 360) {
-  return new Date(new Date(now).getTime() + Math.max(15, minutes) * 60_000).toISOString();
+  return new Date(new Date(now).getTime() + Math.max(5, minutes) * 60_000).toISOString();
 }
 
 function baseCandidate(provider, externalId, input, now, cacheMinutes) {
@@ -571,8 +571,14 @@ export function evaluateDeterministicEligibility(candidate, facts = {}, now = ne
 
 export function applyEligibilityDecision(candidate, decision = {}, now = new Date().toISOString()) {
   const hardReasons = [...new Set(candidate.hard_reject_reasons ?? [])];
-  const factualCode = cleanText(decision.reason_code, 100);
-  if (factualCode && decision.eligible === false) hardReasons.push(factualCode);
+  const requestedFactualCode = cleanText(decision.reason_code, 100);
+  const factualCode = Object.values(RADAR_REASON_CODES).includes(requestedFactualCode)
+    ? requestedFactualCode
+    : RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+  const conclusiveFactualRejection = decision.eligible === false
+    && decision.conclusive === true
+    && factualCode !== RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+  if (conclusiveFactualRejection) hardReasons.push(factualCode);
   const duplicate = hardReasons.includes(RADAR_REASON_CODES.DUPLICATE_MARKET);
   const mappedStatus = hardReasons.includes(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED) ? "rejected_resolved"
     : hardReasons.includes(RADAR_REASON_CODES.SOURCE_STALE) ? "rejected_stale"
@@ -583,7 +589,16 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     : hardReasons.length ? "rejected_ineligible"
     : decision.eligible === true && decision.conclusive === true ? "verified_open"
     : "needs_review";
-  const primaryCode = hardReasons[0] ?? factualCode ?? (mappedStatus === "verified_open" ? null : RADAR_REASON_CODES.VERIFICATION_REQUIRED);
+  const primaryCode = mappedStatus === "verified_open" ? null
+    : mappedStatus === "needs_review" ? RADAR_REASON_CODES.VERIFICATION_REQUIRED
+      : mappedStatus === "rejected_resolved" ? RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED
+        : mappedStatus === "rejected_stale" ? RADAR_REASON_CODES.SOURCE_STALE
+          : mappedStatus === "rejected_unannounced" ? RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED
+            : mappedStatus === "rejected_incoherent" ? RADAR_REASON_CODES.TEMPORAL_INCOHERENCE
+              : mappedStatus === "rejected_invalid_source" ? RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE
+                : mappedStatus === "rejected_duplicate" ? RADAR_REASON_CODES.DUPLICATE_MARKET
+                  : conclusiveFactualRejection ? factualCode
+                    : hardReasons[0] ?? RADAR_REASON_CODES.VERIFICATION_REQUIRED;
   const evidence = Array.isArray(decision.evidence) ? decision.evidence.filter(isRecord).slice(0, 20).map((item) => ({
     title: cleanText(item.title, 300),
     url: safePublicUrl(item.url),
@@ -632,6 +647,33 @@ export function groupCandidates(candidates = []) {
   }).sort((a, b) => b.quality_score - a.quality_score);
 }
 
+export function buildGeminiCandidateBatches(candidates = [], options = {}) {
+  const maxGroups = Math.max(1, Math.floor(safeNumber(options.maxGroups) ?? 20));
+  const maxCandidates = Math.max(1, Math.floor(safeNumber(options.maxCandidates) ?? 126));
+  const batchSize = Math.max(1, Math.floor(safeNumber(options.batchSize) ?? 14));
+  const selected = groupCandidates(candidates)
+    .slice(0, maxGroups)
+    .flatMap((group) => group.candidates)
+    .slice(0, maxCandidates);
+  const selectedSet = new Set(selected);
+  const byProvider = new Map();
+  for (const candidate of selected) {
+    const provider = cleanText(candidate.provider, 40) || "radar";
+    if (!byProvider.has(provider)) byProvider.set(provider, []);
+    byProvider.get(provider).push(candidate);
+  }
+  const batches = [];
+  for (const providerCandidates of byProvider.values()) {
+    for (let start = 0; start < providerCandidates.length; start += batchSize) {
+      batches.push(providerCandidates.slice(start, start + batchSize));
+    }
+  }
+  return {
+    batches,
+    deferred: candidates.filter((candidate) => !selectedSet.has(candidate)),
+  };
+}
+
 export function diversifyGroups(groups = [], limit = 60) {
   const providerCounts = new Map();
   const categoryCounts = new Map();
@@ -667,16 +709,15 @@ export function compactGeminiCandidate(candidate) {
     provider: cleanText(candidate.provider, 40),
     title: cleanText(candidate.source_title, 500),
     question: cleanText(candidate.source_question, 700),
-    description: cleanText(candidate.source_description, 1500),
+    description: cleanText(candidate.source_description, 700),
     close_at: safeIsoDate(candidate.source_close_at),
     category: cleanText(candidate.source_category, 160),
     probability: safeProbability(candidate.source_probability),
-    resolution_rules: cleanText(candidate.source_resolution_rules, 2000),
+    resolution_rules: cleanText(candidate.source_resolution_rules, 1000),
     resolution_source_url: safePublicUrl(candidate.source_resolution_url),
     external_event_url: safePublicUrl(candidate.external_event_url),
     external_market_url: safePublicUrl(candidate.external_market_url),
     deterministic_reasons: safeStringArray(candidate.hard_reject_reasons, 20),
-    evidence: Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence.slice(0, 12) : [],
   };
 }
 
@@ -701,16 +742,163 @@ export function parseGeminiAdaptations(payload) {
   }
 }
 
+export function indexGeminiDecisions(decisions = [], candidateCount = 0) {
+  const limit = Math.max(0, Math.floor(safeNumber(candidateCount) ?? 0));
+  const indexed = new Map();
+  for (const decision of Array.isArray(decisions) ? decisions : []) {
+    if (!isRecord(decision)) continue;
+    const candidateIndex = decision.candidate_index;
+    if (!Number.isInteger(candidateIndex) || candidateIndex < 0 || candidateIndex >= limit || indexed.has(candidateIndex)) continue;
+    indexed.set(candidateIndex, decision);
+  }
+  return indexed;
+}
+
+export function canReuseRadarVerification(cached, candidate, now = new Date().toISOString()) {
+  if (!isRecord(cached) || !isRecord(candidate)) return false;
+  if (cleanText(cached.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return false;
+  if (cleanText(cached.fingerprint, 120) !== cleanText(candidate.fingerprint, 120)) return false;
+  if (cleanText(cached.verification_status, 80) === "needs_review") return false;
+  if (cleanText(cached.verification_reason_code, 100) === RADAR_REASON_CODES.VERIFICATION_REQUIRED) return false;
+  if (cleanText(cached.verification_status, 80) === "verified_open" && !isAdaptedIdeaComplete(cached)) return false;
+  const expiresAt = Date.parse(cleanText(cached.verification_expires_at, 100));
+  const nowMs = Date.parse(now);
+  return Number.isFinite(expiresAt) && Number.isFinite(nowMs) && expiresAt > nowMs;
+}
+
+export function selectVerifiedResolutionUrl(candidate, evidence = []) {
+  const existing = safePublicUrl(candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url);
+  if (existing) return existing;
+  const official = (Array.isArray(evidence) ? evidence : [])
+    .find((item) => isRecord(item) && cleanText(item.source_type, 80) === "official" && safePublicUrl(item.url));
+  return safePublicUrl(official?.url);
+}
+
+export function detectOfficialCoverEventResolution(candidates = [], evidence = []) {
+  const source = Array.isArray(candidates) ? candidates : [];
+  const parsed = source.map((candidate) => {
+    const question = normalizeComparableText(candidate?.source_question ?? candidate?.atinara_question);
+    const match = question.match(/^will (.+?) be (?:on )?the cover of (.+)$/);
+    return match ? { name: match[1], subject: match[2] } : null;
+  });
+  if (source.length < 2 || parsed.some((item) => !item)) return null;
+  const subjects = new Set(parsed.map((item) => item.subject));
+  if (subjects.size !== 1) return null;
+  const subject = parsed[0].subject;
+  const matchedNames = new Map();
+  const relevantEvidence = [];
+  for (const item of Array.isArray(evidence) ? evidence : []) {
+    if (!isRecord(item) || cleanText(item.source_type, 80) !== "official" || !safePublicUrl(item.url)) continue;
+    const text = normalizeComparableText(`${item.title ?? ""} ${item.supports ?? ""}`);
+    if (!text.includes(subject)) continue;
+    const windows = [];
+    let coverIndex = text.indexOf("cover");
+    while (coverIndex >= 0) {
+      windows.push(text.slice(Math.max(0, coverIndex - 180), coverIndex + 220));
+      coverIndex = text.indexOf("cover", coverIndex + 5);
+    }
+    for (const candidate of parsed) {
+      if (windows.some((window) => window.includes(subject) && window.includes(candidate.name))) {
+        matchedNames.set(candidate.name, candidate.name);
+        if (!relevantEvidence.includes(item)) relevantEvidence.push(item);
+      }
+    }
+  }
+  if (matchedNames.size !== 1 || !relevantEvidence.length) return null;
+  return {
+    winner_name: [...matchedNames.values()][0].split(" ").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" "),
+    evidence: relevantEvidence.slice(0, 6),
+  };
+}
+
+export function buildCoverResolutionSignals(candidates = [], now = new Date().toISOString()) {
+  const signals = [];
+  for (const group of groupCandidates(candidates)) {
+    const title = normalizeComparableText(group.title);
+    if (!/\bcover\b|\bportada\b/.test(title) || group.candidates.length < 2) continue;
+    const resolved = group.candidates.filter((candidate) => candidate.verification_status === "rejected_resolved"
+      && (safeNumber(candidate.verification_confidence) ?? 0) >= 85
+      && Array.isArray(candidate.verification_evidence)
+      && candidate.verification_evidence.some((item) => isRecord(item) && cleanText(item.source_type, 80) === "official" && safePublicUrl(item.url)));
+    if (resolved.length < 2 || resolved.length / group.candidates.length < 0.75) continue;
+    const evidenceByUrl = new Map();
+    for (const candidate of resolved) {
+      for (const item of candidate.verification_evidence) {
+        const url = isRecord(item) ? safePublicUrl(item.url) : null;
+        if (url && cleanText(item.source_type, 80) === "official" && !evidenceByUrl.has(url)) evidenceByUrl.set(url, item);
+      }
+    }
+    const evidence = [...evidenceByUrl.values()].slice(0, 6);
+    if (!evidence.length) continue;
+    const strongest = [...resolved].sort((left, right) => (safeNumber(right.verification_confidence) ?? 0) - (safeNumber(left.verification_confidence) ?? 0))[0];
+    for (const candidate of group.candidates) {
+      signals.push({
+        event_group_key: group.event_group_key,
+        candidate_identity: `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`,
+        resolved_at: now,
+        reason: cleanText(strongest.verification_reason, 1000) || reasonCopy(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED),
+        confidence: safeNumber(strongest.verification_confidence) ?? 100,
+        ttl_minutes: 360,
+        evidence,
+      });
+    }
+  }
+  return signals;
+}
+
 export function applyAdaptation(candidate, adaptation) {
   if (!isRecord(adaptation)) return candidate;
   const category = RADAR_CATEGORIES.includes(cleanText(adaptation.atinara_category, 80)) ? cleanText(adaptation.atinara_category, 80) : candidate.atinara_category;
+  const resolutionSourceUrl = safePublicUrl(adaptation.atinara_resolution_source_url) ?? safePublicUrl(candidate.atinara_resolution_source_url ?? candidate.source_resolution_url);
   return {
     ...candidate,
     atinara_question: cleanText(adaptation.atinara_question, 700) || candidate.atinara_question,
     atinara_category: category,
     atinara_resolution_criteria: cleanText(adaptation.atinara_resolution_criteria, 5000) || candidate.atinara_resolution_criteria,
+    atinara_resolution_source_url: resolutionSourceUrl,
     warnings: [...new Set([...(candidate.warnings ?? []), ...safeStringArray(adaptation.warnings, 20)])],
   };
+}
+
+export function propagateResolvedEventGroups(candidates = [], resolutions = [], now = new Date().toISOString()) {
+  const groupSizes = new Map();
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const eventGroupKey = cleanText(candidate?.event_group_key, 240);
+    if (eventGroupKey) groupSizes.set(eventGroupKey, (groupSizes.get(eventGroupKey) ?? 0) + 1);
+  }
+  const signalsByGroup = new Map();
+  for (const resolution of Array.isArray(resolutions) ? resolutions : []) {
+    if (!isRecord(resolution)) continue;
+    const eventGroupKey = cleanText(resolution.event_group_key, 240);
+    const candidateIdentity = cleanText(resolution.candidate_identity, 300);
+    const evidence = Array.isArray(resolution.evidence) ? resolution.evidence.filter(isRecord) : [];
+    const confidence = Math.max(0, Math.min(100, safeNumber(resolution.confidence) ?? 0));
+    if (!eventGroupKey || !candidateIdentity || !safeIsoDate(resolution.resolved_at) || !evidence.length || confidence < 85) continue;
+    if (!signalsByGroup.has(eventGroupKey)) signalsByGroup.set(eventGroupKey, new Map());
+    const signals = signalsByGroup.get(eventGroupKey);
+    const current = signals.get(candidateIdentity);
+    if (!current || confidence > current.confidence) signals.set(candidateIdentity, { ...resolution, evidence, confidence });
+  }
+  const resolvedGroups = new Map();
+  for (const [eventGroupKey, signals] of signalsByGroup.entries()) {
+    const groupSize = groupSizes.get(eventGroupKey) ?? 0;
+    if (signals.size < 2 || groupSize < 2 || signals.size / groupSize < 0.75) continue;
+    const strongest = [...signals.values()].sort((left, right) => right.confidence - left.confidence)[0];
+    resolvedGroups.set(eventGroupKey, strongest);
+  }
+  return (Array.isArray(candidates) ? candidates : []).map((candidate) => {
+    const resolution = resolvedGroups.get(cleanText(candidate?.event_group_key, 240));
+    if (!resolution) return candidate;
+    return applyEligibilityDecision(candidate, {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+      reason: cleanText(resolution.reason, 1000) || reasonCopy(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED),
+      confidence: resolution.confidence,
+      ttl_minutes: safeNumber(resolution.ttl_minutes) ?? 360,
+      evidence: resolution.evidence,
+    }, now);
+  });
 }
 
 export function isAdaptedIdeaComplete(candidate) {

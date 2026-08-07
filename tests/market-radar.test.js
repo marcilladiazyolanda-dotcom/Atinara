@@ -175,6 +175,62 @@ test("la puntuación no puede convertir un rechazo factual en candidato apto", (
   assert.equal(scored.state, "rejected");
 });
 
+test("una verificación inconclusa permanece en needs_review y nunca se convierte en rechazo duro", () => {
+  const candidate = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true })[0];
+  const reviewed = radar.applyEligibilityDecision(candidate, {
+    eligible: false,
+    conclusive: false,
+    reason_code: "VERIFICATION_REQUIRED",
+    confidence: 0,
+    ttl_minutes: 1,
+  }, now);
+  assert.equal(reviewed.verification_status, "needs_review");
+  assert.equal(reviewed.quality_status, "needs_review");
+  assert.equal(reviewed.state, "needs_review");
+  assert.equal(reviewed.verification_reason_code, "VERIFICATION_REQUIRED");
+  assert.ok(!reviewed.hard_reject_reasons.includes("VERIFICATION_REQUIRED"));
+  assert.equal(reviewed.verification_expires_at, "2026-08-06T12:05:00.000Z");
+});
+
+test("el motivo factual específico prevalece sobre un cierre genérico del proveedor", () => {
+  const candidate = radar.adaptPolymarketResponse({
+    events: [polyEvent({ closed: true })],
+  }, { now, canonicalUrlVerified: true })[0];
+  const rejected = radar.applyEligibilityDecision(candidate, {
+    eligible: false,
+    conclusive: true,
+    reason_code: "EVENT_ALREADY_RESOLVED",
+    confidence: 100,
+  }, now);
+  assert.ok(rejected.hard_reject_reasons.includes("PROVIDER_NOT_OPEN"));
+  assert.equal(rejected.verification_status, "rejected_resolved");
+  assert.equal(rejected.verification_reason_code, "EVENT_ALREADY_RESOLVED");
+});
+
+test("los lotes de Gemini son pequeños, monoproveedor y conservan las candidatas aplazadas", () => {
+  const polymarket = Array.from({ length: 19 }, (_, index) => ({
+    provider: "polymarket",
+    external_id: `poly-${index}`,
+    event_group_key: `polymarket:event-${Math.floor(index / 5)}`,
+    quality_score: 100 - index,
+  }));
+  const kalshi = Array.from({ length: 9 }, (_, index) => ({
+    provider: "kalshi",
+    external_id: `kalshi-${index}`,
+    event_group_key: `kalshi:event-${Math.floor(index / 3)}`,
+    quality_score: 80 - index,
+  }));
+  const plan = radar.buildGeminiCandidateBatches([...polymarket, ...kalshi], {
+    maxGroups: 20,
+    maxCandidates: 24,
+    batchSize: 7,
+  });
+  assert.equal(plan.batches.flat().length, 24);
+  assert.equal(plan.deferred.length, 4);
+  assert.ok(plan.batches.every((batch) => batch.length <= 7));
+  assert.ok(plan.batches.every((batch) => new Set(batch.map((candidate) => candidate.provider)).size === 1));
+});
+
 test("fixture EA FC 27 ya revelado se rechaza como resuelto", () => {
   const candidate = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true })[0];
   const decision = radar.evaluateDeterministicEligibility(candidate, { official_reveal_at: "2026-07-23T12:00:00Z" }, now);
@@ -228,6 +284,136 @@ test("Gemini interpreta texto JSON dividido e ignora razonamiento", () => {
   assert.deepEqual(result, [{ external_id: "m-1" }]);
 });
 
+test("Gemini se vincula por índices enteros controlados sin aceptar duplicados ni IDs alterados", () => {
+  const decisions = radar.indexGeminiDecisions([
+    { candidate_index: 1, external_id: "alterado", eligible: true },
+    { candidate_index: 1, eligible: false },
+    { candidate_index: "0", eligible: true },
+    { candidate_index: 3, eligible: true },
+    { candidate_index: 0, eligible: false },
+  ], 3);
+  assert.deepEqual([...decisions.keys()], [1, 0]);
+  assert.equal(decisions.get(1).eligible, true);
+  assert.equal(decisions.get(0).eligible, false);
+});
+
+test("una actualización explícita nunca reutiliza verificaciones inconclusas o caducadas", () => {
+  const candidate = { fingerprint: "fp-1" };
+  const verified = {
+    normalizer_version: "atinara-radar-v2",
+    fingerprint: "fp-1",
+    verification_status: "verified_open",
+    verification_reason_code: null,
+    verification_expires_at: "2026-08-06T13:00:00.000Z",
+    atinara_question: "¿Se anunciará GTA VI?",
+    atinara_category: "Lanzamientos",
+    atinara_resolution_criteria: "Sí si Rockstar lo anuncia oficialmente.",
+    atinara_resolution_source_url: "https://www.rockstargames.com/VI",
+  };
+  assert.equal(radar.canReuseRadarVerification(verified, candidate, now), true);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, verification_status: "needs_review" }, candidate, now), false);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, verification_reason_code: "VERIFICATION_REQUIRED" }, candidate, now), false);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, verification_expires_at: "2026-08-06T11:59:59.000Z" }, candidate, now), false);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, fingerprint: "fp-2" }, candidate, now), false);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, atinara_resolution_source_url: null }, candidate, now), false);
+});
+
+test("la fuente de resolución se toma solo de datos existentes o evidencia oficial", () => {
+  const evidence = [
+    { url: "https://example.com/inventada", source_type: "public" },
+    { url: "https://www.ea.com/games/ea-sports-fc/fc-27/news/official", source_type: "official" },
+  ];
+  const accepted = radar.selectVerifiedResolutionUrl({}, evidence);
+  const untrusted = radar.selectVerifiedResolutionUrl({}, evidence.slice(0, 1));
+  const existing = radar.selectVerifiedResolutionUrl(
+    { source_resolution_url: "https://thegameawards.com/nominees/game-of-the-year" },
+    evidence,
+  );
+  assert.equal(accepted, evidence[1].url);
+  assert.equal(untrusted, null);
+  assert.equal(existing, "https://thegameawards.com/nominees/game-of-the-year");
+});
+
+test("una resolución concluyente se propaga al evento padre solo con consenso suficiente", () => {
+  const candidates = [
+    { event_group_key: "polymarket:ea-fc27", hard_reject_reasons: [], verification_status: "rejected_resolved" },
+    { event_group_key: "polymarket:ea-fc27", hard_reject_reasons: [], verification_status: "rejected_resolved" },
+    { event_group_key: "kalshi:gta6", hard_reject_reasons: [], verification_status: "verified_open" },
+  ];
+  const signal = (candidateIdentity) => ({
+    event_group_key: "polymarket:ea-fc27",
+    candidate_identity: candidateIdentity,
+    resolved_at: "2026-07-17T00:00:00.000Z",
+    confidence: 95,
+    evidence: [{ url: "https://www.ea.com/games/ea-sports-fc/fc-27/news/official" }],
+  });
+  const result = radar.propagateResolvedEventGroups(candidates, [signal("polymarket:1"), signal("polymarket:2")], now);
+  assert.deepEqual(result.slice(0, 2).map((candidate) => candidate.verification_status), ["rejected_resolved", "rejected_resolved"]);
+  assert.equal(result[2].verification_status, "verified_open");
+});
+
+test("una señal aislada de una opción hija no resuelve toda la familia", () => {
+  const candidates = Array.from({ length: 4 }, (_, index) => ({
+    external_id: String(index),
+    event_group_key: "kalshi:release-dates",
+    hard_reject_reasons: [],
+    verification_status: index === 0 ? "rejected_resolved" : "verified_open",
+  }));
+  const result = radar.propagateResolvedEventGroups(candidates, [{
+    event_group_key: "kalshi:release-dates",
+    candidate_identity: "kalshi:0",
+    resolved_at: "2026-08-01T00:00:00.000Z",
+    confidence: 95,
+    evidence: [{ url: "https://www.xbox.com/example" }],
+  }], now);
+  assert.deepEqual(result.map((candidate) => candidate.verification_status), ["rejected_resolved", "verified_open", "verified_open", "verified_open"]);
+});
+
+test("una fuente oficial puede cerrar de forma determinista una familia de atleta de portada", () => {
+  const candidates = ["Kylian Mbappe", "Erling Haaland", "Ousmane Dembele"].map((name) => ({
+    source_question: `Will ${name} be on the cover of EA Sports FC 27?`,
+  }));
+  const resolution = radar.detectOfficialCoverEventResolution(candidates, [{
+    source_type: "official",
+    url: "https://www.ea.com/games/ea-sports-fc/ea-play",
+    title: "EA Sports FC EA Play - EA Official Site",
+    supports: "Cover art for EA SPORTS FC 27, showing Kylian Mbappe standing against a vibrant cityscape.",
+  }]);
+  assert.equal(resolution.winner_name, "Kylian Mbappe");
+  assert.equal(resolution.evidence.length, 1);
+  assert.equal(radar.detectOfficialCoverEventResolution(candidates, [{
+    source_type: "public",
+    url: "https://example.com/rumor",
+    supports: "EA Sports FC 27 cover art showing Kylian Mbappe.",
+  }]), null);
+  assert.equal(radar.detectOfficialCoverEventResolution(candidates, [{
+    source_type: "official",
+    url: "https://www.ea.com/games/college-football-27",
+    supports: "College Football 27 cover art showing Kylian Mbappe.",
+  }]), null);
+});
+
+test("el consenso oficial de una familia de portada incluye opciones reutilizadas", () => {
+  const officialEvidence = [{ source_type: "official", url: "https://www.ea.com/games/madden-nfl/madden-nfl-27/news/welcome-to-madden-27" }];
+  const candidates = Array.from({ length: 4 }, (_, index) => ({
+    provider: "polymarket",
+    external_id: String(index),
+    event_group_key: "polymarket:madden-27-cover",
+    source_title: "Madden NFL 27: Cover Athlete",
+    source_question: `Will Player ${index} be on the cover of Madden NFL 27?`,
+    hard_reject_reasons: index === 3 ? ["PROVIDER_NOT_OPEN"] : [],
+    verification_status: index === 3 ? "rejected_ineligible" : "rejected_resolved",
+    verification_reason: "La portada oficial ya fue revelada.",
+    verification_confidence: 100,
+    verification_evidence: index === 3 ? [] : officialEvidence,
+  }));
+  const signals = radar.buildCoverResolutionSignals(candidates, now);
+  assert.equal(signals.length, 4);
+  const resolved = radar.propagateResolvedEventGroups(candidates, signals, now);
+  assert.deepEqual(resolved.map((candidate) => candidate.verification_status), Array(4).fill("rejected_resolved"));
+  assert.equal(radar.buildCoverResolutionSignals(candidates.map((candidate) => ({ ...candidate, source_title: "Release dates" })), now).length, 0);
+});
+
 test("la Edge descubre taxonomía y eventos Kalshi sin límite arbitrario de cuatro series", () => {
   assert.match(edge, /search\/tags_by_categories/);
   assert.match(edge, /MAX_KALSHI_SERIES = 25/);
@@ -249,17 +435,29 @@ test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estr
   assert.match(edge, /groupCandidates\(candidates\)/);
   assert.match(edge, /evidenceByGroup/);
   assert.match(edge, /include_domains/);
-  assert.match(edge, /facts \{event_resolved_at/);
+  assert.match(edge, /event_resolved_at: \{ type:/);
+  assert.match(edge, /responseJsonSchema: geminiResponseJsonSchema/);
   assert.match(edge, /failClosedCandidates/);
+  assert.match(edge, /mapWithConcurrency\(groups, TAVILY_CONCURRENCY/);
+  assert.match(edge, /valvesoftware\.com/);
   assert.doesNotMatch(edge, /for \(const candidate of candidates\)[\s\S]*api\.tavily\.com/);
 });
 
 test("la verificación vigente se reutiliza por huella y evita repetir servicios automáticos", () => {
   assert.match(edge, /const cachedVerification = new Map/);
-  assert.match(edge, /Date\.parse\(cleanText\(item\.verification_expires_at/);
-  assert.match(edge, /cached\.fingerprint[\s\S]*candidate\.fingerprint/);
+  assert.match(edge, /candidateIdentity\(item\)/);
+  assert.match(edge, /canReuseRadarVerification\(cached, candidate, now\)/);
   assert.match(edge, /const needsVerification: JsonRecord\[\] = \[\]/);
   assert.match(edge, /if \(needsVerification\.length\)/);
+});
+
+test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
+  assert.match(edge, /record_market_radar_provider_success/);
+  assert.match(edge, /persistProcessorPartialFailure/);
+  assert.match(edge, /status_input: "partial_error"/);
+  assert.match(edge, /processedDecisions === 0/);
+  assert.match(edge, /deferredCandidates: plan\.deferred\.length/);
+  assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
 test("la preparación revalida versión, caducidad, proveedor y duplicados", () => {
@@ -273,6 +471,8 @@ test("la preparación revalida versión, caducidad, proveedor y duplicados", () 
   assert.match(edge, /researchGroupsWithTavily\(environment\.tavilyKey, \[candidate\]\)/);
   assert.match(edge, /verifyAndAdaptWithGemini\(environment\.geminiKey, \[candidate\]/);
   assert.match(edge, /prepareRevalidationError/);
+  assert.match(edge, /RESOLUTION_SOURCE_REQUIRED/);
+  assert.match(edge, /const factualReadiness = candidateReady\(factuallyRevalidated\)/);
   assert.match(edge, /RADAR_CANDIDATE_RESOLVED/);
   assert.match(edge, /RADAR_CANDIDATE_INELIGIBLE/);
   assert.match(edge, /RADAR_CANDIDATE_UNANNOUNCED/);
@@ -308,6 +508,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /Abrir evento original/);
   assert.match(adminUi, /Abrir mercado original/);
   assert.match(adminUi, /Abrir fuente de resolución/);
+  assert.match(adminUi, /candidate\.atinara_resolution_source_url \|\| candidate\.source_resolution_url/);
   assert.match(adminUi, /Auditoría factual/);
   assert.match(adminUi, /verification_status === "verified_open"/);
 });
@@ -322,10 +523,27 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /MAX_PROVIDER_PAGES = 3/);
   assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 240/);
   assert.match(edge, /MAX_VISIBLE_GROUPS = 60/);
-  assert.match(edge, /MAX_GEMINI_GROUPS = 20/);
-  assert.match(edge, /GEMINI_TIMEOUT_MS = 35_000/);
+  assert.match(edge, /MAX_GEMINI_GROUPS = 30/);
+  assert.match(edge, /MAX_GEMINI_CANDIDATES = 180/);
+  assert.match(edge, /GEMINI_BATCH_SIZE = 9/);
+  assert.match(edge, /GEMINI_CONCURRENCY = 2/);
+  assert.match(edge, /GEMINI_TIMEOUT_MS = 20_000/);
+  assert.match(edge, /GEMINI_MODEL = "gemini-3\.5-flash-lite"/);
   assert.match(edge, /REFRESH_COOLDOWN_MS = 60_000/);
   assert.match(edge, /thinkingLevel: "minimal"/);
   assert.match(edge, /responseMimeType: "application\/json"/);
+  assert.match(edge, /responseJsonSchema: geminiResponseJsonSchema/);
+  assert.match(edge, /candidate_index: \{ type: "integer"/);
+  assert.match(edge, /indexGeminiDecisions\(decisions, candidates\.length\)/);
+  assert.doesNotMatch(edge, /parent_event_resolved: \{ type:/);
+  assert.doesNotMatch(edge, /atinara_resolution_source_url: \{ type:/);
+  assert.match(edge, /selectVerifiedResolutionUrl\(candidate, evidence\)/);
+  assert.match(edge, /propagateResolvedEventGroups\(verified, eventResolutions, now\)/);
+  assert.match(edge, /officialEventResolutionSignals\(candidates, evidenceByGroup, now\)/);
+  assert.match(edge, /buildCoverResolutionSignals\(candidates, now\)/);
+  assert.match(edge, /atinara_resolution_source_url: cached\.atinara_resolution_source_url \?\? cached\.source_resolution_url/);
+  assert.doesNotMatch(edge, /Devuelve exactamente un elemento por external_id/);
+  assert.doesNotMatch(edge, /maxLength:/);
+  assert.doesNotMatch(edge, /temperature:/);
   assert.doesNotMatch(edge, /cron|setInterval/i);
 });
