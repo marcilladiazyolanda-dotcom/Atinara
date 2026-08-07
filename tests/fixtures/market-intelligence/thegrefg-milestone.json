@@ -1,0 +1,19 @@
+{
+  "provider": "youtube",
+  "entity_type": "channel",
+  "entity_id": "fixture-thegrefg",
+  "title": "TheGrefg",
+  "opportunity_type": "MILESTONE_WITH_NARRATIVE",
+  "metric_name": "subscriberCount",
+  "milestone_metric": "subscriberCount",
+  "metric_value": 19300000,
+  "metric_unit": "suscriptores",
+  "metric_is_rounded": true,
+  "milestone_value": 20000000,
+  "milestone_unit": "suscriptores",
+  "contextual_basis": "La distancia al siguiente hito es limitada y el recuento continúa siendo público.",
+  "viable_horizons_days": [30],
+  "valid_until": "2026-09-06T12:00:00.000Z",
+  "canonical_url": "https://www.youtube.com/channel/fixture-thegrefg",
+  "provider_policy_flags": ["YOUTUBE_ROUNDED_THREE_SIGNIFICANT_FIGURES", "RETENTION_30_DAYS"]
+}

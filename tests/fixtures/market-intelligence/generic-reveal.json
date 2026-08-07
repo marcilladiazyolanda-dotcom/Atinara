@@ -1,0 +1,13 @@
+{
+  "provider": "twitch",
+  "entity_type": "stream",
+  "entity_id": "generic-stream",
+  "title": "Presentación oficial futura",
+  "opportunity_type": "SCHEDULED_REVEAL_WITH_UNKNOWN_CONTENT",
+  "event_start_at": "2026-08-20T18:00:00.000Z",
+  "official_event_url": "https://www.twitch.tv/generic-stream",
+  "content_criterion": "un anuncio verificable definido en los criterios",
+  "valid_until": "2026-08-20T18:00:00.000Z",
+  "canonical_url": "https://www.twitch.tv/generic-stream",
+  "factual_basis": "La fuente oficial anuncia una presentación futura, sin revelar su contenido."
+}

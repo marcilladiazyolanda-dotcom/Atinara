@@ -1,0 +1,18 @@
+{
+  "provider": "youtube",
+  "entity_type": "channel",
+  "entity_id": "generic-channel",
+  "title": "Canal verificado",
+  "opportunity_type": "MILESTONE_WITH_NARRATIVE",
+  "metric_name": "subscriberCount",
+  "milestone_metric": "subscriberCount",
+  "metric_value": 980000,
+  "metric_unit": "suscriptores",
+  "metric_is_rounded": true,
+  "milestone_value": 1000000,
+  "milestone_unit": "suscriptores",
+  "contextual_basis": "La fuente conserva una métrica pública cercana al siguiente hito.",
+  "viable_horizons_days": [30],
+  "valid_until": "2026-09-06T12:00:00.000Z",
+  "canonical_url": "https://www.youtube.com/channel/generic-channel"
+}

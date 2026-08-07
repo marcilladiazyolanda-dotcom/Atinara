@@ -1,0 +1,13 @@
+{
+  "provider": "igdb",
+  "entity_type": "game",
+  "entity_id": "fixture-gta-vi",
+  "title": "GTA VI",
+  "opportunity_type": "SCHEDULED_REVEAL_WITH_UNKNOWN_CONTENT",
+  "event_start_at": "2026-08-25T16:00:00.000Z",
+  "official_event_url": "https://www.rockstargames.com/",
+  "content_criterion": "una fecha concreta comunicada durante la presentación oficial",
+  "valid_until": "2026-08-25T16:00:00.000Z",
+  "canonical_url": "https://www.igdb.com/games/fixture-gta-vi",
+  "factual_basis": "Existe un anuncio oficial futuro; su contenido todavía es desconocido."
+}
