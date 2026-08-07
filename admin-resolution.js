@@ -4,6 +4,8 @@ const adminResolutionState = {
   markets: [],
   selectedMarket: null,
   analysisResponse: null,
+  sourceEvidence: null,
+  evidenceLoading: false,
   analyzing: false,
   approving: false,
   manualMode: false,
@@ -149,6 +151,7 @@ function renderAdminWorkspace() {
           <select id="admin-market-select">${marketOptions}</select>
         </label>
         ${selected ? createAdminMarketSummary(selected) : ""}
+        ${selected ? createSourceEvidenceMarkup() : ""}
         <button class="primary-button admin-analyze-button" id="admin-analyze-market" type="button"${adminResolutionState.analyzing ? " disabled" : ""}>
           ${analyzeLabel}
         </button>
@@ -175,6 +178,41 @@ function createAdminMarketSummary(market) {
       <div><dt>Fuente prevista</dt><dd>${escapeAdminHtml(market.resolution_source || "No indicada")}</dd></div>
     </dl>
   `;
+}
+
+function createSourceEvidenceMarkup() {
+  if (adminResolutionState.evidenceLoading) {
+    return `<section class="admin-source-evidence" aria-busy="true"><p class="eyebrow">Plan de Resolución</p><p>Comprobando fuentes vinculadas…</p></section>`;
+  }
+  const evidence = adminResolutionState.sourceEvidence;
+  if (!evidence?.available) {
+    return `<section class="admin-source-evidence"><p class="eyebrow">Plan de Resolución</p><p>Este mercado no utiliza una fuente monitorizada. La revisión humana y las fuentes manuales siguen disponibles.</p></section>`;
+  }
+  const binding = evidence.binding || {};
+  const sources = Array.isArray(evidence.sources) ? evidence.sources : [];
+  const snapshots = Array.isArray(evidence.snapshots) ? evidence.snapshots : [];
+  const packageData = evidence.evidence_package || {};
+  const latestSnapshot = snapshots[snapshots.length - 1] || null;
+  const sourceItems = sources.length
+    ? sources.map((source) => {
+      const safeUrl = getSafeAdminUrl(source.source_url);
+      return `<li><strong>${escapeAdminHtml(source.role || "Fuente")}</strong>${safeUrl ? ` · <a href="${escapeAdminHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">Abrir</a>` : ""}</li>`;
+    }).join("")
+    : "<li>No hay fuentes registradas.</li>";
+  const status = packageData.status || binding.status || "Pendiente";
+  return `<section class="admin-source-evidence" aria-labelledby="admin-source-evidence-title">
+    <p class="eyebrow">Plan de Resolución · contrato bloqueado</p>
+    <h3 id="admin-source-evidence-title">Evidencias del Agente Centinela</h3>
+    <dl><div><dt>Estado</dt><dd>${escapeAdminHtml(status)}</dd></div><div><dt>Proveedor</dt><dd>${escapeAdminHtml(binding.provider || "No indicado")}</dd></div><div><dt>Capturas</dt><dd>${escapeAdminHtml(snapshots.length)}</dd></div><div><dt>Última observación</dt><dd>${latestSnapshot ? escapeAdminHtml(formatAdminDate(latestSnapshot.observed_at)) : "Sin captura"}</dd></div></dl>
+    <ul>${sourceItems}</ul>
+    ${packageData.recommended_outcome ? `<p><strong>Propuesta técnica:</strong> ${escapeAdminHtml(packageData.recommended_outcome)} · no aplica la resolución.</p>` : ""}
+    <p>Un dato ausente no equivale a cero o No. <strong>ready_to_resolve</strong> solo prepara evidencias; Yol debe revisar y confirmar.</p>
+    <div class="admin-source-evidence-actions">
+      <button class="secondary-button" id="admin-source-capture" type="button"${adminResolutionState.evidenceLoading ? " disabled" : ""}>Capturar ahora</button>
+      <button class="secondary-button" id="admin-source-package" type="button"${adminResolutionState.evidenceLoading ? " disabled" : ""}>Preparar paquete</button>
+      ${["armed", "monitoring", "failed"].includes(binding.status) ? '<button class="secondary-button" id="admin-source-pause" type="button">Pausar monitor</button>' : ""}
+    </div>
+  </section>`;
 }
 
 function createAdminAnalysisEmptyMarkup() {
@@ -379,12 +417,17 @@ function bindAdminWorkspaceEvents() {
       (market) => market.id === event.target.value
     ) || null;
     adminResolutionState.analysisResponse = null;
+    adminResolutionState.sourceEvidence = null;
     adminResolutionState.statusMessage = "";
     resetManualResolution();
     renderAdminWorkspace();
+    loadSourceEvidence();
   });
 
   document.querySelector("#admin-analyze-market")?.addEventListener("click", analyzeSelectedMarket);
+  document.querySelector("#admin-source-capture")?.addEventListener("click", () => runSourceMonitorAction("capture-now"));
+  document.querySelector("#admin-source-package")?.addEventListener("click", () => runSourceMonitorAction("get-evidence-package"));
+  document.querySelector("#admin-source-pause")?.addEventListener("click", () => runSourceMonitorAction("pause-binding"));
   document.querySelector("#admin-toggle-manual")?.addEventListener("click", toggleManualResolution);
   document.querySelector("#admin-approval-form")?.addEventListener("submit", approveSelectedResolution);
   document.querySelector("#admin-manual-approval-form")?.addEventListener("submit", approveManualResolution);
@@ -392,6 +435,60 @@ function bindAdminWorkspaceEvents() {
   document.querySelectorAll("[data-admin-remove-source]").forEach((button) => {
     button.addEventListener("click", () => removeManualSource(Number(button.dataset.adminRemoveSource)));
   });
+}
+
+async function invokeSourceMonitor(action, payload = {}) {
+  const { data, error } = await window.orakloSupabase.functions.invoke("market-source-monitor", {
+    body: { action, ...payload }
+  });
+  if (error) throw error;
+  return data || {};
+}
+
+async function loadSourceEvidence() {
+  const market = adminResolutionState.selectedMarket;
+  if (!market) return;
+  adminResolutionState.evidenceLoading = true;
+  renderAdminWorkspace();
+  try {
+    const { data, error } = await window.orakloSupabase.rpc("get_market_source_evidence", { market_id_input: market.id });
+    if (error) throw error;
+    adminResolutionState.sourceEvidence = data || { available: false };
+  } catch (error) {
+    adminResolutionState.sourceEvidence = { available: false };
+    adminResolutionState.statusMessage = "No se pudo consultar el Plan de Resolución monitorizado. La revisión humana sigue disponible.";
+    adminResolutionState.statusTone = "warning";
+  } finally {
+    adminResolutionState.evidenceLoading = false;
+    renderAdminWorkspace();
+  }
+}
+
+async function runSourceMonitorAction(action) {
+  const market = adminResolutionState.selectedMarket;
+  const binding = adminResolutionState.sourceEvidence?.binding;
+  if (!market || !binding?.id || adminResolutionState.evidenceLoading) return;
+  adminResolutionState.evidenceLoading = true;
+  adminResolutionState.statusMessage = action === "get-evidence-package"
+    ? "Preparando el paquete de evidencias sin aplicar ninguna resolución…"
+    : action === "pause-binding" ? "Pausando la monitorización…" : "Capturando la fuente oficial…";
+  adminResolutionState.statusTone = "info";
+  renderAdminWorkspace();
+  try {
+    await invokeSourceMonitor(action, action === "get-evidence-package"
+      ? { market_id: market.id }
+      : { binding_id: binding.id });
+    adminResolutionState.statusMessage = action === "get-evidence-package"
+      ? "Paquete preparado. La recomendación no liquida el mercado y exige confirmación humana."
+      : action === "pause-binding" ? "Monitorización pausada con trazabilidad." : "Captura registrada; un valor ausente no se interpreta como cero.";
+    adminResolutionState.statusTone = "success";
+  } catch (error) {
+    adminResolutionState.statusMessage = await readFunctionError(error, "La operación de fuentes no se completó. El mercado no ha cambiado.");
+    adminResolutionState.statusTone = "error";
+  } finally {
+    adminResolutionState.evidenceLoading = false;
+    await loadSourceEvidence();
+  }
 }
 
 function captureManualDraft() {
@@ -630,7 +727,9 @@ async function loadAdminMarkets() {
   adminResolutionState.selectedMarket = adminResolutionState.markets.find(
     (market) => market.id === currentId
   ) || adminResolutionState.markets[0] || null;
+  adminResolutionState.sourceEvidence = null;
   renderAdminWorkspace();
+  await loadSourceEvidence();
 }
 
 async function initializeAdminResolution(authState) {

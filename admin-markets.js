@@ -41,7 +41,21 @@
       rejectionReason: "current"
     },
     radarPrefill: null,
-    radarCooldownTimer: null
+    radarCooldownTimer: null,
+    observatory: {
+      providers: [],
+      dashboard: { entities: [], signals: [], context_items: [], story_arcs: [], hypotheses: [], bindings: [], provider_runs: [], schedulers: {} },
+      searchProvider: "igdb",
+      searchQuery: "",
+      searchResults: [],
+      selected: null,
+      provider: "all",
+      category: "",
+      marketability: "",
+      expertStatus: "",
+      query: "",
+      errors: []
+    }
   };
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
@@ -89,6 +103,14 @@
     adapted: "Adaptado automáticamente",
     review: "Requiere revisión",
     missing: "Sin información"
+  };
+  const OBSERVATORY_PROVIDER_LABELS = {
+    igdb: "IGDB",
+    twitch: "Twitch",
+    youtube: "YouTube",
+    "market-expert": "Agente Editor",
+    "source-monitor": "Monitor de fuentes",
+    "tavily-context": "Contexto oficial"
   };
 
   function escapeHtml(value) {
@@ -223,6 +245,30 @@
     return data || {};
   }
 
+  async function invokeObservatory(action, payload = {}) {
+    const { data, error } = await client.functions.invoke("data-observatory", {
+      body: { action, ...payload }
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
+  async function invokeMarketExpert(action, payload = {}) {
+    const { data, error } = await client.functions.invoke("market-expert", {
+      body: { action, ...payload }
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
+  async function invokeSourceMonitor(action, payload = {}) {
+    const { data, error } = await client.functions.invoke("market-source-monitor", {
+      body: { action, ...payload }
+    });
+    if (error) throw error;
+    return data || {};
+  }
+
   function setNotice(message, tone = "info") {
     state.notice = message;
     state.noticeTone = tone;
@@ -230,6 +276,33 @@
 
   function noticeMarkup() {
     return state.notice ? `<p class="admin-status-message admin-status-${escapeHtml(state.noticeTone)}" role="status">${escapeHtml(state.notice)}</p>` : "";
+  }
+
+  function feedbackComparableDraft(fields = {}) {
+    const alternativeSources = Array.isArray(fields.alternative_sources)
+      ? fields.alternative_sources.map((item) => ({ url: String(item?.url || "").trim() })).filter((item) => item.url)
+      : String(fields.alternative_sources || "").split(/\r?\n/).map((url) => ({ url: url.trim() })).filter((item) => item.url);
+    const primarySource = fields.primary_source && typeof fields.primary_source === "object"
+      ? { url: String(fields.primary_source.url || "").trim() }
+      : fields.primary_source_url ? { url: String(fields.primary_source_url).trim() } : {};
+    const comparable = {};
+    [
+      "market_slug", "question", "subject", "category", "evaluation_period_label",
+      "evaluation_ends_at", "timezone", "resolution_deadline", "yes_criteria", "no_criteria",
+      "edge_cases", "delay_treatment", "cancellation_treatment", "leak_treatment",
+      "rename_treatment", "assumptions", "public_criteria", "description"
+    ].forEach((field) => {
+      if (Object.hasOwn(fields, field)) comparable[field] = String(fields[field] || "").trim();
+    });
+    if (Object.hasOwn(fields, "primary_source") || Object.hasOwn(fields, "primary_source_url")) comparable.primary_source = primarySource;
+    if (Object.hasOwn(fields, "alternative_sources")) comparable.alternative_sources = alternativeSources;
+    return comparable;
+  }
+
+  function changedExpertFields(proposedFields, savedPayload) {
+    const proposed = feedbackComparableDraft(proposedFields);
+    const saved = feedbackComparableDraft(savedPayload);
+    return Object.keys(proposed).filter((field) => JSON.stringify(proposed[field]) !== JSON.stringify(saved[field]));
   }
 
   function disabled() {
@@ -262,6 +335,7 @@
       <div class="admin-market-tabs" role="tablist" aria-label="Secciones de gestión">
         <button type="button" role="tab" data-admin-view="drafts" aria-selected="${state.view === "drafts"}">Crear manualmente</button>
         <button type="button" role="tab" data-admin-view="radar" aria-selected="${state.view === "radar"}">Radar de mercados</button>
+        <button type="button" role="tab" data-admin-view="observatory" aria-selected="${state.view === "observatory"}">Datos y tendencias</button>
         <button type="button" role="tab" data-admin-view="catalog" aria-selected="${state.view === "catalog"}">Mercados publicados</button>
         <button type="button" role="tab" data-admin-view="audit" aria-selected="${state.view === "audit"}">Auditoría</button>
       </div>`;
@@ -348,6 +422,7 @@
     const draft = payload?.draft || { market_slug: "", content_version: null, workflow_status: "draft_incomplete" };
     const radarOrigins = payload?.radar_origins || {};
     const radarCandidate = payload?.radar_candidate || null;
+    const observatorySignal = payload?.observatory_signal || null;
     const locked = ["published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
     const source = draft.primary_source || {};
     const alternatives = Array.isArray(draft.alternative_sources) ? draft.alternative_sources.map((item) => item?.url || "").filter(Boolean).join("\n") : "";
@@ -397,6 +472,7 @@
             ${workflowBadge(draft.workflow_status || "draft_incomplete")}
           </div>
           ${radarCandidate ? `<aside class="radar-prefill-notice"><strong>Pre-rellenado desde ${escapeHtml(RADAR_PROVIDER_LABELS[radarCandidate.provider] || radarCandidate.provider)}.</strong><span>Nada se ha guardado, revisado, aprobado, programado ni publicado. Completa y revisa los campos antes de guardar el borrador privado.</span></aside>` : ""}
+          ${observatorySignal ? `<aside class="radar-prefill-notice observatory-prefill-notice"><strong>Propuesta del Observatorio desde ${escapeHtml(OBSERVATORY_PROVIDER_LABELS[observatorySignal.provider] || observatorySignal.provider)}.</strong><span>Los datos observados, la inferencia editorial y las fuentes vinculantes permanecen separados. Nada se ha guardado, aprobado, programado ni publicado.</span></aside>` : ""}
           ${locked ? '<p class="admin-locked-notice"><strong>Campos esenciales bloqueados:</strong> el mercado ya fue publicado. Utiliza las acciones posteriores seguras.</p>' : ""}
           <fieldset${locked ? " disabled" : ""}>
             <legend>Identidad y pregunta</legend>
@@ -675,8 +751,11 @@
           ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.status)}</strong> · ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : "<p>Sin duplicados deterministas.</p>"}
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
         </section>
+        <section><h3>Agente Editor</h3>${candidate.expert_analysis
+          ? `<p><strong>${escapeHtml(candidate.expert_analysis.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(candidate.expert_analysis.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
+          : `<p>Análisis opcional y aditivo. No cambia la aptitud, la caché ni la política determinista del Radar v17.</p>`}</section>
       </div>
-      <footer><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
+      <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${candidate.expert_analysis ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
     </section>`;
   }
 
@@ -700,6 +779,151 @@
     </section>`;
   }
 
+  function observatoryProviderMarkup() {
+    const latestRuns = Array.isArray(state.observatory.dashboard.provider_runs) ? state.observatory.dashboard.provider_runs : [];
+    return `<section class="observatory-provider-grid" aria-label="Estado de proveedores y agentes">
+      ${state.observatory.providers.map((provider) => {
+        const latest = latestRuns.find((run) => run.provider === provider.provider);
+        const configured = provider.configured === true;
+        const status = provider.status === "deterministic_only" ? "Puerta determinista disponible" : provider.status === "scheduler_disabled" ? "Programación desactivada" : configured ? "Configurado" : "No configurado";
+        return `<article class="observatory-provider-card" data-status="${escapeHtml(configured ? "configured" : provider.status || "not_configured")}">
+          <div><strong>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[provider.provider] || provider.provider)}</strong><span>${escapeHtml(status)}</span></div>
+          <small>${latest ? `${escapeHtml(displayDate(latest.completed_at || latest.created_at))} · ${escapeHtml(latest.is_cached ? "Caché" : latest.status || "Última consulta")}` : "Sin consulta registrada"}</small>
+          ${provider.policy_version ? `<code>${escapeHtml(provider.policy_version)}</code>` : ""}
+        </article>`;
+      }).join("")}
+    </section>`;
+  }
+
+  function observatorySearchMarkup() {
+    const results = state.observatory.searchResults.length
+      ? `<ul class="observatory-search-results">${state.observatory.searchResults.map((item) => `<li>
+          <div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[item.provider] || item.provider)} · ${escapeHtml(item.entity_type)}</span></div>
+          ${externalLink(item.canonical_url, "Abrir fuente")}
+          <button class="primary-button" type="button" data-observatory-add="${escapeHtml(item.external_id)}">Seguir fuente</button>
+        </li>`).join("")}</ul>`
+      : "";
+    return `<section class="observatory-watch-search" aria-labelledby="observatory-watch-title">
+      <div class="admin-section-heading"><div><p class="eyebrow">Fuentes seguidas</p><h3 id="observatory-watch-title">Añadir una entidad pública</h3></div><p>La búsqueda es manual y limitada. YouTube consume cuota únicamente cuando la solicitas.</p></div>
+      <form id="observatory-search-form" class="observatory-search-form">
+        <label><span>Proveedor</span><select name="provider">
+          <option value="igdb"${state.observatory.searchProvider === "igdb" ? " selected" : ""}>IGDB</option>
+          <option value="twitch"${state.observatory.searchProvider === "twitch" ? " selected" : ""}>Twitch</option>
+          <option value="youtube"${state.observatory.searchProvider === "youtube" ? " selected" : ""}>YouTube</option>
+        </select></label>
+        <label class="field-wide"><span>Juego, empresa, canal o ID público</span><input type="search" name="query" minlength="2" maxlength="200" value="${valueAttribute(state.observatory.searchQuery)}" required></label>
+        <button class="secondary-button" type="submit"${disabled()}>Buscar en la API</button>
+      </form>
+      <button class="secondary-button" type="button" data-observatory-top-games${disabled()}>Ver juegos destacados de Twitch</button>
+      ${results}
+    </section>`;
+  }
+
+  function observatoryWatchlistMarkup() {
+    const entities = Array.isArray(state.observatory.dashboard.entities) ? state.observatory.dashboard.entities : [];
+    const cards = entities.length ? entities.map((entity) => `<article class="observatory-watch-card">
+      <div><span class="radar-provider-badge">${escapeHtml(OBSERVATORY_PROVIDER_LABELS[entity.provider] || entity.provider)}</span><strong>${escapeHtml(entity.label)}</strong><small>${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.health_status || "Sin comprobar")}</small></div>
+      <div>${externalLink(entity.canonical_url, "Abrir")}
+        <button class="secondary-button" type="button" data-observatory-pause="${escapeHtml(entity.id)}">Pausar</button>
+      </div>
+    </article>`).join("") : `<div class="admin-empty-state"><strong>No hay fuentes seguidas</strong><span>Añade una entidad pública mediante la búsqueda. No se realiza rastreo global.</span></div>`;
+    return `<section class="observatory-watchlist" aria-label="Lista de fuentes seguidas"><div class="observatory-watch-grid">${cards}</div></section>`;
+  }
+
+  function observatoryFiltersMarkup() {
+    return `<form id="observatory-filters" class="observatory-filters">
+      <label><span>Proveedor</span><select name="provider"><option value="all">Todos</option>${["igdb", "twitch", "youtube"].map((provider) => `<option value="${provider}"${state.observatory.provider === provider ? " selected" : ""}>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[provider])}</option>`).join("")}</select></label>
+      <label><span>Aptitud</span><select name="marketability"><option value="">Todas</option>${["pending", "useful", "needs_review", "insufficient_history", "policy_blocked", "rejected"].map((status) => `<option value="${status}"${state.observatory.marketability === status ? " selected" : ""}>${escapeHtml(observatoryStatusLabel(status))}</option>`).join("")}</select></label>
+      <label><span>Análisis experto</span><select name="expertStatus"><option value="">Todos</option>${["not_requested", "pending", "completed", "failed", "stale"].map((status) => `<option value="${status}"${state.observatory.expertStatus === status ? " selected" : ""}>${escapeHtml(observatoryExpertLabel(status))}</option>`).join("")}</select></label>
+      <label class="field-wide"><span>Buscar</span><input type="search" name="query" value="${valueAttribute(state.observatory.query)}" placeholder="Entidad, señal o categoría"></label>
+      <button class="secondary-button" type="submit">Aplicar filtros</button>
+      <button class="primary-button" type="button" data-observatory-refresh${disabled()}>${state.busy ? "Actualizando…" : "Actualizar fuentes seguidas"}</button>
+    </form>`;
+  }
+
+  function observatoryStatusLabel(status) {
+    return ({ pending: "Pendiente", useful: "Útil", needs_review: "Revisión necesaria", insufficient_history: "Historial insuficiente", not_interesting: "Interés insuficiente", already_resolved: "Resultado conocido", incoherent: "Incoherente", unsupported_metric: "Métrica no compatible", unverifiable: "No verificable", duplicate: "Duplicada", policy_blocked: "Bloqueada por política", rejected: "Descartada" })[status] || status || "Pendiente";
+  }
+
+  function observatoryExpertLabel(status) {
+    return ({ not_requested: "No solicitado", pending: "En curso", completed: "Completado", failed: "Fallido", stale: "Caducado" })[status] || status || "No solicitado";
+  }
+
+  function observatorySignalCard(signal) {
+    const metric = signal.metric_value === null || signal.metric_value === undefined
+      ? "Dato no disponible"
+      : `${displayNumber(signal.metric_value)}${signal.metric_unit ? ` ${escapeHtml(signal.metric_unit)}` : ""}`;
+    return `<article class="observatory-signal-card" data-marketability="${escapeHtml(signal.marketability_status)}">
+      <header><div><span class="radar-provider-badge">${escapeHtml(OBSERVATORY_PROVIDER_LABELS[signal.provider] || signal.provider)}</span><span>${escapeHtml(signal.atinara_category || signal.signal_type)}</span></div><time>${escapeHtml(displayDate(signal.observed_at))}</time></header>
+      <h3>${escapeHtml(signal.title)}</h3>
+      <dl><div><dt>Dato observado</dt><dd>${metric}</dd></div><div><dt>Aptitud</dt><dd>${escapeHtml(observatoryStatusLabel(signal.marketability_status))}</dd></div><div><dt>Resolución</dt><dd>${escapeHtml(signal.resolution_readiness || "Pendiente")}</dd></div><div><dt>Agente Editor</dt><dd>${escapeHtml(observatoryExpertLabel(signal.expert_analysis_status))}</dd></div></dl>
+      <p class="observatory-factual"><strong>Hecho observado:</strong> ${escapeHtml(signal.factual_basis || "La fuente no aporta todavía una descripción factual suficiente.")}</p>
+      ${signal.inference_summary ? `<p class="observatory-inference"><strong>Inferencia editorial:</strong> ${escapeHtml(signal.inference_summary)}</p>` : ""}
+      <footer>${externalLink(signal.canonical_url, "Abrir origen")}
+        <button class="secondary-button" type="button" data-observatory-details="${escapeHtml(signal.id)}">Ver análisis</button>
+        <button class="primary-button" type="button" data-observatory-analyze="${escapeHtml(signal.id)}">${signal.expert_analysis_status === "completed" ? "Reanalizar" : "Analizar"}</button>
+        <button class="secondary-button" type="button" data-observatory-dismiss="${escapeHtml(signal.id)}">Descartar</button>
+      </footer>
+    </article>`;
+  }
+
+  function observatoryDetailMarkup(detail) {
+    if (!detail) return "";
+    const signal = detail.signal || {};
+    const run = detail.expert_analysis || {};
+    const verdict = run.result_json || {};
+    const proposal = verdict.proposal || {};
+    const contract = verdict.resolution_contract || signal.suggested_resolution_contract || {};
+    const sources = Array.isArray(contract.sources) ? contract.sources : [];
+    const hypotheses = Array.isArray(detail.hypotheses) ? detail.hypotheses : [];
+    const reasonCodes = Array.isArray(verdict.reason_codes) ? verdict.reason_codes : [];
+    return `<section class="observatory-detail" role="dialog" aria-modal="false" aria-labelledby="observatory-detail-title" tabindex="-1">
+      <header><div><p class="eyebrow">Expediente privado · sin cadena de pensamiento</p><h2 id="observatory-detail-title">${escapeHtml(signal.title || "Detalle de señal")}</h2></div><button class="secondary-button" type="button" data-observatory-close>Cerrar</button></header>
+      <div class="observatory-detail-grid">
+        <section><h3>Dato observado</h3><p>${escapeHtml(signal.factual_basis || "No disponible")}</p><dl><div><dt>Proveedor</dt><dd>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[signal.provider] || signal.provider)}</dd></div><div><dt>Métrica</dt><dd>${escapeHtml(signal.metric_name || "No aplica")}</dd></div><div><dt>Valor</dt><dd>${signal.metric_value === null || signal.metric_value === undefined ? "Ausente; no equivale a cero" : escapeHtml(displayNumber(signal.metric_value))}</dd></div></dl></section>
+        <section><h3>Contexto documentado</h3><p>${escapeHtml(signal.contextual_basis || "Todavía no existe contexto suficiente.")}</p><p><strong>Por qué ahora:</strong> ${escapeHtml(verdict.why_now || signal.why_now || "Pendiente de análisis")}</p><p><strong>Cuestión abierta:</strong> ${escapeHtml(verdict.unresolved_question || signal.unresolved_question || "Pendiente de análisis")}</p></section>
+        <section><h3>Dictamen experto</h3><dl><div><dt>Decisión</dt><dd>${escapeHtml(verdict.decision || "No disponible")}</dd></div><div><dt>Integridad</dt><dd>${escapeHtml(verdict.integrity_status || "Pendiente")}</dd></div><div><dt>Forecastability</dt><dd>${escapeHtml(verdict.forecastability_status || "Pendiente")}</dd></div><div><dt>Fuentes</dt><dd>${escapeHtml(verdict.source_readiness || "Pendiente")}</dd></div><div><dt>Confianza</dt><dd>${escapeHtml(verdict.confidence ?? "—")}</dd></div></dl><p>${escapeHtml(verdict.summary || "Solicita el análisis para obtener un dictamen estructurado.")}</p>${reasonCodes.length ? `<ul>${reasonCodes.map((code) => `<li><code>${escapeHtml(code)}</code></li>`).join("")}</ul>` : ""}</section>
+        <section><h3>Propuesta editable</h3><p>${escapeHtml(proposal.question || signal.suggested_question || "No existe una propuesta aprobable todavía.")}</p><p><strong>Tesis:</strong> ${escapeHtml(verdict.market_thesis || signal.market_thesis || "Pendiente")}</p><button class="primary-button" type="button" data-observatory-prepare="${escapeHtml(signal.id)}"${run.id && (proposal.question || signal.suggested_question) ? "" : " disabled"}>Aplicar propuesta al formulario</button><small>No guarda, aprueba, programa ni publica.</small></section>
+        <section class="field-wide"><h3>Plan de Resolución</h3><dl><div><dt>Esquema</dt><dd>${escapeHtml(contract.contract_schema_version || "Pendiente")}</dd></div><div><dt>Proveedor</dt><dd>${escapeHtml(contract.provider || "Pendiente")}</dd></div><div><dt>Estrategia</dt><dd>${escapeHtml(contract.capture_strategy || "Pendiente")}</dd></div><div><dt>Métrica y umbral</dt><dd>${escapeHtml(contract.metric || "No aplica")} ${escapeHtml(contract.operator || "")} ${escapeHtml(contract.threshold ?? "")}</dd></div><div><dt>Agregación</dt><dd>${escapeHtml(contract.aggregation || "Pendiente")}</dd></div></dl><h4>Fuentes y roles</h4>${sources.length ? `<ol>${sources.map((source) => `<li><strong>${escapeHtml(source.role)}</strong> · ${externalLink(source.url, "Abrir fuente")}</li>`).join("")}</ol>` : `<p>Falta una fuente de resolución aprobable.</p>`}</section>
+        <section class="field-wide"><h3>Hipótesis privadas</h3>${hypotheses.length ? `<ul>${hypotheses.map((hypothesis) => `<li><strong>${escapeHtml(hypothesis.proposed_question || "Hipótesis descartada")}</strong><span>${escapeHtml(hypothesis.why_now || hypothesis.rejection_reason_codes?.join(", ") || "")}</span></li>`).join("")}</ul>` : `<p>No se ha fabricado ninguna hipótesis sin una oportunidad sólida.</p>`}<button class="secondary-button" type="button" data-observatory-discover-context="${escapeHtml(signal.id)}">Descubrir oportunidades</button></section>
+      </div>
+    </section>`;
+  }
+
+  function observatoryContextMarkup() {
+    const arcs = Array.isArray(state.observatory.dashboard.story_arcs) ? state.observatory.dashboard.story_arcs : [];
+    const hypotheses = Array.isArray(state.observatory.dashboard.hypotheses) ? state.observatory.dashboard.hypotheses : [];
+    return `<section class="observatory-context" aria-labelledby="observatory-context-title"><div class="admin-section-heading"><div><p class="eyebrow">Contexto y oportunidades</p><h3 id="observatory-context-title">Narrativas trazables</h3></div><p>Hecho, contexto e inferencia se guardan por separado. El agente puede devolver cero propuestas.</p></div>
+      <div class="observatory-context-grid"><article><strong>${escapeHtml(arcs.length)}</strong><span>story arcs privados</span></article><article><strong>${escapeHtml(hypotheses.filter((item) => item.hypothesis_status === "shortlisted" || item.hypothesis_status === "generated").length)}</strong><span>hipótesis para revisar</span></article><article><strong>Desactivado</strong><span>scheduler editorial</span></article></div></section>`;
+  }
+
+  function observatoryMonitoringMarkup() {
+    const bindings = Array.isArray(state.observatory.dashboard.bindings) ? state.observatory.dashboard.bindings : [];
+    const schedulerEnabled = state.observatory.dashboard.schedulers?.source_monitor_scheduler_enabled?.enabled === true;
+    return `<section class="observatory-monitoring" aria-labelledby="observatory-monitor-title"><div class="admin-section-heading"><div><p class="eyebrow">Agente Centinela</p><h3 id="observatory-monitor-title">Monitorización de resolución</h3></div><p>validated prepara el contrato; armed exige activación manual del scheduler; ready_to_resolve nunca liquida.</p></div>
+      ${bindings.length ? `<div class="observatory-binding-list">${bindings.map((binding) => `<article><div><strong>${escapeHtml(binding.market_id || `Borrador · plan v${binding.plan_version}`)}</strong><span>${escapeHtml(binding.provider)} · ${escapeHtml(binding.status)}</span><small>${escapeHtml(binding.monitor_required ? `Monitor ${binding.monitor_readiness}` : "Sin capturas periódicas")}</small></div><div><button class="secondary-button" type="button" data-binding-verify="${escapeHtml(binding.id)}">Validar contrato</button>${binding.monitor_required ? `<button class="secondary-button" type="button" data-binding-arm="${escapeHtml(binding.id)}"${schedulerEnabled ? "" : " disabled"}>${schedulerEnabled ? "Armar monitor" : "Scheduler desactivado"}</button>` : ""}${["armed", "monitoring", "failed"].includes(binding.status) ? `<button class="secondary-button" type="button" data-binding-pause="${escapeHtml(binding.id)}">Pausar</button>` : ""}</div></article>`).join("")}</div>` : `<div class="admin-empty-state"><strong>No hay planes monitorizados</strong><span>Los mercados manuales no necesitan binding. No se exigen capturas antes de publicar.</span></div>`}
+    </section>`;
+  }
+
+  function observatoryMarkup() {
+    const allSignals = Array.isArray(state.observatory.dashboard.signals) ? state.observatory.dashboard.signals : [];
+    const query = state.observatory.query.toLowerCase();
+    const signals = allSignals.filter((signal) =>
+      (state.observatory.provider === "all" || signal.provider === state.observatory.provider)
+      && (!state.observatory.marketability || signal.marketability_status === state.observatory.marketability)
+      && (!state.observatory.expertStatus || signal.expert_analysis_status === state.observatory.expertStatus)
+      && (!query || `${signal.title} ${signal.subtitle || ""} ${signal.atinara_category || ""}`.toLowerCase().includes(query))
+    );
+    const cards = signals.length ? `<div class="observatory-signal-grid">${signals.map(observatorySignalCard).join("")}</div>` : `<div class="admin-empty-state"><strong>No hay señales con estos filtros</strong><span>Configura una fuente o actualiza las seguidas. Atinara no inventa datos para llenar el estado.</span></div>`;
+    return `<section class="data-observatory" aria-labelledby="data-observatory-title">
+      <header class="radar-heading"><div><p class="eyebrow">Administración · inteligencia de fuentes</p><h2 id="data-observatory-title">Observatorio de datos</h2><p>Analiza señales de IGDB, Twitch y YouTube y conviértelas en borradores verificables.</p></div><span class="radar-cache-badge">Privado · sin publicación automática</span></header>
+      <aside class="admin-fail-closed-notice"><strong>Las métricas externas no son resultados.</strong><span>Un dato ausente no equivale a cero o No. Toda propuesta conserva revisión, contrato y confirmación humanas.</span></aside>
+      ${observatoryProviderMarkup()}${observatorySearchMarkup()}${observatoryWatchlistMarkup()}${observatoryFiltersMarkup()}
+      <div class="radar-results-heading"><h3>${escapeHtml(signals.length)} señales</h3><p>Solo datos reales de proveedores configurados; cada fallo es parcial.</p></div>
+      ${cards}${observatoryContextMarkup()}${observatoryMonitoringMarkup()}${observatoryDetailMarkup(state.observatory.selected)}
+    </section>`;
+  }
+
   function renderWorkspace() {
     root.setAttribute("aria-busy", String(state.busy));
     let content = "";
@@ -707,6 +931,8 @@
       content = `<div class="admin-market-workspace">${listMarkup()}${formMarkup(state.selected)}</div>`;
     } else if (state.view === "radar") {
       content = radarMarkup();
+    } else if (state.view === "observatory") {
+      content = observatoryMarkup();
     } else if (state.view === "catalog") {
       content = catalogMarkup();
     } else {
@@ -752,14 +978,39 @@
     state.busy = true;
     renderWorkspace();
     try {
+      const intelligencePrefill = state.radarPrefill;
       const args = {
         draft_id_input: form.dataset.draftId || null,
         expected_version_input: form.dataset.version ? Number(form.dataset.version) : null,
         draft_input: payload
       };
-      const result = state.radarPrefill?.candidateId && !form.dataset.draftId
-        ? await rpc("save_market_draft_from_radar", { candidate_id_input: state.radarPrefill.candidateId, ...args })
-        : await rpc("save_market_draft", args);
+      let result;
+      if (intelligencePrefill?.candidateId && !form.dataset.draftId) {
+        result = await rpc("save_market_draft_from_radar", { candidate_id_input: intelligencePrefill.candidateId, ...args });
+      } else if (intelligencePrefill?.originType === "observatory_signal" && !form.dataset.draftId) {
+        result = await rpc("save_market_draft_from_intelligence", {
+          ...args,
+          origin_type_input: intelligencePrefill.originType,
+          origin_id_input: intelligencePrefill.originId,
+          expert_run_id_input: intelligencePrefill.expertRunId,
+          contract_input: intelligencePrefill.contract || {},
+          sources_input: intelligencePrefill.sources || []
+        });
+      } else {
+        result = await rpc("save_market_draft", args);
+      }
+      let feedbackWarning = false;
+      if (intelligencePrefill?.expertRunId) {
+        const changedFields = changedExpertFields(intelligencePrefill.proposedFields || {}, payload);
+        await invokeMarketExpert("record-feedback", {
+          run_id: intelligencePrefill.expertRunId,
+          final_decision: changedFields.length ? "saved_with_edits" : "saved_as_proposed",
+          changed_fields: changedFields,
+          reason: changedFields.length
+            ? "La administradora ajustó la propuesta antes de guardarla como borrador privado."
+            : "La administradora guardó la propuesta sin cambios materiales."
+        }).catch(() => { feedbackWarning = true; });
+      }
       state.radarPrefill = null;
       await loadDrafts();
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: result.draft.id });
@@ -768,7 +1019,10 @@
       const noticeMessage = issueCount
         ? `Borrador guardado en privado con ${issueCount} motivo${pluralSuffix} pendiente${pluralSuffix}.`
         : "Borrador guardado. Ya puede solicitarse la revisión automática.";
-      setNotice(noticeMessage, issueCount ? "warning" : "success");
+      setNotice(
+        feedbackWarning ? `${noticeMessage} El feedback experto no pudo registrarse y podrá reintentarse sin afectar al borrador.` : noticeMessage,
+        issueCount || feedbackWarning ? "warning" : "success"
+      );
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo guardar el borrador."), "error");
     } finally {
@@ -932,6 +1186,10 @@
     try {
       const data = await invokeRadar("details", { candidate_id: candidateId });
       state.radar.selected = data.candidate || null;
+      if (state.radar.selected) {
+        const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId }).catch(() => null);
+        state.radar.selected.expert_analysis = expert?.run || null;
+      }
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo abrir el detalle del candidato."), "error");
     } finally {
@@ -951,7 +1209,12 @@
       const prefill = data.prefill || {};
       const fields = prefill.fields || {};
       const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
-      state.radarPrefill = { candidateId, origins: prefill.origins || {} };
+      state.radarPrefill = {
+        candidateId,
+        origins: prefill.origins || {},
+        expertRunId: state.radar.selected?.id === candidateId ? state.radar.selected.expert_analysis?.id || null : null,
+        proposedFields: fields
+      };
       state.selected = {
         draft: {
           ...fields,
@@ -1000,6 +1263,257 @@
     }
   }
 
+  async function loadObservatory({ refresh = false } = {}) {
+    state.busy = true;
+    if (refresh) setNotice("Actualizando únicamente las fuentes seguidas. Cada proveedor puede fallar de forma independiente.", "info");
+    renderWorkspace();
+    try {
+      const status = await invokeObservatory("provider-status");
+      state.observatory.providers = Array.isArray(status.providers) ? status.providers : [];
+      const data = refresh
+        ? await invokeObservatory("discover", { providers: ["igdb", "twitch", "youtube"], trigger_type: "manual" })
+        : await invokeObservatory("dashboard", { filters: { limit: 100 } });
+      state.observatory.dashboard = data.dashboard || state.observatory.dashboard;
+      state.observatory.errors = Array.isArray(data.errors) ? data.errors : [];
+      if (refresh) {
+        setNotice(data.partial
+          ? "Observatorio actualizado con incidencias parciales. Los proveedores disponibles siguen utilizables."
+          : "Observatorio actualizado sin crear borradores ni modificar mercados.", data.partial ? "warning" : "success");
+      } else {
+        setNotice("Observatorio privado cargado. La monitorización programada permanece desactivada.", "success");
+      }
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo cargar el Observatorio. Crear manualmente y el Radar siguen disponibles."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function searchObservatory(form) {
+    const data = new FormData(form);
+    state.observatory.searchProvider = String(data.get("provider") || "igdb");
+    state.observatory.searchQuery = String(data.get("query") || "").trim();
+    if (state.observatory.searchQuery.length < 2) return;
+    state.busy = true;
+    renderWorkspace();
+    try {
+      const result = await invokeObservatory("search", {
+        provider: state.observatory.searchProvider,
+        query: state.observatory.searchQuery
+      });
+      state.observatory.searchResults = Array.isArray(result.items) ? result.items : [];
+      setNotice(result.warning || (state.observatory.searchResults.length
+        ? "Resultados públicos listos para añadir al seguimiento privado."
+        : "La fuente no devolvió coincidencias."), result.warning ? "warning" : "info");
+    } catch (error) {
+      state.observatory.searchResults = [];
+      setNotice(helpers.getFriendlyError(error, "El proveedor no está disponible o no está configurado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function loadTwitchTopGames() {
+    state.busy = true;
+    state.observatory.searchProvider = "twitch";
+    renderWorkspace();
+    try {
+      const result = await invokeObservatory("twitch-top-games");
+      state.observatory.searchResults = Array.isArray(result.items) ? result.items : [];
+      setNotice(state.observatory.searchResults.length
+        ? "Juegos destacados de Twitch listos para añadir al seguimiento privado. El puesto observado no crea una propuesta sin historial."
+        : "Twitch no devolvió categorías destacadas en esta consulta.", "info");
+    } catch (error) {
+      state.observatory.searchResults = [];
+      setNotice(helpers.getFriendlyError(error, "Twitch no está disponible o no está configurado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function addObservatoryEntity(externalId) {
+    const entity = state.observatory.searchResults.find((item) => String(item.external_id) === String(externalId));
+    if (!entity) return;
+    state.busy = true;
+    renderWorkspace();
+    try {
+      await invokeObservatory("add-watch", { entity: {
+        provider: entity.provider,
+        entity_type: entity.entity_type,
+        external_id: entity.external_id,
+        label: entity.label,
+        canonical_url: entity.canonical_url,
+        configuration: { added_from: "manual_provider_search" }
+      } });
+      state.observatory.searchResults = [];
+      await loadObservatory();
+      setNotice("Fuente añadida al seguimiento privado. No se ha creado ni publicado ningún mercado.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo añadir la fuente al seguimiento."), "error");
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function pauseObservatoryEntity(entityId) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      await invokeObservatory("remove-watch", { entity_id: entityId });
+      await loadObservatory();
+      setNotice("Seguimiento pausado. Los datos históricos conservan su trazabilidad y retención.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo pausar esta fuente."), "error");
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function openObservatoryDetails(signalId, { preserveNotice = false } = {}) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      const data = await invokeObservatory("details", { signal_id: signalId });
+      state.observatory.selected = data.detail || null;
+      if (!preserveNotice) setNotice("Expediente privado cargado. Los hechos, el contexto y la inferencia permanecen separados.", "info");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo abrir el expediente de la señal."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector(".observatory-detail")?.focus();
+    }
+  }
+
+  async function analyzeObservatorySignal(signalId) {
+    state.busy = true;
+    setNotice("El Agente Editor está comprobando integridad, previsibilidad y Plan de Resolución.", "info");
+    renderWorkspace();
+    try {
+      const result = await invokeObservatory("request-expert-analysis", { signal_id: signalId });
+      setNotice(result.expert?.message || "Análisis estructurado terminado. No se ha guardado ningún borrador.", "success");
+      await openObservatoryDetails(signalId, { preserveNotice: true });
+    } catch (error) {
+      state.busy = false;
+      setNotice(helpers.getFriendlyError(error, "El Agente Editor no pudo completar el análisis. La señal sigue privada."), "error");
+      renderWorkspace();
+    }
+  }
+
+  async function discoverObservatoryContext(signalId) {
+    state.busy = true;
+    setNotice("Buscando contexto permitido y oportunidades trazables. Puede devolver cero propuestas.", "info");
+    renderWorkspace();
+    try {
+      const result = await invokeObservatory("discover-context", { signal_id: signalId });
+      setNotice(result.discovery?.message || "Descubrimiento editorial terminado sin crear borradores.", "success");
+      await openObservatoryDetails(signalId, { preserveNotice: true });
+    } catch (error) {
+      state.busy = false;
+      setNotice(helpers.getFriendlyError(error, "No se pudo ampliar el contexto. No se ha fabricado ninguna propuesta."), "error");
+      renderWorkspace();
+    }
+  }
+
+  async function prepareObservatorySignal(signalId) {
+    state.busy = true;
+    setNotice("Preparando una copia editable. Todavía no se guarda, valida ni publica.", "info");
+    renderWorkspace();
+    try {
+      const data = await invokeObservatory("prepare-draft", { signal_id: signalId });
+      const prefill = data.prefill || {};
+      const fields = prefill.fields || {};
+      const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
+      state.radarPrefill = {
+        originType: prefill.origin?.type || "observatory_signal",
+        originId: prefill.origin?.id || signalId,
+        expertRunId: prefill.origin?.expert_run_id,
+        contract: prefill.contract || {},
+        sources: Array.isArray(prefill.sources) ? prefill.sources : [],
+        proposedFields: fields
+      };
+      state.selected = {
+        draft: {
+          ...fields,
+          id: null,
+          content_version: null,
+          workflow_status: "draft_incomplete",
+          primary_source: fields.primary_source_url ? { url: fields.primary_source_url } : {},
+          alternative_sources: alternatives
+        },
+        deterministic_issues: [],
+        latest_review: null,
+        audit: [],
+        observatory_origin: prefill.origin || {},
+        expert_recommendation: prefill.expert || {}
+      };
+      state.view = "drafts";
+      setNotice("Propuesta aplicada al formulario. Revísala: solo se vinculará el plan al guardar este nuevo borrador.", "warning");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo preparar la propuesta. La señal no se ha modificado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector("#admin-market-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector('#admin-market-form [name="question"]')?.focus({ preventScroll: true });
+    }
+  }
+
+  async function dismissObservatorySignal(signalId) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      await invokeObservatory("dismiss-signal", { signal_id: signalId });
+      state.observatory.selected = null;
+      await loadObservatory();
+      setNotice("Señal descartada con trazabilidad privada. No afecta al proveedor ni a los mercados.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo descartar la señal."), "error");
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function analyzeRadarCandidate(candidateId) {
+    state.busy = true;
+    setNotice("El Agente Editor analiza la candidata sin modificar la caché ni el criterio del Radar v17.", "info");
+    renderWorkspace();
+    try {
+      await invokeMarketExpert("analyze-origin", { origin_type: "radar_candidate", origin_id: candidateId });
+      const data = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId });
+      state.radar.selected = { ...(state.radar.selected || {}), expert_analysis: data.run || null };
+      setNotice("Dictamen experto añadido de forma aditiva. La aptitud determinista del Radar no ha cambiado.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "El análisis experto no está disponible. El Radar v17 sigue operativo."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
+  async function runBindingAction(action, bindingId) {
+    state.busy = true;
+    const labels = { "verify-binding": "Validando el contrato y la disponibilidad del proveedor…", "arm-binding": "Armando el monitor…", "pause-binding": "Pausando el monitor…" };
+    setNotice(labels[action] || "Actualizando el Plan de Resolución…", "info");
+    renderWorkspace();
+    try {
+      const result = await invokeSourceMonitor(action, { binding_id: bindingId });
+      await loadObservatory();
+      const issues = Array.isArray(result.binding?.validation?.issues) ? result.binding.validation.issues : [];
+      setNotice(issues.length
+        ? `El contrato permanece bloqueado: ${issues.join(", ")}.`
+        : action === "arm-binding" ? "Monitor armado. La publicación volverá a comprobarlo en Supabase." : action === "pause-binding" ? "Monitor pausado con trazabilidad." : "Contrato validado y bloqueado para esta versión.", issues.length ? "warning" : "success");
+      renderWorkspace();
+    } catch (error) {
+      state.busy = false;
+      setNotice(helpers.getFriendlyError(error, "La operación fue bloqueada de forma segura. El borrador sigue privado."), "error");
+      renderWorkspace();
+    }
+  }
+
   async function loadView(view) {
     state.view = view;
     state.busy = true;
@@ -1009,6 +1523,11 @@
       if (view === "radar") {
         state.busy = false;
         await loadRadar(false);
+        return;
+      }
+      if (view === "observatory") {
+        state.busy = false;
+        await loadObservatory();
         return;
       }
       if (view === "catalog") state.catalog = await rpc("get_admin_market_catalog") || [];
@@ -1114,11 +1633,30 @@
     if (target.dataset.radarDetails) openRadarDetails(target.dataset.radarDetails);
     if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
     if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);
+    if (target.dataset.radarExpert) analyzeRadarCandidate(target.dataset.radarExpert);
     if (target.dataset.radarCloseDetail !== undefined) {
       const closedCandidateId = state.radar.selected?.id || "";
       state.radar.selected = null;
       renderWorkspace();
       document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
+    if (target.dataset.observatoryRefresh !== undefined) loadObservatory({ refresh: true });
+    if (target.dataset.observatoryTopGames !== undefined) loadTwitchTopGames();
+    if (target.dataset.observatoryAdd) addObservatoryEntity(target.dataset.observatoryAdd);
+    if (target.dataset.observatoryPause) pauseObservatoryEntity(target.dataset.observatoryPause);
+    if (target.dataset.observatoryDetails) openObservatoryDetails(target.dataset.observatoryDetails);
+    if (target.dataset.observatoryAnalyze) analyzeObservatorySignal(target.dataset.observatoryAnalyze);
+    if (target.dataset.observatoryDiscoverContext) discoverObservatoryContext(target.dataset.observatoryDiscoverContext);
+    if (target.dataset.observatoryPrepare) prepareObservatorySignal(target.dataset.observatoryPrepare);
+    if (target.dataset.observatoryDismiss) dismissObservatorySignal(target.dataset.observatoryDismiss);
+    if (target.dataset.bindingVerify) runBindingAction("verify-binding", target.dataset.bindingVerify);
+    if (target.dataset.bindingArm) runBindingAction("arm-binding", target.dataset.bindingArm);
+    if (target.dataset.bindingPause) runBindingAction("pause-binding", target.dataset.bindingPause);
+    if (target.dataset.observatoryClose !== undefined) {
+      const closedSignalId = state.observatory.selected?.signal?.id || "";
+      state.observatory.selected = null;
+      renderWorkspace();
+      document.querySelector(`[data-observatory-details="${CSS.escape(closedSignalId)}"]`)?.focus();
     }
     if (target.dataset.closeEarly) managePublishedMarket(target.dataset.closeEarly, "early", target);
     if (target.dataset.cancelMarket) managePublishedMarket(target.dataset.cancelMarket, "cancel", target);
@@ -1133,6 +1671,18 @@
         state.radar[name] = typeof value === "string" ? value.trim() : "";
       });
       loadRadar(false);
+      return;
+    }
+    if (event.target.id === "observatory-search-form") {
+      searchObservatory(event.target);
+      return;
+    }
+    if (event.target.id === "observatory-filters") {
+      const data = new FormData(event.target);
+      ["provider", "marketability", "expertStatus", "query"].forEach((name) => {
+        state.observatory[name] = String(data.get(name) || "").trim();
+      });
+      renderWorkspace();
       return;
     }
     if (event.target.id === "admin-draft-filters") {
@@ -1180,6 +1730,12 @@
       state.radar.selected = null;
       renderWorkspace();
       document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
+    if (event.key === "Escape" && state.observatory.selected) {
+      const closedSignalId = state.observatory.selected.signal?.id || "";
+      state.observatory.selected = null;
+      renderWorkspace();
+      document.querySelector(`[data-observatory-details="${CSS.escape(closedSignalId)}"]`)?.focus();
     }
   });
 

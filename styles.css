@@ -6285,6 +6285,324 @@ body .admin-status-error {
   }
 }
 
+/* Paso 13.5.2 · Observatorio privado y agentes de mercado. */
+.data-observatory,
+.observatory-watch-search,
+.observatory-watchlist,
+.observatory-context,
+.observatory-monitoring {
+  min-width: 0;
+}
+
+.observatory-provider-grid,
+.observatory-watch-grid,
+.observatory-context-grid,
+.observatory-signal-grid,
+.observatory-detail-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.observatory-provider-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 18px 0;
+}
+
+.observatory-provider-card,
+.observatory-watch-card,
+.observatory-context-grid > article,
+.observatory-signal-card,
+.observatory-binding-list > article,
+.admin-source-evidence {
+  min-width: 0;
+  border: 1px solid var(--border-lavender);
+  border-radius: 12px;
+  color: var(--theme-text);
+  background: var(--surface);
+}
+
+.observatory-provider-card,
+.observatory-context-grid > article {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.observatory-provider-card[data-status="not_configured"] {
+  border-style: dashed;
+  background: var(--surface-lavender);
+}
+
+.observatory-provider-card strong,
+.observatory-context-grid strong {
+  font-size: 1.1rem;
+}
+
+.observatory-watch-search,
+.observatory-watchlist,
+.observatory-context,
+.observatory-monitoring {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 14px;
+  background: var(--surface-lavender);
+}
+
+.observatory-search-form,
+.observatory-filters {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.5fr) minmax(240px, 1.5fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.observatory-filters {
+  grid-template-columns: repeat(3, minmax(150px, 0.7fr)) minmax(220px, 1.4fr) auto auto;
+  margin: 20px 0;
+}
+
+.observatory-search-form label,
+.observatory-filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.observatory-search-form input,
+.observatory-search-form select,
+.observatory-filters input,
+.observatory-filters select {
+  width: 100%;
+  min-width: 0;
+}
+
+.observatory-search-results {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.observatory-search-results li,
+.observatory-watch-card,
+.observatory-binding-list > article {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.observatory-search-results li > div,
+.observatory-watch-card > div:first-child,
+.observatory-binding-list > article > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.observatory-signal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.observatory-signal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.observatory-signal-card > header,
+.observatory-signal-card > footer,
+.observatory-detail > header,
+.admin-source-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.observatory-signal-card h3,
+.observatory-detail h2,
+.observatory-detail p,
+.observatory-detail li,
+.admin-source-evidence li {
+  overflow-wrap: anywhere;
+}
+
+.observatory-signal-card dl,
+.observatory-detail dl,
+.admin-source-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.observatory-signal-card dl > div,
+.observatory-detail dl > div,
+.admin-source-evidence dl > div {
+  min-width: 0;
+  padding: 9px;
+  border-radius: 8px;
+  background: var(--surface-lavender);
+}
+
+.observatory-signal-card dt,
+.observatory-detail dt,
+.admin-source-evidence dt {
+  color: var(--secondary-text);
+  font-size: 0.78rem;
+}
+
+.observatory-signal-card dd,
+.observatory-detail dd,
+.admin-source-evidence dd {
+  margin: 3px 0 0;
+  font-weight: 700;
+}
+
+.observatory-factual,
+.observatory-inference {
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--yes-soft);
+}
+
+.observatory-inference {
+  background: var(--surface-lavender);
+}
+
+.observatory-signal-card > footer {
+  margin-top: auto;
+  justify-content: flex-start;
+}
+
+.observatory-context-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.observatory-binding-list {
+  display: grid;
+  gap: 8px;
+}
+
+.observatory-detail {
+  margin-top: 20px;
+  padding: 20px;
+  border: 2px solid var(--brand-violet);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 16px 44px rgba(23, 18, 37, 0.14);
+  scroll-margin-top: 100px;
+}
+
+.observatory-detail:focus-visible {
+  outline: 3px solid transparent;
+  box-shadow: var(--focus-ring), 0 16px 44px rgba(23, 18, 37, 0.14);
+}
+
+.observatory-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.observatory-detail-grid > section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 10px;
+}
+
+.observatory-detail-grid > .field-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-source-evidence {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+}
+
+.admin-source-evidence ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 1180px) {
+  .observatory-provider-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .observatory-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .observatory-signal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .observatory-provider-grid,
+  .observatory-context-grid,
+  .observatory-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .observatory-search-form,
+  .observatory-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .observatory-signal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .observatory-detail-grid > .field-wide {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .observatory-search-form,
+  .observatory-filters,
+  .observatory-signal-card dl,
+  .observatory-detail dl,
+  .admin-source-evidence dl {
+    grid-template-columns: 1fr;
+  }
+
+  .observatory-search-results li,
+  .observatory-watch-card,
+  .observatory-binding-list > article,
+  .observatory-signal-card > header,
+  .observatory-signal-card > footer,
+  .observatory-detail > header,
+  .admin-source-evidence-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .observatory-search-form button,
+  .observatory-filters button,
+  .observatory-search-results a,
+  .observatory-search-results button,
+  .observatory-watch-card a,
+  .observatory-watch-card button,
+  .observatory-signal-card footer a,
+  .observatory-signal-card footer button,
+  .observatory-detail button,
+  .admin-source-evidence-actions button,
+  .radar-candidate-detail > footer .secondary-button {
+    width: 100%;
+  }
+}
+
 @media (max-width: 390px) {
   body .topbar {
     grid-template-columns: minmax(0, 1fr) 44px 44px;

@@ -4,6 +4,37 @@ MVP de red social competitiva de predicciones gaming basada en Karma, Prestigio 
 
 Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
+## Estado local · Paso 13.5.2
+
+El árbol local incorpora el **Observatorio de Datos y tendencias**, un núcleo
+experto compartido y el **Agente Centinela** de fuentes de resolución. La
+implementación está preparada para revisión y activación manual; no está
+desplegada y no cambia el estado productivo vigente.
+
+- `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
+  el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
+  aislados: la falta o el fallo de uno no bloquea los restantes.
+- `market-expert` analiza tanto candidatas del Radar como señales del
+  Observatorio bajo una sola Constitución versionada. Entrega JSON estructurado,
+  separa hechos, contexto e inferencias, limita herramientas y nunca almacena
+  cadena de pensamiento.
+- `market-source-monitor` captura evidencias versionadas para la revisión humana.
+  Un error, un dato oculto o la ausencia de un valor nunca equivalen a cero o a
+  un resultado. `ready_to_resolve` no liquida el mercado.
+- La puerta de fuentes es aditiva: solo los borradores vinculados al nuevo
+  sistema deben tener contrato vigente y, cuando corresponda, monitor armado.
+  Los borradores manuales anteriores conservan su flujo.
+- La migración local pendiente es
+  `supabase/migrations/20260807163000_add_data_observatory_and_market_intelligence.sql`.
+  Las funciones nuevas son `data-observatory`, `market-expert` y
+  `market-source-monitor`, siempre con verificación JWT.
+- Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
+  configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
+  Los dos schedulers preparados permanecen desactivados y son independientes.
+
+La arquitectura, los contratos, la activación y las pruebas se documentan en
+`STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`.
+
 ## Continuidad entre chats
 
 - `AGENTS.md` contiene las instrucciones permanentes que Codex debe aplicar al trabajar en esta carpeta.

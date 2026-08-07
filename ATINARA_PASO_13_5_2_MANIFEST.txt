@@ -1,0 +1,87 @@
+ATINARA · PASO 13.5.2 · MANIFIESTO DE ENTREGA
+Fecha: 2026-08-07
+Base canónica: origin/main 56e6f58ccc7feaf7c71f30ac4da2387ccc5b893d
+Rama local: codex/paso-13-5-2
+Estado: implementado localmente; pendiente de activación manual y aceptación de Yol.
+
+ARCHIVOS NUEVOS
+- ATINARA_PASO_13_5_2_MANIFEST.txt
+- STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md
+- supabase/functions/.env.example (nombres vacíos, sin valores)
+- supabase/functions/_shared/market-intelligence/ (20 módulos compartidos)
+- supabase/functions/data-observatory/index.ts
+- supabase/functions/market-expert/index.ts
+- supabase/functions/market-source-monitor/index.ts
+- supabase/migrations/20260807163000_add_data_observatory_and_market_intelligence.sql
+- tests/fixtures/market-intelligence/ (5 fixtures)
+- tests/market-intelligence.test.js
+
+ARCHIVOS MODIFICADOS
+- AGENTS.md
+- ORAKLO_PROJECT_CONTEXT.md
+- README.md
+- STEP_13_5_MARKET_RADAR_AND_CATALOG.md
+- admin-community.html
+- admin-markets.html
+- admin-markets.js
+- admin-resolution.html
+- admin-resolution.js
+- community.html
+- index.html
+- market-detail.html
+- my-predictions.html
+- profile.html
+- ranking.html
+- reset-password.html
+- styles.css
+- tests/market-radar.test.js
+- tests/public-brand.test.js
+- tests/sonarqube-quality.test.js
+- tests/theme.test.js
+
+ARCHIVOS ELIMINADOS
+- Ninguno.
+
+CONTRATO IMPLEMENTADO
+- Nueva pestaña privada Datos y tendencias, separada del Radar y situada entre
+  Radar de mercados y Mercados publicados.
+- Observatorio con IGDB, búsqueda y top games de Twitch, y el recorrido público
+  channels → uploads → videos de YouTube; ausencia de credenciales y fallos
+  parciales no bloquean Crear manualmente ni Radar.
+- Agente Editor compartido con Constitución atinara-market-constitution-v1,
+  salida atinara-market-expert-v1 y validación separada de probabilidad.
+- Explorador Editorial con context items, story arcs e hipótesis privadas; Tavily
+  está acotado, cacheado y sujeto a cooldown. Puede devolver cero propuestas.
+- Agente Centinela con Plan de Resolución versionado, hash, roles de fuente,
+  snapshots inmutables y expediente de evidencia. Nunca liquida por sí solo.
+- Feedback administrativo registrado al guardar propuestas; la promoción a
+  precedente exige una acción explícita, separada y no modifica la política.
+- Los schedulers editorial y de monitorización nacen independientes y apagados.
+- Radar permanece en atinara-radar-v2 / atinara-prediction-policy-v3; no existe v18.
+
+VALIDACIÓN LOCAL
+- Sintaxis válida en 57 JavaScript.
+- 153/153 pruebas unitarias; 36/36 específicas de inteligencia de mercados.
+- TypeScript de Checkly correcto.
+- Parseo TypeScript correcto en las tres Edge Functions y el runtime compartido.
+- Recursos locales presentes en los diez HTML, sin referencias 404.
+- Caché única v=20260807-observatory-intelligence1 en los diez HTML.
+- git diff --check correcto.
+- Layout representativo del Observatorio comprobado sin desbordamiento en claro
+  y oscuro a 1648, 1366, 1280, 1024, 768, 430, 390, 375 y 320 px.
+- Sin secretos, datos privados, cadenas de pensamiento, mercados o predicciones.
+
+ORDEN MANUAL SEGURO
+1. Descomprimir el ZIP y subir su contenido completo a la raíz de main.
+2. Aplicar una sola vez la migración 20260807163000_add_data_observatory_and_market_intelligence.sql.
+3. Comprobar sin revelar valores que GEMINI_API_KEY y TAVILY_API_KEY continúan disponibles.
+4. Configurar solo si faltan TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET y YOUTUBE_API_KEY.
+5. Desplegar market-expert, data-observatory y market-source-monitor con verify_jwt=true.
+6. Ejecutar los smoke tests manuales de STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md.
+7. Mantener ambos schedulers desactivados hasta dos aprobaciones manuales separadas.
+
+NO EJECUTAR
+- No repetir las migraciones de Radar o LMSR ya aplicadas.
+- No volver a desplegar ni renombrar Radar v17.
+- No activar Cron, publicar borradores ni resolver mercados automáticamente.
+- No cambiar economía, Auth, mercados, predicciones, Karma o Prestigio.

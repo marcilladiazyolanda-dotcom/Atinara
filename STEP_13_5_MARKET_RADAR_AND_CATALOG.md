@@ -4,6 +4,12 @@ Fecha de preparación: 4 de agosto de 2026. Activación y corrección operativa:
 
 Estado: **activado y aceptado técnicamente**. El catálogo ampliado de 24–36 mercados no se implementa en esta entrega. El Radar permanece privado y no creó borradores ni modificó datos públicos durante la aceptación.
 
+> **Continuación local separada:** el Paso 13.5.2 añade un Observatorio, un
+> Agente Editor compartido y monitorización de fuentes sin convertir el Radar en
+> una versión nueva ni mezclar su caché. Su contrato se documenta en
+> `STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`; la activación permanece pendiente
+> y no exige repetir ninguna migración histórica del Radar.
+
 ## 1. Alcance y garantías
 
 - `Gestionar mercados` conserva el flujo `Crear manualmente` y añade `Radar de mercados` dentro de la misma superficie administrativa.

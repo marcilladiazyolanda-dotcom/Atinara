@@ -10,6 +10,33 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > preparado solo en local, sin SQL ni cambios externos, y pendiente de
 > activación coordinada por Yol.
 
+### Paso 13.5.2 · Observatorio y agentes · 7 de agosto de 2026
+
+- Base local canónica: `origin/main = 56e6f58ccc7feaf7c71f30ac4da2387ccc5b893d`;
+  rama `codex/paso-13-5-2`. El trabajo no se ha publicado ni desplegado.
+- `Gestionar mercados` añade `Datos y tendencias` como tercera pestaña sin
+  modificar el contrato del Radar v17. La caché, tablas y procedencias de ambos
+  sistemas permanecen separadas.
+- IGDB, Twitch y YouTube alimentan señales privadas. Las respuestas se
+  normalizan sin inventar ceros, los errores se aíslan y los secretos solo se
+  leen desde Edge Functions.
+- `market-expert` es un núcleo editorial común para `radar_candidate`,
+  `observatory_signal` y arcos contextuales. Usa la Constitución
+  `atinara-market-constitution-v1`, el esquema `atinara-market-expert-v1` y el
+  contrato de resolución `atinara-resolution-contract-v1`.
+- El descubrimiento contextual limita y cachea Tavily, da prioridad a fuentes
+  oficiales, puede devolver cero hipótesis y solo persiste contexto, arcos e
+  hipótesis privadas. Nunca guarda un borrador por sí solo.
+- `market-source-monitor` captura snapshots inmutables, construye expedientes y
+  deja la decisión final a una administradora. Datos ausentes, errores o cambios
+  de esquema no se traducen en Sí, No o cero.
+- La migración `20260807163000_add_data_observatory_and_market_intelligence.sql`
+  está preparada, no ejecutada. Los schedulers editorial y de resolución nacen
+  desactivados, separados y pendientes de activación manual.
+- Validación local: 57 JavaScript con sintaxis válida, 153 pruebas unitarias y
+  tipado de Checkly superados. No se ha tocado Supabase, GitHub, producción,
+  mercados, predicciones, Karma, Prestigio ni datos reales.
+
 ### Radar v17 · criterio predictivo profesional · 7 de agosto de 2026
 
 - La política `atinara-prediction-policy-v3` separa validez de probabilidad: una

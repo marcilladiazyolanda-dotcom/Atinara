@@ -2,6 +2,27 @@
 
 ## Estado vigente · 7 de agosto de 2026
 
+- El Paso 13.5.2 queda preparado localmente en `codex/paso-13-5-2`, basado en
+  `origin/main = 56e6f58ccc7feaf7c71f30ac4da2387ccc5b893d`. Añade el
+  Observatorio privado de Datos y tendencias, el Agente Editor compartido y el
+  Agente Centinela de fuentes sin mezclar sus tablas, cachés o responsabilidades
+  con el Radar v17.
+- La única migración nueva del Paso 13.5.2 es
+  `20260807163000_add_data_observatory_and_market_intelligence.sql`. Está
+  preparada pero no aplicada. Las Edge Functions nuevas `data-observatory`,
+  `market-expert` y `market-source-monitor` están preparadas pero no desplegadas.
+- `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` y `YOUTUBE_API_KEY` solo se pueden
+  configurar como secretos de Supabase. No se incluyen valores en el árbol. Los
+  proveedores faltantes se muestran como no configurados y fallan de manera
+  independiente, sin convertir ausencia en cero.
+- Los schedulers editorial y de monitorización de resolución nacen separados y
+  desactivados. Ninguno publica borradores, aprueba mercados, liquida resultados
+  ni modifica Karma, Prestigio o predicciones. Su activación futura requiere
+  revisión y acción manual expresa de Yol.
+- La versión coordinada de los recursos del frontend del Paso 13.5.2 es
+  `v=20260807-observatory-intelligence1`. La entrega sigue siendo local: no se ha
+  modificado GitHub, GitHub Pages, Supabase ni ningún dato real.
+
 - El Radar v16 está publicado y aceptado sobre `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Las migraciones `20260804194933_add_market_radar.sql` y `20260806183627_harden_market_radar_quality_sources.sql` ya forman parte de esa activación y **no deben repetirse**.
 - El Radar v17 está preparado solo en local en `codex/radar-v17-professional-criteria`. Introduce la política `atinara-prediction-policy-v3`, corrige el criterio predictivo, reconcilia resultados finales de Kalshi sin IA, evita enviar descartes deterministas a Tavily/Gemini, filtra la auditoría en español y mejora la cuadrícula. No añade SQL, migraciones, secretos ni datos. Para activarlo, desplegar primero `market-radar`, subir después el árbol coordinado `v=20260807-radar3` y ejecutar una actualización explícita de fuentes.
 - `TAVILY_API_KEY` y `GEMINI_API_KEY` se reutilizan únicamente si ya existen en Supabase. Si faltan o fallan, el Radar deja la candidata en revisión y bloquea preparar; no se piden credenciales ni se degrada a datos inventados. IGDB/Twitch/YouTube continúan fuera de esta entrega.
