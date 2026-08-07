@@ -37,7 +37,8 @@
       query: "",
       horizon: "180d",
       quality: "review",
-      order: "recommended"
+      order: "recommended",
+      rejectionReason: "current"
     },
     radarPrefill: null,
     radarCooldownTimer: null
@@ -45,6 +46,44 @@
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
   const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming", gemini: "Gemini" };
+  const RADAR_POLICY_VERSION = "atinara-prediction-policy-v3";
+  const RADAR_REASON_LABELS = {
+    EVENT_ALREADY_RESOLVED: "Evento ya resuelto",
+    SOURCE_STALE: "Información desactualizada",
+    EVENT_OUTSIDE_CONTRACT: "Contrato no compatible",
+    SUBJECT_NOT_ANNOUNCED: "Requisito previo no cumplido",
+    TEMPORAL_INCOHERENCE: "Fechas incompatibles",
+    INVALID_OR_UNVERIFIED_SOURCE: "Fuente no verificable",
+    DUPLICATE_MARKET: "Mercado duplicado",
+    PROVIDER_NOT_OPEN: "Mercado de origen cerrado",
+    PROVIDER_EVENT_NOT_FOUND: "Evento de origen no disponible",
+    PROVIDER_CHILD_NOT_FOUND: "Opción de origen no disponible",
+    VERIFICATION_REQUIRED: "Comprobación pendiente",
+    VERIFICATION_EXPIRED: "Comprobación caducada"
+  };
+  const RADAR_REASON_DESCRIPTIONS = {
+    EVENT_ALREADY_RESOLVED: "El resultado ya está publicado y ya no constituye una predicción futura.",
+    SOURCE_STALE: "La información guardada ya no representa el estado actual del mercado.",
+    EVENT_OUTSIDE_CONTRACT: "La opción no es binaria o no encaja en el periodo y las reglas de Atinara.",
+    SUBJECT_NOT_ANNOUNCED: "La pregunta depende de un producto no anunciado para un resultado posterior, como un premio o una reseña.",
+    TEMPORAL_INCOHERENCE: "El periodo o las fechas se contradicen de forma objetiva con el contrato.",
+    INVALID_OR_UNVERIFIED_SOURCE: "No existe una fuente pública válida con la que resolver la pregunta.",
+    DUPLICATE_MARKET: "Ya existe un mercado o borrador equivalente en Atinara.",
+    PROVIDER_NOT_OPEN: "El mercado de origen ya está cerrado y no ofrece una opción futura abierta para importar.",
+    PROVIDER_EVENT_NOT_FOUND: "El proveedor ya no ofrece el evento indicado.",
+    PROVIDER_CHILD_NOT_FOUND: "La opción ya no pertenece al evento de origen.",
+    VERIFICATION_REQUIRED: "La comprobación automática no dispone todavía de información suficiente.",
+    VERIFICATION_EXPIRED: "La comprobación ha caducado y debe repetirse antes de preparar el borrador."
+  };
+  const RADAR_SCORE_LABELS = {
+    popularity: "Popularidad",
+    relevance: "Relevancia gaming",
+    clarity: "Claridad",
+    recency: "Vigencia",
+    uncertainty: "Incertidumbre útil",
+    novelty: "Novedad",
+    verification: "Confianza de verificación"
+  };
   const RADAR_ORIGIN_LABELS = {
     source: "Importado de la fuente",
     adapted: "Adaptado automáticamente",
@@ -113,14 +152,67 @@
       : "No disponible";
   }
 
-  function externalLink(url, label = "Abrir fuente") {
+  function externalLink(url, label = "Abrir fuente", variant = "secondary") {
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== "https:") return "";
-      return `<a class="text-link" href="${escapeHtml(parsed.toString())}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+      const className = variant === "primary" ? "primary-button radar-link-button" : "secondary-button radar-link-button";
+      return `<a class="${className}" href="${escapeHtml(parsed.toString())}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
     } catch {
       return "";
     }
+  }
+
+  function radarReasonLabel(code) {
+    return RADAR_REASON_LABELS[code] || "No cumple los criterios";
+  }
+
+  function radarCandidatePolicyCurrent(candidate) {
+    return candidate?.eligibility_policy_version === RADAR_POLICY_VERSION;
+  }
+
+  function radarReasonDescription(candidate) {
+    if (!radarCandidatePolicyCurrent(candidate)) {
+      return "Esta evaluación pertenece al criterio anterior y debe volver a comprobarse antes de tomarla como válida.";
+    }
+    const code = candidate?.verification_reason_code || "";
+    const reason = String(candidate?.verification_reason || "").trim();
+    const isLegacyUnannouncedRule = code === "SUBJECT_NOT_ANNOUNCED"
+      && /(?:premisa presupone|producto o evento que no ha sido anunciado|no ha sido anunciado oficialmente)/i.test(reason);
+    const looksTechnicalOrEnglish = /^[A-Z0-9_]+$/.test(reason)
+      || /\b(?:official confirmation|provider|market|source|found|release before|not open|will be)\b/i.test(reason);
+    return reason && !looksTechnicalOrEnglish && !isLegacyUnannouncedRule
+      ? reason
+      : RADAR_REASON_DESCRIPTIONS[code] || "La candidata no cumple las condiciones para preparar un borrador.";
+  }
+
+  function radarVerificationLabel(candidate) {
+    if (!radarCandidatePolicyCurrent(candidate)) return "Pendiente de reevaluación";
+    if (candidate?.verification_status === "verified_open") return "Verificado";
+    if (candidate?.verification_status === "needs_review") return "Revisión necesaria";
+    return radarReasonLabel(candidate?.verification_reason_code);
+  }
+
+  function providerStatusLabel(status) {
+    const labels = {
+      open: "Abierto",
+      active: "Abierto",
+      trading: "Abierto",
+      initialized: "Abierto",
+      closed: "Cerrado",
+      determined: "Resultado determinado",
+      finalized: "Resuelto",
+      settled: "Resuelto",
+      inactive: "Inactivo"
+    };
+    return labels[String(status || "").toLowerCase()] || "No disponible";
+  }
+
+  function providerResultLabel(result) {
+    if (result === "yes") return "Sí";
+    if (result === "no") return "No";
+    if (result === "scalar") return "Resultado numérico";
+    return "";
   }
 
   async function invokeRadar(action, payload = {}) {
@@ -450,6 +542,7 @@
     const expiresAt = Date.parse(candidate.verification_expires_at || "");
     return candidate.state === "available"
       && candidate.verification_status === "verified_open"
+      && candidate.eligibility_policy_version === RADAR_POLICY_VERSION
       && Number.isFinite(expiresAt)
       && expiresAt > Date.now()
       && !candidate.is_stale
@@ -458,9 +551,7 @@
 
   function radarChildMarkup(candidate) {
     const ready = radarCandidateReady(candidate);
-    const status = candidate.verification_status === "verified_open" ? "Verificado"
-      : candidate.verification_status === "needs_review" ? "Revisión necesaria"
-        : "No preparable";
+    const status = radarVerificationLabel(candidate);
     return `<li class="radar-event-option">
       <div class="radar-event-option-copy">
         <strong>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</strong>
@@ -468,7 +559,7 @@
       </div>
       <div class="radar-event-option-actions">
         <span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(status)}</span>
-        <button class="secondary-button" type="button" data-radar-details="${escapeHtml(candidate.id)}">Detalles</button>
+        <button class="primary-button" type="button" data-radar-details="${escapeHtml(candidate.id)}">Detalles</button>
         <button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${ready ? "" : " disabled"}>Preparar</button>
       </div>
     </li>`;
@@ -479,25 +570,31 @@
       ? group.top_candidates
       : Array.isArray(group.candidates) ? group.candidates.slice(0, 3) : [];
     const hiddenCount = Math.max(0, Number(group.child_count || group.candidates?.length || 0) - candidates.length);
-    return `<article class="radar-candidate-card radar-event-card" data-verification="${escapeHtml(group.verification_status)}">
+    const childCount = Number(group.child_count || group.candidates?.length || candidates.length);
+    const summary = childCount === 1
+      ? "1 opción encontrada para este evento."
+      : `${childCount} opciones del mismo evento. Se muestran las tres más relevantes.`;
+    return `<article class="radar-candidate-card radar-event-card" data-verification="${escapeHtml(group.verification_status)}" data-child-count="${escapeHtml(childCount)}">
       <header>
         <div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[group.provider] || group.provider)}</span><span>${escapeHtml(group.category || "Sin clasificar")}</span></div>
         <strong class="radar-score" aria-label="Puntuación Atinara ${escapeHtml(group.quality_score || 0)} de 100">${escapeHtml(group.quality_score || 0)}<small>/100</small></strong>
       </header>
       <h3>${escapeHtml(group.title || "Evento externo")}</h3>
-      <p class="radar-event-summary">${escapeHtml(group.child_count || candidates.length)} opciones del mismo evento. Se muestran las tres más relevantes.</p>
+      <p class="radar-event-summary">${escapeHtml(summary)}</p>
       <ul class="radar-event-options">${candidates.map(radarChildMarkup).join("")}</ul>
       ${hiddenCount ? `<p class="radar-event-more">${escapeHtml(hiddenCount)} opciones adicionales disponibles en el detalle de sus candidatas.</p>` : ""}
-      <footer>${externalLink(group.external_event_url, "Abrir evento original")}</footer>
+      <footer>${externalLink(group.external_event_url, "Abrir evento original", "primary")}</footer>
     </article>`;
   }
 
   function radarRejectionMarkup(candidate) {
     const evidence = Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence : [];
+    const sourceResult = providerResultLabel(candidate.source_result);
     return `<article class="radar-rejection-card">
-      <header><div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><strong>${escapeHtml(candidate.verification_reason_code || "REJECTED")}</strong></div><time>${escapeHtml(displayDate(candidate.verified_at))}</time></header>
+      <header><div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><strong>${escapeHtml(radarReasonLabel(candidate.verification_reason_code))}</strong></div><time>${escapeHtml(displayDate(candidate.verified_at))}</time></header>
       <h4>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</h4>
-      <p>${escapeHtml(candidate.verification_reason || "La candidata no cumple las condiciones de preparación.")}</p>
+      <p>${escapeHtml(radarReasonDescription(candidate))}</p>
+      ${sourceResult ? `<p class="radar-provider-result"><strong>Resultado del proveedor:</strong> ${escapeHtml(sourceResult)}</p>` : ""}
       <div class="radar-rejection-links">${externalLink(candidate.external_event_url || candidate.external_market_url, "Abrir mercado original")}${evidence.slice(0, 2).map((item) => externalLink(item.url, item.title || "Abrir evidencia")).join("")}</div>
     </article>`;
   }
@@ -506,11 +603,35 @@
     const rejected = state.radar.rejected || { total: 0, counts: {}, items: [] };
     const items = Array.isArray(rejected.items) ? rejected.items : [];
     if (!items.length) return "";
-    const counts = Object.entries(rejected.counts || {}).map(([code, count]) => `<li><code>${escapeHtml(code)}</code><strong>${escapeHtml(count)}</strong></li>`).join("");
+    const policyItems = items.filter(radarCandidatePolicyCurrent);
+    const outdatedItems = items.filter((candidate) => !radarCandidatePolicyCurrent(candidate));
+    const currentItems = policyItems.filter((candidate) => candidate.verification_reason_code !== "EVENT_ALREADY_RESOLVED");
+    const selectedReason = state.radar.rejectionReason;
+    const visibleItems = selectedReason === "all"
+      ? items
+      : selectedReason === "outdated"
+        ? outdatedItems
+      : selectedReason === "current"
+        ? currentItems
+        : policyItems.filter((candidate) => candidate.verification_reason_code === selectedReason);
+    const filterButton = (value, label, count) => `<button class="radar-rejection-filter" type="button" data-radar-rejection-filter="${escapeHtml(value)}" aria-pressed="${String(selectedReason === value)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(count)}</strong></button>`;
+    const currentReasonCounts = policyItems.reduce((counts, candidate) => {
+      const code = candidate.verification_reason_code || "VERIFICATION_REQUIRED";
+      counts[code] = (counts[code] || 0) + 1;
+      return counts;
+    }, {});
+    const reasonButtons = Object.entries(currentReasonCounts)
+      .sort((left, right) => Number(right[1]) - Number(left[1]))
+      .map(([code, count]) => filterButton(code, radarReasonLabel(code), count))
+      .join("");
+    const cards = visibleItems.length
+      ? `<div class="radar-rejection-grid">${visibleItems.map(radarRejectionMarkup).join("")}</div>`
+      : `<div class="admin-empty-state radar-empty"><strong>No hay rechazos con este filtro</strong><span>Elige otro motivo para consultar el archivo factual.</span></div>`;
     return `<section class="radar-rejections" aria-labelledby="radar-rejections-title">
-      <header><div><p class="eyebrow">Auditoría factual</p><h3 id="radar-rejections-title">${escapeHtml(rejected.total || items.length)} candidatas rechazadas</h3></div><p>No pueden preparar borradores. Se conserva el motivo y la evidencia para revisión administrativa.</p></header>
-      <ul class="radar-rejection-counts">${counts}</ul>
-      <div class="radar-rejection-grid">${items.map(radarRejectionMarkup).join("")}</div>
+      <header><div><p class="eyebrow">Auditoría factual</p><h3 id="radar-rejections-title">${escapeHtml(rejected.total || items.length)} candidatas registradas</h3></div><p>Los eventos ya resueltos y las evaluaciones del criterio anterior quedan ocultos por defecto. Puedes filtrar cada motivo sin exponer códigos internos.</p></header>
+      <div class="radar-rejection-counts" role="group" aria-label="Filtrar candidatas no aptas por motivo">${filterButton("current", "Rechazos vigentes", currentItems.length)}${filterButton("all", "Todos", items.length)}${outdatedItems.length ? filterButton("outdated", "Criterio anterior", outdatedItems.length) : ""}${reasonButtons}</div>
+      <p class="radar-rejection-summary" role="status">Mostrando ${escapeHtml(visibleItems.length)} de ${escapeHtml(items.length)} candidatas.</p>
+      ${cards}
     </section>`;
   }
 
@@ -529,8 +650,9 @@
           <div><dt>ID externo</dt><dd><code>${escapeHtml(candidate.external_id)}</code></dd></div>
           <div><dt>Título original</dt><dd>${escapeHtml(candidate.source_title || "No disponible")}</dd></div>
           <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
-          <div><dt>Estado y fechas</dt><dd>${escapeHtml(candidate.source_status || "No disponible")} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
-        </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original")}${externalLink(candidate.external_market_url, "Abrir mercado original")}</div></section>
+          <div><dt>Estado y fechas</dt><dd>${escapeHtml(providerStatusLabel(candidate.source_status))} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
+          ${candidate.source_result ? `<div><dt>Resultado del proveedor</dt><dd>${escapeHtml(providerResultLabel(candidate.source_result))}</dd></div>` : ""}
+        </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original", "primary")}${externalLink(candidate.external_market_url, "Abrir mercado original", "primary")}</div></section>
         <section><h3>Reglas y fuentes</h3><p>${escapeHtml(candidate.source_resolution_rules || "La fuente no ofrece reglas completas.")}</p>${externalLink(candidate.atinara_resolution_source_url || candidate.source_resolution_url, "Abrir fuente de resolución")}</section>
         <section><h3>Métricas externas</h3><dl>
           <div><dt>Probabilidad de referencia</dt><dd>${escapeHtml(displayProbability(candidate.source_probability_yes))}</dd></div>
@@ -541,12 +663,12 @@
         </dl><p class="radar-reference-note">Estas métricas son solo referencia administrativa y nunca alteran precios, Karma o participaciones de Atinara.</p></section>
         <section><h3>Adaptación propuesta</h3><p><strong>Categoría:</strong> ${escapeHtml(candidate.atinara_category || "Requiere revisión")}</p><p>${escapeHtml(candidate.source_description || "Sin contexto adaptado.")}</p><p><strong>Criterios:</strong> ${escapeHtml(candidate.atinara_resolution_criteria || "Requieren revisión humana.")}</p></section>
         <section><h3>Verificación factual</h3><dl>
-          <div><dt>Estado</dt><dd>${escapeHtml(candidate.verification_status || "pending")}</dd></div>
-          <div><dt>Código</dt><dd><code>${escapeHtml(candidate.verification_reason_code || "VERIFICATION_REQUIRED")}</code></dd></div>
+          <div><dt>Estado</dt><dd>${escapeHtml(radarVerificationLabel(candidate))}</dd></div>
+          <div><dt>Motivo</dt><dd>${escapeHtml(candidate.verification_status === "verified_open" ? "Mercado predictivo válido" : radarReasonLabel(candidate.verification_reason_code))}</dd></div>
           <div><dt>Verificada</dt><dd>${escapeHtml(displayDate(candidate.verified_at))}</dd></div>
           <div><dt>Caduca</dt><dd>${escapeHtml(displayDate(candidate.verification_expires_at))}</dd></div>
-        </dl><p>${escapeHtml(candidate.verification_reason || "Pendiente de verificación factual.")}</p>${Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence.map((item) => externalLink(item.url, item.title || "Abrir evidencia")).join("") : ""}</section>
-        <section><h3>Atinara Score</h3><dl>${Object.entries(scores).map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p>No es una predicción científica: ordena candidatas con criterios transparentes.</p></section>
+        </dl><p>${escapeHtml(radarReasonDescription(candidate))}</p>${Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence.map((item, index) => externalLink(item.url, `Abrir evidencia ${index + 1}`)).join("") : ""}</section>
+        <section><h3>Atinara Score</h3><dl>${Object.entries(scores).map(([key, value]) => `<div><dt>${escapeHtml(RADAR_SCORE_LABELS[key] || "Criterio adicional")}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><p>No es una predicción científica: ordena candidatas con criterios transparentes.</p></section>
         <section><h3>Revisión necesaria</h3>
           ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Sin advertencias registradas.</p>"}
           ${missing.length ? `<p><strong>Campos sin información:</strong> ${escapeHtml(missing.join(", "))}</p>` : ""}
@@ -772,6 +894,10 @@
       state.radar.rejected = data.rejected && typeof data.rejected === "object"
         ? data.rejected
         : { total: 0, counts: {}, items: [] };
+      if (!["current", "all", "outdated"].includes(state.radar.rejectionReason)
+        && !Object.hasOwn(state.radar.rejected.counts || {}, state.radar.rejectionReason)) {
+        state.radar.rejectionReason = "current";
+      }
       state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
       state.radar.cached = data.cached === true;
@@ -782,11 +908,15 @@
         ? window.setTimeout(() => renderWorkspace(), cooldownMs + 100)
         : null;
       state.radar.selected = null;
-      const radarNotice = data.partial
+      const reconciledResults = Math.max(0, Number(data.reconciled_provider_results) || 0);
+      const reconciliationCopy = reconciledResults
+        ? ` Se corrigieron ${reconciledResults} resultado${reconciledResults === 1 ? "" : "s"} directamente con el proveedor.`
+        : "";
+      const radarNotice = (data.partial
         ? "Radar actualizado con incidencias parciales. Las fuentes disponibles siguen utilizables."
         : data.cached
           ? "Radar cargado desde la caché privada sin consultar proveedores."
-          : "Radar actualizado sin crear ni modificar ningún mercado.";
+          : "Radar actualizado sin crear ni modificar ningún mercado.") + reconciliationCopy;
       setNotice(radarNotice, data.partial ? "warning" : "success");
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo cargar el Radar. La creación manual sigue disponible."), "error");
@@ -976,6 +1106,11 @@
     if (target.dataset.confirmReview !== undefined) confirmReview();
     if (target.dataset.publishDraft !== undefined) publishDraft();
     if (target.dataset.radarRefresh !== undefined) loadRadar(true);
+    if (target.dataset.radarRejectionFilter) {
+      state.radar.rejectionReason = target.dataset.radarRejectionFilter;
+      renderWorkspace();
+      document.querySelector(".radar-rejections")?.scrollIntoView({ block: "nearest" });
+    }
     if (target.dataset.radarDetails) openRadarDetails(target.dataset.radarDetails);
     if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
     if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);

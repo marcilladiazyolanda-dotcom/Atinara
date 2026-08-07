@@ -7986,6 +7986,10 @@ body .market-price-ranges button[aria-pressed="true"] {
   gap: 14px;
 }
 
+.radar-event-card[data-child-count="1"] {
+  grid-column: 1 / -1;
+}
+
 .radar-candidate-card {
   display: flex;
   min-width: 0;
@@ -8059,6 +8063,12 @@ body .market-price-ranges button[aria-pressed="true"] {
   white-space: nowrap;
 }
 
+.radar-link-button {
+  width: auto;
+  margin-top: 0;
+  text-align: center;
+}
+
 .radar-quality-badge[data-quality="rejected"] {
   color: var(--no);
   border-color: var(--no-border);
@@ -8099,6 +8109,48 @@ body .market-price-ranges button[aria-pressed="true"] {
   padding: 0;
   list-style: none;
   flex-wrap: wrap;
+}
+
+.radar-rejection-filter {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 9px;
+  color: var(--secondary-text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.radar-rejection-filter:hover {
+  color: var(--brand-link);
+  border-color: var(--line-strong);
+  background: var(--interactive-surface-hover);
+}
+
+.radar-rejection-filter[aria-pressed="true"] {
+  color: #fff;
+  border-color: var(--brand-violet);
+  background: var(--brand-violet);
+}
+
+.radar-rejection-filter strong {
+  min-width: 24px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  text-align: center;
+}
+
+.radar-rejection-summary {
+  margin: -4px 0 12px;
+  color: var(--secondary-text);
+  font-size: 0.82rem;
 }
 
 .radar-rejection-counts li {
@@ -8145,6 +8197,21 @@ body .market-price-ranges button[aria-pressed="true"] {
 .radar-rejection-card h4,
 .radar-rejection-card p {
   overflow-wrap: anywhere;
+}
+
+.radar-provider-result {
+  padding: 8px 10px;
+  border: 1px solid var(--yes-border);
+  border-radius: 8px;
+  color: var(--yes);
+  background: var(--yes-soft);
+}
+
+.radar-source-links .radar-link-button,
+.radar-rejection-links .radar-link-button,
+.radar-candidate-card > footer .radar-link-button {
+  width: auto;
+  margin-top: 0;
 }
 
 .radar-candidate-card:hover {
@@ -8424,7 +8491,13 @@ body .market-price-ranges button[aria-pressed="true"] {
 
   .radar-event-option-actions .primary-button,
   .radar-event-option-actions .secondary-button,
-  .radar-rejection-links .text-link {
+  .radar-rejection-links .radar-link-button,
+  .radar-source-links .radar-link-button {
     width: 100%;
+  }
+
+  .radar-rejection-filter {
+    flex: 1 1 180px;
+    justify-content: space-between;
   }
 }

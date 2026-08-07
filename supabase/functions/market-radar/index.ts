@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   RADAR_API_HOSTS,
   RADAR_CATEGORIES,
+  RADAR_ELIGIBILITY_POLICY_VERSION,
   RADAR_NORMALIZER_VERSION,
   RADAR_PROVIDERS,
   RADAR_REASON_CODES,
@@ -13,6 +14,7 @@ import {
   buildCoverResolutionSignals,
   buildDraftPrefill,
   buildGeminiCandidateBatches,
+  canApplyPredictivePolicyOverride,
   canReuseRadarVerification,
   cleanText,
   compactGeminiCandidate,
@@ -20,11 +22,15 @@ import {
   diversifyGroups,
   detectOfficialCoverEventResolution,
   evaluateDeterministicEligibility,
+  evaluatePredictiveEligibility,
+  evaluateProviderEligibility,
   groupCandidates,
   indexGeminiDecisions,
   isAdaptedIdeaComplete,
   isRecord,
+  normalizeProviderResult,
   parseGeminiAdaptations,
+  providerResultLabel,
   propagateResolvedEventGroups,
   publicProviderError,
   safeIsoDate,
@@ -52,6 +58,7 @@ const GEMINI_CONCURRENCY = 2;
 const TAVILY_CONCURRENCY = 4;
 const MAX_KALSHI_SERIES = 25;
 const KALSHI_CONCURRENCY = 4;
+const MAX_REJECTED_OUTCOME_RECONCILIATIONS = 16;
 const REFRESH_COOLDOWN_MS = 60_000;
 const VERIFICATION_TTL_MINUTES = 360;
 const OFFICIAL_EVIDENCE_HOSTS = [
@@ -59,6 +66,8 @@ const OFFICIAL_EVIDENCE_HOSTS = [
   "xbox.com",
   "nintendo.com",
   "ea.com",
+  "capcom.com",
+  "rockstargames.com",
   "thegameawards.com",
   "metacritic.com",
   "store.steampowered.com",
@@ -492,23 +501,90 @@ async function discoverKalshi(now: string) {
   return adaptKalshiResponse({ events }, { now, category, cacheMinutes: 20 }).slice(0, MAX_NORMALIZED_PER_PROVIDER);
 }
 
+async function fetchKalshiMarketRecord(ticker: string): Promise<JsonRecord | null> {
+  try {
+    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/markets/${encodeURIComponent(ticker)}`))) ?? {};
+    return toRecord(payload.market) ?? payload;
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("HTTP_404")) throw error;
+    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/historical/markets/${encodeURIComponent(ticker)}`))) ?? {};
+    return toRecord(payload.market) ?? payload;
+  }
+}
+
+async function reconcileRejectedKalshiOutcomes(
+  environment: Environment,
+  rejected: JsonRecord[],
+  cacheKey: string,
+  now: string,
+): Promise<number> {
+  const pending = rejected
+    .filter((candidate) => cleanText(candidate.provider, 40) === "kalshi"
+      && cleanText(candidate.verification_reason_code, 100) === RADAR_REASON_CODES.PROVIDER_NOT_OPEN
+      && !normalizeProviderResult(candidate.source_result)
+      && cleanText(candidate.external_market_id, 220))
+    .slice(0, MAX_REJECTED_OUTCOME_RECONCILIATIONS);
+  if (!pending.length) return 0;
+  const checked = await mapWithConcurrency(pending, KALSHI_CONCURRENCY, async (candidate) => {
+    const market = await fetchKalshiMarketRecord(cleanText(candidate.external_market_id, 220));
+    const result = normalizeProviderResult(market?.result);
+    if (!market || !result) return null;
+    const sourceUrl = safePublicUrl(candidate.external_market_url ?? candidate.external_event_url);
+    return applyEligibilityDecision({
+      ...candidate,
+      source_status: cleanText(market.status, 80).toLowerCase() || candidate.source_status,
+      source_result: result,
+      source_settled_at: safeIsoDate(market.settlement_ts ?? market.determined_at),
+      eligibility_policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
+      hard_reject_reasons: [...new Set([
+        ...(Array.isArray(candidate.hard_reject_reasons)
+          ? candidate.hard_reject_reasons.map((reason) => cleanText(reason, 100)).filter(Boolean)
+          : []),
+        RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+      ])],
+    }, {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+      reason: `Kalshi ya ha determinado esta opción como «${providerResultLabel(result)}».`,
+      confidence: 100,
+      ttl_minutes: 1_440,
+      evidence: sourceUrl ? [{
+        title: "Resultado oficial en Kalshi",
+        url: sourceUrl,
+        published_at: safeIsoDate(market.settlement_ts ?? market.determined_at),
+        source_type: "provider",
+        supports: `Resultado: ${providerResultLabel(result)}`,
+      }] : [],
+    }, now) as JsonRecord;
+  });
+  const reconciled = checked.flatMap((item) => item.status === "fulfilled" && item.value ? [item.value] : []);
+  if (reconciled.length) await persistProviderResult(environment, "kalshi", `${cacheKey}:resultados`, reconciled);
+  return reconciled.length;
+}
+
 async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]) {
   if (!apiKey) throw new Error("PROVIDER_NOT_CONFIGURED");
   const groups = groupCandidates(candidates).slice(0, MAX_GEMINI_GROUPS);
   const evidence = new Map<string, JsonRecord[]>();
   const settled = await mapWithConcurrency(groups, TAVILY_CONCURRENCY, async (group) => {
     const url = new URL("https://api.tavily.com/search");
+    const childQuestions = group.candidates
+      .slice(0, 8)
+      .map((candidate) => cleanText(candidate.source_question ?? candidate.atinara_question, 180))
+      .filter(Boolean)
+      .join(" | ");
     const payload = toRecord(await fetchJson(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         api_key: apiKey,
-        query: `${cleanText(group.title, 500)} official announcement release date result eligibility`,
+        query: cleanText(`official announcement release date result eligibility ${group.title} ${childQuestions}`, 1_200),
         search_depth: "basic",
         max_results: 6,
         include_answer: false,
         include_raw_content: false,
-        include_domains: ["playstation.com", "xbox.com", "nintendo.com", "ea.com", "thegameawards.com", "metacritic.com", "store.steampowered.com", "valvesoftware.com", "gamespress.com"],
+        include_domains: ["playstation.com", "xbox.com", "nintendo.com", "ea.com", "capcom.com", "rockstargames.com", "thegameawards.com", "metacritic.com", "store.steampowered.com", "valvesoftware.com", "gamespress.com"],
       }),
     })) ?? {};
     return {
@@ -588,7 +664,7 @@ async function verifyGeminiBatch(apiKey: string, candidates: JsonRecord[], exist
     evidence: evidenceByGroup.get(group.event_group_key) ?? [],
   }));
   const safeExisting = existing.slice(0, 50).map((item) => compactGeminiDefinition(item)).filter(isRecord);
-  const prompt = `Actúa como validador factual cerrado del Radar privado de Atinara. Solo puedes usar los datos de proveedor y las evidencias incluidas. No inventes hechos, URLs, fechas, nombres, estados ni condiciones. Devuelve exactamente un elemento por candidate_index, conserva cada índice entero sin cambiarlo y cumple el esquema JSON. Si un valor factual no está demostrado, usa null. event_resolved_at y official_reveal_at solo pueden indicar que toda la familia del evento padre ya tiene resultado; nunca representan el vencimiento aislado de una opción hija. Sin una fuente de resolución suficiente en los datos recibidos, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Un hecho ya anunciado no puede formularse como anuncio futuro. Un lanzamiento o premio posterior al periodo es ineligible. Un producto no anunciado no puede tratarse como existente salvo que la pregunta sea precisamente si se anunciará. Si la evidencia falta, contradice o no concluye: eligible=false, conclusive=false, reason_code=VERIFICATION_REQUIRED. Las comprobaciones deterministas recibidas tienen prioridad. Códigos permitidos: ${GEMINI_REASON_CODES.join(", ")}. Categorías permitidas: ${RADAR_CATEGORIES.join(", ")}. Grupos:\n${JSON.stringify(safeGroups)}\nDefiniciones existentes sin datos personales:\n${JSON.stringify(safeExisting)}`;
+  const prompt = `Actúa como editor experto de mercados predictivos para el Radar privado de Atinara. Evalúas si la pregunta constituye una predicción futura, binaria, objetiva y resoluble; no evalúas si crees que el resultado Sí ocurrirá. Solo puedes usar los datos del proveedor y las evidencias incluidas. No inventes hechos, URLs, fechas, nombres, estados ni condiciones. Escribe reason y atinara_resolution_criteria en español claro, sin códigos técnicos en el texto. Devuelve exactamente un elemento por candidate_index, conserva cada índice entero sin cambiarlo y cumple el esquema JSON. Si un valor factual no está demostrado, usa null. event_resolved_at y official_reveal_at solo pueden indicar que toda la familia del evento padre ya tiene resultado; nunca representan el vencimiento aislado de una opción hija. Una fecha oficial prevista es información para estimar probabilidad, no invalida una opción futura anterior o posterior: una fecha umbral solo es incoherente si el plazo ya venció o existe imposibilidad objetiva demostrada. Que todavía no exista anuncio, nominación, ganador o resultado es incertidumbre válida. Una pregunta directa sobre anuncio, lanzamiento, retraso o tráiler puede ser válida aunque el producto no esté anunciado. En cambio, un premio o una reseña de un producto no anunciado depende de un requisito previo y no es apto. Un juego anunciado puede ser candidato a un premio futuro aunque aún no haya nominaciones. Sin una fuente pública suficiente para resolver el contrato, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Marca EVENT_ALREADY_RESOLVED solo cuando el resultado de la pregunta ya sea público, nunca porque el pronóstico actual parezca muy probable o improbable. Si la evidencia falta para una afirmación factual bloqueante, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Las comprobaciones deterministas recibidas tienen prioridad. Códigos permitidos: ${GEMINI_REASON_CODES.join(", ")}. Categorías permitidas: ${RADAR_CATEGORIES.join(", ")}. Grupos:\n${JSON.stringify(safeGroups)}\nDefiniciones existentes sin datos personales:\n${JSON.stringify(safeExisting)}`;
   const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`);
   const payload = toRecord(await fetchJson(url, {
     method: "POST",
@@ -622,7 +698,10 @@ async function verifyGeminiBatch(apiKey: string, candidates: JsonRecord[], exist
     const adapted = applyAdaptation(candidate, sanitizedDecision);
     const facts = toRecord(decision.facts) ?? {};
     const deterministic = evaluateDeterministicEligibility(adapted, facts, now);
-    let eligibilityDecision = deterministic ?? decision;
+    const predictive = !deterministic && canApplyPredictivePolicyOverride(adapted, decision)
+      ? evaluatePredictiveEligibility(adapted, facts, now)
+      : null;
+    let eligibilityDecision = deterministic ?? predictive ?? decision;
     if (eligibilityDecision.eligible === true && eligibilityDecision.conclusive === true && !isAdaptedIdeaComplete(adapted)) {
       eligibilityDecision = {
         eligible: false,
@@ -784,7 +863,8 @@ async function loadRadarView(environment: Environment, authorization: string, fi
     }, authorization).catch(() => []),
     rpc(environment, "get_market_radar_provider_status", {}, authorization),
   ]);
-  const candidates = toRecordArray(candidatesPayload);
+  const candidates = toRecordArray(candidatesPayload)
+    .filter((candidate) => cleanText(candidate.eligibility_policy_version, 80) === RADAR_ELIGIBILITY_POLICY_VERSION);
   const rejected = toRecordArray(rejectedPayload);
   const groups = diversifyGroups(groupCandidates(candidates), MAX_VISIBLE_GROUPS);
   return {
@@ -807,6 +887,12 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
 
   const now = new Date().toISOString();
+  const reconciledProviderResults = await reconcileRejectedKalshiOutcomes(
+    environment,
+    toRecordArray(current.rejected?.items),
+    cacheKey,
+    now,
+  ).catch(() => 0);
   const existing = await loadExistingDefinitions(environment, authorization);
   const providers = filters.provider === "all" ? ["polymarket", "kalshi"] : filters.provider === "tavily" ? [] : [filters.provider];
   const errors: JsonRecord[] = [];
@@ -835,7 +921,13 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   );
   const reusable: JsonRecord[] = [];
   const needsVerification: JsonRecord[] = [];
+  const deterministicRejections: JsonRecord[] = [];
   for (const candidate of scoredFirst) {
+    const providerDecision = evaluateProviderEligibility(candidate, now);
+    if (providerDecision) {
+      deterministicRejections.push(applyEligibilityDecision(candidate, providerDecision, now) as JsonRecord);
+      continue;
+    }
     const cached = cachedVerification.get(candidateIdentity(candidate));
     if (canReuseRadarVerification(cached, candidate, now)) {
       reusable.push({
@@ -899,7 +991,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     }
   }
 
-  candidates = [...reusable, ...newlyVerified];
+  candidates = [...deterministicRejections, ...reusable, ...newlyVerified];
   candidates = propagateResolvedEventGroups(
     candidates,
     [
@@ -923,6 +1015,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     partial: errors.length > 0,
     errors,
     deferred_verification_count: deferredVerificationCount,
+    reconciled_provider_results: reconciledProviderResults,
     cooldown_seconds: Math.ceil(REFRESH_COOLDOWN_MS / 1000),
     limits: {
       max_pages: MAX_PROVIDER_PAGES,
@@ -931,12 +1024,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       max_gemini_groups: MAX_GEMINI_GROUPS,
       max_gemini_candidates: MAX_GEMINI_CANDIDATES,
       gemini_batch_size: GEMINI_BATCH_SIZE,
+      max_rejected_outcome_reconciliations: MAX_REJECTED_OUTCOME_RECONCILIATIONS,
     },
   });
 }
 
 function candidateReady(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
+  if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente. Actualiza el Radar." };
   if (cleanText(candidate.verification_status, 80) !== "verified_open") return { ok: false, error: "VERIFICATION_REQUIRED", message: "La candidata no tiene una verificación factual vigente." };
   if (!isAdaptedIdeaComplete(candidate)) return { ok: false, error: "RESOLUTION_SOURCE_REQUIRED", message: "La candidata no conserva una pregunta, criterios y fuente de resolución verificables." };
   const expiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
@@ -986,7 +1081,7 @@ function prepareRevalidationError(candidate: JsonRecord): { error: string; messa
   const status = cleanText(candidate.verification_status, 80);
   if (status === "verified_open") return null;
   if (status === "rejected_resolved") return { error: "RADAR_CANDIDATE_RESOLVED", message: "El resultado ya es público y la candidata no puede prepararse." };
-  if (status === "rejected_unannounced") return { error: "RADAR_CANDIDATE_UNANNOUNCED", message: "La candidata presupone un producto o acontecimiento no anunciado oficialmente." };
+  if (status === "rejected_unannounced") return { error: "RADAR_CANDIDATE_UNANNOUNCED", message: "La candidata depende de un producto no anunciado para un resultado posterior, como un premio o una reseña." };
   if (["rejected_ineligible", "rejected_incoherent"].includes(status)) return { error: "RADAR_CANDIDATE_INELIGIBLE", message: "La candidata no es temporal o factualmente compatible con el contrato." };
   if (status === "rejected_invalid_source") return { error: "RADAR_CANONICAL_URL_INVALID", message: "No se pudo validar la fuente o el enlace canónico de la candidata." };
   if (status === "rejected_duplicate") return { error: "RADAR_CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };

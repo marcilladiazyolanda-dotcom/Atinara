@@ -10,6 +10,8 @@ const edge = readFileSync(join(root, "supabase/functions/market-radar/index.ts")
 const baseMigration = readFileSync(join(root, "supabase/migrations/20260804194933_add_market_radar.sql"), "utf8");
 const v2Migration = readFileSync(join(root, "supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql"), "utf8");
 const adminUi = readFileSync(join(root, "admin-markets.js"), "utf8");
+const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const styles = readFileSync(join(root, "styles.css"), "utf8");
 let radar;
 
 before(async () => {
@@ -86,8 +88,23 @@ function kalshiEvent(overrides = {}) {
   };
 }
 
+function completeCandidate(question, overrides = {}) {
+  return {
+    source_question: question,
+    atinara_question: question,
+    atinara_category: "Lanzamientos",
+    atinara_resolution_criteria: "Se resolverá Sí si una fuente oficial confirma el resultado dentro del periodo.",
+    atinara_resolution_source_url: "https://www.example.com/official-source",
+    source_close_at: "2026-12-31T23:59:59Z",
+    hard_reject_reasons: [],
+    eligibility_policy_version: "atinara-prediction-policy-v3",
+    ...overrides,
+  };
+}
+
 test("el normalizador usa la versión v2", () => {
   assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v2");
+  assert.equal(radar.RADAR_ELIGIBILITY_POLICY_VERSION, "atinara-prediction-policy-v3");
 });
 
 test("Polymarket conserva evento padre y mercado hijo sin fabricar una URL con el slug hijo", () => {
@@ -149,6 +166,35 @@ test("Kalshi bloquea estados cerrados y tipos no binarios", () => {
   const candidates = radar.adaptKalshiResponse({ events: [closed, multi] }, { now });
   assert.ok(candidates[0].hard_reject_reasons.includes("PROVIDER_NOT_OPEN"));
   assert.ok(candidates[1].hard_reject_reasons.includes("EVENT_OUTSIDE_CONTRACT"));
+});
+
+test("Polymarket conserva un resultado explícito del mercado hijo sin inferirlo del evento padre", () => {
+  const event = polyEvent({ result: "yes" });
+  event.markets = [
+    polyMarket("m-resolved", "resolved", "Will the official source confirm it?", { result: "no", resolved: true }),
+    polyMarket("m-open", "open", "Will another outcome happen?"),
+  ];
+  const candidates = radar.adaptPolymarketResponse({ events: [event] }, { now, canonicalUrlVerified: true });
+  assert.equal(candidates[0].source_result, "no");
+  assert.ok(candidates[0].hard_reject_reasons.includes("EVENT_ALREADY_RESOLVED"));
+  assert.equal(candidates[1].source_result, null);
+  assert.ok(!candidates[1].hard_reject_reasons.includes("EVENT_ALREADY_RESOLVED"));
+});
+
+test("Kalshi conserva un resultado final Sí como evento ya resuelto", () => {
+  const event = kalshiEvent();
+  event.markets[0] = {
+    ...event.markets[0],
+    status: "finalized",
+    result: "yes",
+    settled_time: "2026-08-01T12:00:00Z",
+  };
+  const candidate = radar.adaptKalshiResponse({ events: [event] }, { now })[0];
+  const decision = radar.evaluateProviderEligibility(candidate, now);
+  assert.equal(candidate.source_result, "yes");
+  assert.ok(candidate.hard_reject_reasons.includes("EVENT_ALREADY_RESOLVED"));
+  assert.equal(decision.reason_code, "EVENT_ALREADY_RESOLVED");
+  assert.match(decision.reason, /«Sí»/);
 });
 
 test("Kalshi bloquea un mercado cuyo cierre ya ha vencido aunque siga active", () => {
@@ -243,16 +289,60 @@ test("fixture Fable GOTY 2026 se rechaza si el lanzamiento es posterior al perio
   assert.equal(decision.reason_code, "EVENT_OUTSIDE_CONTRACT");
 });
 
-test("fixture Half-Life 3 no anunciado se rechaza salvo una pregunta explícita de anuncio", () => {
+test("Half-Life 3 puede predecir lanzamiento o anuncio, pero no un GOTY dependiente sin anuncio", () => {
   const release = radar.evaluateDeterministicEligibility({ source_question: "Will Half-Life 3 release in 2026?", source_close_at: "2026-12-31T00:00:00Z" }, { subject_announced: false }, now);
   const announcement = radar.evaluateDeterministicEligibility({ source_question: "Will Valve announce Half-Life 3 in 2026?", source_close_at: "2026-12-31T00:00:00Z" }, { subject_announced: false }, now);
-  assert.equal(release.reason_code, "SUBJECT_NOT_ANNOUNCED");
+  const award = radar.evaluateDeterministicEligibility({ source_question: "Will Half-Life 3 win Game of the Year at The Game Awards 2026?", source_close_at: "2026-12-31T00:00:00Z" }, { subject_announced: false }, now);
+  assert.equal(release, null);
   assert.equal(announcement, null);
+  assert.equal(award.reason_code, "SUBJECT_NOT_ANNOUNCED");
 });
 
 test("la incoherencia temporal tiene un código estable", () => {
-  const decision = radar.evaluateDeterministicEligibility({ source_question: "Will a game launch?" }, { temporal_coherence: false }, now);
+  const decision = radar.evaluateDeterministicEligibility({ source_question: "Will this happen?" }, { temporal_coherence: false }, now);
   assert.equal(decision.reason_code, "TEMPORAL_INCOHERENCE");
+});
+
+test("la fecha oficial de GTA VI informa la probabilidad, pero no invalida un umbral anterior", () => {
+  const candidate = completeCandidate("Will Grand Theft Auto VI release before September 1, 2026?", {
+    atinara_question: "¿Se lanzará Grand Theft Auto VI antes del 1 de septiembre de 2026?",
+    atinara_resolution_source_url: "https://www.rockstargames.com/VI",
+  });
+  const facts = {
+    subject_announced: true,
+    release_at: "2026-11-19T00:00:00Z",
+    temporal_coherence: false,
+  };
+  assert.equal(radar.evaluateDeterministicEligibility(candidate, facts, now), null);
+  assert.equal(radar.evaluatePredictiveEligibility(candidate, facts, now).eligible, true);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "TEMPORAL_INCOHERENCE" }), true);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "EVENT_OUTSIDE_CONTRACT" }), true);
+});
+
+test("la política predictiva nunca pisa un resultado resuelto ni una fuente inválida", () => {
+  const candidate = completeCandidate("Will Grand Theft Auto VI release before September 1, 2026?");
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "EVENT_ALREADY_RESOLVED" }), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "INVALID_OR_UNVERIFIED_SOURCE" }), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "VERIFICATION_REQUIRED" }), false);
+});
+
+test("un lanzamiento futuro no anunciado sigue siendo una predicción válida y resoluble", () => {
+  const candidate = completeCandidate("Will Half-Life 3 release in 2026?", {
+    atinara_resolution_source_url: "https://www.valvesoftware.com/",
+  });
+  const decision = radar.evaluatePredictiveEligibility(candidate, { subject_announced: false }, now);
+  assert.equal(decision.eligible, true);
+  assert.equal(decision.conclusive, true);
+});
+
+test("Onimusha anunciado puede ser candidato a GOTY antes de publicarse las nominaciones", () => {
+  const candidate = completeCandidate("Will Onimusha: Way of the Sword win Game of the Year at The Game Awards 2026?", {
+    atinara_category: "Reviews/Premios",
+    atinara_resolution_source_url: "https://thegameawards.com/nominees/game-of-the-year",
+  });
+  const facts = { subject_announced: true };
+  assert.equal(radar.evaluateDeterministicEligibility(candidate, facts, now), null);
+  assert.equal(radar.evaluatePredictiveEligibility(candidate, facts, now).eligible, true);
 });
 
 test("el pre-rellenado no usa la URL del mercado como fuente de resolución", () => {
@@ -298,9 +388,10 @@ test("Gemini se vincula por índices enteros controlados sin aceptar duplicados 
 });
 
 test("una actualización explícita nunca reutiliza verificaciones inconclusas o caducadas", () => {
-  const candidate = { fingerprint: "fp-1" };
+  const candidate = { fingerprint: "fp-1", eligibility_policy_version: "atinara-prediction-policy-v3" };
   const verified = {
     normalizer_version: "atinara-radar-v2",
+    eligibility_policy_version: "atinara-prediction-policy-v3",
     fingerprint: "fp-1",
     verification_status: "verified_open",
     verification_reason_code: null,
@@ -316,6 +407,7 @@ test("una actualización explícita nunca reutiliza verificaciones inconclusas o
   assert.equal(radar.canReuseRadarVerification({ ...verified, verification_expires_at: "2026-08-06T11:59:59.000Z" }, candidate, now), false);
   assert.equal(radar.canReuseRadarVerification({ ...verified, fingerprint: "fp-2" }, candidate, now), false);
   assert.equal(radar.canReuseRadarVerification({ ...verified, atinara_resolution_source_url: null }, candidate, now), false);
+  assert.equal(radar.canReuseRadarVerification({ ...verified, eligibility_policy_version: "atinara-prediction-policy-v2" }, candidate, now), false);
 });
 
 test("la fuente de resolución se toma solo de datos existentes o evidencia oficial", () => {
@@ -440,7 +532,18 @@ test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estr
   assert.match(edge, /failClosedCandidates/);
   assert.match(edge, /mapWithConcurrency\(groups, TAVILY_CONCURRENCY/);
   assert.match(edge, /valvesoftware\.com/);
+  assert.match(edge, /childQuestions/);
+  assert.match(edge, /cleanText\(`official announcement release date result eligibility \$\{group\.title\} \$\{childQuestions\}`, 1_200\)/);
   assert.doesNotMatch(edge, /for \(const candidate of candidates\)[\s\S]*api\.tavily\.com/);
+});
+
+test("los descartes deterministas no consumen Tavily ni Gemini y Kalshi reconcilia resultados", () => {
+  assert.match(edge, /evaluateProviderEligibility\(candidate, now\)/);
+  assert.match(edge, /const deterministicRejections/);
+  assert.match(edge, /MAX_REJECTED_OUTCOME_RECONCILIATIONS = 16/);
+  assert.match(edge, /historical\/markets/);
+  assert.match(edge, /reconcileRejectedKalshiOutcomes/);
+  assert.match(edge, /reconciled_provider_results/);
 });
 
 test("la verificación vigente se reutiliza por huella y evita repetir servicios automáticos", () => {
@@ -449,6 +552,11 @@ test("la verificación vigente se reutiliza por huella y evita repetir servicios
   assert.match(edge, /canReuseRadarVerification\(cached, candidate, now\)/);
   assert.match(edge, /const needsVerification: JsonRecord\[\] = \[\]/);
   assert.match(edge, /if \(needsVerification\.length\)/);
+});
+
+test("la vista solo expone candidatas evaluadas con la política predictiva vigente", () => {
+  assert.match(edge, /filter\(\(candidate\) => cleanText\(candidate\.eligibility_policy_version, 80\) === RADAR_ELIGIBILITY_POLICY_VERSION\)/);
+  assert.match(edge, /canApplyPredictivePolicyOverride\(adapted, decision\)/);
 });
 
 test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
@@ -462,6 +570,7 @@ test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
 
 test("la preparación revalida versión, caducidad, proveedor y duplicados", () => {
   assert.match(edge, /NORMALIZER_OUTDATED/);
+  assert.match(edge, /ELIGIBILITY_POLICY_OUTDATED/);
   assert.match(edge, /VERIFICATION_EXPIRED/);
   assert.match(edge, /revalidatePolymarketCandidate/);
   assert.match(edge, /revalidateKalshiCandidate/);
@@ -511,6 +620,17 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /candidate\.atinara_resolution_source_url \|\| candidate\.source_resolution_url/);
   assert.match(adminUi, /Auditoría factual/);
   assert.match(adminUi, /verification_status === "verified_open"/);
+  assert.match(adminUi, /data-child-count/);
+  assert.match(adminUi, /data-radar-rejection-filter/);
+  assert.match(adminUi, /RADAR_REASON_LABELS/);
+  assert.match(adminUi, /RADAR_SCORE_LABELS/);
+  assert.match(adminUi, /Criterio anterior/);
+  assert.match(adminUi, /radarCandidatePolicyCurrent/);
+  assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
+  assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
+  assert.match(styles, /radar-rejection-filter/);
+  assert.match(adminHtml, /v=20260807-radar3/);
+  assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 
 test("el frontend nunca consulta directamente proveedores ni introduce secretos", () => {

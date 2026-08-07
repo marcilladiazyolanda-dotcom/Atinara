@@ -1,17 +1,48 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 6 de agosto de 2026.
+Última actualización del contexto: 7 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Yol cerró y aprobó el Paso 13.3 el 3 de agosto de 2026.
-> `A3 · Criterio modular`, sus activos vectoriales y Atinara Sunset son
-> definitivos para la beta v0.1. El Paso 13.5 está activado y aceptado
-> técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`;
-> la migración y la Edge Function v4 descritas en el registro histórico están
-> desplegadas y no deben repetirse. El Paso 13.5.1 está implementado solo en
-> local sobre `origin/main = b10f0eb146dff5043a32c11978f1a9ec3101d7c1` y
-> pendiente de activación manual; su nueva migración todavía no se ha aplicado.
+> **Estado vigente:** el Radar v16 está publicado y aceptado en
+> `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Sus dos
+> migraciones ya están aplicadas y no deben repetirse. El Radar v17 está
+> preparado solo en local, sin SQL ni cambios externos, y pendiente de
+> activación coordinada por Yol.
+
+### Radar v17 · criterio predictivo profesional · 7 de agosto de 2026
+
+- La política `atinara-prediction-policy-v3` separa validez de probabilidad: una
+  fecha oficial prevista no invalida una opción de umbral futura. GTA VI antes
+  de septiembre sigue siendo un contrato válido aunque la fecha anunciada sea
+  posterior.
+- Una pregunta directa de anuncio, lanzamiento, retraso o tráiler puede ser
+  válida sin confirmación previa. Un premio o una reseña de un producto no
+  anunciado continúa bloqueado; un juego anunciado, como Onimusha, puede ser
+  candidato a GOTY antes de publicarse nominaciones.
+- Resultados `yes`, `no` o `scalar` y estados finales del proveedor se descartan
+  antes de Tavily/Gemini. Una reconciliación directa y acotada de Kalshi corrige
+  descartes históricos, por ejemplo Halo resuelto como Sí, sin gastar IA.
+- La política positiva solo corrige falsos `SUBJECT_NOT_ANNOUNCED`,
+  `TEMPORAL_INCOHERENCE` o `EVENT_OUTSIDE_CONTRACT` en predicciones directas.
+  Nunca pisa un resultado resuelto, una fuente inválida o una comprobación
+  inconclusa.
+- La auditoría usa español natural, filtra por motivo, oculta por defecto
+  eventos resueltos y evaluaciones de la política anterior. Las candidatas v16
+  no pueden prepararse hasta actualizar el Radar con v17.
+- Las tarjetas de eventos con una sola opción ocupan toda la cuadrícula. Los
+  controles `Detalles` y `Abrir evento original` comparten jerarquía con
+  `Preparar`. La versión de caché coordinada es `v=20260807-radar3`.
+- No hay migración nueva, secretos nuevos, datos simulados ni cambios en LMSR,
+  mercados, predicciones, perfiles, Karma o Prestigio. No se ha desplegado ni
+  subido nada desde esta tarea.
+- Orden de activación obligatorio: desplegar primero `market-radar`; subir
+  después el árbol completo a GitHub; finalmente pulsar `Actualizar fuentes`
+  una vez y comprobar GTA VI, Half-Life 3, Onimusha y Halo. No ejecutar ninguna
+  migración.
+- Validación local: sintaxis JavaScript y TypeScript Edge correctas, suite
+  completa `npm run validate` y renderizado real de escritorio/móvil sin
+  desbordamiento horizontal.
 
 ### Paso 13.5.1 · corrección profesional del Radar · 6 de agosto de 2026
 
@@ -530,12 +561,12 @@ El alcance aprobado incluye recuperación completa de contraseña; administraci�
 
 Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: subir a GitHub la corrección versionada de Gemini para
-que el repositorio coincida con `market-radar` v4. No hay que repetir migraciones,
-secretos ni despliegues. Después puede continuar el QA integral del Paso 13.6. El
-mercado antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el
-catálogo, chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni
-compraventa secundaria.
+Siguiente paso operativo: activar el Radar v17 en el orden documentado —Edge
+Function, árbol coordinado y una actualización explícita— sin repetir
+migraciones ni secretos. Después debe hacerse la aceptación funcional con los
+casos de regresión indicados. El mercado antiguo de julio continúa sin aprobar
+ni liquidar. No ampliar todavía el catálogo, chat, GIF, feed algorítmico,
+temporadas, monetización, dinero real ni compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

@@ -1,9 +1,10 @@
 # Instrucciones permanentes de Atinara · nombre interno Oraklo
 
-## Estado vigente · 5 de agosto de 2026
+## Estado vigente · 7 de agosto de 2026
 
-- Paso 13.5.1 preparado localmente el 6 de agosto sobre `origin/main = b10f0eb146dff5043a32c11978f1a9ec3101d7c1`. No está desplegado. La corrección usa `atinara-radar-v2`, una tarjeta por evento padre, URLs canónicas separadas, taxonomía dinámica de Kalshi, verificación factual cerrada y auditoría de rechazados. La nueva migración `20260806183627_harden_market_radar_quality_sources.sql` debe aplicarse una sola vez **después** de subir el árbol y **antes** de desplegar la Edge Function actualizada. No editar ni repetir `20260804194933_add_market_radar.sql`.
-- `TAVILY_API_KEY` y `GEMINI_API_KEY` se reutilizan únicamente si ya existen en Supabase. Si faltan o fallan, el Radar v2 deja la candidata en revisión y bloquea preparar; no se piden credenciales ni se degrada a datos inventados. IGDB/Twitch/YouTube continúan fuera de esta entrega.
+- El Radar v16 está publicado y aceptado sobre `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Las migraciones `20260804194933_add_market_radar.sql` y `20260806183627_harden_market_radar_quality_sources.sql` ya forman parte de esa activación y **no deben repetirse**.
+- El Radar v17 está preparado solo en local en `codex/radar-v17-professional-criteria`. Introduce la política `atinara-prediction-policy-v3`, corrige el criterio predictivo, reconcilia resultados finales de Kalshi sin IA, evita enviar descartes deterministas a Tavily/Gemini, filtra la auditoría en español y mejora la cuadrícula. No añade SQL, migraciones, secretos ni datos. Para activarlo, desplegar primero `market-radar`, subir después el árbol coordinado `v=20260807-radar3` y ejecutar una actualización explícita de fuentes.
+- `TAVILY_API_KEY` y `GEMINI_API_KEY` se reutilizan únicamente si ya existen en Supabase. Si faltan o fallan, el Radar deja la candidata en revisión y bloquea preparar; no se piden credenciales ni se degrada a datos inventados. IGDB/Twitch/YouTube continúan fuera de esta entrega.
 
 - La corrección responsive `v=20260805-mobile1` elimina la regresión móvil de
   la portada y de la cabecera compartida. A 320–620 px la cabecera distribuye

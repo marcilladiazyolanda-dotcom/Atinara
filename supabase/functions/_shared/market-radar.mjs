@@ -1,4 +1,5 @@
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
+export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v3";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -84,7 +85,7 @@ const REASON_COPY = Object.freeze({
   EVENT_ALREADY_RESOLVED: "El hecho ya es público o el evento ya está resuelto.",
   SOURCE_STALE: "La evidencia disponible está caducada o ya no representa el estado actual.",
   EVENT_OUTSIDE_CONTRACT: "El hecho ocurrirá fuera del periodo que plantea el mercado.",
-  SUBJECT_NOT_ANNOUNCED: "La premisa presupone un producto o evento que no ha sido anunciado oficialmente.",
+  SUBJECT_NOT_ANNOUNCED: "La predicción depende de un producto no anunciado para un resultado posterior, como un premio o una reseña.",
   TEMPORAL_INCOHERENCE: "Las fechas o el periodo del mercado son incompatibles con la evidencia verificada.",
   INVALID_OR_UNVERIFIED_SOURCE: "No se pudo validar una fuente pública suficiente para preparar el mercado.",
   DUPLICATE_MARKET: "Ya existe un mercado o borrador equivalente en Atinara.",
@@ -217,6 +218,22 @@ function verificationExpiry(now, minutes = 360) {
   return new Date(new Date(now).getTime() + Math.max(5, minutes) * 60_000).toISOString();
 }
 
+export function normalizeProviderResult(value) {
+  const result = normalizeComparableText(value);
+  if (["yes", "si", "true", "1"].includes(result)) return "yes";
+  if (["no", "false", "0"].includes(result)) return "no";
+  if (result === "scalar") return "scalar";
+  return null;
+}
+
+export function providerResultLabel(value) {
+  const result = normalizeProviderResult(value);
+  if (result === "yes") return "Sí";
+  if (result === "no") return "No";
+  if (result === "scalar") return "Resultado numérico";
+  return "Resultado publicado";
+}
+
 function baseCandidate(provider, externalId, input, now, cacheMinutes) {
   const title = cleanText(input.title ?? input.question, 500);
   const description = cleanText(input.description, 3000);
@@ -257,6 +274,8 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
     source_volume_total: safeNumber(input.volume),
     source_liquidity: safeNumber(input.liquidity),
     source_status: cleanText(input.status, 80).toLowerCase() || null,
+    source_result: normalizeProviderResult(input.result),
+    source_settled_at: safeIsoDate(input.settled_at),
     source_resolution_rules: cleanText(input.resolution_rules, 5000) || null,
     source_resolution_url: resolutionUrl,
     external_url: originalUrl || eventUrl,
@@ -281,13 +300,14 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
     quality_status: "needs_review",
     score_breakdown: {},
     state: "needs_review",
-    fingerprint: stableFingerprint(provider, eventKey, title, input.question),
+    fingerprint: stableFingerprint(provider, eventKey, title, input.question, RADAR_ELIGIBILITY_POLICY_VERSION),
     fetched_at: now,
     first_seen_at: now,
     last_seen_at: now,
     expires_at: expiresAt,
     cache_expires_at: expiresAt,
     normalizer_version: RADAR_NORMALIZER_VERSION,
+    eligibility_policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
   };
 }
 
@@ -333,6 +353,8 @@ export function adaptPolymarketResponse(payload, options = {}) {
         volume: market.volumeNum ?? market.volume ?? event.volume,
         liquidity: market.liquidityNum ?? market.liquidity ?? event.liquidity,
         status,
+        result: market.result ?? market.resolutionResult ?? market.winningOutcome,
+        settled_at: market.resolvedAt ?? market.resolutionDate ?? event.resolvedAt ?? event.resolutionDate,
         resolution_rules: market.description ?? event.description,
         resolution_url: market.resolutionSource ?? event.resolutionSource,
         external_event_id: eventId,
@@ -349,11 +371,15 @@ export function adaptPolymarketResponse(payload, options = {}) {
           market_slug: marketSlug,
           condition_id: cleanText(market.conditionId, 220) || null,
           outcomes: parsed.outcomes,
+          result: normalizeProviderResult(market.result ?? market.resolutionResult ?? market.winningOutcome),
           canonical_url_verified: eventValidated,
         },
       }, now, cacheMinutes);
       const closeMs = Date.parse(candidate.source_close_at ?? "");
       const nowMs = Date.parse(now);
+      if (candidate.source_result || market.resolved === true || event.resolved === true) {
+        candidate.hard_reject_reasons.push(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED);
+      }
       if (!providerIsOpen(status) || (Number.isFinite(closeMs) && Number.isFinite(nowMs) && closeMs <= nowMs)) {
         candidate.hard_reject_reasons.push(RADAR_REASON_CODES.PROVIDER_NOT_OPEN);
       }
@@ -411,6 +437,8 @@ export function adaptKalshiResponse(payload, options = {}) {
       volume: market.volume_fp ?? market.volume ?? event.volume_fp ?? event.volume,
       liquidity: market.liquidity_dollars ?? market.liquidity ?? event.liquidity,
       status,
+      result: market.result,
+      settled_at: market.settlement_ts ?? market.determined_at ?? event.settlement_ts,
       resolution_rules: rules,
       resolution_url: resolutionSources[0] ?? market.rules_url ?? event.rules_url,
       external_event_id: eventTicker,
@@ -428,11 +456,16 @@ export function adaptKalshiResponse(payload, options = {}) {
         yes_sub_title: cleanText(market.yes_sub_title, 500) || null,
         no_sub_title: cleanText(market.no_sub_title, 500) || null,
         settlement_sources: resolutionSources,
+        result: normalizeProviderResult(market.result),
+        settlement_ts: safeIsoDate(market.settlement_ts ?? market.determined_at ?? event.settlement_ts),
         canonical_url_verified: urlVerified,
       },
     }, now, cacheMinutes);
     const marketType = cleanText(market.market_type, 80).toLowerCase();
     if (marketType && !["binary", "yes_no"].includes(marketType)) candidate.hard_reject_reasons.push(RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT);
+    if (candidate.source_result || ["determined", "finalized", "settled"].includes(status)) {
+      candidate.hard_reject_reasons.push(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED);
+    }
     const closeMs = Date.parse(candidate.source_close_at ?? "");
     const nowMs = Date.parse(now);
     if (!providerIsOpen(status) || (Number.isFinite(closeMs) && Number.isFinite(nowMs) && closeMs <= nowMs)) {
@@ -546,27 +579,182 @@ export function reasonCopy(code) {
   return REASON_COPY[cleanText(code, 100)] ?? "La candidata no cumple todavía las condiciones para preparar un borrador.";
 }
 
+export function predictionContractKind(candidate) {
+  const question = normalizeComparableText(candidate?.atinara_question ?? candidate?.source_question ?? candidate?.source_title);
+  if (/(?:\bannounc|\banunci|\breveal|\bpresent)/.test(question)) return "announcement";
+  if (/(?:\breleas|\blaunch|\blanz|\bsaldr|\bdebut)/.test(question)) return "release";
+  if (/(?:\btrailer|\bavance|\bdelay|\bretras)/.test(question)) return "milestone";
+  if (/(?:\bmetacritic|\breview|\bresena|\bscore|\bpuntuacion)/.test(question)) return "review";
+  if (/(?:\bgame of the year|\bgoty|\baward|\bpremio|\bnomina|\bwin\b|\bganar|\bgana)/.test(question)) return "award";
+  return "other";
+}
+
+function isNamedAwardCandidate(question) {
+  return /^(?:will .+ win\b|ganara .+ (?:premio|goty)\b)|(?:\bwin game of the year\b|\bganar el premio\b)/.test(question);
+}
+
+function providerEvidence(candidate) {
+  const url = safePublicUrl(candidate?.external_market_url ?? candidate?.external_event_url);
+  if (!url) return [];
+  return [{
+    title: "Resultado publicado por el proveedor original",
+    url,
+    published_at: safeIsoDate(candidate?.source_settled_at),
+    source_type: "provider",
+    supports: cleanText(candidate?.source_result, 40)
+      ? `Resultado: ${providerResultLabel(candidate.source_result)}`
+      : "Estado oficial del mercado de origen.",
+  }];
+}
+
+export function evaluateProviderEligibility(candidate, now = new Date().toISOString()) {
+  const hardReasons = new Set(candidate?.hard_reject_reasons ?? []);
+  const sourceResult = normalizeProviderResult(candidate?.source_result);
+  if (sourceResult || hardReasons.has(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED)) {
+    const resultCopy = sourceResult ? ` como «${providerResultLabel(sourceResult)}»` : "";
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+      reason: `El proveedor original ya ha publicado el resultado${resultCopy}; no es una predicción futura.`,
+      confidence: 100,
+      ttl_minutes: 1_440,
+      evidence: providerEvidence(candidate),
+    };
+  }
+  if (hardReasons.has(RADAR_REASON_CODES.PROVIDER_NOT_OPEN)) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.PROVIDER_NOT_OPEN,
+      reason: "El mercado de origen ya está cerrado y no ofrece una opción futura abierta para importar.",
+      confidence: 100,
+      ttl_minutes: 360,
+      evidence: providerEvidence(candidate),
+    };
+  }
+  if (hardReasons.has(RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE)) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
+      reason: reasonCopy(RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE),
+      confidence: 100,
+      ttl_minutes: 60,
+      evidence: [],
+    };
+  }
+  if (hardReasons.has(RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT)) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+      reason: "El contrato de origen no es una opción binaria compatible con Atinara.",
+      confidence: 100,
+      ttl_minutes: 360,
+      evidence: providerEvidence(candidate),
+    };
+  }
+  if (hardReasons.has(RADAR_REASON_CODES.DUPLICATE_MARKET)) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.DUPLICATE_MARKET,
+      reason: reasonCopy(RADAR_REASON_CODES.DUPLICATE_MARKET),
+      confidence: 100,
+      ttl_minutes: 360,
+      evidence: [],
+    };
+  }
+  const closeMs = Date.parse(candidate?.source_close_at ?? "");
+  const nowMs = Date.parse(now);
+  if (Number.isFinite(closeMs) && Number.isFinite(nowMs) && closeMs <= nowMs) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.PROVIDER_NOT_OPEN,
+      reason: "El periodo de participación del mercado de origen ya ha terminado.",
+      confidence: 100,
+      ttl_minutes: 360,
+      evidence: providerEvidence(candidate),
+    };
+  }
+  return null;
+}
+
 export function evaluateDeterministicEligibility(candidate, facts = {}, now = new Date().toISOString()) {
   const question = normalizeComparableText(candidate.atinara_question ?? candidate.source_question ?? candidate.source_title);
   const nowMs = Date.parse(now);
   const closeMs = Date.parse(candidate.source_close_at ?? "");
   const resolvedMs = Date.parse(facts.event_resolved_at ?? facts.official_reveal_at ?? "");
   const releaseMs = Date.parse(facts.release_at ?? "");
-  const asksAnnouncement = /\bannounce|\banunci|\breveal|\bpresent/.test(question);
-  const assumesProduct = /release|launch|lanz|review|metacritic|game of the year|goty|win|ganar|cover|portada/.test(question);
+  const contractKind = predictionContractKind(candidate);
+  const directPrediction = ["announcement", "release", "milestone"].includes(contractKind);
+  const dependentPrediction = ["award", "review"].includes(contractKind);
   if (Number.isFinite(resolvedMs) && Number.isFinite(nowMs) && resolvedMs <= nowMs) {
     return { eligible: false, conclusive: true, reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED, reason: reasonCopy(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED), confidence: 100 };
   }
-  if (Number.isFinite(releaseMs) && Number.isFinite(closeMs) && releaseMs > closeMs && /review|metacritic|award|premio|game of the year|goty|win|ganar/.test(question)) {
+  if (Number.isFinite(releaseMs) && Number.isFinite(closeMs) && releaseMs > closeMs && dependentPrediction) {
     return { eligible: false, conclusive: true, reason_code: RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT, reason: reasonCopy(RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT), confidence: 100 };
   }
-  if (facts.subject_announced === false && assumesProduct && !asksAnnouncement) {
+  if (facts.subject_announced === false && (contractKind === "review" || (contractKind === "award" && isNamedAwardCandidate(question)))) {
     return { eligible: false, conclusive: true, reason_code: RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED, reason: reasonCopy(RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED), confidence: 100 };
   }
-  if (facts.temporal_coherence === false) {
+  if (facts.temporal_coherence === false && !directPrediction && contractKind === "other") {
     return { eligible: false, conclusive: true, reason_code: RADAR_REASON_CODES.TEMPORAL_INCOHERENCE, reason: reasonCopy(RADAR_REASON_CODES.TEMPORAL_INCOHERENCE), confidence: 100 };
   }
   return null;
+}
+
+export function evaluatePredictiveEligibility(candidate, facts = {}, now = new Date().toISOString()) {
+  if (evaluateProviderEligibility(candidate, now) || !isAdaptedIdeaComplete(candidate)) return null;
+  const closeMs = Date.parse(candidate.source_close_at ?? "");
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(closeMs) || !Number.isFinite(nowMs) || closeMs <= nowMs) return null;
+  const kind = predictionContractKind(candidate);
+  const question = normalizeComparableText(candidate.atinara_question ?? candidate.source_question ?? candidate.source_title);
+  if (["announcement", "release", "milestone"].includes(kind)) {
+    return {
+      eligible: true,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+      reason: "Mercado futuro, binario y resoluble. Que el resultado todavía no esté confirmado es la incertidumbre que se predice.",
+      confidence: 95,
+      ttl_minutes: 360,
+    };
+  }
+  if (kind === "award" && (!isNamedAwardCandidate(question) || facts.subject_announced === true)) {
+    return {
+      eligible: true,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+      reason: "Mercado de premio futuro y resoluble. Las nominaciones o el resultado no necesitan haberse publicado todavía.",
+      confidence: 90,
+      ttl_minutes: 360,
+    };
+  }
+  if (kind === "review" && facts.subject_announced === true) {
+    return {
+      eligible: true,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+      reason: "Mercado de valoración futura con un producto anunciado y una fuente objetiva de resolución.",
+      confidence: 90,
+      ttl_minutes: 360,
+    };
+  }
+  return null;
+}
+
+export function canApplyPredictivePolicyOverride(candidate, decision = {}) {
+  const kind = predictionContractKind(candidate);
+  const reasonCode = cleanText(decision?.reason_code, 100);
+  return ["announcement", "release", "milestone"].includes(kind)
+    && [
+      RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+      RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
+      RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
+    ].includes(reasonCode);
 }
 
 export function applyEligibilityDecision(candidate, decision = {}, now = new Date().toISOString()) {
@@ -707,12 +895,14 @@ export function compactGeminiCandidate(candidate) {
     external_id: cleanText(candidate.external_id, 220),
     event_group_key: cleanText(candidate.event_group_key, 240),
     provider: cleanText(candidate.provider, 40),
+    eligibility_policy_version: cleanText(candidate.eligibility_policy_version, 80),
     title: cleanText(candidate.source_title, 500),
     question: cleanText(candidate.source_question, 700),
     description: cleanText(candidate.source_description, 700),
     close_at: safeIsoDate(candidate.source_close_at),
     category: cleanText(candidate.source_category, 160),
     probability: safeProbability(candidate.source_probability),
+    source_result: normalizeProviderResult(candidate.source_result),
     resolution_rules: cleanText(candidate.source_resolution_rules, 1000),
     resolution_source_url: safePublicUrl(candidate.source_resolution_url),
     external_event_url: safePublicUrl(candidate.external_event_url),
@@ -757,6 +947,8 @@ export function indexGeminiDecisions(decisions = [], candidateCount = 0) {
 export function canReuseRadarVerification(cached, candidate, now = new Date().toISOString()) {
   if (!isRecord(cached) || !isRecord(candidate)) return false;
   if (cleanText(cached.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return false;
+  if (cleanText(cached.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return false;
+  if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return false;
   if (cleanText(cached.fingerprint, 120) !== cleanText(candidate.fingerprint, 120)) return false;
   if (cleanText(cached.verification_status, 80) === "needs_review") return false;
   if (cleanText(cached.verification_reason_code, 100) === RADAR_REASON_CODES.VERIFICATION_REQUIRED) return false;
@@ -960,6 +1152,7 @@ export function buildDraftPrefill(candidate) {
       external_event_url: safePublicUrl(candidate.external_event_url),
       external_market_url: safePublicUrl(candidate.external_market_url),
       normalizer_version: candidate.normalizer_version,
+      eligibility_policy_version: candidate.eligibility_policy_version,
       verification_status: candidate.verification_status,
       verification_reason_code: candidate.verification_reason_code,
       verified_at: candidate.verified_at,
@@ -972,7 +1165,7 @@ export function buildCacheKey(filters = {}) {
   const category = RADAR_CATEGORIES.includes(filters.category) ? filters.category : "all";
   const query = normalizeComparableText(filters.query ?? "").slice(0, 80) || "all";
   const horizon = cleanText(filters.horizon, 40) || "all";
-  return `${RADAR_NORMALIZER_VERSION}:${provider}:${category}:${query}:${horizon}`;
+  return `${RADAR_NORMALIZER_VERSION}:${RADAR_ELIGIBILITY_POLICY_VERSION}:${provider}:${category}:${query}:${horizon}`;
 }
 
 export function publicProviderError(provider, code, status = 502) {
