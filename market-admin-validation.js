@@ -55,11 +55,12 @@
   }
 
   function toIsoOrEmpty(value, timeZone = "Europe/Madrid") {
-    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || ""));
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(String(value || ""));
     if (!match) return "";
+    const milliseconds = Number(String(match[7] || "").padEnd(3, "0"));
     const requestedUtc = Date.UTC(
       Number(match[1]), Number(match[2]) - 1, Number(match[3]),
-      Number(match[4]), Number(match[5]), 0
+      Number(match[4]), Number(match[5]), Number(match[6] || 0), milliseconds
     );
     try {
       const parts = new Intl.DateTimeFormat("en-CA", {
@@ -75,10 +76,14 @@
       const get = (type) => Number(parts.find((part) => part.type === type)?.value);
       const representedUtc = Date.UTC(
         get("year"), get("month") - 1, get("day"),
-        get("hour"), get("minute"), get("second")
+        get("hour"), get("minute"), get("second"), milliseconds
       );
       const result = new Date(requestedUtc - (representedUtc - requestedUtc));
-      return Number.isFinite(result.getTime()) ? result.toISOString() : "";
+      if (!Number.isFinite(result.getTime())) return "";
+      return normalizeLocalDateTimeInput(localDateTime(result.toISOString(), timeZone))
+        === normalizeLocalDateTimeInput(value)
+        ? result.toISOString()
+        : "";
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn(`[Atinara] Zona horaria no válida: ${errorName}`);
@@ -86,17 +91,135 @@
     }
   }
 
-  function collectDraftPayload(form) {
+  function normalizeLocalDateTimeInput(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(String(value || ""));
+    if (!match) return "";
+    return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6] || "00"}.${String(match[7] || "").padEnd(3, "0")}`;
+  }
+
+  function localDateTime(value, timeZone = "Europe/Madrid") {
+    const date = value ? new Date(value) : null;
+    if (!date || !Number.isFinite(date.getTime())) return "";
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+      }).formatToParts(date);
+      const get = (type) => parts.find((part) => part.type === type)?.value || "";
+      const milliseconds = String(date.getUTCMilliseconds()).padStart(3, "0");
+      return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}.${milliseconds}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function timestampFromForm(value, timeZone, originalValue, originalTimeZone) {
+    const normalizedInput = normalizeLocalDateTimeInput(value);
+    const normalizedOriginal = normalizeLocalDateTimeInput(localDateTime(originalValue, originalTimeZone));
+    if (normalizedInput && originalValue && timeZone === originalTimeZone
+        && normalizedInput === normalizedOriginal) {
+      return canonicalTimestamp(originalValue) || "";
+    }
+    return toIsoOrEmpty(value, timeZone);
+  }
+
+  function normalizeComparableText(value) {
+    const normalized = String(value ?? "")
+      .replace(/\r\n?/g, "\n")
+      .trim()
+      .replace(/\s+/g, " ");
+    return normalized || null;
+  }
+
+  function canonicalJson(value) {
+    if (Array.isArray(value)) return value.map(canonicalJson);
+    if (value && typeof value === "object") {
+      return Object.keys(value).sort().reduce((result, key) => {
+        result[key] = canonicalJson(value[key]);
+        return result;
+      }, {});
+    }
+    return typeof value === "string" ? normalizeComparableText(value) : value;
+  }
+
+  function canonicalTimestamp(value) {
+    const date = value ? new Date(value) : null;
+    return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  }
+
+  function canonicalAlternativeSources(value) {
+    const unique = new Map();
+    (Array.isArray(value) ? value : []).forEach((source) => {
+      if (!source || typeof source !== "object") return;
+      const item = canonicalJson(source);
+      const serialized = JSON.stringify(item);
+      const sourceKey = normalizeComparableText(item?.url) || serialized;
+      const current = unique.get(sourceKey);
+      if (!current || serialized < current.serialized) unique.set(sourceKey, { item, serialized, sourceKey });
+    });
+    return [...unique.values()]
+      .sort((left, right) => left.sourceKey < right.sourceKey ? -1
+        : left.sourceKey > right.sourceKey ? 1
+        : left.serialized < right.serialized ? -1 : left.serialized > right.serialized ? 1 : 0)
+      .map((entry) => entry.item);
+  }
+
+  function canonicalizeDraftPayload(payload = {}) {
+    const textFields = [
+      "question", "subject", "category", "yes_option", "no_option",
+      "evaluation_period_label", "timezone", "yes_criteria", "no_criteria",
+      "edge_cases", "delay_treatment", "cancellation_treatment",
+      "leak_treatment", "rename_treatment", "assumptions", "public_criteria",
+      "description"
+    ];
+    const canonical = {
+      market_slug: String(payload.market_slug || "").trim().toLowerCase()
+    };
+    textFields.forEach((field) => { canonical[field] = normalizeComparableText(payload[field]); });
+    canonical.evaluation_ends_at = canonicalTimestamp(payload.evaluation_ends_at);
+    canonical.closes_at = canonicalTimestamp(payload.closes_at || payload.evaluation_ends_at);
+    canonical.resolution_deadline = canonicalTimestamp(payload.resolution_deadline);
+    canonical.primary_source = canonicalJson(
+      payload.primary_source && typeof payload.primary_source === "object"
+        ? payload.primary_source : {}
+    );
+    canonical.alternative_sources = canonicalAlternativeSources(payload.alternative_sources);
+    return canonical;
+  }
+
+  function draftPayloadsEqual(left, right) {
+    return JSON.stringify(canonicalizeDraftPayload(left)) === JSON.stringify(canonicalizeDraftPayload(right));
+  }
+
+  function collectDraftPayload(form, baseDraft = {}) {
     const read = (name) => String(form.elements.namedItem(name)?.value || "").trim();
     const timezone = read("timezone");
     const primaryUrl = normalizeUrl(read("primary_source_url"));
-    const alternativeUrls = read("alternative_sources")
+    const basePrimary = baseDraft?.primary_source && typeof baseDraft.primary_source === "object"
+      ? baseDraft.primary_source : {};
+    const baseAlternatives = new Map(
+      (Array.isArray(baseDraft?.alternative_sources) ? baseDraft.alternative_sources : [])
+        .filter((item) => item && typeof item === "object")
+        .map((item) => [normalizeUrl(item.url), item])
+        .filter(([url]) => url)
+    );
+    const alternativeUrls = [...new Set(read("alternative_sources")
       .split(/\r?\n/)
       .map(normalizeUrl)
-      .filter(Boolean)
-      .map((url) => ({ url }));
+      .filter(Boolean))]
+      .sort()
+      .map((url) => ({ ...(baseAlternatives.get(url) || {}), url }));
 
+    const evaluationInput = read("evaluation_ends_at");
+    const deadlineInput = read("resolution_deadline");
     return {
+      _timestamp_precision: "milliseconds-v1",
       market_slug: read("market_slug").toLowerCase(),
       question: read("question"),
       subject: read("subject"),
@@ -104,13 +227,19 @@
       yes_option: "Sí",
       no_option: "No",
       evaluation_period_label: read("evaluation_period_label"),
-      evaluation_ends_at: toIsoOrEmpty(read("evaluation_ends_at"), timezone),
+      evaluation_ends_at: timestampFromForm(
+        evaluationInput, timezone, baseDraft.evaluation_ends_at, baseDraft.timezone
+      ),
       timezone,
-      resolution_deadline: toIsoOrEmpty(read("resolution_deadline"), timezone),
+      resolution_deadline: timestampFromForm(
+        deadlineInput, timezone, baseDraft.resolution_deadline, baseDraft.timezone
+      ),
       yes_criteria: read("yes_criteria"),
       no_criteria: read("no_criteria"),
       edge_cases: read("edge_cases"),
-      primary_source: primaryUrl ? { url: primaryUrl } : {},
+      primary_source: primaryUrl
+        ? { ...(normalizeUrl(basePrimary.url) === primaryUrl ? basePrimary : {}), url: primaryUrl }
+        : {},
       alternative_sources: alternativeUrls,
       delay_treatment: read("delay_treatment"),
       cancellation_treatment: read("cancellation_treatment"),
@@ -147,6 +276,11 @@
     getFriendlyError,
     normalizeUrl,
     toIsoOrEmpty,
+    localDateTime,
+    timestampFromForm,
+    normalizeComparableText,
+    canonicalizeDraftPayload,
+    draftPayloadsEqual,
     collectDraftPayload,
     validateDraftLocally
   };

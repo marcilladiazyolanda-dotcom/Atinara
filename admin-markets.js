@@ -21,6 +21,8 @@
     busy: false,
     notice: "",
     noticeTone: "info",
+    draftDirty: false,
+    draftBaseline: null,
     pendingAction: null,
     actionTrigger: null,
     radar: {
@@ -127,35 +129,14 @@
   }
 
   function localDateTime(value, timeZone = "Europe/Madrid") {
-    if (!value) return "";
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return "";
-    try {
-      const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23"
-      }).formatToParts(date);
-      const get = (type) => parts.find((part) => part.type === type)?.value || "";
-      return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
-    } catch (error) {
-      console.warn(
-        "Atinara: no se pudo representar una fecha administrativa.",
-        error instanceof Error ? error.name : "UnknownError"
-      );
-      return "";
-    }
+    return helpers.localDateTime(value, timeZone);
   }
 
   function displayDate(value) {
     if (!value) return "Sin fecha";
     const date = new Date(value);
     return Number.isFinite(date.getTime())
-      ? new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(date)
+      ? new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "medium" }).format(date)
       : "Fecha no válida";
   }
 
@@ -368,12 +349,15 @@
 
   function reviewMarkup(payload) {
     const draft = payload?.draft || {};
-    const latest = payload?.latest_review || null;
+    const effective = payload?.effective_review || null;
+    const latestAttempt = payload?.latest_attempt || null;
+    const latestContentReview = payload?.latest_review || null;
+    const binding = payload?.binding_compatibility || { compatible: true, required: false, reasons: [] };
     const deterministic = Array.isArray(payload?.deterministic_issues) ? payload.deterministic_issues : [];
-    const semantic = Array.isArray(latest?.semantic_issues) ? latest.semantic_issues : [];
+    const semantic = Array.isArray(latestContentReview?.semantic_issues) ? latestContentReview.semantic_issues : [];
     const issues = [...deterministic, ...semantic];
     const issueItems = issues.map((issue, issueIndex) => `
-      <li id="admin-issue-${escapeHtml(issue.field)}-${issueIndex}" data-field="${escapeHtml(issue.field)}">
+      <li id="admin-issue-${escapeHtml(issue.field)}-${issueIndex}" data-field="${escapeHtml(issue.field)}" data-content-issue="true">
         <code>${escapeHtml(issue.code)}</code>
         <strong>${escapeHtml(issue.field || "Revisión")}</strong>
         <span>${escapeHtml(issue.message)}</span>
@@ -381,38 +365,81 @@
     const issueMarkup = issues.length
       ? `<ol class="admin-validation-reasons">${issueItems}</ol>`
       : '<p class="admin-empty-state">No hay motivos bloqueantes registrados para esta versión.</p>';
-    const noteItems = Array.isArray(latest?.editorial_notes)
-      ? latest.editorial_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
+    const noteItems = Array.isArray(latestContentReview?.editorial_notes)
+      ? latestContentReview.editorial_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
       : "";
-    const notes = Array.isArray(latest?.editorial_notes) && latest.editorial_notes.length
+    const notes = Array.isArray(latestContentReview?.editorial_notes) && latestContentReview.editorial_notes.length
       ? `<ul>${noteItems}</ul>` : "";
-    const canReview = ["draft_ready", "review_rejected", "review_inconclusive", "review_unavailable"].includes(draft.workflow_status);
-    const canConfirm = draft.workflow_status === "review_approved" && draft.review_status === "approved";
+    const technicalAttempt = latestAttempt?.classification === "technical";
+    const technicalLabels = {
+      invalid_response: "La respuesta estructurada del proveedor no fue válida.",
+      provider_rate_limited: "El proveedor limitó temporalmente las solicitudes.",
+      provider_timeout: "El proveedor no respondió dentro del plazo seguro.",
+      provider_unavailable: "El proveedor no está disponible temporalmente.",
+      provider_auth_error: "La integración del proveedor rechazó la autenticación.",
+      internal_error: "La revisión encontró una incidencia interna temporal.",
+      stale: "La respuesta pertenecía a una versión anterior y fue ignorada."
+    };
+    const technicalMarkup = technicalAttempt ? `
+      <aside class="admin-service-incident" role="status">
+        <strong>Incidencia temporal del servicio</strong>
+        <span>${escapeHtml(technicalLabels[latestAttempt.status] || "La revisión automática no terminó correctamente.")}</span>
+        <small>Código: ${escapeHtml(latestAttempt.technical_code || latestAttempt.status)} · ${escapeHtml(displayDate(latestAttempt.completed_at || latestAttempt.started_at))}</small>
+        <span>${effective ? "La aprobación efectiva anterior sigue vigente." : "El borrador continúa listo para reintentar; no se ha marcado como rechazado."}</span>
+      </aside>` : "";
+    const history = Array.isArray(payload?.review_history) ? payload.review_history : [];
+    const versions = Array.isArray(payload?.version_history) ? payload.version_history : [];
+    const historyMarkup = `
+      <details class="admin-state-history">
+        <summary>Historial recuperable · ${history.length} intentos · ${versions.length} versiones materiales</summary>
+        <div class="admin-state-history-grid">
+          <section><h4>Intentos</h4><ol>${history.slice(0, 12).map((attempt) => `<li><strong>${escapeHtml(attempt.status)}</strong><span>v${escapeHtml(attempt.draft_version)} · ${escapeHtml(attempt.classification)} · ${escapeHtml(displayDate(attempt.completed_at || attempt.started_at))}</span></li>`).join("") || "<li>Sin intentos.</li>"}</ol></section>
+          <section><h4>Versiones</h4><ol>${versions.slice(0, 12).map((version) => `<li><strong>v${escapeHtml(version.content_version)}</strong><span>${escapeHtml(version.change_origin)} · <code>${escapeHtml(String(version.content_fingerprint || "").slice(0, 16))}…</code></span></li>`).join("") || "<li>Sin snapshots.</li>"}</ol></section>
+        </div>
+      </details>`;
+    const bindingReasons = Array.isArray(binding.reasons) ? binding.reasons : [];
+    const bindingMarkup = `
+      <p class="admin-binding-compatibility" data-compatible="${binding.compatible === true}">
+        <strong>Plan de Resolución:</strong>
+        ${binding.required === false ? "No requerido para este borrador manual." : binding.compatible === true
+          ? `Compatible · plan v${escapeHtml(binding.plan_version || "—")} · ${escapeHtml(binding.binding_status || "draft")}`
+          : `No compatible · ${escapeHtml(bindingReasons.join(", ") || "requiere revisión")}`}
+      </p>`;
+    const canReview = ["draft_ready", "review_rejected", "review_inconclusive", "review_unavailable"].includes(draft.workflow_status) || technicalAttempt;
+    const canConfirm = Boolean(effective)
+      && draft.workflow_status === "review_approved"
+      && draft.review_status === "approved"
+      && binding.compatible === true;
     const canPublish = draft.workflow_status === "human_confirmed";
     const locked = ["published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
 
     return `
-      <section class="admin-review-gate" aria-labelledby="admin-review-title">
+      <section class="admin-review-gate" aria-labelledby="admin-review-title" data-latest-attempt-classification="${escapeHtml(latestAttempt?.classification || "none")}">
         <div class="admin-section-heading">
           <div><p class="eyebrow">Puerta automática obligatoria</p><h3 id="admin-review-title">Revisión y publicación</h3></div>
           ${workflowBadge(draft.workflow_status)}
         </div>
         <div class="admin-review-summary">
           <p><strong>Versión:</strong> ${escapeHtml(draft.content_version || "—")}</p>
-          <p><strong>Revisión:</strong> ${escapeHtml(draft.review_status || "No solicitada")}</p>
+          <p><strong>Huella:</strong> <code>${escapeHtml(String(draft.content_fingerprint || "—").slice(0, 20))}${draft.content_fingerprint ? "…" : ""}</code></p>
+          <p><strong>Revisión efectiva:</strong> ${effective ? `Aprobada · ${escapeHtml(effective.validator_version)}` : "Ninguna aplicable"}</p>
+          <p><strong>Último intento:</strong> ${latestAttempt ? `${escapeHtml(latestAttempt.status)} · ${escapeHtml(latestAttempt.classification)}` : "No solicitado"}</p>
           <p><strong>Privacidad:</strong> permanece privado hasta la publicación autoritativa.</p>
         </div>
+        ${technicalMarkup}
+        ${bindingMarkup}
         ${issueMarkup}
         ${notes}
+        ${historyMarkup}
         <div class="admin-gate-actions">
-          <button class="primary-button" type="button" data-request-review${disabled()}${canReview && !locked ? "" : " disabled"}>Solicitar nueva revisión</button>
-          <button class="secondary-button" type="button" data-confirm-review${disabled()}${canConfirm ? "" : " disabled"}>Confirmar humanamente</button>
+          <button class="primary-button" type="button" data-request-review data-state-allowed="${canReview && !locked}"${disabled()}${canReview && !locked ? "" : " disabled"}>${technicalAttempt ? "Reintentar revisión" : "Solicitar nueva revisión"}</button>
+          <button class="secondary-button" type="button" data-confirm-review data-state-allowed="${canConfirm}"${disabled()}${canConfirm ? "" : " disabled"}>Confirmar humanamente</button>
         </div>
         <p class="admin-gate-rule">No existe una acción para omitir un rechazo o aceptar el riesgo. Cualquier cambio esencial invalida esta revisión.</p>
-        <fieldset class="admin-publish-controls"${canPublish ? "" : " disabled"}>
+        <fieldset class="admin-publish-controls" data-state-allowed="${canPublish}"${canPublish ? "" : " disabled"}>
           <legend>Programación o publicación</legend>
-          <label><span>Programar para (opcional)</span><input type="datetime-local" name="scheduled_for" form="admin-market-form"></label>
-          <button class="primary-button" type="button" data-publish-draft${disabled()}>${canPublish ? "Revalidar y publicar" : "Falta confirmación humana"}</button>
+          <label><span>Programar para (opcional)</span><input type="datetime-local" step="0.001" name="scheduled_for" form="admin-market-form"></label>
+          <button class="primary-button" type="button" data-publish-draft data-state-allowed="${canPublish}"${disabled()}>${canPublish ? "Revalidar y publicar" : "Falta confirmación humana"}</button>
           <p>Supabase volverá a comprobar rol, estado, versión, huella y aprobación vigente.</p>
         </fieldset>
       </section>`;
@@ -452,7 +479,7 @@
     const f = (name, label, type = "text", options = {}) => `
       <label class="${options.wide ? "field-wide" : ""}">
         <span>${escapeHtml(label)}${options.required ? " *" : ""}</span>
-        <input type="${type}" name="${escapeHtml(name)}" value="${valueAttribute(options.value ?? draft[name])}"${options.required ? " required" : ""}${locked ? " disabled" : ""}${invalidAttributes(name)}${options.help && !invalidAttributes(name) ? ` aria-describedby="help-${escapeHtml(name)}"` : ""}>
+        <input type="${type}" name="${escapeHtml(name)}" value="${valueAttribute(options.value ?? draft[name])}"${options.step ? ` step="${escapeHtml(options.step)}"` : ""}${options.required ? " required" : ""}${locked ? " disabled" : ""}${invalidAttributes(name)}${options.help && !invalidAttributes(name) ? ` aria-describedby="help-${escapeHtml(name)}"` : ""}>
         ${originMarkup(name)}
         ${options.help ? `<small id="help-${escapeHtml(name)}">${escapeHtml(options.help)}</small>` : ""}
       </label>`;
@@ -491,9 +518,9 @@
             <p class="fieldset-note">El cierre de participación se deriva del final estructurado del periodo. La fecha límite de resolución es independiente.</p>
             <div class="admin-form-grid">
               ${f("evaluation_period_label", "Periodo evaluado", "text", { wide: true, help: "Ejemplo: desde el 1 de septiembre de 2026 00:00 hasta el 30 de septiembre de 2026 23:59 Europe/Madrid." })}
-              ${f("evaluation_ends_at", "Final exacto del periodo", "datetime-local", { value: localDateTime(draft.evaluation_ends_at, draft.timezone), required: true })}
+              ${f("evaluation_ends_at", "Final exacto del periodo", "datetime-local", { value: localDateTime(draft.evaluation_ends_at, draft.timezone), required: true, step: "0.001" })}
               ${f("timezone", "Zona horaria IANA", "text", { value: draft.timezone || "Europe/Madrid", required: true })}
-              ${f("resolution_deadline", "Fecha límite de resolución", "datetime-local", { value: localDateTime(draft.resolution_deadline, draft.timezone), required: true })}
+              ${f("resolution_deadline", "Fecha límite de resolución", "datetime-local", { value: localDateTime(draft.resolution_deadline, draft.timezone), required: true, step: "0.001" })}
               <div class="field-derived field-wide"><span>closes_at derivado</span><strong>${escapeHtml(draft.evaluation_ends_at ? displayDate(draft.evaluation_ends_at) : "Se calculará al guardar")}</strong><small>No se introduce una segunda fecha contradictoria.</small></div>
             </div>
           </fieldset>
@@ -519,8 +546,9 @@
             </div>
           </fieldset>
           <div class="admin-editor-actions">
-            <button class="primary-button" type="submit"${disabled()}${locked ? " disabled" : ""}>Guardar borrador privado</button>
-            <span>Los borradores incompletos nunca aparecen en superficies públicas.</span>
+            <button class="primary-button" type="submit" data-save-draft${disabled()}${locked || draft.id ? " disabled" : ""}>Guardar borrador privado</button>
+            <span data-draft-change-status aria-live="polite">${draft.id ? "Sin cambios pendientes" : "Nuevo borrador sin guardar"}</span>
+            <small>Los borradores incompletos nunca aparecen en superficies públicas.</small>
           </div>
         </form>
         ${draft.id ? reviewMarkup(payload) : ""}
@@ -924,6 +952,70 @@
     </section>`;
   }
 
+  function setDraftDirtyState(form) {
+    if (!form) return;
+    const baseDraft = state.selected?.draft || {};
+    const currentPayload = helpers.collectDraftPayload(form, baseDraft);
+    const currentCanonical = JSON.stringify(helpers.canonicalizeDraftPayload(currentPayload));
+    const hasStoredDraft = Boolean(form.dataset.draftId);
+    const hasNewDraftContent = Boolean(
+      currentPayload.market_slug
+      || currentPayload.question
+      || currentPayload.subject
+      || currentPayload.category
+      || currentPayload.evaluation_ends_at
+      || currentPayload.resolution_deadline
+      || currentPayload.primary_source?.url
+      || currentPayload.alternative_sources?.length
+    );
+    const dirty = hasStoredDraft
+      ? currentCanonical !== state.draftBaseline
+      : hasNewDraftContent;
+    if (form.dataset.lastCanonical && form.dataset.lastCanonical !== currentCanonical) {
+      delete form.dataset.idempotencyKey;
+    }
+    form.dataset.lastCanonical = currentCanonical;
+    state.draftDirty = dirty;
+    const saveButton = form.querySelector("[data-save-draft]");
+    if (saveButton) saveButton.disabled = state.busy || !dirty;
+    const status = form.querySelector("[data-draft-change-status]");
+    if (status) {
+      status.textContent = hasStoredDraft
+        ? dirty ? "Cambios sin guardar" : "Sin cambios pendientes"
+        : dirty ? "Nuevo borrador sin guardar" : "Sin cambios pendientes";
+      status.dataset.dirty = String(dirty);
+    }
+    document.querySelectorAll("[data-request-review], [data-confirm-review], [data-publish-draft]")
+      .forEach((button) => {
+        button.disabled = state.busy || dirty || button.dataset.stateAllowed !== "true";
+      });
+    const publishControls = document.querySelector(".admin-publish-controls");
+    if (publishControls) {
+      publishControls.disabled = state.busy || dirty || publishControls.dataset.stateAllowed !== "true";
+    }
+  }
+
+  function initializeDraftFormState() {
+    const form = document.querySelector("#admin-market-form");
+    if (!form) {
+      state.draftDirty = false;
+      state.draftBaseline = null;
+      return;
+    }
+    const baseDraft = state.selected?.draft || {};
+    state.draftBaseline = form.dataset.draftId
+      ? JSON.stringify(helpers.canonicalizeDraftPayload(baseDraft))
+      : null;
+    form.dataset.lastCanonical = JSON.stringify(
+      helpers.canonicalizeDraftPayload(helpers.collectDraftPayload(form, baseDraft))
+    );
+    setDraftDirtyState(form);
+  }
+
+  function canDiscardDraftChanges() {
+    return !state.draftDirty || window.confirm("Hay cambios materiales sin guardar. ¿Quieres descartarlos?");
+  }
+
   function renderWorkspace() {
     root.setAttribute("aria-busy", String(state.busy));
     let content = "";
@@ -939,6 +1031,7 @@
       content = auditMarkup(state.audit);
     }
     root.innerHTML = `${toolbarMarkup()}${noticeMarkup()}${content}`;
+    initializeDraftFormState();
   }
 
   async function loadDrafts({ preserveSelection = true } = {}) {
@@ -952,6 +1045,7 @@
   }
 
   async function openDraft(id) {
+    if (!canDiscardDraftChanges()) return;
     state.busy = true;
     renderWorkspace();
     try {
@@ -967,16 +1061,39 @@
   }
 
   async function saveDraft(form) {
-    const payload = helpers.collectDraftPayload(form);
+    const baseDraft = state.selected?.draft || {};
+    const payload = helpers.collectDraftPayload(form, baseDraft);
+    if (form.dataset.draftId && helpers.draftPayloadsEqual(payload, baseDraft)) {
+      setNotice("No había cambios materiales. Se conserva la versión y la revisión vigente.", "success");
+      state.draftDirty = false;
+      setDraftDirtyState(form);
+      const existingNotice = root.querySelector(".admin-status-message");
+      if (existingNotice) existingNotice.textContent = state.notice;
+      return;
+    }
     const localIssues = helpers.validateDraftLocally(payload);
     if (localIssues.length) {
       setNotice(localIssues[0].message, "error");
-      renderWorkspace();
+      let inlineNotice = root.querySelector("[data-inline-save-error]");
+      if (!inlineNotice) {
+        inlineNotice = document.createElement("p");
+        inlineNotice.dataset.inlineSaveError = "true";
+        inlineNotice.className = "admin-status-message admin-status-error";
+        inlineNotice.setAttribute("role", "alert");
+        form.prepend(inlineNotice);
+      }
+      inlineNotice.textContent = state.notice;
       form.querySelector(`[name="${CSS.escape(localIssues[0].field)}"]`)?.focus();
       return;
     }
+    form.dataset.idempotencyKey ||= crypto.randomUUID();
+    payload._idempotency_key = form.dataset.idempotencyKey;
+    payload._change_origin = state.radarPrefill ? "intelligence_form_save" : "manual_form_save";
     state.busy = true;
-    renderWorkspace();
+    root.setAttribute("aria-busy", "true");
+    form.setAttribute("aria-busy", "true");
+    form.querySelectorAll("button, input, textarea, select").forEach((control) => { control.disabled = true; });
+    let saved = false;
     try {
       const intelligencePrefill = state.radarPrefill;
       const args = {
@@ -1016,18 +1133,37 @@
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: result.draft.id });
       const issueCount = Array.isArray(result.deterministic_issues) ? result.deterministic_issues.length : 0;
       const pluralSuffix = issueCount === 1 ? "" : "s";
-      const noticeMessage = issueCount
+      const noticeMessage = result.changed === false
+        ? result.message || "No había cambios materiales. Se conserva la versión y la revisión vigente."
+        : issueCount
         ? `Borrador guardado en privado con ${issueCount} motivo${pluralSuffix} pendiente${pluralSuffix}.`
         : "Borrador guardado. Ya puede solicitarse la revisión automática.";
       setNotice(
         feedbackWarning ? `${noticeMessage} El feedback experto no pudo registrarse y podrá reintentarse sin afectar al borrador.` : noticeMessage,
         issueCount || feedbackWarning ? "warning" : "success"
       );
+      saved = true;
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo guardar el borrador."), "error");
+      let inlineNotice = root.querySelector("[data-inline-save-error]");
+      if (!inlineNotice) {
+        inlineNotice = document.createElement("p");
+        inlineNotice.dataset.inlineSaveError = "true";
+        inlineNotice.className = "admin-status-message admin-status-error";
+        inlineNotice.setAttribute("role", "alert");
+        form.prepend(inlineNotice);
+      }
+      inlineNotice.textContent = state.notice;
     } finally {
       state.busy = false;
-      renderWorkspace();
+      root.setAttribute("aria-busy", "false");
+      if (saved) {
+        renderWorkspace();
+      } else {
+        form.removeAttribute("aria-busy");
+        form.querySelectorAll("input, textarea, select").forEach((control) => { control.disabled = false; });
+        setDraftDirtyState(form);
+      }
     }
   }
 
@@ -1039,7 +1175,12 @@
     renderWorkspace();
     try {
       const { data, error } = await client.functions.invoke("validate-market-draft", {
-        body: { draft_id: draft.id, expected_version: draft.content_version }
+        body: {
+          draft_id: draft.id,
+          expected_version: draft.content_version,
+          attempt_id: crypto.randomUUID(),
+          force_review: state.selected?.latest_attempt?.classification === "technical"
+        }
       });
       if (error) throw error;
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: draft.id });
@@ -1077,7 +1218,14 @@
     const draft = state.selected?.draft;
     if (!draft) return;
     const scheduledValue = document.querySelector('[name="scheduled_for"]')?.value || "";
-    const scheduledFor = scheduledValue ? new Date(scheduledValue).toISOString() : null;
+    const scheduledFor = scheduledValue
+      ? helpers.toIsoOrEmpty(scheduledValue, draft.timezone || "Europe/Madrid")
+      : null;
+    if (scheduledValue && !scheduledFor) {
+      setNotice("La fecha programada no es válida en la zona horaria del mercado.", "error");
+      renderWorkspace();
+      return;
+    }
     const action = scheduledFor ? "programar" : "publicar";
     if (!window.confirm(`Supabase revalidará el rol y la revisión vigente antes de ${action}. ¿Continuar?`)) return;
     state.busy = true;
@@ -1515,6 +1663,7 @@
   }
 
   async function loadView(view) {
+    if (state.view === "drafts" && view !== "drafts" && !canDiscardDraftChanges()) return;
     state.view = view;
     state.busy = true;
     renderWorkspace();
@@ -1662,6 +1811,16 @@
     if (target.dataset.cancelMarket) managePublishedMarket(target.dataset.cancelMarket, "cancel", target);
   });
 
+  root.addEventListener("input", (event) => {
+    const form = event.target.closest("#admin-market-form");
+    if (form) setDraftDirtyState(form);
+  });
+
+  root.addEventListener("change", (event) => {
+    const form = event.target.closest("#admin-market-form");
+    if (form) setDraftDirtyState(form);
+  });
+
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "radar-filters") {
@@ -1706,6 +1865,7 @@
   });
 
   newDraftButton?.addEventListener("click", () => {
+    if (!canDiscardDraftChanges()) return;
     state.view = "drafts";
     state.selected = null;
     state.radarPrefill = null;
@@ -1737,6 +1897,12 @@
       renderWorkspace();
       document.querySelector(`[data-observatory-details="${CSS.escape(closedSignalId)}"]`)?.focus();
     }
+  });
+
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.draftDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
   });
 
   async function applyAuth(auth) {

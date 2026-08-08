@@ -76,8 +76,9 @@
   function needsRepair() {
     const gate = document.querySelector(".admin-review-gate");
     if (!gate) return false;
-    const hasIssues = gate.querySelectorAll(".admin-validation-reasons li").length > 0;
-    return hasIssues && /(rejected|rechazad|inconclus|no disponible)/i.test(gate.textContent || "");
+    if (gate.dataset.latestAttemptClassification === "technical") return false;
+    const hasContentIssues = gate.querySelectorAll("[data-content-issue='true']").length > 0;
+    return hasContentIssues && /(rejected|rechazad|inconclus|incomplet|contradic|ambigu)/i.test(gate.textContent || "");
   }
 
   function enhance() {
@@ -85,7 +86,7 @@
     const draft = currentDraft();
     if (!gate || !draft || !needsRepair() || gate.querySelector("[data-expert-repair-panel]")) return;
 
-    const issueCount = gate.querySelectorAll(".admin-validation-reasons li").length;
+    const issueCount = gate.querySelectorAll("[data-content-issue='true']").length;
     const panel = document.createElement("section");
     panel.className = "admin-expert-repair-panel";
     panel.dataset.expertRepairPanel = "true";

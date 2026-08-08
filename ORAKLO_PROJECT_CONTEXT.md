@@ -1,14 +1,79 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 7 de agosto de 2026.
+Última actualización del contexto: 8 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** el Radar v16 está publicado y aceptado en
-> `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Sus dos
-> migraciones ya están aplicadas y no deben repetirse. El Radar v17 está
-> preparado solo en local, sin SQL ni cambios externos, y pendiente de
-> activación coordinada por Yol.
+> **Estado vigente:** el Radar funcional v17 continúa activo e intacto. Supabase
+> lo enumera internamente como despliegue 18, con hash
+> `942a51d928aa4c7666bb481cd55d449fb5ff00270decdb7889de8f584b15fc8e` y
+> `verify_jwt=true`. El cierre del Paso 13.5.2 añade memoria autoritativa de
+> borradores y revisiones; no activa Cron ni schedulers y no modifica mercados
+> publicados, predicciones, Karma, Prestigio o economía.
+
+### Cierre del Paso 13.5.2 · memoria autoritativa · 8 de agosto de 2026
+
+- La base real inspeccionada fue `origin/main =
+  3eb35bff241750158dec2aff54773c1ce2edb803`, en la rama
+  `work/fix-draft-memory-review-state`. Supabase producción y no un ZIP o un
+  resumen anterior fue la fuente de verdad.
+- La causa exacta del incidente de GTA VI fue el round-trip del control
+  `datetime-local`: la versión aprobada terminaba a
+  `2026-08-31T23:59:59.000Z`, pero abrir y guardar desde el formulario truncó
+  ambos campos al minuto `23:59:00.000Z`. El resto del payload editable era
+  equivalente; el binding v2 y el antiguo MD5 aprobado permitieron demostrarlo.
+- `sha256-canonical-v2` normaliza texto, JSON, instantes UTC a milisegundos y
+  fuentes no semánticamente ordenadas. Las precedencias y roles del Plan de
+  Resolución sí se conservan como semánticos. El frontend usa
+  `step="0.001"`, mantiene la zona IANA y vuelve a leer Supabase después de
+  guardar.
+- `private.market_draft_versions` conserva snapshots materiales inmutables;
+  `private.market_review_attempts` conserva cada intento técnico o de contenido;
+  `private.market_effective_reviews` conserva por separado la aprobación
+  aplicable; y `private.market_workflow_requests` hace recuperables los replay
+  idempotentes. Una restauración crea otra versión enlazada, nunca reescribe el
+  pasado.
+- `save_market_draft` usa lock, `expected_version`, UUID y hash de petición. Un
+  payload canónicamente idéntico devuelve `changed=false`, no incrementa versión
+  y conserva revisión y confirmación. Radar, Observatorio, Agente Editor y
+  Corrector delegan en la misma política.
+- `validate-market-draft` está activa como versión interna 6, hash de bundle
+  `1e6b75e9a5336746572d7c3eee48a884659250022ab46376898ffeb1abd8db1a`,
+  `verify_jwt=true`. Usa `gemini-3.5-flash-lite`, JSON Schema, razonamiento
+  mínimo y un único retry solo si la salida estructurada es inválida. Cuota,
+  timeout, 5xx, red y autenticación quedan clasificados como intentos técnicos.
+- `market-draft-fixer` está activa como versión interna 2, hash de bundle
+  `4d393ac5a932c6e94376657b416bae6e6261d9ed722ce373cbf6f434717e8169`,
+  `verify_jwt=true`. Rechaza incidentes de infraestructura y solo propone
+  cambios mínimos ante errores reales de contenido; nunca confirma o publica.
+- GTA VI quedó recuperado de forma auditada como versión 5,
+  `review_approved`, SHA-256
+  `a1829b275119a0dc4b862e4028172dcf26718d92b8eccccd07125ec407cf0663`,
+  con revisión efectiva id 3 y Plan de Resolución v2 compatible. El último
+  `invalid_response` de la antigua versión 4 se conserva aparte como intento
+  técnico. `human_confirmed_at`, `scheduled_for`, `published_at` y `market_id`
+  siguen nulos.
+- Producción registra las migraciones `add_authoritative_draft_versions_and_review_attempts`,
+  `fix_save_market_draft_actor_ambiguity`, `fix_market_text_normalization`,
+  `fix_binding_source_alias_ambiguity` e
+  `index_authoritative_draft_memory_foreign_keys`. No deben repetirse.
+- Baseline protegida después de la recuperación: 11 mercados, 9 predicciones,
+  2 perfiles, 2.027 Karma, 40 Prestigio, 1 borrador, 2 bindings, 0 snapshots de
+  fuente y 0 expedientes de evidencia. Los schedulers de monitor y
+  descubrimiento contextual permanecen desactivados.
+- La matriz transaccional pasa 19 casos con rollback; la suite local pasa 164
+  pruebas, sintaxis de 58 JavaScript, TypeScript de Checkly, bundle de las dos
+  Edge Functions y mocks de JSON dividido, razonamiento, retry único, 429,
+  timeout y 5xx. `docs/STATE_CONSISTENCY_AND_MEMORY.md` fija el contrato para
+  futuras escrituras.
+- La comprobación final del editor real cubre 1366×768, 1280×720, 1024×768,
+  430×932, 390×844, 375×667 y 320×568, en tema claro y oscuro, sin scroll
+  horizontal y con el control de tema operable por Enter y Espacio. Los códigos
+  de auditoría largos, `fieldset` y controles temporales conservan anchura
+  flexible en la pantalla estrecha.
+- Yol debe ser la única persona que pulse primero `Confirmar humanamente` y,
+  después, `Revalidar y publicar`. Esta entrega no ejecuta ninguna de esas dos
+  acciones.
 
 ### Paso 13.5.2 · Observatorio y agentes · 7 de agosto de 2026
 

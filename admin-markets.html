@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260807-radar-expert-bridge1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260807-radar-expert-bridge1">
-  <script src="observability-config.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="monitoring.js?v=20260807-radar-expert-bridge1"></script>
+  <script src="theme.js?v=20260808-draft-memory2"></script>
+  <link rel="stylesheet" href="styles.css?v=20260808-draft-memory2">
+  <script src="observability-config.js?v=20260808-draft-memory2"></script>
+  <script src="monitoring.js?v=20260808-draft-memory2"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -263,21 +263,22 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="password-security.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="password-recovery.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="site-ui.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="auth.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="market-admin-validation.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="admin-markets.js?v=20260807-radar-expert-bridge1"></script>
-  <script src="market-draft-fixer.js?v=20260808-draftfix1"></script>
+  <script src="supabaseClient.js?v=20260808-draft-memory2"></script>
+  <script src="password-security.js?v=20260808-draft-memory2"></script>
+  <script src="password-recovery.js?v=20260808-draft-memory2"></script>
+  <script src="site-ui.js?v=20260808-draft-memory2"></script>
+  <script src="auth.js?v=20260808-draft-memory2"></script>
+  <script src="market-admin-validation.js?v=20260808-draft-memory2"></script>
+  <script src="admin-markets.js?v=20260808-draft-memory2"></script>
+  <script src="market-draft-fixer.js?v=20260808-draft-memory2"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
 
       const root = document.querySelector("#admin-markets-root");
       const client = window.orakloSupabase;
-      if (!root || !client) return;
+      const helpers = window.atinaraMarketAdmin;
+      if (!root || !client || !helpers) return;
 
       const packageCache = new Map();
       const pendingPackages = new Map();
@@ -356,19 +357,7 @@
       }
 
       function datetimeLocal(value, timeZone = "Europe/Madrid") {
-        const date = value ? new Date(value) : null;
-        if (!date || !Number.isFinite(date.getTime())) return "";
-        const parts = new Intl.DateTimeFormat("en-CA", {
-          timeZone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hourCycle: "h23"
-        }).formatToParts(date);
-        const get = (type) => parts.find((part) => part.type === type)?.value || "";
-        return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+        return helpers.localDateTime(value, timeZone);
       }
 
       async function invokeExpert(action, payload) {
@@ -590,37 +579,7 @@
           const direct = new Date(raw);
           return Number.isFinite(direct.getTime()) ? direct.toISOString() : "";
         }
-        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
-        if (!match) return "";
-        const desired = {
-          year: Number(match[1]), month: Number(match[2]), day: Number(match[3]),
-          hour: Number(match[4]), minute: Number(match[5]), second: Number(match[6] || 0)
-        };
-        let instant = Date.UTC(
-          desired.year, desired.month - 1, desired.day,
-          desired.hour, desired.minute, desired.second
-        );
-        const formatter = new Intl.DateTimeFormat("en-CA", {
-          timeZone,
-          year: "numeric", month: "2-digit", day: "2-digit",
-          hour: "2-digit", minute: "2-digit", second: "2-digit",
-          hourCycle: "h23"
-        });
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const parts = formatter.formatToParts(new Date(instant));
-          const get = (type) => Number(parts.find((part) => part.type === type)?.value || 0);
-          const represented = Date.UTC(
-            get("year"), get("month") - 1, get("day"),
-            get("hour"), get("minute"), get("second")
-          );
-          const wanted = Date.UTC(
-            desired.year, desired.month - 1, desired.day,
-            desired.hour, desired.minute, desired.second
-          );
-          instant += wanted - represented;
-        }
-        const result = new Date(instant);
-        return Number.isFinite(result.getTime()) ? result.toISOString() : "";
+        return helpers.toIsoOrEmpty(raw, timeZone);
       }
 
       function draftPayload(form) {
@@ -646,6 +605,10 @@
           .map((url) => url.trim())
           .filter(Boolean)
           .map((url) => ({ url }));
+        form.dataset.idempotencyKey ||= crypto.randomUUID();
+        payload._idempotency_key = form.dataset.idempotencyKey;
+        payload._change_origin = "radar_expert_bridge_save";
+        payload._timestamp_precision = "milliseconds-v1";
         return payload;
       }
 
@@ -653,6 +616,8 @@
         const original = Array.isArray(pkg.sources) ? pkg.sources : [];
         const originalByUrl = new Map(original.map((source) => [String(source?.url || "").trim(), source]));
         const output = [];
+        const usedPrecedences = new Set([1]);
+        let nextPrecedence = 2;
         const primaryUrl = String(payload.primary_source?.url || "").trim();
         if (primaryUrl) {
           output.push({
@@ -672,10 +637,17 @@
             "DISCOVERY_SIGNAL", "PROBABILITY_SIGNAL", "CONTEXT_SOURCE",
             "FALLBACK_RESOLUTION", "CORROBORATION", "PROHIBITED_FOR_RESOLUTION"
           ].includes(previousRole) ? previousRole : "CORROBORATION";
+          let precedence = Number(previous.precedence);
+          if (!Number.isSafeInteger(precedence) || precedence < 2 || usedPrecedences.has(precedence)) {
+            while (usedPrecedences.has(nextPrecedence)) nextPrecedence += 1;
+            precedence = nextPrecedence;
+          }
+          usedPrecedences.add(precedence);
+          nextPrecedence = Math.max(nextPrecedence, precedence + 1);
           output.push({
             url,
             role,
-            precedence: output.length + 1,
+            precedence,
             required: previous.required === true,
             fallback_condition: role === "FALLBACK_RESOLUTION"
               ? String(previous.fallback_condition || "Si la fuente primaria deja de estar disponible o no publica el dato previsto.")
