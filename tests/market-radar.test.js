@@ -319,11 +319,27 @@ test("la fecha oficial de GTA VI informa la probabilidad, pero no invalida un um
   assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "EVENT_OUTSIDE_CONTRACT" }), true);
 });
 
-test("la política predictiva nunca pisa un resultado resuelto ni una fuente inválida", () => {
+test("la política predictiva solo resuelve VERIFICATION_REQUIRED para una predicción directa completa y segura", () => {
   const candidate = completeCandidate("Will Grand Theft Auto VI release before September 1, 2026?");
-  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "EVENT_ALREADY_RESOLVED" }), false);
-  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "INVALID_OR_UNVERIFIED_SOURCE" }), false);
-  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "VERIFICATION_REQUIRED" }), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "VERIFICATION_REQUIRED" }, now), true);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "EVENT_ALREADY_RESOLVED" }, now), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(candidate, { reason_code: "INVALID_OR_UNVERIFIED_SOURCE" }, now), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride({ ...candidate, atinara_resolution_source_url: null }, { reason_code: "VERIFICATION_REQUIRED" }, now), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride({ ...candidate, source_result: "yes" }, { reason_code: "VERIFICATION_REQUIRED" }, now), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride({
+    ...candidate,
+    hard_reject_reasons: ["INVALID_OR_UNVERIFIED_SOURCE"],
+  }, { reason_code: "VERIFICATION_REQUIRED" }, now), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(
+    completeCandidate("Will Grand Theft Auto VI score above 95 on Metacritic?"),
+    { reason_code: "VERIFICATION_REQUIRED" },
+    now,
+  ), false);
+  assert.equal(radar.canApplyPredictivePolicyOverride(
+    completeCandidate("Will Grand Theft Auto VI win Game of the Year 2026?"),
+    { reason_code: "VERIFICATION_REQUIRED" },
+    now,
+  ), false);
 });
 
 test("un lanzamiento futuro no anunciado sigue siendo una predicción válida y resoluble", () => {
@@ -556,7 +572,7 @@ test("la verificación vigente se reutiliza por huella y evita repetir servicios
 
 test("la vista solo expone candidatas evaluadas con la política predictiva vigente", () => {
   assert.match(edge, /filter\(\(candidate\) => cleanText\(candidate\.eligibility_policy_version, 80\) === RADAR_ELIGIBILITY_POLICY_VERSION\)/);
-  assert.match(edge, /canApplyPredictivePolicyOverride\(adapted, decision\)/);
+  assert.match(edge, /canApplyPredictivePolicyOverride\(adapted, decision, now\)/);
 });
 
 test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
@@ -568,14 +584,16 @@ test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
   assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
-test("la preparación revalida proveedor, reutiliza verificación vigente y reserva el estado autoritativo", () => {
+test("la preparación revalida proveedor y aplica verificación y revisión en una transacción autoritativa", () => {
   assert.match(edge, /NORMALIZER_OUTDATED/);
   assert.match(edge, /ELIGIBILITY_POLICY_OUTDATED/);
   assert.match(edge, /VERIFICATION_EXPIRED/);
   assert.match(edge, /revalidatePolymarketCandidate/);
   assert.match(edge, /revalidateKalshiCandidate/);
-  assert.match(edge, /reserve_market_radar_candidate_for_prepare/);
-  assert.match(edge, /PROVIDER_REVALIDATION_FAILED/);
+  assert.match(edge, /revalidateCandidateForPreparation/);
+  assert.match(edge, /apply_market_radar_prepare_verification/);
+  assert.match(edge, /expected_preparation_revision_input/);
+  assert.match(edge, /PREPARATION_REVISION_MISMATCH/);
   assert.match(edge, /candidatePreflight/);
   assert.match(edge, /canReuseRadarVerification\(candidate, candidate, checkedAt\)/);
   assert.match(edge, /refreshCandidateCacheLease/);
@@ -584,7 +602,7 @@ test("la preparación revalida proveedor, reutiliza verificación vigente y rese
   assert.match(edge, /verifyAndAdaptWithGemini\(environment\.geminiKey, \[candidate\]/);
   assert.match(edge, /prepareRevalidationError/);
   assert.match(edge, /RESOLUTION_SOURCE_REQUIRED/);
-  assert.match(edge, /const authoritativeCandidate = toRecord\(await rpc/);
+  assert.match(edge, /const authoritativeCandidate = toRecord\(applied\.candidate\)/);
   assert.match(edge, /const factualReadiness = candidateReady\(authoritativeCandidate\)/);
   assert.match(edge, /some\(isBlockingDuplicateMatch\)/);
   assert.match(edge, /RADAR_CANDIDATE_RESOLVED/);
@@ -635,12 +653,14 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /\["exact_duplicate", "semantic_duplicate"\]/);
   assert.match(adminUi, /edgeInvocationError/);
   assert.match(adminUi, /window\.atinaraMarketAdminBridge/);
-  assert.match(adminHtml, /await preparation\(candidateId, \{ throwOnError: true \}\)/);
+  assert.match(adminHtml, /await bridge\.prepareRadarCandidate\(candidateId, \{ throwOnError: true \}\)/);
+  assert.match(adminHtml, /await bridge\.refreshRadarExpertAnalysis\(candidateId/);
+  assert.match(adminHtml, /packageMatchesPreparation\(pkg, preparationRevision\)/);
   assert.doesNotMatch(adminHtml, /debe conservar una verificación factual vigente antes de abrir el formulario/);
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260808-radar-e2e1/);
+  assert.match(adminHtml, /v=20260808-radar-expert-atomic1/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 

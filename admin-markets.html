@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260808-radar-e2e1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260808-radar-e2e1">
-  <script src="observability-config.js?v=20260808-radar-e2e1"></script>
-  <script src="monitoring.js?v=20260808-radar-e2e1"></script>
+  <script src="theme.js?v=20260808-radar-expert-atomic1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260808-radar-expert-atomic1">
+  <script src="observability-config.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="monitoring.js?v=20260808-radar-expert-atomic1"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -263,14 +263,14 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260808-radar-e2e1"></script>
-  <script src="password-security.js?v=20260808-radar-e2e1"></script>
-  <script src="password-recovery.js?v=20260808-radar-e2e1"></script>
-  <script src="site-ui.js?v=20260808-radar-e2e1"></script>
-  <script src="auth.js?v=20260808-radar-e2e1"></script>
-  <script src="market-admin-validation.js?v=20260808-radar-e2e1"></script>
-  <script src="admin-markets.js?v=20260808-radar-e2e1"></script>
-  <script src="market-draft-fixer.js?v=20260808-radar-e2e1"></script>
+  <script src="supabaseClient.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="password-security.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="password-recovery.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="site-ui.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="auth.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="market-admin-validation.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="admin-markets.js?v=20260808-radar-expert-atomic1"></script>
+  <script src="market-draft-fixer.js?v=20260808-radar-expert-atomic1"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
@@ -282,9 +282,15 @@
 
       const packageCache = new Map();
       const pendingPackages = new Map();
+      const packageRequestVersions = new Map();
+      const appliedPackages = new Map();
+      const applyingCandidates = new Set();
       const STORAGE_KEY = "atinara:radar-expert-draft-package:v1";
       const SAVED_NOTICE_KEY = "atinara:radar-expert-saved:v1";
       let scanTimer = null;
+      let forceNextScan = false;
+      let detailRequestSequence = 0;
+      let bridgeStatus = null;
 
       const labels = {
         decision: {
@@ -326,7 +332,13 @@
         EVENT_ALREADY_RESOLVED: "El resultado ya es público.",
         EXPERT_PROVIDER_DEGRADED: "El proveedor editorial estuvo temporalmente limitado; se conserva la evaluación determinista.",
         EXPERT_NOT_CONFIGURED: "El análisis editorial avanzado no está configurado.",
-        MARKET_EXPERT_ANALYSIS_REQUIRED: "Primero debe completarse un análisis experto."
+        MARKET_EXPERT_ANALYSIS_REQUIRED: "Primero debe completarse un análisis experto.",
+        MARKET_EXPERT_ANALYSIS_STALE: "El análisis experto pertenece a una revisión anterior de la candidata.",
+        RADAR_FACTUAL_VERIFICATION_REQUIRED: "La comprobación factual debe actualizarse antes de continuar.",
+        RADAR_CANDIDATE_NOT_PREPARABLE: "La candidata no cumple todavía las condiciones para preparar un borrador.",
+        RADAR_NORMALIZER_OUTDATED: "La candidata debe actualizarse con la versión actual del normalizador.",
+        RADAR_ELIGIBILITY_POLICY_OUTDATED: "La candidata debe revisarse con la política de elegibilidad actual.",
+        RADAR_RESOLUTION_SOURCE_REQUIRED: "Falta una fuente de resolución verificable para esta candidata."
       };
 
       function escapeHtml(value) {
@@ -368,23 +380,123 @@
         return data || {};
       }
 
+      function invalidatePackage(candidateId) {
+        packageRequestVersions.set(candidateId, (packageRequestVersions.get(candidateId) || 0) + 1);
+        packageCache.delete(candidateId);
+        pendingPackages.delete(candidateId);
+      }
+
       async function loadPackage(candidateId, force = false) {
         if (!force && packageCache.has(candidateId)) return packageCache.get(candidateId);
-        if (pendingPackages.has(candidateId)) return pendingPackages.get(candidateId);
+        const pending = pendingPackages.get(candidateId);
+        if (!force && pending) return pending.promise;
+        const requestVersion = (packageRequestVersions.get(candidateId) || 0) + 1;
+        packageRequestVersions.set(candidateId, requestVersion);
         const promise = invokeExpert("get-draft-package", {
           origin_type: "radar_candidate",
           origin_id: candidateId
         }).then((data) => {
           const value = data.package || { available: false };
-          packageCache.set(candidateId, value);
-          pendingPackages.delete(candidateId);
+          if (packageRequestVersions.get(candidateId) === requestVersion) {
+            packageCache.set(candidateId, value);
+          }
           return value;
-        }).catch((error) => {
-          pendingPackages.delete(candidateId);
-          throw error;
+        }).finally(() => {
+          if (pendingPackages.get(candidateId)?.requestVersion === requestVersion) {
+            pendingPackages.delete(candidateId);
+          }
         });
-        pendingPackages.set(candidateId, promise);
+        pendingPackages.set(candidateId, { requestVersion, promise });
         return promise;
+      }
+
+      function preparationRevisionFrom(value) {
+        return String(
+          value?.preparation_revision
+          || value?.origin_preparation_revision
+          || value?.origin?.preparation_revision
+          || value?.candidate?.preparation_revision
+          || value?.reservation?.preparation_revision
+          || value?.run?.origin_preparation_revision
+          || value?.run?.result_json?.origin_preparation_revision
+          || value?.verdict?.origin_preparation_revision
+          || ""
+        ).trim();
+      }
+
+      function packageMatchesPreparation(pkg, preparationRevision) {
+        const originRevisions = [pkg?.preparation_revision, pkg?.origin?.preparation_revision]
+          .filter((value) => value !== null && value !== undefined && String(value).trim())
+          .map((value) => String(value).trim());
+        const expertRevisions = [
+          pkg?.run?.origin_preparation_revision,
+          pkg?.run?.result_json?.origin_preparation_revision,
+          pkg?.verdict?.origin_preparation_revision
+        ].filter((value) => value !== null && value !== undefined && String(value).trim())
+          .map((value) => String(value).trim());
+        return Boolean(
+          preparationRevision
+          && originRevisions.length
+          && expertRevisions.length
+          && originRevisions.every((revision) => revision === preparationRevision)
+          && expertRevisions.every((revision) => revision === preparationRevision)
+        );
+      }
+
+      function clearPreparedPackage(candidateId = "") {
+        try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* The in-memory binding is cleared below. */ }
+        if (candidateId) appliedPackages.delete(candidateId);
+        else appliedPackages.clear();
+      }
+
+      function rememberPreparedPackage(candidateId, preparationRevision, pkg) {
+        const value = {
+          candidate_id: candidateId,
+          preparation_revision: preparationRevision,
+          package: pkg
+        };
+        appliedPackages.set(candidateId, value);
+        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* Memory remains authoritative for this page. */ }
+        return value;
+      }
+
+      function readPreparedPackage(candidateId) {
+        const inMemory = appliedPackages.get(candidateId);
+        if (inMemory?.candidate_id === candidateId && inMemory?.package) return inMemory;
+        try {
+          const stored = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null");
+          if (stored?.candidate_id === candidateId && stored?.package) {
+            appliedPackages.set(candidateId, stored);
+            return stored;
+          }
+        } catch {
+          // A missing or malformed session binding must never fall back to a stale package.
+        }
+        appliedPackages.delete(candidateId);
+        return null;
+      }
+
+      function renderBridgeStatus() {
+        let status = root.querySelector("[data-market-expert-bridge-status]");
+        if (!bridgeStatus) {
+          status?.remove();
+          return;
+        }
+        if (!status) {
+          status = document.createElement("p");
+          status.className = "market-expert-bridge-status";
+          status.dataset.marketExpertBridgeStatus = "true";
+          status.setAttribute("role", bridgeStatus.tone === "error" ? "alert" : "status");
+          root.prepend(status);
+        }
+        status.setAttribute("role", bridgeStatus.tone === "error" ? "alert" : "status");
+        status.dataset.tone = bridgeStatus.tone;
+        status.textContent = bridgeStatus.message;
+      }
+
+      function setBridgeStatus(message, tone = "warning") {
+        bridgeStatus = message ? { message, tone } : null;
+        renderBridgeStatus();
       }
 
       function listMarkup(values, tone) {
@@ -396,7 +508,13 @@
 
       function dossierMarkup(pkg, candidateId) {
         if (!pkg?.available) {
-          return `<h3>Agente Editor</h3><p>No existe todavía un dictamen completo para esta candidata.</p><small>Utiliza «Analizar con el Agente Editor» antes de aplicar datos al formulario.</small>`;
+          const isApplying = applyingCandidates.has(candidateId);
+          return `<h3>Agente Editor</h3>
+            <p>No existe un dictamen vigente para la revisión actual de esta candidata.</p>
+            <div class="market-expert-dossier-actions">
+              <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${isApplying ? " disabled" : ""}>${isApplying ? "Preparando propuesta…" : "Revalidar y aplicar propuesta"}</button>
+              <small>Radar comprobará primero los hechos y después generará el dictamen exacto de esa revisión. Si existe un bloqueo real, se mostrará su causa concreta.</small>
+            </div>`;
         }
         const verdict = pkg.verdict || {};
         const fields = pkg.fields || {};
@@ -405,7 +523,23 @@
         const sources = Array.isArray(pkg.sources) ? pkg.sources : [];
         const hardBlocks = Array.isArray(gate.hard_blocks) ? gate.hard_blocks : [];
         const warnings = Array.isArray(gate.warnings) ? gate.warnings : [];
-        const canApply = gate.can_prefill === true && gate.can_save_private_draft === true;
+        const isApplying = applyingCandidates.has(candidateId);
+        const retryableHardBlocks = new Set([
+          "MARKET_EXPERT_ANALYSIS_REQUIRED",
+          "MARKET_EXPERT_ANALYSIS_STALE",
+          "RADAR_FACTUAL_VERIFICATION_REQUIRED",
+          "RADAR_CANDIDATE_NOT_PREPARABLE",
+          "RADAR_RESOLUTION_SOURCE_REQUIRED"
+        ]);
+        const canRefreshAndApply = hardBlocks.length > 0
+          && hardBlocks.every((code) => retryableHardBlocks.has(code))
+          && hardBlocks.some((code) => [
+            "MARKET_EXPERT_ANALYSIS_REQUIRED",
+            "MARKET_EXPERT_ANALYSIS_STALE",
+            "RADAR_FACTUAL_VERIFICATION_REQUIRED"
+          ].includes(code));
+        const gateAllowsApply = gate.can_prefill === true && gate.can_save_private_draft === true;
+        const canApply = (gateAllowsApply || canRefreshAndApply) && !isApplying;
         const sourceMarkup = sources.length
           ? `<ul class="market-expert-source-list">${sources.map((source) => `<li>
               <strong>${escapeHtml(source.role || "Fuente")}</strong>
@@ -458,9 +592,13 @@
           ${hardBlocks.length ? `<div><h4>Bloqueos</h4>${listMarkup(hardBlocks, "error")}</div>` : ""}
           ${warnings.length ? `<div><h4>Advertencias</h4>${listMarkup(warnings, "warning")}</div>` : ""}
           <div class="market-expert-dossier-actions">
-            <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${canApply ? "" : " disabled"}>Aplicar propuesta al formulario</button>
-            <small>${canApply
+            <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${canApply ? "" : " disabled"}>${isApplying ? "Preparando propuesta…" : "Aplicar propuesta al formulario"}</button>
+            <small>${isApplying
+              ? "Revalidando Radar y actualizando el dictamen antes de cargar el formulario."
+              : gateAllowsApply
               ? "Solo pre-rellena. El borrador se guardará cuando tú pulses Guardar y conservará Radar, dictamen, contrato y fuentes en una única transacción."
+              : canRefreshAndApply
+              ? "Se repetirá primero la comprobación factual y el dictamen; solo se aplicará si la revisión resultante queda lista."
               : "La propuesta no puede pasar al borrador mientras conserve bloqueos o no tenga fecha y fuente primaria."}</small>
           </div>`;
       }
@@ -473,28 +611,36 @@
         const target = sections.find((section) => section.querySelector(":scope > h3")?.textContent.trim() === "Agente Editor")
           || sections.at(-1);
         if (!target) return;
+        const requestId = String(++detailRequestSequence);
+        target.dataset.expertPackageRequest = requestId;
         target.classList.add("market-expert-dossier");
         target.dataset.gate = "loading";
         target.innerHTML = `<h3>Agente Editor</h3><p>Cargando el expediente experto…</p>`;
         try {
           const pkg = await loadPackage(candidateId, force);
+          if (!target.isConnected || target.dataset.expertPackageRequest !== requestId) return;
           target.dataset.gate = pkg?.gate?.status || "blocked";
           target.innerHTML = dossierMarkup(pkg, candidateId);
         } catch {
+          if (!target.isConnected || target.dataset.expertPackageRequest !== requestId) return;
           target.dataset.gate = "blocked";
           target.innerHTML = `<h3>Agente Editor</h3><p>No se pudo cargar el expediente. El Radar y la creación manual continúan disponibles.</p>`;
         }
       }
 
       function scheduleScan(force = false) {
+        forceNextScan ||= force;
         window.clearTimeout(scanTimer);
         scanTimer = window.setTimeout(() => {
+          const shouldForce = forceNextScan;
+          forceNextScan = false;
           const detail = root.querySelector(".radar-candidate-detail");
-          if (detail && (force || detail.dataset.expertDossierReady !== "true")) {
+          if (detail && (shouldForce || detail.dataset.expertDossierReady !== "true")) {
             detail.dataset.expertDossierReady = "true";
-            enhanceDetail(detail, force);
+            enhanceDetail(detail, shouldForce);
           }
           showSavedNotice();
+          renderBridgeStatus();
         }, 40);
       }
 
@@ -520,7 +666,7 @@
         element.dispatchEvent(new Event("change", { bubbles: true }));
       }
 
-      function applyPackageToForm(form, pkg) {
+      function applyPackageToForm(form, pkg, preparationRevision) {
         const fields = pkg.fields || {};
         const timezone = fields.timezone || pkg.contract?.timezone || "Europe/Madrid";
         const mapping = {
@@ -551,6 +697,7 @@
         form.dataset.atinaraExpertBridge = "true";
         form.dataset.expertCandidateId = pkg.origin?.id || "";
         form.dataset.expertRunId = pkg.run?.id || "";
+        form.dataset.preparationRevision = preparationRevision;
 
         form.querySelector(".market-expert-bridge-banner")?.remove();
         const banner = document.createElement("aside");
@@ -609,6 +756,7 @@
         payload._idempotency_key = form.dataset.idempotencyKey;
         payload._change_origin = "radar_expert_bridge_save";
         payload._timestamp_precision = "milliseconds-v1";
+        payload._radar_preparation_revision = String(form.dataset.preparationRevision || "").trim();
         return payload;
       }
 
@@ -717,27 +865,32 @@
               ? "La administradora ajustó la propuesta antes de guardarla como borrador privado."
               : "La administradora guardó la propuesta sin cambios materiales."
           }).catch(() => null);
-          sessionStorage.removeItem(STORAGE_KEY);
-          sessionStorage.setItem(SAVED_NOTICE_KEY, JSON.stringify({
-            draft_id: data?.draft?.id || null,
-            message: "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
-          }));
+          clearPreparedPackage(form.dataset.expertCandidateId);
+          try {
+            sessionStorage.setItem(SAVED_NOTICE_KEY, JSON.stringify({
+              draft_id: data?.draft?.id || null,
+              message: "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
+            }));
+          } catch { /* El guardado ya es definitivo; el aviso entre recargas es opcional. */ }
           status.dataset.tone = "success";
           status.textContent = "Borrador guardado. Recargando el expediente privado…";
           window.setTimeout(() => window.location.reload(), 450);
         } catch (error) {
+          clearPreparedPackage(form.dataset.expertCandidateId);
           status.dataset.tone = "error";
           status.textContent = error?.message || "No se pudo guardar el borrador. No se ha publicado ni resuelto nada.";
           buttons.forEach((button) => { button.disabled = false; });
+          delete form.dataset.expertSaving;
         }
       }
 
       function showSavedNotice() {
-        const raw = sessionStorage.getItem(SAVED_NOTICE_KEY);
+        let raw = null;
+        try { raw = sessionStorage.getItem(SAVED_NOTICE_KEY); } catch { return; }
         if (!raw || root.querySelector(".market-expert-saved-notice")) return;
         let value;
         try { value = JSON.parse(raw); } catch { value = { message: raw }; }
-        sessionStorage.removeItem(SAVED_NOTICE_KEY);
+        try { sessionStorage.removeItem(SAVED_NOTICE_KEY); } catch { /* The notice can remain in blocked storage. */ }
         const notice = document.createElement("p");
         notice.className = "admin-status-message admin-status-success market-expert-saved-notice";
         notice.setAttribute("role", "status");
@@ -750,35 +903,52 @@
         if (target) {
           event.preventDefault();
           const candidateId = target.dataset.expertApply;
+          if (!candidateId || applyingCandidates.has(candidateId)) return;
+          applyingCandidates.add(candidateId);
           target.disabled = true;
+          clearPreparedPackage(candidateId);
+          setBridgeStatus("Revalidando la candidata en Radar antes de actualizar el dictamen experto…", "warning");
           try {
+            const bridge = window.atinaraMarketAdminBridge;
+            if (typeof bridge?.prepareRadarCandidate !== "function" || typeof bridge?.refreshRadarExpertAnalysis !== "function") {
+              throw new Error("La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
+            }
+            const preparation = await bridge.prepareRadarCandidate(candidateId, { throwOnError: true });
+            const preparationRevision = preparationRevisionFrom(preparation);
+            if (!preparationRevision) {
+              throw new Error("Radar no devolvió una revisión de preparación válida. La propuesta no se ha aplicado.");
+            }
+            invalidatePackage(candidateId);
+            setBridgeStatus("Radar revalidado. Actualizando el análisis experto para esta revisión…", "warning");
+            await bridge.refreshRadarExpertAnalysis(candidateId, {
+              force: true,
+              preparationRevision
+            });
+            invalidatePackage(candidateId);
+            setBridgeStatus("Análisis actualizado. Cargando el expediente exacto de esta preparación…", "warning");
             const pkg = await loadPackage(candidateId, true);
+            if (pkg?.origin?.type !== "radar_candidate" || pkg?.origin?.id !== candidateId) {
+              throw new Error("El expediente experto no pertenece a la candidata preparada. La propuesta no se ha aplicado.");
+            }
+            if (!packageMatchesPreparation(pkg, preparationRevision)) {
+              throw new Error("El expediente experto no corresponde a la revisión actual de Radar. Vuelve a aplicar la propuesta.");
+            }
             if (pkg?.gate?.can_prefill !== true || pkg?.gate?.can_save_private_draft !== true) {
               throw new Error("La propuesta conserva bloqueos o carece de fecha y fuente primaria.");
             }
-            sessionStorage.setItem(STORAGE_KEY, JSON.stringify(pkg));
-            const preparation = window.atinaraMarketAdminBridge?.prepareRadarCandidate;
-            if (typeof preparation !== "function") {
-              throw new Error("La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
-            }
-            await preparation(candidateId, { throwOnError: true });
             const form = await waitForForm();
-            applyPackageToForm(form, pkg);
+            rememberPreparedPackage(candidateId, preparationRevision, pkg);
+            applyPackageToForm(form, pkg, preparationRevision);
+            setBridgeStatus("", "success");
           } catch (error) {
+            clearPreparedPackage(candidateId);
+            setBridgeStatus(error?.message || "No se pudo aplicar la propuesta.", "error");
+          } finally {
+            applyingCandidates.delete(candidateId);
             target.disabled = false;
             const currentTarget = document.querySelector(`[data-expert-apply="${CSS.escape(candidateId)}"]`);
             if (currentTarget) currentTarget.disabled = false;
-            const dossier = currentTarget?.closest(".market-expert-dossier") || target.closest(".market-expert-dossier");
-            let status = dossier?.querySelector(".market-expert-bridge-status");
-            if (!status && dossier) {
-              status = document.createElement("p");
-              status.className = "market-expert-bridge-status";
-              dossier.append(status);
-            }
-            if (status) {
-              status.dataset.tone = "error";
-              status.textContent = error?.message || "No se pudo aplicar la propuesta.";
-            }
+            scheduleScan();
           }
           return;
         }
@@ -786,21 +956,58 @@
         const analyzeButton = event.target.closest?.("[data-radar-expert]");
         if (analyzeButton) {
           const candidateId = analyzeButton.dataset.radarExpert;
-          packageCache.delete(candidateId);
-          window.setTimeout(() => scheduleScan(true), 2_800);
+          invalidatePackage(candidateId);
         }
       }, true);
+
+      document.addEventListener("atinara:radar-preparation-complete", (event) => {
+        const candidateId = event.detail?.candidateId;
+        if (candidateId) invalidatePackage(candidateId);
+      });
+
+      document.addEventListener("atinara:radar-revalidation-complete", (event) => {
+        const candidateId = event.detail?.candidateId;
+        if (candidateId) invalidatePackage(candidateId);
+      });
+
+      document.addEventListener("atinara:radar-expert-analysis-complete", (event) => {
+        const candidateId = event.detail?.candidateId;
+        if (!candidateId) return;
+        invalidatePackage(candidateId);
+        scheduleScan(true);
+      });
 
       document.addEventListener("submit", (event) => {
         const form = event.target.closest?.("#admin-market-form");
         if (!form || form.dataset.atinaraExpertBridge !== "true" || form.dataset.draftId) return;
-        let pkg = packageCache.get(form.dataset.expertCandidateId);
-        if (!pkg) {
-          try { pkg = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null"); } catch { pkg = null; }
-        }
-        if (!pkg?.origin?.id || !pkg?.run?.id || pkg?.gate?.can_save_private_draft !== true) return;
         event.preventDefault();
         event.stopImmediatePropagation();
+        if (form.dataset.expertSaving === "true") return;
+        const candidateId = String(form.dataset.expertCandidateId || "").trim();
+        const preparationRevision = String(form.dataset.preparationRevision || "").trim();
+        const prepared = readPreparedPackage(candidateId);
+        const pkg = prepared?.package;
+        const validBinding = Boolean(
+          candidateId
+          && preparationRevision
+          && prepared?.candidate_id === candidateId
+          && prepared?.preparation_revision === preparationRevision
+          && pkg?.origin?.type === "radar_candidate"
+          && pkg?.origin?.id === candidateId
+          && packageMatchesPreparation(pkg, preparationRevision)
+          && pkg?.run?.id
+          && String(pkg.run.id) === String(form.dataset.expertRunId || "")
+          && pkg?.gate?.can_prefill === true
+          && pkg?.gate?.can_save_private_draft === true
+        );
+        if (!validBinding) {
+          clearPreparedPackage(candidateId);
+          const status = statusElement(form);
+          status.dataset.tone = "error";
+          status.textContent = "La candidata o su revisión de preparación ya no coinciden con el expediente experto. Vuelve a aplicar la propuesta antes de guardar.";
+          return;
+        }
+        form.dataset.expertSaving = "true";
         saveAtomicExpertDraft(form, pkg);
       }, true);
 

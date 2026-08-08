@@ -82,6 +82,6 @@ test("los errores de procedencia tienen explicación humana y el navegador recib
   const expertError = helpers.getFriendlyError({ details: { code: "MARKET_EXPERT_ANALYSIS_REQUIRED" } });
   assert.match(provenanceError, /procedencia verificable/);
   assert.match(expertError, /Agente Editor/);
-  assert.match(adminHtml, /market-admin-validation\.js\?v=20260808-radar-e2e1/);
-  assert.match(adminHtml, /admin-markets\.js\?v=20260808-radar-e2e1/);
+  assert.match(adminHtml, /market-admin-validation\.js\?v=20260808-radar-expert-atomic1/);
+  assert.match(adminHtml, /admin-markets\.js\?v=20260808-radar-expert-atomic1/);
 });

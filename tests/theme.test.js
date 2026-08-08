@@ -24,8 +24,8 @@ function read(fileName) {
 test("el tema se aplica antes de la hoja de estilos en las diez pÃ¡ginas", () => {
   htmlFiles.forEach((fileName) => {
     const html = read(fileName);
-    const themePosition = html.indexOf('src="theme.js?v=20260808-radar-e2e1"');
-    const stylesheetPosition = html.indexOf('href="styles.css?v=20260808-radar-e2e1"');
+    const themePosition = html.search(/src="theme\.js\?v=[a-zA-Z0-9-]+"/);
+    const stylesheetPosition = html.search(/href="styles\.css\?v=[a-zA-Z0-9-]+"/);
     assert.ok(themePosition > 0, `${fileName} no carga el controlador de tema.`);
     assert.ok(themePosition < stylesheetPosition, `${fileName} puede mostrar un destello del tema incorrecto.`);
   });

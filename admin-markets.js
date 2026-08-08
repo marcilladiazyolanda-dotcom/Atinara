@@ -859,7 +859,7 @@
         </section>
         <section><h3>Agente Editor</h3>${candidate.expert_analysis
           ? `<p><strong>${escapeHtml(candidate.expert_analysis.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(candidate.expert_analysis.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
-          : `<p>Análisis opcional y aditivo. No cambia la aptitud, la caché ni la política determinista del Radar v17.</p>`}</section>
+          : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
       </div>
       <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${candidate.expert_analysis ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
     </section>`;
@@ -1571,10 +1571,17 @@
       const data = await invokeRadar("prepare", { candidate_id: candidateId });
       const candidate = data.candidate || {};
       const prefill = data.prefill || {};
+      const preparationRevision = String(
+        data.preparation_revision
+        || candidate.preparation_revision
+        || data.reservation?.preparation_revision
+        || ""
+      ).trim();
       const fields = prefill.fields || {};
       const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
       state.radarPrefill = {
         candidateId,
+        preparationRevision,
         origins: prefill.origins || {},
         expertRunId: state.radar.selected?.id === candidateId ? state.radar.selected.expert_analysis?.id || null : null,
         proposedFields: fields
@@ -1596,7 +1603,10 @@
       };
       state.view = "drafts";
       setNotice("Formulario pre-rellenado. Revisa y completa la información: todavía no se ha guardado nada.", "warning");
-      result = data;
+      result = { ...data, preparation_revision: preparationRevision };
+      document.dispatchEvent(new CustomEvent("atinara:radar-preparation-complete", {
+        detail: { candidateId, preparationRevision }
+      }));
     } catch (error) {
       failure = error;
       setNotice(helpers.getFriendlyError(error, "No se pudo preparar el borrador. El candidato no se ha modificado."), "error");
@@ -1847,17 +1857,67 @@
     }
   }
 
+  async function revalidateRadarCandidate(candidateId) {
+    const data = await invokeRadar("revalidate", { candidate_id: candidateId });
+    const candidate = data.candidate || {};
+    const preparationRevision = String(
+      data.preparation_revision
+      || candidate.preparation_revision
+      || data.reservation?.preparation_revision
+      || ""
+    ).trim();
+    if (!preparationRevision) throw new Error("RADAR_PREPARATION_REVISION_REQUIRED");
+    if (state.radar.selected?.id === candidateId) {
+      state.radar.selected = {
+        ...state.radar.selected,
+        ...candidate,
+        expert_analysis: null
+      };
+    }
+    document.dispatchEvent(new CustomEvent("atinara:radar-revalidation-complete", {
+      detail: { candidateId, preparationRevision }
+    }));
+    return { ...data, preparationRevision, preparation_revision: preparationRevision };
+  }
+
+  async function refreshRadarExpertAnalysis(candidateId, { force = true, preparationRevision = "" } = {}) {
+    const payload = {
+      origin_type: "radar_candidate",
+      origin_id: candidateId,
+      ...(preparationRevision ? { preparation_revision: preparationRevision } : {})
+    };
+    try {
+      const analysis = await invokeMarketExpert(force ? "revalidate-analysis" : "analyze-origin", payload);
+      const data = await invokeMarketExpert("get-analysis", {
+        origin_type: "radar_candidate",
+        origin_id: candidateId
+      });
+      const run = data.run || analysis.run || null;
+      if (state.radar.selected?.id === candidateId) {
+        state.radar.selected = { ...state.radar.selected, expert_analysis: run };
+      }
+      document.dispatchEvent(new CustomEvent("atinara:radar-expert-analysis-complete", {
+        detail: { candidateId, run }
+      }));
+      return { analysis, run };
+    } catch (error) {
+      document.dispatchEvent(new CustomEvent("atinara:radar-expert-analysis-failed", {
+        detail: { candidateId }
+      }));
+      throw error;
+    }
+  }
+
   async function analyzeRadarCandidate(candidateId) {
     state.busy = true;
-    setNotice("El Agente Editor analiza la candidata sin modificar la caché ni el criterio del Radar v17.", "info");
+    setNotice("Revalidando la candidata en Radar antes de actualizar el análisis experto…", "info");
     renderWorkspace();
     try {
-      await invokeMarketExpert("analyze-origin", { origin_type: "radar_candidate", origin_id: candidateId });
-      const data = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId });
-      state.radar.selected = { ...(state.radar.selected || {}), expert_analysis: data.run || null };
-      setNotice("Dictamen experto añadido de forma aditiva. La aptitud determinista del Radar no ha cambiado.", "success");
+      const { preparationRevision } = await revalidateRadarCandidate(candidateId);
+      await refreshRadarExpertAnalysis(candidateId, { force: true, preparationRevision });
+      setNotice("Comprobación factual y dictamen experto actualizados para la revisión vigente.", "success");
     } catch (error) {
-      setNotice(helpers.getFriendlyError(error, "El análisis experto no está disponible. El Radar v17 sigue operativo."), "error");
+      setNotice(helpers.getFriendlyError(error, "El análisis experto no está disponible. El Radar sigue operativo."), "error");
     } finally {
       state.busy = false;
       renderWorkspace();
@@ -2131,6 +2191,8 @@
 
   window.atinaraMarketAdminBridge = Object.freeze({
     prepareRadarCandidate,
+    revalidateRadarCandidate,
+    refreshRadarExpertAnalysis,
   });
 
   async function applyAuth(auth) {

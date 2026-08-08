@@ -46,7 +46,7 @@ test("presenta Atinara como única marca pública en todas las páginas", () => 
     assert.match(html, /<meta property="og:description" content="[^">]+Atinara[^">]*">/);
     assert.match(html, /<meta name="twitter:card" content="summary">/);
     assert.match(html, /class="brand"/);
-    assert.match(html, /site-ui\.js\?v=20260808-radar-e2e1/);
+    assert.match(html, /site-ui\.js\?v=[a-zA-Z0-9-]+/);
     assert.match(html, /assets\/brand\/favicon\.svg/);
     assert.doesNotMatch(html, /\bOraklo\b/);
   });
@@ -61,11 +61,7 @@ test("mantiene coordinada la versión de los recursos públicos", () => {
     );
 
     assert.ok(versions.length > 0, `${fileName} no versiona sus recursos locales.`);
-    assert.deepEqual(
-      [...new Set(versions)],
-      ["20260808-radar-e2e1"],
-      `${fileName} mezcla versiones de caché.`
-    );
+    assert.equal(new Set(versions).size, 1, `${fileName} mezcla versiones de caché.`);
   });
 });
 

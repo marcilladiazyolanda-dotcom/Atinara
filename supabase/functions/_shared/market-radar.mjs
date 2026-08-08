@@ -1,6 +1,6 @@
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
 export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v3";
-export const RADAR_FAMILY_VERSION = "atinara-market-family-v1";
+export const RADAR_FAMILY_VERSION = "atinara-market-family-v2";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -553,6 +553,12 @@ function familyEntity(candidate, normalizedQuestion, dimension) {
   const sourceTitle = normalizeComparableText(candidate.source_title ?? candidate.title);
   const structuredSubject = normalizeComparableText(candidate.subject ?? candidate.atinara_subject);
   if (structuredSubject) return structuredSubject.slice(0, 120);
+  // Kalshi expone a menudo la pregunta padre en `title` y el hijo real en
+  // `yes_sub_title` (por ejemplo, "Above 95" o "Cairn"). En familias de
+  // umbrales/resultados el título del evento es, por tanto, la entidad estable.
+  if (["threshold", "outcome"].includes(dimension) && sourceTitle) {
+    return sourceTitle.slice(0, 120);
+  }
   if (dimension === "participant" && sourceTitle.includes(":")) return sourceTitle.split(":")[0].trim();
   let value = normalizedQuestion
     .replace(/^(?:will|whether|can|could|is|are|sera|seran|se)\s+/, "")
@@ -600,25 +606,72 @@ function familyThreshold(question) {
   return `${amount}${unit ? `:${unit}` : ""}`;
 }
 
+function familyProviderPayload(candidate) {
+  if (isRecord(candidate?.provider_payload)) return candidate.provider_payload;
+  if (isRecord(candidate?.normalized_payload?.provider_payload)) return candidate.normalized_payload.provider_payload;
+  return {};
+}
+
+function familyStructuredChild(candidate, dimension) {
+  const payload = familyProviderPayload(candidate);
+  const rawYesLabel = cleanText(payload.yes_sub_title, 500);
+  const normalizedYesLabel = normalizeComparableText(rawYesLabel);
+  const thresholdPattern = /\b(above|over|more than|greater than|at least|below|under|less than|fewer than|at most)\s+(\d+(?:[.,]\d+)?)(?:\s*(%|points?|pts?|thousand|million|billion|usd|dollars?|games?|copies?))?/;
+  const thresholdMatch = normalizedYesLabel.match(thresholdPattern)
+    ?? normalizeComparableText(candidate?.source_resolution_rules).match(thresholdPattern);
+  if (thresholdMatch) {
+    const direction = ["below", "under", "less than", "fewer than", "at most"].includes(thresholdMatch[1])
+      ? "below"
+      : "above";
+    const amount = thresholdMatch[2].replace(",", ".");
+    const unit = cleanText(thresholdMatch[3], 24).replace(/[^a-z%]+/g, "");
+    return {
+      dimension: "threshold",
+      type: "milestone_thresholds",
+      child_key: `threshold:${direction}:${amount}${unit ? `:${unit}` : ""}`,
+      child_label: rawYesLabel || `${direction === "above" ? "Por encima de" : "Por debajo de"} ${amount}`,
+    };
+  }
+  if (["outcome", "participant", "platform"].includes(dimension)
+      && normalizedYesLabel
+      && !/^(?:yes|si|true|no)$/.test(normalizedYesLabel)) {
+    const option = normalizedYesLabel.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120);
+    if (option) {
+      return {
+        dimension,
+        type: dimension === "outcome" ? "categorical_outcomes"
+          : dimension === "participant" ? "participant_options" : "platform_variants",
+        child_key: `option:${option}`,
+        child_label: rawYesLabel,
+      };
+    }
+  }
+  return null;
+}
+
 export function deriveMarketFamily(candidate) {
   const normalizedQuestion = normalizeComparableText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title);
   if (!normalizedQuestion) return null;
-  const { dimension, type } = familyDimension(normalizedQuestion);
+  const detected = familyDimension(normalizedQuestion);
+  const structuredChild = familyStructuredChild(candidate ?? {}, detected.dimension);
+  const dimension = structuredChild?.dimension ?? detected.dimension;
+  const type = structuredChild?.type ?? detected.type;
   const entity = familyEntity(candidate ?? {}, normalizedQuestion, dimension);
   if (!entity) return null;
   const deadline = familyDate(normalizedQuestion);
-  const threshold = dimension === "threshold" ? familyThreshold(normalizedQuestion) : null;
+  const threshold = dimension === "threshold" && !structuredChild ? familyThreshold(normalizedQuestion) : null;
   const familyKey = `atinara:v1:${entity.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100)}:${dimension}`;
-  let childKey = threshold ? `threshold:${threshold}` : deadline ? `deadline:${deadline}` : `option:${stableFingerprint(normalizedQuestion)}`;
+  let childKey = structuredChild?.child_key
+    ?? (threshold ? `threshold:${threshold}` : deadline ? `deadline:${deadline}` : `option:${stableFingerprint(normalizedQuestion)}`);
   if (dimension === "official_content") {
     const contentKind = /\bteaser\b/.test(normalizedQuestion) ? "teaser" : /\b(?:clip|avance)\b/.test(normalizedQuestion) ? "clip" : "trailer";
     childKey = `content:${contentKind}:${deadline ?? stableFingerprint(normalizedQuestion)}`;
   }
-  const childLabel = threshold
+  const childLabel = structuredChild?.child_label || (threshold
     ? `Umbral ${threshold.replace(":", " ")}`
     : deadline
     ? `Hasta el ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${deadline}T12:00:00Z`))}`
-    : cleanText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question, 180);
+    : cleanText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question, 180));
   const titlePrefix = type === "deadline_ladder"
     ? (dimension === "announcement_date" ? "Anuncio oficial" : "Fecha de lanzamiento")
     : dimension === "official_content" ? "Contenido oficial"
@@ -681,7 +734,7 @@ export function classifyMarketRelations(candidate, existing = []) {
   const siblings = [];
   for (const item of existing) {
     if (sameCandidateIdentity(candidate, item)) continue;
-    const target = normalizeComparableText(item.question ?? item.title ?? item.atinara_question);
+    const target = normalizeComparableText(item.question ?? item.title ?? item.atinara_question ?? item.source_question);
     if (!target) continue;
     const targetTokens = new Set(target.split(" ").filter((token) => token.length > 2));
     const intersection = [...tokens].filter((token) => targetTokens.has(token)).length;
@@ -690,7 +743,7 @@ export function classifyMarketRelations(candidate, existing = []) {
     const existingFamily = matchFamily(item);
     const base = {
       id: cleanText(item.id, 220) || null,
-      question: cleanText(item.question ?? item.title, 500),
+      question: cleanText(item.question ?? item.title ?? item.atinara_question ?? item.source_question, 500),
       similarity: Number(similarity.toFixed(3)),
       family_key: candidateFamily.family_key,
       family_child_key: existingFamily?.family_child_key ?? null,
@@ -953,15 +1006,21 @@ export function evaluatePredictiveEligibility(candidate, facts = {}, now = new D
   return null;
 }
 
-export function canApplyPredictivePolicyOverride(candidate, decision = {}) {
+export function canApplyPredictivePolicyOverride(candidate, decision = {}, now = new Date().toISOString()) {
   const kind = predictionContractKind(candidate);
   const reasonCode = cleanText(decision?.reason_code, 100);
-  return ["announcement", "release", "milestone"].includes(kind)
-    && [
+  if (!["announcement", "release", "milestone"].includes(kind)) return false;
+  if (![
       RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
       RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
       RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
-    ].includes(reasonCode);
+      RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+    ].includes(reasonCode)) return false;
+  // La falta de confirmación del resultado es precisamente la incertidumbre de
+  // una predicción futura directa. Solo se permite el override si las puertas
+  // objetivas ya están completas y el proveedor/fuente no presenta un bloqueo.
+  return isAdaptedIdeaComplete(candidate)
+    && evaluateProviderEligibility(candidate, now) === null;
 }
 
 export function applyEligibilityDecision(candidate, decision = {}, now = new Date().toISOString()) {

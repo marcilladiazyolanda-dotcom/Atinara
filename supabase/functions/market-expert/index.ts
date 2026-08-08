@@ -11,6 +11,9 @@ type SupabaseEnvironment = {
 const MARKET_INTELLIGENCE_POLICY_VERSION = "atinara-market-constitution-v1";
 const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
+const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v2";
+const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
+const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v3";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const MAX_CONTEXT_BYTES = 24_000;
 const MAX_REQUEST_BYTES = 12_288;
@@ -100,6 +103,12 @@ const HARD_REASON_CODES = new Set([
   "CONFIRMED_DUPLICATE",
   "SOURCE_ALREADY_RESOLVED",
   "SOURCE_NOT_RESOLVABLE",
+  "RADAR_FACTUAL_VERIFICATION_REQUIRED",
+  "RADAR_CANDIDATE_NOT_PREPARABLE",
+  "RADAR_NORMALIZER_OUTDATED",
+  "RADAR_ELIGIBILITY_POLICY_OUTDATED",
+  "RADAR_RESOLUTION_SOURCE_REQUIRED",
+  "MARKET_EXPERT_ANALYSIS_STALE",
 ]);
 
 function text(value: unknown, max = 4_000): string {
@@ -301,8 +310,13 @@ function handleEdgeError(error: unknown, fallbackMessage: string): Response {
   const code = publicErrorCode(error);
   const status = ["REQUEST_TOO_LARGE", "INVALID_REQUEST", "INTELLIGENCE_ORIGIN_INVALID"].includes(code)
     ? 400
-    : code.includes("AUTH") ? 401 : code.includes("ADMIN") ? 403 : 503;
-  return jsonResponse({ error: code, message: fallbackMessage }, status);
+    : code.includes("AUTH") ? 401
+      : code.includes("ADMIN") ? 403
+        : ["PREPARATION_REVISION_MISMATCH", "MARKET_EXPERT_ANALYSIS_STALE"].includes(code) ? 409 : 503;
+  const message = code === "PREPARATION_REVISION_MISMATCH"
+    ? "La candidata cambió durante el análisis. Vuelve a aplicar para usar su revisión vigente."
+    : fallbackMessage;
+  return jsonResponse({ error: code, message }, status);
 }
 
 async function sha256(value: unknown): Promise<string> {
@@ -387,7 +401,10 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     "atinara_category", "atinara_question", "atinara_closes_at", "atinara_resolution_criteria",
     "atinara_resolution_source_url", "provider_payload", "verification_status", "verification_reason",
     "verification_reason_code", "verification_evidence", "verification_confidence", "verification_expires_at",
-    "normalizer_version", "eligibility_policy_version",
+    "normalizer_version", "eligibility_policy_version", "fingerprint", "preparation_revision",
+    "verified_at", "cache_expires_at", "quality_updated_at", "family_key", "family_title",
+    "family_type", "family_child_key", "family_child_label", "family_relationship", "family_matches",
+    "family_version", "family_semantics", "family_source_event_key", "family_sort_at",
     "signal_type", "entity_type", "entity_id", "parent_entity_id", "canonical_url", "title", "subtitle",
     "description", "observed_at", "source_updated_at", "valid_until", "signal_origin", "opportunity_type",
     "context_type", "catalyst_type", "milestone_metric", "milestone_value", "milestone_unit",
@@ -413,6 +430,18 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     if (typeof output[key] === "string") output[key] = inspectPromptInjection(output[key]).safe_text;
   }
   return output;
+}
+
+function analysisOriginSnapshot(origin: JsonRecord, originType: string): JsonRecord {
+  if (originType !== "radar_candidate") return origin;
+  const snapshot = { ...origin };
+  // Son datos de lease/caché, no hechos del mercado ni del contrato. Excluirlos
+  // mantiene la huella alineada con preparation_revision y evita invalidar un
+  // dictamen únicamente porque el Radar renovó su caché.
+  for (const key of ["fetched_at", "expires_at", "cache_expires_at", "is_stale", "cache_key", "updated_at"]) {
+    delete snapshot[key];
+  }
+  return snapshot;
 }
 
 function getOfficialResolutionUrl(origin: JsonRecord): string {
@@ -819,24 +848,54 @@ function proposalFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, c
   };
 }
 
-function deterministicAssessment(origin: JsonRecord) {
+function hasBlockingDuplicate(value: unknown): boolean {
+  return records(value).some((match) => {
+    const relationship = text(match.relationship, 80);
+    return match.blocking !== false && ["exact_duplicate", "semantic_duplicate"].includes(relationship);
+  });
+}
+
+function deterministicAssessment(origin: JsonRecord, originType: string) {
   const structuralIssues: string[] = [];
   if (origin.marketability_status === "incoherent") structuralIssues.push("ORIGIN_INCOHERENT");
-  if (origin.marketability_status === "duplicate" || records(origin.duplicate_matches).length) {
+  if (origin.marketability_status === "duplicate" || hasBlockingDuplicate(origin.duplicate_matches)) {
     structuralIssues.push("DUPLICATE_MARKET");
   }
   const resultKnown = origin.marketability_status === "already_resolved" ||
     origin.verification_reason_code === "EVENT_ALREADY_RESOLVED";
-  const verificationExpired = origin.verification_expires_at && safeDate(origin.verification_expires_at)
-    ? (safeDate(origin.verification_expires_at) as Date) <= new Date()
-    : false;
+  const now = new Date();
+  const verificationExpiry = safeDate(origin.verification_expires_at);
+  const verificationExpired = !verificationExpiry || verificationExpiry <= now;
   const stale = origin.marketability_status === "rejected" ||
     (origin.verification_status && origin.verification_status !== "verified_open" && verificationExpired);
+
+  if (originType === "radar_candidate") {
+    const candidateExpiry = safeDate(origin.expires_at);
+    if (text(origin.state, 40) !== "available" || !candidateExpiry || candidateExpiry <= now) {
+      structuralIssues.push("RADAR_CANDIDATE_NOT_PREPARABLE");
+    }
+    if (text(origin.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) {
+      structuralIssues.push("RADAR_NORMALIZER_OUTDATED");
+    }
+    if (text(origin.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) {
+      structuralIssues.push("RADAR_ELIGIBILITY_POLICY_OUTDATED");
+    }
+    if (text(origin.verification_status, 80) !== "verified_open" || verificationExpired) {
+      structuralIssues.push("RADAR_FACTUAL_VERIFICATION_REQUIRED");
+    }
+    if (!text(origin.atinara_question, 700)
+      || !text(origin.atinara_resolution_criteria, 5_000)
+      || !safeHttpsUrl(origin.atinara_resolution_source_url || origin.source_resolution_url)) {
+      structuralIssues.push("RADAR_RESOLUTION_SOURCE_REQUIRED");
+    }
+  }
 
   if (resultKnown) {
     return { integrity_status: "fail", forecastability_status: "already_determined", structuralIssues };
   }
-  if (stale) return { integrity_status: "fail", forecastability_status: "stale", structuralIssues };
+  if (stale || (originType === "radar_candidate" && structuralIssues.length)) {
+    return { integrity_status: "fail", forecastability_status: "stale", structuralIssues };
+  }
   if (structuralIssues.length) {
     return { integrity_status: "needs_edit", forecastability_status: "unknown", structuralIssues };
   }
@@ -852,7 +911,7 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
     ? generateHypotheses(origin)
     : [];
   const hypothesis = hypotheses[0] || null;
-  const assessment = deterministicAssessment(origin);
+  const assessment = deterministicAssessment(origin, originType);
   const contract = contractFromOrigin(origin, hypothesis, originType);
   const issues = validationIssues(contract);
   const proposal = proposalFromOrigin(origin, hypothesis, contract);
@@ -910,6 +969,7 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
     proposal,
     resolution_contract: contract,
     hypotheses,
+    origin_preparation_revision: origin.preparation_revision ?? null,
     policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
     schema_version: MARKET_EXPERT_SCHEMA_VERSION,
   };
@@ -1087,7 +1147,9 @@ function mergeExpertVerdict(deterministic: JsonRecord, expert: JsonRecord, origi
     : currentIssues.length ? "ready_with_warnings" : "ready";
   const reasonCodes = uniqueStrings([
     ...((deterministic.reason_codes as unknown[]) || []).filter((code) => currentIssueCodes.has(text(code, 100)) || HARD_REASON_CODES.has(text(code, 100))),
-    ...((expert.reason_codes as unknown[]) || []),
+    // Gemini puede proponer advertencias editoriales, pero nunca fabricar una
+    // causa dura capaz de contradecir el snapshot autoritativo del Radar.
+    ...((expert.reason_codes as unknown[]) || []).filter((code) => !HARD_REASON_CODES.has(text(code, 100))),
     ...currentIssues.map((issue) => issue.code),
   ]);
 
@@ -1189,22 +1251,32 @@ function reconcileSavedVerdict(savedValue: unknown, deterministic: JsonRecord, o
   const issues = validationIssues(contract);
   const activeIssueCodes = new Set(issues.map((issue) => text(issue.code, 100)));
   const retainedCodes = Array.isArray(saved.reason_codes)
-    ? saved.reason_codes.map((code) => text(code, 100)).filter((code) => HARD_REASON_CODES.has(code) || activeIssueCodes.has(code))
+    ? saved.reason_codes.map((code) => text(code, 100)).filter((code) => activeIssueCodes.has(code))
     : [];
   const sourceReadiness = issues.some((issue) => issue.code === "RESOLUTION_PRIMARY_SOURCE_REQUIRED")
     ? "needs_official_source"
     : issues.length ? "ready_with_warnings" : "ready";
+  const deterministicReasonCodes = Array.isArray(deterministic.reason_codes)
+    ? deterministic.reason_codes.map((code) => text(code, 100))
+    : [];
+  const deterministicBlocks = deterministic.integrity_status === "fail"
+    || ["already_determined", "stale"].includes(text(deterministic.forecastability_status, 60))
+    || deterministicReasonCodes.some((code) => HARD_REASON_CODES.has(code));
   return decorateVerdict({
     ...deterministic,
-    decision: EXPERT_DECISIONS.has(text(saved.decision, 40)) ? saved.decision : deterministic.decision,
-    integrity_status: INTEGRITY_STATUSES.has(text(saved.integrity_status, 40)) ? saved.integrity_status : deterministic.integrity_status,
-    forecastability_status: FORECASTABILITY_STATUSES.has(text(saved.forecastability_status, 60))
+    decision: !deterministicBlocks && EXPERT_DECISIONS.has(text(saved.decision, 40)) ? saved.decision : deterministic.decision,
+    integrity_status: !deterministicBlocks && INTEGRITY_STATUSES.has(text(saved.integrity_status, 40)) ? saved.integrity_status : deterministic.integrity_status,
+    forecastability_status: !deterministicBlocks && FORECASTABILITY_STATUSES.has(text(saved.forecastability_status, 60))
       ? saved.forecastability_status
       : deterministic.forecastability_status,
     source_readiness: sourceReadiness,
     confidence: Number.isFinite(Number(saved.confidence)) ? saved.confidence : deterministic.confidence,
     human_review_required: true,
-    reason_codes: uniqueStrings([...retainedCodes, ...issues.map((issue) => issue.code)]),
+    reason_codes: uniqueStrings([
+      ...deterministicReasonCodes.filter((code) => HARD_REASON_CODES.has(code)),
+      ...retainedCodes,
+      ...issues.map((issue) => issue.code),
+    ]),
     summary: text(saved.summary, 2_000) || deterministic.summary,
     evidence: Array.isArray(saved.evidence) && saved.evidence.length ? saved.evidence : deterministic.evidence,
     suggested_changes: issues.map((issue) => ({ field: issue.field, code: issue.code, suggestion: "Corregir antes de validar el contrato." })),
@@ -1213,6 +1285,7 @@ function reconcileSavedVerdict(savedValue: unknown, deterministic: JsonRecord, o
       : Array.isArray(saved.uncertainties) ? saved.uncertainties : [],
     proposal,
     resolution_contract: contract,
+    origin_preparation_revision: origin.preparation_revision ?? deterministic.origin_preparation_revision ?? null,
     policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
     schema_version: MARKET_EXPERT_SCHEMA_VERSION,
   });
@@ -1247,7 +1320,7 @@ async function storeRun(
       origin_type: originType,
       origin_id: originId,
       provider: origin.provider || null,
-      origin_fingerprint: await sha256(origin),
+      origin_fingerprint: await sha256(analysisOriginSnapshot(origin, originType)),
       analysis_fingerprint: analysisFingerprint,
       policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
       schema_version: MARKET_EXPERT_SCHEMA_VERSION,
@@ -1301,11 +1374,15 @@ async function analyzeOrigin(
     throw new Error("INTELLIGENCE_ORIGIN_INVALID");
   }
   const origin = await loadOrigin(environment, authorization, originType, originId);
+  if (originType === "radar_candidate" && body.preparation_revision !== undefined
+    && text(body.preparation_revision, 80) !== text(origin.preparation_revision, 80)) {
+    throw new Error("PREPARATION_REVISION_MISMATCH");
+  }
   const analysisFingerprint = await sha256({
-    origin,
+    origin: analysisOriginSnapshot(origin, originType),
     policy: MARKET_INTELLIGENCE_POLICY_VERSION,
     schema: MARKET_EXPERT_SCHEMA_VERSION,
-    implementation: "radar-intelligence-bridge-v1",
+    implementation: MARKET_EXPERT_IMPLEMENTATION_VERSION,
   });
   if (body.force !== true) {
     const cached = await rpc(environment, "get_market_expert_analysis", {
@@ -1315,7 +1392,7 @@ async function analyzeOrigin(
     if (cached.status === "completed" && cached.analysis_fingerprint === analysisFingerprint) {
       const deterministic = createDeterministicVerdict(origin, originType);
       const reconciled = reconcileSavedVerdict(cached.result_json, deterministic, origin);
-      return jsonResponse({ ok: true, cached: true, run: cached, verdict: reconciled, draft_package: packageFromRun(cached, reconciled, originType, originId) });
+      return jsonResponse({ ok: true, cached: true, run: cached, verdict: reconciled, draft_package: packageFromRun(cached, reconciled, originType, originId, origin) });
     }
   }
 
@@ -1353,7 +1430,21 @@ async function analyzeOrigin(
   verdict = decorateVerdict(verdict);
   const validation = validateExpertVerdict(verdict);
   if (!validation.valid) throw new Error("EXPERT_INVALID_RESPONSE");
-  const run = await storeRun(environment, originType, originId, origin, analysisFingerprint, verdict, {
+  // Gemini may take long enough for Radar to publish a newer factual revision.
+  // Never let a late response become the newest run for a snapshot it did not analyse.
+  const authoritativeOrigin = await loadOrigin(environment, authorization, originType, originId);
+  const authoritativeFingerprint = await sha256({
+    origin: analysisOriginSnapshot(authoritativeOrigin, originType),
+    policy: MARKET_INTELLIGENCE_POLICY_VERSION,
+    schema: MARKET_EXPERT_SCHEMA_VERSION,
+    implementation: MARKET_EXPERT_IMPLEMENTATION_VERSION,
+  });
+  if (authoritativeFingerprint !== analysisFingerprint
+    || (originType === "radar_candidate"
+      && text(authoritativeOrigin.preparation_revision, 80) !== text(origin.preparation_revision, 80))) {
+    throw new Error("PREPARATION_REVISION_MISMATCH");
+  }
+  const run = await storeRun(environment, originType, originId, authoritativeOrigin, analysisFingerprint, verdict, {
     errorCode: warningCode,
     modelVersion: degraded ? `${GEMINI_MODEL}:degraded` : GEMINI_MODEL,
   }) as JsonRecord;
@@ -1371,11 +1462,17 @@ async function analyzeOrigin(
     warning_code: warningCode,
     run,
     verdict,
-    draft_package: packageFromRun(run, verdict, originType, originId),
+    draft_package: packageFromRun(run, verdict, originType, originId, authoritativeOrigin),
   });
 }
 
-function packageFromRun(run: JsonRecord, verdict: JsonRecord, originType: string, originId: string): JsonRecord {
+function packageFromRun(
+  run: JsonRecord,
+  verdict: JsonRecord,
+  originType: string,
+  originId: string,
+  origin: JsonRecord = {},
+): JsonRecord {
   const contract = verdict.resolution_contract as JsonRecord || {};
   const sources = records(contract.sources);
   const gate = verdict.draft_gate && typeof verdict.draft_gate === "object"
@@ -1383,13 +1480,22 @@ function packageFromRun(run: JsonRecord, verdict: JsonRecord, originType: string
     : buildDraftGate(verdict);
   return {
     available: run.status === "completed",
-    origin: { type: originType, id: originId },
+    origin: {
+      type: originType,
+      id: originId,
+      preparation_revision: origin.preparation_revision ?? verdict.origin_preparation_revision ?? null,
+      fingerprint: origin.fingerprint ?? run.origin_fingerprint ?? null,
+    },
     run: {
       id: run.id || null,
       model_version: run.model_version || null,
       status: run.status || null,
       completed_at: run.completed_at || null,
       error_code: run.error_code || null,
+      origin_fingerprint: run.origin_fingerprint || null,
+      analysis_fingerprint: run.analysis_fingerprint || null,
+      policy_version: run.policy_version || null,
+      schema_version: run.schema_version || null,
     },
     verdict,
     fields: verdict.proposal || {},
@@ -1429,9 +1535,56 @@ async function getDraftPackage(
       },
     });
   }
+  const currentAnalysisFingerprint = await sha256({
+    origin: analysisOriginSnapshot(origin, originType),
+    policy: MARKET_INTELLIGENCE_POLICY_VERSION,
+    schema: MARKET_EXPERT_SCHEMA_VERSION,
+    implementation: MARKET_EXPERT_IMPLEMENTATION_VERSION,
+  });
+  const runResult = run.result_json && typeof run.result_json === "object" && !Array.isArray(run.result_json)
+    ? run.result_json as JsonRecord
+    : {};
+  const currentRevision = Number(origin.preparation_revision);
+  const runRevision = Number(runResult.origin_preparation_revision);
+  const revisionMatches = originType !== "radar_candidate"
+    || (Number.isSafeInteger(currentRevision) && Number.isSafeInteger(runRevision) && currentRevision === runRevision);
+  const runIsCurrent = run.analysis_fingerprint === currentAnalysisFingerprint
+    && run.policy_version === MARKET_INTELLIGENCE_POLICY_VERSION
+    && run.schema_version === MARKET_EXPERT_SCHEMA_VERSION
+    && revisionMatches;
+  if (!runIsCurrent) {
+    return jsonResponse({
+      ok: true,
+      stale: true,
+      package: {
+        available: false,
+        origin: {
+          type: originType,
+          id: originId,
+          preparation_revision: origin.preparation_revision ?? null,
+          fingerprint: origin.fingerprint ?? null,
+        },
+        run: {
+          id: run.id,
+          status: run.status,
+          origin_fingerprint: run.origin_fingerprint || null,
+          analysis_fingerprint: run.analysis_fingerprint || null,
+          policy_version: run.policy_version || null,
+          schema_version: run.schema_version || null,
+        },
+        gate: {
+          status: "blocked",
+          can_prefill: false,
+          can_save_private_draft: false,
+          hard_blocks: ["MARKET_EXPERT_ANALYSIS_STALE"],
+          warnings: [],
+        },
+      },
+    });
+  }
   const deterministic = createDeterministicVerdict(origin, originType);
   const verdict = reconcileSavedVerdict(run.result_json, deterministic, origin);
-  return jsonResponse({ ok: true, package: packageFromRun(run, verdict, originType, originId) });
+  return jsonResponse({ ok: true, package: packageFromRun(run, verdict, originType, originId, origin) });
 }
 
 async function discoverOfficialContext(
