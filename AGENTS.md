@@ -1,118 +1,148 @@
-# Instrucciones permanentes de Atinara · nombre interno Oraklo
+# Instrucciones permanentes de Atinara · nombre interno histórico Oraklo
 
-## Estado vigente · 7 de agosto de 2026
+Estas instrucciones se aplican a todo el árbol del repositorio. Codex debe obedecerlas aunque el prompt de una tarea no repita la estrategia. Una conversación antigua o un resumen previo no sustituyen el estado actual del repositorio.
 
-- El Paso 13.5.2 queda preparado localmente en `codex/paso-13-5-2`, basado en
-  `origin/main = 56e6f58ccc7feaf7c71f30ac4da2387ccc5b893d`. Añade el
-  Observatorio privado de Datos y tendencias, el Agente Editor compartido y el
-  Agente Centinela de fuentes sin mezclar sus tablas, cachés o responsabilidades
-  con el Radar v17.
-- La única migración nueva del Paso 13.5.2 es
-  `20260807163000_add_data_observatory_and_market_intelligence.sql`. Está
-  preparada pero no aplicada. Las Edge Functions nuevas `data-observatory`,
-  `market-expert` y `market-source-monitor` están preparadas pero no desplegadas.
-- `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` y `YOUTUBE_API_KEY` solo se pueden
-  configurar como secretos de Supabase. No se incluyen valores en el árbol. Los
-  proveedores faltantes se muestran como no configurados y fallan de manera
-  independiente, sin convertir ausencia en cero.
-- Los schedulers editorial y de monitorización de resolución nacen separados y
-  desactivados. Ninguno publica borradores, aprueba mercados, liquida resultados
-  ni modifica Karma, Prestigio o predicciones. Su activación futura requiere
-  revisión y acción manual expresa de Yol.
-- La versión coordinada de los recursos del frontend del Paso 13.5.2 es
-  `v=20260807-observatory-intelligence1`. La entrega sigue siendo local: no se ha
-  modificado GitHub, GitHub Pages, Supabase ni ningún dato real.
+## 1. Lectura obligatoria antes de cualquier tarea
 
-- El Radar v16 está publicado y aceptado sobre `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Las migraciones `20260804194933_add_market_radar.sql` y `20260806183627_harden_market_radar_quality_sources.sql` ya forman parte de esa activación y **no deben repetirse**.
-- El Radar v17 está preparado solo en local en `codex/radar-v17-professional-criteria`. Introduce la política `atinara-prediction-policy-v3`, corrige el criterio predictivo, reconcilia resultados finales de Kalshi sin IA, evita enviar descartes deterministas a Tavily/Gemini, filtra la auditoría en español y mejora la cuadrícula. No añade SQL, migraciones, secretos ni datos. Para activarlo, desplegar primero `market-radar`, subir después el árbol coordinado `v=20260807-radar3` y ejecutar una actualización explícita de fuentes.
-- `TAVILY_API_KEY` y `GEMINI_API_KEY` se reutilizan únicamente si ya existen en Supabase. Si faltan o fallan, el Radar deja la candidata en revisión y bloquea preparar; no se piden credenciales ni se degrada a datos inventados. IGDB/Twitch/YouTube continúan fuera de esta entrega.
+Lee completos, en este orden:
 
-- La corrección responsive `v=20260805-mobile1` elimina la regresión móvil de
-  la portada y de la cabecera compartida. A 320–620 px la cabecera distribuye
-  marca, tema y menú en una primera fila y el buscador en una segunda; categorías
-  y filtros se agrupan sin desplazamiento horizontal y el catálogo usa una sola
-  tarjeta legible por fila. La validación local no detecta desbordamiento global
-  en las diez páginas a 320, 360, 375, 390 y 768 px. Esta corrección es solo de
-  frontend y ya forma parte de la base canónica `b10f0eb`.
-- Yol cerró y aprobó el Paso 13.3. `A3 · Criterio modular`, el logotipo, símbolo, favicon, glifo vectorial de Karma, doce glifos, las composiciones 13.3D y la paleta **Atinara Sunset** son la fuente visual oficial de la beta v0.1.
-- El Paso 13.5 está activado y aceptado técnicamente. GitHub Pages sirve el Radar desde `main = 7cfcc2313f6b4a4b9afea1ddecf0e2b548c365d4`; la migración local `20260804194933_add_market_radar.sql` consta remotamente como `20260804213111 · add_market_radar` y no debe repetirse.
-- `market-radar` está activa en Supabase como versión 4 con `verify_jwt=true`. La corrección del 5 de agosto compacta la entrada de Gemini, limita su salida, usa razonamiento mínimo y amplía su timeout interno a 35 s. La aceptación real terminó con Gemini disponible y 12 adaptaciones, sin borradores ni cambios públicos.
-- El catálogo ampliado de 24–36 mercados continúa fuera de alcance: este paso descubre y pre-rellena borradores privados, pero nunca publica, aprueba o programa automáticamente.
+1. `AGENTS.md`.
+2. `ORAKLO_PROJECT_CONTEXT.md`.
+3. `ATINARA_PRODUCT_STRATEGY.md`.
+4. `README.md`.
+5. Para economía o predicción: `LIVE_MARKET_ECONOMY.md`.
+6. Para identidad o Penpot: `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`.
+7. Para escrituras de borradores, revisiones o estados: `docs/STATE_CONSISTENCY_AND_MEMORY.md` cuando exista en la rama.
 
-## Antes de empezar cualquier tarea
+Al retomar una conversación nueva o antigua, vuelve a leer estos archivos. No trabajes únicamente desde el transcript, una memoria externa, un ZIP anterior o una descripción del usuario si puedes verificar el sistema real.
 
-1. Lee `ORAKLO_PROJECT_CONTEXT.md` y `README.md` completos. Para economía, predicción o Penpot lee también `LIVE_MARKET_ECONOMY.md` y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` antes de actuar.
-2. Inspecciona `git status`, la rama actual, los últimos commits y la diferencia con `origin/main` antes de editar.
-3. Conserva cualquier cambio local o remoto que no pertenezca a la tarea. No uses comandos destructivos para sincronizar.
-4. No repitas funcionalidades que el contexto marque como terminadas. Si el código y el documento discrepan, comprueba el código y explica la discrepancia.
-5. Espera a que la usuaria indique el siguiente resultado que quiere. No inicies por tu cuenta una fase nueva del roadmap.
+## 2. Fuentes de verdad y continuidad
 
-## Producto y tono
+- Antes de editar, inspecciona `git status`, rama, últimos commits, `origin/main` y diferencias locales.
+- Para producción, comprueba Supabase y los despliegues reales cuando la tarea lo requiera y exista acceso.
+- Conserva cambios locales o remotos ajenos a la tarea. No uses sincronizaciones destructivas.
+- Si una conversación antigua parte de una rama desactualizada, compara con `origin/main` antes de actuar. La estrategia vigente de `ATINARA_PRODUCT_STRATEGY.md` en la rama canónica prevalece salvo que Yol indique expresamente que está cambiándola.
+- El estado técnico cambiante se documenta en `ORAKLO_PROJECT_CONTEXT.md`; la intención de producto y empresa se documenta en `ATINARA_PRODUCT_STRATEGY.md`.
+- Si código y documentación discrepan, verifica el código y el sistema real, explica la discrepancia y corrige la memoria dentro del alcance autorizado.
+- No repitas funcionalidades ni auditorías ya cerradas salvo cambio material, discrepancia o necesidad proporcional al riesgo.
 
-- Atinara es la marca pública de la red social competitiva de predicciones sobre videojuegos y el ecosistema gaming. `Oraklo` se conserva únicamente en infraestructura, historial e identificadores técnicos existentes.
-- Karma es el saldo ficticio para participar; Prestigio es la reputación histórica y determina el rango.
-- No hay dinero real, pagos, compra de Karma ni Modo Real.
-- La interfaz debe sentirse como un mercado predictivo premium, sofisticado, claro e intuitivo. Puede adoptar patrones familiares de descubrimiento y acción de Polymarket o Kalshi, pero nunca copiar sus pantallas, activos o identidad. La marca, los componentes y el lenguaje visual deben ser propios de Atinara y evitar cualquier estética o lenguaje de casino, dinero real, cripto o esports genérico.
-- Ningún texto, título, metadato o mensaje visible para usuarias debe presentar `Oraklo` como marca. La marca pública se escribe **Atinara** y en logotipo puede escribirse **ATINARA**.
-- Las predicciones activas y el Karma disponible son privados. El perfil y las predicciones liquidadas sí pueden ser públicos.
-- No inventes usuarios, métricas, actividad, comentarios ni resultados. La interfaz debe reflejar datos reales de Supabase o estados vacíos honestos.
-- La interfaz y los mensajes para la usuaria deben estar en español, ser claros y evitar errores técnicos crudos.
+## 3. Identidad y producto actual
 
-## Arquitectura y seguridad
+- **Atinara** es la única marca pública. `Oraklo` se conserva únicamente en identificadores técnicos, infraestructura e historial cuando renombrarlo resulte arriesgado o innecesario.
+- Atinara es una red social competitiva de predicciones con varias categorías, no solo gaming.
+- Karma es saldo ficticio para participar. Prestigio es reputación histórica y determina el rango.
+- Durante la beta no hay depósitos, retiradas, compra de Karma ni dinero real.
+- El Karma no es convertible a euros, no genera derechos económicos y nunca debe prometer valor futuro.
+- Una futura modalidad regulada, si llega a existir, tendrá saldo, cuentas y controles separados del Karma.
+- La reputación, precisión, historial, Prestigio, rangos, especialidades e insignias sí deben poder conservar valor reputacional.
+- La interfaz pública debe ser premium, clara, accesible y propia de Atinara. Puede aprender de patrones de Polymarket o Kalshi, pero no copiar sus activos, pantallas o identidad.
+- Evita estética y lenguaje de casino, promesas de beneficio, inversión, rentabilidad, cripto agresiva o esports genérico.
+- Predicciones activas y Karma disponible son privados. Perfil y predicciones liquidadas pueden ser públicos según las reglas vigentes.
+- No inventes usuarios, métricas, actividad, comentarios, mercados o resultados. Usa datos reales o estados vacíos honestos.
+- La interfaz y los mensajes para usuarias deben estar en español y no mostrar errores técnicos crudos.
 
-- Frontend estático compatible con GitHub Pages: HTML, CSS y JavaScript sin proceso de compilación.
+## 4. Intención estratégica obligatoria
+
+Toda propuesta, revisión o cambio debe tener en cuenta la visión completa de `ATINARA_PRODUCT_STRATEGY.md`:
+
+- Atinara Social debe ser un producto completo y viable con Karma ficticio.
+- El Paso 13.6 prepara captación, beta, atribución, onboarding, analítica, feedback, retención, referidos y Temporada Cero.
+- Tras validar la beta, el Paso 13.7 prepara **Atinara Engine**, una infraestructura B2B modular y licenciable a operadores regulados, proveedores, agregadores, medios o instituciones.
+- La vía preferente a estudiar combina Atinara Social, Atinara Engine y un operador regulado asociado. Winamax es solo un ejemplo de posible cliente.
+- Ningún dinero real, depósito, retirada, KYC monetario o motor monetario queda autorizado antes de superar expresamente la Puerta regulatoria R1.
+- La meta empresarial es generar ingresos recurrentes y una actividad profesional sostenible sin vender innecesariamente el núcleo ni depender de un único cliente.
+
+Para cada cambio significativo evalúa y documenta, cuando sea aplicable:
+
+1. Impacto en Atinara Social y en la beta.
+2. Separación Karma/dinero real.
+3. Modularidad y ausencia de acoplamiento innecesario.
+4. Trazabilidad y auditabilidad.
+5. Seguridad, privacidad e integridad.
+6. Propiedad intelectual y conveniencia de repositorio público o privado.
+7. Posible evolución a API, webhooks, marca blanca o configuración por operador.
+8. Calidad de reglas, fuentes, cierres, anulaciones y resoluciones.
+9. Dependencias de proveedores, clientes o jurisdicciones.
+10. Proporcionalidad: no sobredimensionar ahora una función futura.
+
+Pensar en el futuro B2B no autoriza a añadir funciones fuera del alcance. Obliga a evitar callejones sin salida y a señalar deuda técnica relevante.
+
+## 5. Arquitectura y seguridad actuales
+
+- Frontend estático compatible con GitHub Pages: HTML, CSS y JavaScript sin compilación, salvo decisión futura expresa y documentada.
 - Backend: Supabase Auth, Postgres/RLS, RPC y Edge Functions.
-- Nunca pongas claves, `service_role`, `GEMINI_API_KEY` o `TAVILY_API_KEY` en el frontend o en el repositorio.
-- Las APIs externas del Radar solo se consultan desde `market-radar`, con JWT, rol administrativo, hosts permitidos, caché, cooldown y fallos parciales. El navegador nunca actúa como proxy y ninguna métrica externa modifica la economía de Atinara.
-- Las operaciones económicas o de liquidación deben ser atómicas y autoritativas en Supabase. El frontend solo ayuda a validar y mostrar mensajes.
-- No insertes directamente en `predictions` desde el frontend: usa `place_prediction`.
-- El mercado vivo usa una cotización LMSR versionada. El precio medio, impacto, contratos, retorno base, bonus y Prestigio se calculan en servidor; si la versión cambia, la usuaria debe revisar una nueva cotización.
-- Durante la beta no hay venta, salida anticipada, cambio de posición, cobertura, libro de órdenes ni mercado secundario. Solo se reevaluarán después de la beta y no están prometidos.
-- No expongas funciones de resolución protegidas a clientes públicos. La resolución requiere administradora autenticada y confirmación humana.
-- La IA investiga y propone; nunca liquida por sí sola.
-- Ningún mercado puede publicarse o programarse como público sin una validación automática vigente de claridad, coherencia y resolubilidad ejecutada y comprobada en servidor. Un rechazo debe mantenerlo privado, explicar los motivos y no admitir omisión administrativa; cualquier cambio esencial exige repetir la revisión.
-- Las temporadas están preparadas, pero deben permanecer desactivadas hasta alcanzar el umbral de usuarios y recibir activación administrativa explícita.
+- Nunca pongas claves, `service_role`, secretos de Supabase ni claves de proveedores en el frontend o repositorio.
+- Las APIs externas se consultan desde Edge Functions con autenticación, autorización, hosts permitidos, límites, caché y fallos parciales según el contrato vigente. El navegador no actúa como proxy de secretos.
+- Ninguna métrica externa modifica directamente la economía de Atinara.
+- Las operaciones económicas o de liquidación son atómicas y autoritativas en Supabase. El frontend solo ayuda a validar y mostrar.
+- No insertes directamente en `predictions` desde el frontend; usa los RPC autoritativos vigentes, como `place_prediction`.
+- El mercado vivo usa cotización LMSR versionada. Precio, impacto, contratos, retorno, bonus y Prestigio se calculan en servidor; si la versión cambia, la usuaria revisa una nueva cotización.
+- Durante la beta no hay venta, salida anticipada, cambio de posición, cobertura, libro de órdenes ni mercado secundario salvo autorización posterior expresa.
+- No expongas funciones protegidas de administración o resolución a clientes públicos.
+- La IA investiga, clasifica y propone; nunca aprueba, publica, liquida o resuelve por sí sola cuando el contrato exige confirmación humana.
+- Ningún mercado se publica o programa sin validación vigente de claridad, coherencia y resolubilidad en servidor. Un cambio esencial invalida la aprobación anterior.
+- Temporadas y schedulers permanecen en el estado documentado y solo se activan mediante autorización expresa.
 
-## Forma de trabajar acordada
+## 6. Calidad profesional y auditabilidad
+
+- Mantén trazabilidad de creación, edición, revisión, aprobación, publicación, cierre, anulación y resolución.
+- Usa versiones, locks, idempotencia y operaciones transaccionales en escrituras sensibles.
+- Conserva evidencias y fuentes de resolución verificables.
+- Aplica mínimos privilegios y separación de funciones.
+- Evita mezclar dominio, interfaz, proveedores externos y persistencia cuando una separación razonable reduzca futuras reescrituras.
+- Antes de añadir lógica diferencial B2B o integraciones de operadores al repositorio público, evalúa y señala si debe residir en un repositorio privado.
+- No sacrifiques accesibilidad, rendimiento u onboarding por una arquitectura futura no validada.
+
+## 7. Forma de trabajo acordada
 
 - Un único implementador por tarea. No coordines dos agentes editando los mismos archivos simultáneamente.
-- Inspecciona antes de cambiar y mantén el alcance pedido. No añadas funciones futuras sin autorización.
-- Usa migraciones SQL versionadas para cambios de esquema y documenta qué debe ejecutar manualmente la usuaria.
-- Al completar un hito importante, actualiza `ORAKLO_PROJECT_CONTEXT.md` para que el siguiente chat no dependa del transcript.
-- La usuaria suele ejecutar SQL/secretos en Supabase y subir manualmente a GitHub el contenido de un ZIP completo.
-- No hagas `push`, despliegues ni mutaciones externas salvo petición expresa.
-- Tras cambios JavaScript ejecuta comprobación de sintaxis. Revisa también estructura CSS/HTML, rutas, flujo afectado y `git diff --check`.
-- Para cambios visuales, verifica escritorio y móvil en proporción al riesgo. Mantén el versionado de recursos para evitar caché antigua de GitHub Pages.
-- Entrega un commit claro y, cuando se solicite publicación manual, un ZIP del repositorio completo; no solo los archivos modificados.
+- Inspecciona antes de cambiar y limita el alcance a lo pedido.
+- Work puede haber revisado GitHub, Supabase, SQL, pruebas o producción. No repitas esas comprobaciones sin necesidad; reutiliza evidencia vigente y verifica solo lo afectado o riesgoso.
+- Usa migraciones SQL versionadas para cambios de esquema. No repitas migraciones ya aplicadas.
+- No hagas `push`, despliegues, SQL productivo, activaciones, secretos o mutaciones externas salvo autorización expresa de Yol.
+- Tras cambios JavaScript, comprueba sintaxis. Revisa también HTML/CSS, rutas, flujo afectado y `git diff --check`.
+- Ejecuta las pruebas indicadas por el repositorio y las específicas del riesgo. Documenta lo que no pueda ejecutarse.
+- Para cambios visuales, valida escritorio y móvil en proporción al riesgo y conserva el versionado de recursos para evitar caché antigua.
+- Al cerrar un hito importante, actualiza `ORAKLO_PROJECT_CONTEXT.md`. Si cambia la estrategia, actualiza también `ATINARA_PRODUCT_STRATEGY.md` y este archivo.
+- No inicies por tu cuenta una fase nueva del roadmap. Yol decide cuándo continuar.
 
-## Criterios que nunca deben romperse
+### Entregas manuales para GitHub
 
-- Auth, cabecera y actualización de perfil real.
+- Yol suele subir personalmente los archivos preparados.
+- Cuando se solicite ZIP, incluye **solo archivos modificados, añadidos o creados**, conservando sus rutas. No incluyas todo el repositorio.
+- Si la entrega supera 100 archivos, divídela en dos paquetes o grupos de commit claramente numerados y documenta el orden.
+- Entrega una lista exacta de archivos, migraciones, Edge Functions, secretos y pasos manuales.
+
+## 8. Criterios que nunca deben romperse
+
+- Auth, cabecera y perfil real.
 - Descuento real de Karma al confirmar y persistencia tras recargar.
-- Contador basado en `closes_at`, cierre automático visual y bloqueo de predicción tras el vencimiento.
-- Resolución atómica con devolución/retorno y Prestigio nunca inferior a 0. Las posiciones nuevas `lmsr_v1` liquidan cada contrato acertado a 1 Karma más el bonus de dificultad separado y no tienen el antiguo tope `×10`; las posiciones anteriores `legacy_fixed_v1` conservan ese límite y todas sus condiciones originales.
+- Contador basado en `closes_at`, cierre automático y bloqueo tras vencimiento.
+- Resolución atómica con devolución o retorno y Prestigio nunca inferior a cero.
+- Posiciones `lmsr_v1`: cada contrato acertado liquida según el contrato vigente, con bonus de dificultad separado. Posiciones `legacy_fixed_v1`: conservan sus condiciones históricas.
 - Mercados anulados: devolución íntegra del Karma y sin cambio de Prestigio.
-- Los precios `Sí` y `No` suman 100 %, solo se mueven por participaciones confirmadas y su histórico nunca se rellena con fluctuaciones simuladas.
-- Fuentes de resolución visibles, verificables y anteriores al cierre.
-- Pregunta, opciones, criterios, periodo, fecha de cierre y fuentes coherentes antes de publicar; los mercados ambiguos o no resolubles permanecen como borradores privados.
-- Ranking y perfiles basados en datos reales; predicciones activas nunca públicas.
-- Compatibilidad con GitHub Pages.
+- Precios Sí/No coherentes con el modelo vigente; el histórico nunca se rellena con fluctuaciones inventadas.
+- Fuentes visibles, verificables y válidas según el contrato de resolución.
+- Pregunta, opciones, criterios, periodo, cierre y fuentes coherentes antes de publicar.
+- Mercados ambiguos, vencidos, no verificables o no resolubles permanecen privados o se rechazan.
+- Ranking y perfiles basados en datos reales. Predicciones activas nunca públicas.
+- Compatibilidad con GitHub Pages mientras siga siendo la arquitectura aprobada.
 
-## Próxima fase conocida
+## 9. Secuencia estratégica vigente
 
-- Paso 9 (rangos, clasificación y temporadas dormidas): terminado.
-- Paso 10 y 10B (currículum predictivo, personalización y menú de cuenta): terminado en la rama de trabajo local.
-- Paso 11 (comentarios, seguimiento, feed, reacción y moderación): terminado, desplegado y aceptado.
-- Paso 11C (protección gratuita de contraseñas filtradas): publicado y validado el 30 de julio de 2026.
-- Paso 12 (calidad y observabilidad): terminado, publicado y comprobado con SonarQube Cloud, GitGuardian, Checkly y Sentry.
-- Cambio de marca pública: aprobado el 31 de julio de 2026. Atinara sustituye a Oraklo en toda la superficie pública; los contratos técnicos internos no se renombran.
-- Paso 13.1 (auditoría funcional): cerrado el 1 de agosto de 2026.
-- Paso 13.2 (prioridades y criterios): aprobado con correcciones en `STEP_13_2_PRIORITIES_ACCEPTANCE.md`. P0, P1 y P2 son requisitos completos antes de abrir la beta.
-- El mercado vivo se activó en producción el 1 de agosto de 2026. La migración `20260801172543_add_live_prediction_market_model.sql` ya fue aplicada una sola vez y **no debe volver a ejecutarse**. El frontend inicial se publicó en `f7aac42`.
-- La activación conservó las 7 predicciones anteriores como `legacy_fixed_v1`, mantuvo sin cambios los saldos agregados y creó 11 estados LMSR y 11 puntos históricos iniciales para 11 mercados. La aceptación posterior no creó ni modificó predicciones.
-- `data.js` fue eliminado de `main` en `4ccd97e` y la limpieza completa se publicó en `a5c633b`. GitHub Pages sirve `v=20260801-market2`, la URL pública de `data.js` devuelve 404 y las invitadas ya no ven Karma, Prestigio ni rango provisionales.
-- La aceptación pública de escritorio quedó superada. La aceptación móvil real se ejecutó en 320 × 568, 375 × 667, 390 × 844 y 768 × 1024 sobre portada, Comunidad, clasificación, perfil público y fichas abierta y resuelta. Detectó dos desbordamientos reales —el mínimo raíz de 320 px y las URLs largas de una resolución—; el árbol de cierre los corrige de forma mínima en `styles.css` y la comprobación visual local posterior supera las seis superficies a 320 y 375 px.
-- Una nueva consulta administrativa exclusivamente de lectura confirmó 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos `legacy_fixed_v1` —5 activos— y 0 `lmsr_v1`; versiones, probabilidades, RPC, privacidad y resolución administrativa siguen protegidas. No se creó ni modificó ninguna predicción.
-- Paso 13.3: cerrado y aprobado por Yol el 3 de agosto de 2026. La identidad A3 y Atinara Sunset no están pendientes ni deben rediseñarse durante la implementación.
-- Paso 13.4: incorporado al árbol canónico que sirve de base al Radar; su aceptación integral continúa separada de esta entrega.
-- Paso 13.5: Radar administrativo activado y aceptado técnicamente. Polymarket y Kalshi son proveedores públicos; Tavily y Gemini reutilizan los secretos existentes. IGDB queda preparado como proveedor futuro, sin credenciales ni interfaz rota. El catálogo ampliado de 24–36 mercados sigue fuera de alcance.
+```text
+Cerrar y estabilizar el Paso 13.5.2
+        ↓
+Paso 13.6 · Infraestructura de Beta y Crecimiento
+        ↓
+Validación real de Atinara Social
+        ↓
+Paso 13.7 · Productización B2B y preparación para operadores
+        ↓
+Puerta regulatoria R1
+        ↓
+Solo con resultado favorable y autorización expresa:
+modalidad regulada con valor económico
+```
+
+Consulta `ORAKLO_PROJECT_CONTEXT.md` para saber qué parte está realmente cerrada, desplegada o pendiente. No deduzcas el estado desde esta secuencia ni desde una conversación antigua.
