@@ -227,7 +227,7 @@
     const { data, error } = await client.functions.invoke("market-radar", {
       body: { action, ...payload }
     });
-    if (error) throw error;
+    if (error) throw await edgeInvocationError(error, "No se pudo completar la operación del Radar.");
     return data || {};
   }
 
@@ -235,7 +235,7 @@
     const { data, error } = await client.functions.invoke("data-observatory", {
       body: { action, ...payload }
     });
-    if (error) throw error;
+    if (error) throw await edgeInvocationError(error, "No se pudo completar la operación del Observatorio.");
     return data || {};
   }
 
@@ -243,7 +243,7 @@
     const { data, error } = await client.functions.invoke("market-expert", {
       body: { action, ...payload }
     });
-    if (error) throw error;
+    if (error) throw await edgeInvocationError(error, "No se pudo completar el análisis del Agente Editor.");
     return data || {};
   }
 
@@ -251,8 +251,23 @@
     const { data, error } = await client.functions.invoke("market-source-monitor", {
       body: { action, ...payload }
     });
-    if (error) throw error;
+    if (error) throw await edgeInvocationError(error, "No se pudo completar la operación del monitor de fuentes.");
     return data || {};
+  }
+
+  async function edgeInvocationError(error, fallback) {
+    let payload = null;
+    try {
+      if (error?.context && typeof error.context.clone === "function") {
+        payload = await error.context.clone().json();
+      }
+    } catch {
+      // El cuerpo puede no ser JSON; se conserva un error seguro y acotado.
+    }
+    const wrapped = new Error(helpers.formatStructuredText(payload?.message || fallback, fallback));
+    wrapped.code = helpers.formatStructuredText(payload?.error || error?.code, "EDGE_FUNCTION_ERROR");
+    wrapped.details = helpers.formatStructuredText(payload?.details || payload?.message, "");
+    return wrapped;
   }
 
   function setNotice(message, tone = "info") {
@@ -702,7 +717,15 @@
       && Number.isFinite(expiresAt)
       && expiresAt > Date.now()
       && !candidate.is_stale
-      && !(Array.isArray(candidate.duplicate_matches) && candidate.duplicate_matches.length);
+      && !radarBlockingDuplicateMatches(candidate).length;
+  }
+
+  function radarBlockingDuplicateMatches(candidate) {
+    return (Array.isArray(candidate?.duplicate_matches) ? candidate.duplicate_matches : []).filter((match) => {
+      const relationship = String(match?.relationship || "");
+      return match?.blocking !== false
+        && ["exact_duplicate", "semantic_duplicate"].includes(relationship);
+    });
   }
 
   function radarChildMarkup(candidate) {
@@ -1538,10 +1561,12 @@
     }
   }
 
-  async function prepareRadarCandidate(candidateId) {
+  async function prepareRadarCandidate(candidateId, { throwOnError = false } = {}) {
     state.busy = true;
     setNotice("Comprobando estado y duplicados antes de pre-rellenar…", "info");
     renderWorkspace();
+    let result = null;
+    let failure = null;
     try {
       const data = await invokeRadar("prepare", { candidate_id: candidateId });
       const candidate = data.candidate || {};
@@ -1571,14 +1596,20 @@
       };
       state.view = "drafts";
       setNotice("Formulario pre-rellenado. Revisa y completa la información: todavía no se ha guardado nada.", "warning");
+      result = data;
     } catch (error) {
+      failure = error;
       setNotice(helpers.getFriendlyError(error, "No se pudo preparar el borrador. El candidato no se ha modificado."), "error");
     } finally {
       state.busy = false;
       renderWorkspace();
-      document.querySelector("#admin-market-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      document.querySelector('#admin-market-form [name="question"]')?.focus({ preventScroll: true });
+      if (result) {
+        document.querySelector("#admin-market-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.querySelector('#admin-market-form [name="question"]')?.focus({ preventScroll: true });
+      }
     }
+    if (failure && throwOnError) throw failure;
+    return result;
   }
 
   async function dismissRadarCandidate(candidateId) {
@@ -2096,6 +2127,10 @@
     if (!state.draftDirty) return;
     event.preventDefault();
     event.returnValue = "";
+  });
+
+  window.atinaraMarketAdminBridge = Object.freeze({
+    prepareRadarCandidate,
   });
 
   async function applyAuth(auth) {

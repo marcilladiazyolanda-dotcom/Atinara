@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260808-confirmation1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260808-confirmation1">
-  <script src="observability-config.js?v=20260808-confirmation1"></script>
-  <script src="monitoring.js?v=20260808-confirmation1"></script>
+  <script src="theme.js?v=20260808-radar-e2e1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260808-radar-e2e1">
+  <script src="observability-config.js?v=20260808-radar-e2e1"></script>
+  <script src="monitoring.js?v=20260808-radar-e2e1"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -263,14 +263,14 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260808-confirmation1"></script>
-  <script src="password-security.js?v=20260808-confirmation1"></script>
-  <script src="password-recovery.js?v=20260808-confirmation1"></script>
-  <script src="site-ui.js?v=20260808-confirmation1"></script>
-  <script src="auth.js?v=20260808-confirmation1"></script>
-  <script src="market-admin-validation.js?v=20260808-confirmation1"></script>
-  <script src="admin-markets.js?v=20260808-confirmation1"></script>
-  <script src="market-draft-fixer.js?v=20260808-confirmation1"></script>
+  <script src="supabaseClient.js?v=20260808-radar-e2e1"></script>
+  <script src="password-security.js?v=20260808-radar-e2e1"></script>
+  <script src="password-recovery.js?v=20260808-radar-e2e1"></script>
+  <script src="site-ui.js?v=20260808-radar-e2e1"></script>
+  <script src="auth.js?v=20260808-radar-e2e1"></script>
+  <script src="market-admin-validation.js?v=20260808-radar-e2e1"></script>
+  <script src="admin-markets.js?v=20260808-radar-e2e1"></script>
+  <script src="market-draft-fixer.js?v=20260808-radar-e2e1"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
@@ -757,17 +757,18 @@
               throw new Error("La propuesta conserva bloqueos o carece de fecha y fuente primaria.");
             }
             sessionStorage.setItem(STORAGE_KEY, JSON.stringify(pkg));
-            const detail = target.closest(".radar-candidate-detail");
-            const prepareButton = detail?.querySelector("[data-radar-prepare]");
-            if (!prepareButton || prepareButton.disabled) {
-              throw new Error("La candidata debe conservar una verificación factual vigente antes de abrir el formulario.");
+            const preparation = window.atinaraMarketAdminBridge?.prepareRadarCandidate;
+            if (typeof preparation !== "function") {
+              throw new Error("La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
             }
-            prepareButton.click();
+            await preparation(candidateId, { throwOnError: true });
             const form = await waitForForm();
             applyPackageToForm(form, pkg);
           } catch (error) {
             target.disabled = false;
-            const dossier = target.closest(".market-expert-dossier");
+            const currentTarget = document.querySelector(`[data-expert-apply="${CSS.escape(candidateId)}"]`);
+            if (currentTarget) currentTarget.disabled = false;
+            const dossier = currentTarget?.closest(".market-expert-dossier") || target.closest(".market-expert-dossier");
             let status = dossier?.querySelector(".market-expert-bridge-status");
             if (!status && dossier) {
               status = document.createElement("p");

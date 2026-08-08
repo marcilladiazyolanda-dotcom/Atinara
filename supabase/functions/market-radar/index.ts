@@ -27,6 +27,7 @@ import {
   groupCandidates,
   indexGeminiDecisions,
   isAdaptedIdeaComplete,
+  isBlockingDuplicateMatch,
   isRecord,
   normalizeProviderResult,
   parseGeminiAdaptations,
@@ -1031,16 +1032,37 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   });
 }
 
-function candidateReady(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
+function candidatePreflight(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente. Actualiza el Radar." };
+  const state = cleanText(candidate.state, 40);
+  if (["prepared", "dismissed", "expired"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
+  if (toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch)) return { ok: false, error: "CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
+  const verificationStatus = cleanText(candidate.verification_status, 80);
+  if (verificationStatus.startsWith("rejected_")) {
+    const rejection = prepareRevalidationError(candidate);
+    return { ok: false, error: rejection?.error ?? "RADAR_CANDIDATE_INELIGIBLE", message: rejection?.message ?? "La candidata no cumple las condiciones para preparar." };
+  }
+  return { ok: true };
+}
+
+function candidateReady(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
+  const preflight = candidatePreflight(candidate);
+  if (!preflight.ok) return preflight;
   if (cleanText(candidate.verification_status, 80) !== "verified_open") return { ok: false, error: "VERIFICATION_REQUIRED", message: "La candidata no tiene una verificación factual vigente." };
   if (!isAdaptedIdeaComplete(candidate)) return { ok: false, error: "RESOLUTION_SOURCE_REQUIRED", message: "La candidata no conserva una pregunta, criterios y fuente de resolución verificables." };
   const expiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { ok: false, error: "VERIFICATION_EXPIRED", message: "La verificación factual ha caducado. Actualiza el Radar." };
   if (cleanText(candidate.state, 40) !== "available") return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
-  if (toRecordArray(candidate.duplicate_matches).length) return { ok: false, error: "CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
   return { ok: true };
+}
+
+function refreshCandidateCacheLease(candidate: JsonRecord, checkedAt: string): JsonRecord {
+  return {
+    ...candidate,
+    fetched_at: checkedAt,
+    cache_expires_at: new Date(Date.parse(checkedAt) + (20 * 60_000)).toISOString(),
+  };
 }
 
 async function revalidatePolymarketCandidate(candidate: JsonRecord): Promise<boolean> {
@@ -1108,8 +1130,8 @@ async function handleAction(environment: Environment, authorization: string, bod
   if (action === "prepare") {
     const candidate = toRecord(await rpc(environment, "get_market_radar_candidate", { candidate_id_input: candidateId }, authorization));
     if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
-    const readiness = candidateReady(candidate);
-    if (!readiness.ok) return jsonResponse({ error: readiness.error, message: readiness.message }, 409);
+    const preflight = candidatePreflight(candidate);
+    if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
     let providerOpen = false;
     try {
       providerOpen = candidate.provider === "polymarket"
@@ -1119,9 +1141,15 @@ async function handleAction(environment: Environment, authorization: string, bod
       return jsonResponse({ error: "PROVIDER_REVALIDATION_FAILED", message: "No se pudo confirmar el estado actual del mercado de origen. No se ha preparado ningún borrador." }, 503);
     }
     if (!providerOpen) return jsonResponse({ error: "PROVIDER_NOT_OPEN", message: "El mercado de origen ya no está abierto o no conserva la opción verificada." }, 409);
+    const checkedAt = new Date().toISOString();
     let factuallyRevalidated: JsonRecord;
     try {
-      factuallyRevalidated = await revalidateCriticalEligibility(environment, authorization, candidate);
+      factuallyRevalidated = canReuseRadarVerification(candidate, candidate, checkedAt)
+        ? refreshCandidateCacheLease(candidate, checkedAt)
+        : refreshCandidateCacheLease(
+          await revalidateCriticalEligibility(environment, authorization, candidate),
+          checkedAt,
+        );
       await persistProviderResult(
         environment,
         cleanText(candidate.provider, 40),
@@ -1133,15 +1161,17 @@ async function handleAction(environment: Environment, authorization: string, bod
     }
     const factualError = prepareRevalidationError(factuallyRevalidated);
     if (factualError) return jsonResponse(factualError, 409);
-    const factualReadiness = candidateReady(factuallyRevalidated);
+    const authoritativeCandidate = toRecord(await rpc(environment, "get_market_radar_candidate", { candidate_id_input: candidateId }, authorization));
+    if (!authoritativeCandidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata después de verificarla." }, 404);
+    const factualReadiness = candidateReady(authoritativeCandidate);
     if (!factualReadiness.ok) return jsonResponse({ error: factualReadiness.error, message: factualReadiness.message }, 409);
     const reserved = toRecord(await rpc(environment, "reserve_market_radar_candidate_for_prepare", {
       candidate_id_input: candidateId,
       normalizer_version_input: RADAR_NORMALIZER_VERSION,
-      verification_checked_at_input: new Date().toISOString(),
+      verification_checked_at_input: checkedAt,
     }, authorization));
     if (!reserved?.ok) return jsonResponse({ error: cleanText(reserved?.error, 100) || "PREPARE_REJECTED", message: cleanText(reserved?.message, 500) || "La candidata ya no cumple las condiciones de preparación." }, 409);
-    return jsonResponse({ ok: true, candidate: factuallyRevalidated, prefill: buildDraftPrefill(factuallyRevalidated) });
+    return jsonResponse({ ok: true, candidate: authoritativeCandidate, prefill: buildDraftPrefill(authoritativeCandidate) });
   }
   if (action === "dismiss") {
     const result = await rpc(environment, "dismiss_market_radar_candidate", { candidate_id_input: candidateId }, authorization);

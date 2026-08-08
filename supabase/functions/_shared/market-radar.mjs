@@ -649,6 +649,29 @@ function matchFamily(item) {
   return deriveMarketFamily(item);
 }
 
+function sameCandidateIdentity(candidate, item) {
+  const candidateId = cleanText(candidate?.id, 220);
+  const itemId = cleanText(item?.id, 220);
+  if (candidateId && itemId && candidateId === itemId) return true;
+  const candidateProvider = cleanText(candidate?.provider, 80).toLowerCase();
+  const itemProvider = cleanText(item?.provider, 80).toLowerCase();
+  const candidateExternalId = cleanText(candidate?.external_id, 300);
+  const itemExternalId = cleanText(item?.external_id, 300);
+  return Boolean(
+    candidateProvider
+    && itemProvider === candidateProvider
+    && candidateExternalId
+    && itemExternalId === candidateExternalId
+  );
+}
+
+export function isBlockingDuplicateMatch(match) {
+  if (!isRecord(match)) return false;
+  const relationship = cleanText(match.relationship, 80);
+  return match.blocking !== false
+    && ["exact_duplicate", "semantic_duplicate"].includes(relationship);
+}
+
 export function classifyMarketRelations(candidate, existing = []) {
   const source = normalizeComparableText(candidate.atinara_question ?? candidate.source_question);
   const candidateFamily = deriveMarketFamily(candidate);
@@ -657,6 +680,7 @@ export function classifyMarketRelations(candidate, existing = []) {
   const duplicates = [];
   const siblings = [];
   for (const item of existing) {
+    if (sameCandidateIdentity(candidate, item)) continue;
     const target = normalizeComparableText(item.question ?? item.title ?? item.atinara_question);
     if (!target) continue;
     const targetTokens = new Set(target.split(" ").filter((token) => token.length > 2));

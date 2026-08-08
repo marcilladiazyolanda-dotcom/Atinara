@@ -703,13 +703,25 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
 - El mercado publicado de GTA VI fue enlazado a `atinara:v1:grand-theft-auto-vi:release_date`, hijo `deadline:2026-08-31`, sin alterar 50/50, participantes, Karma ni estado económico.
 - Validación final: 62 archivos JavaScript, 178 pruebas unitarias, TypeScript, permisos, SQL transaccional con `ROLLBACK`, catálogo anónimo, invariantes económicas y asesores de Supabase sin errores.
 
+### Corrección crítica Radar → publicación (8 de agosto de 2026)
+
+- La causa real era una autocoincidencia: una candidata redescubierta podía compararse con su propia fila o con otra representación de la misma identidad `(provider, external_id)`, quedar guardada como `exact_duplicate` y recibir `DUPLICATE_MARKET`.
+- La migración `20260808204159_fix_radar_prepare_identity_and_blocking_duplicates` está aplicada y registrada en producción. Elimina autocoincidencias, separa los arrays de duplicados bloqueantes y hermanas no bloqueantes, deduplica por identidad y endurece la reserva SQL con política, vigencia, campos resolubles y tiempo autoritativo.
+- `market-radar` v23 está activa con `verify_jwt=true`. Preparar reutiliza una verificación factual vigente, vuelve a comprobar que el proveedor siga abierto, renueva la caché y relee la candidata autoritativa; Tavily y Gemini solo se repiten cuando la verificación no puede reutilizarse.
+- La interfaz ya no intenta pulsar un botón obsoleto desde el puente del Agente Editor. Llama al preparador central, interpreta el JSON de error de la Edge Function y distingue solo `exact_duplicate` o `semantic_duplicate` bloqueantes.
+- La candidata de Half-Life 3 que produjo el 409 original se probó de nuevo contra la Edge Function desplegada: preparación 200, `verified_open`, cero duplicados bloqueantes, prefill completo y paquete experto aplicable.
+- Prueba real completa en producción: Radar → preparación 200 → Agente Editor sin caché ni degradación → propuesta `validated` → guardado atómico v1 con cero incidencias → revisión `approved` → confirmación → publicación. Se publicó el hijo `deadline:2026-11-30` de GTA VI.
+- El catálogo público contiene dos hijos de `atinara:v1:grand-theft-auto-vi:release_date`: agosto y noviembre. Tienen claves de hijo distintas y ambos son visibles; una fecha no bloqueó a la otra.
+- Estado final tras limpiar la cuenta técnica temporal: 15 mercados, 9 predicciones, 2 perfiles, 2027 Karma total y 40 Prestigio total. El único cambio económico fue el nuevo mercado solicitado; no se creó ninguna predicción ni se alteró Karma o Prestigio.
+- Integridad Radar final: 229 candidatas, cero autocoincidencias, cero hermanas bloqueantes y cero elementos no bloqueantes dentro de `duplicate_matches`; los 54 duplicados reales siguen bloqueados.
+- Validación final: 63 archivos JavaScript, 186 pruebas unitarias, TypeScript, `git diff --check`, publicación y confirmación idempotentes, RPC pública del mercado, JWT obligatorio y asesores de seguridad/rendimiento de Supabase sin avisos.
+
 Siguiente paso operativo: subir a `main`, conservando rutas, el ZIP mínimo de
-la corrección de confirmación y comprobar el clic real de Yol. No repetir
-migraciones ni despliegues: el backend ya está activado y la versión de caché
-ha cambiado. El mercado
-antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el
-catálogo, chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni
-compraventa secundaria.
+esta corrección para que GitHub Pages cargue la nueva interfaz y la versión de
+caché `20260808-radar-e2e1`. No repetir la migración ni el despliegue de
+`market-radar`: el backend ya está activo. El mercado antiguo de julio continúa
+sin aprobar ni liquidar. No ampliar todavía el catálogo, chat, GIF, feed
+algorítmico, temporadas, monetización, dinero real ni compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

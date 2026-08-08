@@ -13,6 +13,7 @@ const migration = readFileSync(join(root, "supabase/migrations/20260808180729_ad
 const familyDerivationMigration = readFileSync(join(root, "supabase/migrations/20260808182940_strengthen_generic_market_family_derivation.sql"), "utf8");
 const candidateDuplicateMigration = readFileSync(join(root, "supabase/migrations/20260808183415_enforce_exact_candidate_family_duplicates.sql"), "utf8");
 const familyMatchDeduplicationMigration = readFileSync(join(root, "supabase/migrations/20260808185135_deduplicate_market_family_matches.sql"), "utf8");
+const radarIdentityMigration = readFileSync(join(root, "supabase/migrations/20260808204159_fix_radar_prepare_identity_and_blocking_duplicates.sql"), "utf8");
 const explorer = require(join(root, "market-family-explorer.js"));
 const landing = readFileSync(join(root, "market-publication-landing.js"), "utf8");
 const home = readFileSync(join(root, "script.js"), "utf8");
@@ -130,6 +131,7 @@ function gtaRelease(question, overrides = {}) {
   return {
     id: overrides.id,
     provider: overrides.provider || "kalshi",
+    external_id: overrides.external_id,
     source_title: "Grand Theft Auto VI release date",
     source_question: question,
     atinara_question: question,
@@ -167,6 +169,41 @@ test("Familias · fecha distinta es sibling, comparte familia y recupera novedad
     aggregate_probability: false,
     economic_independence: true,
   });
+});
+
+test("Familias · una candidata nunca puede bloquearse al reencontrarse a sí misma", () => {
+  const candidate = gtaRelease("Will Grand Theft Auto VI be released before December 31, 2026?", {
+    id: "candidate-uuid",
+    external_id: "kalshi:KXGTA6-26-DEC31",
+  });
+  const cachedOccurrence = {
+    ...candidate,
+    id: "cached-copy-with-another-row-shape",
+    question: candidate.atinara_question,
+  };
+  const relation = radar.classifyMarketRelations(candidate, [candidate, cachedOccurrence]);
+  assert.equal(relation.duplicates.length, 0);
+  assert.equal(relation.siblings.length, 0);
+  const scored = radar.scoreCandidates([candidate, cachedOccurrence]);
+  assert.ok(scored.every((item) => !item.hard_reject_reasons.includes("DUPLICATE_MARKET")));
+  assert.ok(scored.every((item) => item.score_breakdown.novelty === 20));
+});
+
+test("Familias · identidad distinta y mismo hijo continúa siendo un duplicado real", () => {
+  const first = gtaRelease("Will Grand Theft Auto VI be released before December 31, 2026?", {
+    id: "first",
+    external_id: "kalshi:KXGTA6-26-DEC31-A",
+  });
+  const second = {
+    ...first,
+    id: "second",
+    external_id: "kalshi:KXGTA6-26-DEC31-B",
+    question: first.atinara_question,
+  };
+  const relation = radar.classifyMarketRelations(second, [first]);
+  assert.equal(relation.duplicates.length, 1);
+  assert.equal(radar.isBlockingDuplicateMatch(relation.duplicates[0]), true);
+  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "sibling", blocking: false }), false);
 });
 
 test("Familias · tráiler y lanzamiento son proposiciones distintas", () => {
@@ -243,6 +280,12 @@ test("Backend · metadatos atraviesan candidata, borrador, publicación y RPC p�
   assert.match(familyMatchDeduplicationMigration, /group by element\.item/);
   assert.match(familyMatchDeduplicationMigration, /zzz_deduplicate_market_candidate_family_arrays_before_write/);
   assert.doesNotMatch(familyMatchDeduplicationMigration, /public\.(markets|predictions|profiles)\s+(?:set|values)/i);
+  assert.match(radarIdentityMigration, /market_candidate_blocking_duplicates/);
+  assert.match(radarIdentityMigration, /element\.item ->> 'id' is distinct from self_id_input::text/);
+  assert.match(radarIdentityMigration, /relationship' in \('exact_duplicate', 'semantic_duplicate'\)/);
+  assert.match(radarIdentityMigration, /relationship' = 'sibling'/);
+  assert.match(radarIdentityMigration, /reserve_market_radar_candidate_for_prepare/);
+  assert.doesNotMatch(radarIdentityMigration, /(?:insert|update|delete)\s+(?:into\s+|from\s+)?public\.(?:markets|predictions|profiles)/i);
   assert.match(radarEdge, /get_admin_market_family_definitions/);
   assert.doesNotMatch(migration, /insert into public\.predictions|update public\.predictions|publish_market_draft\(/i);
 });

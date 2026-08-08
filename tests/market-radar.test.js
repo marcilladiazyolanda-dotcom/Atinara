@@ -568,7 +568,7 @@ test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
   assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
-test("la preparación revalida versión, caducidad, proveedor y duplicados", () => {
+test("la preparación revalida proveedor, reutiliza verificación vigente y reserva el estado autoritativo", () => {
   assert.match(edge, /NORMALIZER_OUTDATED/);
   assert.match(edge, /ELIGIBILITY_POLICY_OUTDATED/);
   assert.match(edge, /VERIFICATION_EXPIRED/);
@@ -576,12 +576,17 @@ test("la preparación revalida versión, caducidad, proveedor y duplicados", () 
   assert.match(edge, /revalidateKalshiCandidate/);
   assert.match(edge, /reserve_market_radar_candidate_for_prepare/);
   assert.match(edge, /PROVIDER_REVALIDATION_FAILED/);
+  assert.match(edge, /candidatePreflight/);
+  assert.match(edge, /canReuseRadarVerification\(candidate, candidate, checkedAt\)/);
+  assert.match(edge, /refreshCandidateCacheLease/);
   assert.match(edge, /revalidateCriticalEligibility/);
   assert.match(edge, /researchGroupsWithTavily\(environment\.tavilyKey, \[candidate\]\)/);
   assert.match(edge, /verifyAndAdaptWithGemini\(environment\.geminiKey, \[candidate\]/);
   assert.match(edge, /prepareRevalidationError/);
   assert.match(edge, /RESOLUTION_SOURCE_REQUIRED/);
-  assert.match(edge, /const factualReadiness = candidateReady\(factuallyRevalidated\)/);
+  assert.match(edge, /const authoritativeCandidate = toRecord\(await rpc/);
+  assert.match(edge, /const factualReadiness = candidateReady\(authoritativeCandidate\)/);
+  assert.match(edge, /some\(isBlockingDuplicateMatch\)/);
   assert.match(edge, /RADAR_CANDIDATE_RESOLVED/);
   assert.match(edge, /RADAR_CANDIDATE_INELIGIBLE/);
   assert.match(edge, /RADAR_CANDIDATE_UNANNOUNCED/);
@@ -626,10 +631,16 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /RADAR_SCORE_LABELS/);
   assert.match(adminUi, /Criterio anterior/);
   assert.match(adminUi, /radarCandidatePolicyCurrent/);
+  assert.match(adminUi, /radarBlockingDuplicateMatches/);
+  assert.match(adminUi, /\["exact_duplicate", "semantic_duplicate"\]/);
+  assert.match(adminUi, /edgeInvocationError/);
+  assert.match(adminUi, /window\.atinaraMarketAdminBridge/);
+  assert.match(adminHtml, /await preparation\(candidateId, \{ throwOnError: true \}\)/);
+  assert.doesNotMatch(adminHtml, /debe conservar una verificación factual vigente antes de abrir el formulario/);
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260808-confirmation1/);
+  assert.match(adminHtml, /v=20260808-radar-e2e1/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 
