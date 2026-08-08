@@ -1,0 +1,171 @@
+Sí, Yol. Queda incorporado como regla permanente de Atinara:
+
+- Yo en Work también consultaré GitHub y trabajaré con Supabase cuando tenga acceso y resulte práctico.
+- No enviaremos esas tareas automáticamente a Codex.
+- Codex quedará para programación compleja, cambios amplios, migraciones delicadas, Penpot o trabajos que aquí sean inviables.
+- Evitaremos duplicar trabajo: si yo ya compruebo GitHub o Supabase, Codex no repetirá la revisión salvo que sea imprescindible.
+- Solo escalaremos una tarea cuando exista un bloqueo real de acceso, capacidad o complejidad.
+
+Así aprovechamos mejor el límite sin renunciar a que yo pueda hacer directamente buena parte del trabajo técnico.
+====================================================================
+MEMORIA ESTRATÉGICA PERMANENTE · ATINARA
+PASOS 13.6, 13.7 Y VISIÓN B2B/REGULADA
+Actualización: 8 de agosto de 2026
+====================================================================
+
+Esta sección forma parte del estado vigente del proyecto Atinara y debe aplicarse al continuar el proyecto en conversaciones actuales, antiguas retomadas o futuras.
+
+1. VISIÓN DE PRODUCTO A LARGO PLAZO
+
+- Atinara debe nacer y consolidarse como una red social competitiva de predicciones con Karma ficticio, reputación, temporadas, comunidad y mercados rigurosamente verificables.
+- La versión con Karma ficticio debe ser un producto completo, útil y sostenible por sí mismo, no una simple demostración provisional.
+- La aspiración estratégica a largo plazo es que la tecnología y experiencia de Atinara puedan utilizarse en mercados de predicción con valor económico, siempre mediante una vía legal, regulada, financiada y segura.
+- La vía empresarial prioritaria que debe estudiarse es combinar:
+  a) Atinara Social, como producto propio con Karma ficticio y comunidad.
+  b) Atinara Engine, como infraestructura B2B modular y licenciable.
+  c) Un operador regulado asociado, como Winamax u otro operador o proveedor interesado, responsable de cuentas de juego, saldo real, KYC, depósitos, retiradas, límites, juego responsable y obligaciones de licencia.
+- Atinara debe poder obtener ingresos recurrentes por licencia de uso, integración, soporte, módulos, servicios gestionados o participación comercial, conservando su propiedad intelectual.
+- No se construirá Atinara para depender de un único posible cliente. Winamax es un ejemplo de objetivo comercial, no el único destino del producto.
+
+2. COMUNICACIÓN ACTUAL Y SEPARACIÓN ECONÓMICA
+
+- La comunicación pública actual seguirá definiendo Atinara como una red social de predicciones con Karma ficticio, sin depósitos, retiradas ni apuestas con dinero real.
+- No se prometerá que el Karma tendrá valor económico, que será convertible a euros ni que dará derechos sobre una futura modalidad regulada.
+- Un futuro saldo real, si alguna vez existe, deberá estar jurídica, contable, técnica y visualmente separado del Karma.
+- Sí podrán conservarse como activos reputacionales el historial de predicciones, la precisión, el Prestigio, los rangos, especialidades, insignias, antigüedad y resultados de temporadas.
+- La posible evolución monetaria solo se comunicará como visión futura condicional a viabilidad jurídica, licencias, financiación, certificación y protección de usuarios.
+
+3. PASO 13.6 · INFRAESTRUCTURA DE BETA Y CRECIMIENTO
+
+El Paso 13.6 debe ejecutarse después de cerrar y estabilizar el Paso 13.5.2. Incluye:
+
+13.6.0 · Posicionamiento y opcionalidad regulatoria.
+13.6.1 · Captación, lista de espera, campañas, UTM, fuentes y cohortes.
+13.6.2 · Activación y onboarding por intereses.
+13.6.3 · Retención, notificaciones de resolución, tarjetas compartibles, referidos y Temporada Cero.
+13.6.4 · Observatorio de crecimiento y métricas de producto.
+
+Debe permitir medir desde el primer tester externo: origen, registro, primera predicción, activación, retorno, resolución consultada, invitaciones y retención.
+
+4. PASO 13.7 · PRODUCTIZACIÓN B2B Y PREPARACIÓN PARA OPERADORES
+
+El Paso 13.7 queda incorporado formalmente al roadmap. No sustituye a los pasos actuales y debe abordarse después del 13.6 y de validar suficientemente la beta social.
+
+Objetivo general:
+Convertir las capacidades probadas de Atinara en una plataforma profesional, modular, auditable, integrable y licenciable por operadores regulados, proveedores B2B, agregadores, medios, comunidades o instituciones.
+
+13.7.1 · Separación del producto
+- Delimitar Atinara Social y Atinara Engine.
+- Definir qué componentes son públicos, privados, compartidos o exclusivos del núcleo B2B.
+- Separar datos sociales, datos del operador, configuración comercial y lógica económica.
+- Proteger marca, propiedad intelectual, metodologías, código propietario y documentación sensible.
+- Preparar, cuando corresponda, repositorios privados para el núcleo B2B, adaptadores regulatorios, integraciones de operadores y documentación de seguridad.
+
+13.7.2 · Arquitectura modular e integrable
+- Diseñar APIs versionadas, webhooks, SDK o adaptadores cuando exista necesidad real.
+- Separar interfaz, reglas de mercado, resolución, contabilidad ficticia, identidad, analítica e integraciones.
+- Permitir marca blanca y configuración por cliente sin bifurcar permanentemente el código.
+- Preparar una arquitectura adaptable a distintos modelos: social ficticio, contrapartida, apuestas cruzadas u otras modalidades que resulten jurídicamente válidas.
+- Evitar acoplar el motor actual a un único operador, proveedor, interfaz o jurisdicción.
+
+13.7.3 · Calidad técnica, seguridad y preparación regulatoria
+- Mantener trazabilidad completa de creación, revisión, aprobación, modificación, cierre, resolución, anulación y liquidación.
+- Implantar roles, permisos mínimos, doble aprobación cuando proceda, logs fiables y evidencias conservables.
+- Garantizar operaciones deterministas e idempotentes, especialmente en cierres y liquidaciones.
+- Preparar pruebas automáticas, pruebas de carga, recuperación ante fallos, monitorización, alertas, copias de seguridad y despliegues reversibles.
+- Diseñar políticas de conflictos de interés, información privilegiada, mercados sensibles, moderación, fraude y abuso.
+- No incorporar depósitos, retiradas, KYC monetario ni saldo real antes de superar la Puerta regulatoria R1.
+
+13.7.4 · Paquete comercial y modelo de licencia
+- Crear una demostración profesional y configurable.
+- Documentar módulos, integración, seguridad, soporte, métricas y propuesta de valor.
+- Preparar pilotos pagados, costes de integración, licencia recurrente, soporte y posibles componentes variables.
+- Vender licencias de uso y servicios, no desprenderse del núcleo del código ni de la propiedad intelectual salvo decisión empresarial extraordinaria y expresa.
+- Evitar exclusividades amplias sin mínimos garantizados y limitar cualquier exclusividad por territorio, categoría, plazo o cliente.
+- Proteger la reutilización de mejoras generales de Atinara entre clientes.
+
+13.7.5 · Descubrimiento y validación con operadores
+- Crear un mapa de operadores, plataformas B2B, agregadores y posibles socios.
+- Priorizar contactos de producto, innovación, tecnología, partnerships, regulación y desarrollo de negocio.
+- Realizar primero entrevistas de descubrimiento y después propuestas de piloto basadas en métricas reales.
+- No contactar presentando únicamente una idea. Presentar un producto funcional con mercados resueltos, usuarios, trazabilidad, rendimiento, administración, seguridad y demostración de marca blanca.
+- Buscar un primer cliente de referencia, un segundo que demuestre replicabilidad y un tercero que reduzca dependencia.
+
+13.7.6 · Módulos conceptuales de Atinara Engine
+- Atinara Discover: radar, descubrimiento y priorización de acontecimientos.
+- Atinara Studio: creación, revisión, aprobación y programación de mercados.
+- Atinara Resolve: fuentes, evidencias, resolución, anulaciones y auditoría.
+- Atinara Engage: experiencia social, retos, rankings, temporadas, reputación y tarjetas compartibles.
+- Atinara Connect: APIs, webhooks, SSO delegado, analítica, marca blanca e integración.
+- Atinara Core: lógica económica configurable. Este módulo queda condicionado a la Puerta regulatoria R1 y no debe implementarse prematuramente como sistema de dinero real.
+
+Los nombres anteriores son denominaciones internas de trabajo y no marcas públicas definitivas.
+
+5. PUERTA REGULATORIA R1 · VIABILIDAD DE MERCADOS CON VALOR ECONÓMICO
+
+Después de validar la beta y antes de crear funciones monetarias, deberá realizarse una fase formal de viabilidad que estudie:
+
+- Clasificación jurídica del producto y de cada modalidad.
+- Competencias de DGOJ, CNMV u otros organismos cuando proceda.
+- Contrapartida, apuestas cruzadas, instrumentos financieros u otras categorías.
+- Operador propio frente a proveedor tecnológico, agregador o socio autorizado.
+- Licencias, capital, garantías, certificación, homologación y auditorías.
+- KYC, AML, pagos, fiscalidad, límites, autoexclusión y juego responsable.
+- Publicidad, protección de menores, mercados prohibidos o sensibles y jurisdicciones.
+- Coste, plazo, personal, seguros, soporte, responsabilidad contractual y riesgo reputacional.
+
+No se autoriza ningún desarrollo de dinero real por el mero hecho de que esta visión figure en la memoria. La Puerta R1 deberá aprobarse expresamente antes de iniciar esa implementación.
+
+6. REGLA TRANSVERSAL OBLIGATORIA PARA TODO TRABAJO FUTURO
+
+A partir de esta actualización, todo lo que se investigue, revise, diseñe, modifique, migre, despliegue o cree para Atinara debe valorar expresamente esta visión de producto y sus objetivos empresariales.
+
+Cada propuesta, prompt para Codex, revisión de Work, commit, migración, Edge Function, diseño de Supabase, interfaz o nueva funcionalidad deberá comprobar, cuando sea aplicable:
+
+1) Si mantiene separadas la experiencia social ficticia y una posible modalidad regulada.
+2) Si evita vincular Karma con dinero real.
+3) Si la lógica está suficientemente modular y no encerrada en una sola interfaz o cliente.
+4) Si deja trazabilidad y es auditable.
+5) Si protege seguridad, privacidad, integridad de datos y propiedad intelectual.
+6) Si puede evolucionar hacia APIs, marca blanca o configuración por operador sin una reescritura total.
+7) Si las reglas, fuentes, cierres, anulaciones y resoluciones son profesionalmente defendibles.
+8) Si el cambio mejora o perjudica la capacidad futura de licenciar Atinara.
+9) Si introduce dependencia innecesaria de un proveedor, cliente o jurisdicción.
+10) Si es necesario en la fase actual o supondría sobredimensionar prematuramente la beta.
+
+Tener en cuenta la visión B2B no significa implementar ahora todas las funciones B2B. Significa evitar decisiones que destruyan esa opción y construir con una calidad proporcional a la fase real del proyecto.
+
+La prioridad inmediata sigue siendo entregar una Atinara Social clara, segura, atractiva y útil para usuarios reales. La futura productización B2B no debe empeorar el onboarding, la velocidad, la accesibilidad ni la experiencia de la beta.
+
+7. DIVISIÓN DE TRABAJO
+
+- Work diseña producto, define requisitos y métricas, consulta GitHub y Supabase cuando sea práctico, revisa arquitectura y código, ejecuta pruebas, valida producción y evita auditorías repetitivas.
+- Codex se utiliza para implementación compleja, refactorizaciones amplias, migraciones delicadas, nuevas APIs, arquitectura modular, seguridad avanzada, Penpot o tareas inviables directamente desde Work.
+- Flujo recomendado: Work especifica, Codex implementa, Work verifica contra el estado real de origin/main y Supabase producción.
+
+8. OBJETIVO EMPRESARIAL
+
+Atinara debe desarrollarse con calidad suficiente para poder convertirse en una actividad profesional sostenible y generar ingresos recurrentes que permitan dedicación real al proyecto.
+
+La meta no es únicamente crear una web atractiva ni acumular registros. Es demostrar:
+- demanda y retención;
+- mercados rigurosos;
+- resolución fiable;
+- tecnología reutilizable;
+- capacidad de integración;
+- seguridad y trazabilidad;
+- una propuesta comercial que produzca valor medible para clientes.
+
+Esta memoria debe aplicarse automáticamente al retomar Atinara salvo que Yol decida expresamente modificarla.
+
+9. ÁMBITO MULTIMODO Y MULTICONVERSACIÓN
+
+- Esta memoria se aplica automáticamente a Chat, investigaciones Pro, Work y Codex.
+- Se aplica tanto en conversaciones nuevas como en conversaciones antiguas que se retomen dentro del proyecto Atinara.
+- Un transcript antiguo no prevalece sobre el roadmap vigente, la estrategia canónica, origin/main o Supabase producción.
+- Todo análisis, investigación, recomendación, prompt, revisión, cambio o creación debe evaluar Atinara Social, el Paso 13.6, Atinara Engine/Paso 13.7 y la Puerta R1 cuando sean pertinentes.
+- Work y Pro deben reutilizar evidencia vigente y distinguir hechos, fuentes, inferencias y recomendaciones. Codex debe leer la documentación canónica y no repetir auditorías sin necesidad.
+- Ningún modo puede prometer conversión del Karma ni introducir dinero real antes de R1.
+- Si una solución inmediata perjudica la modularidad, auditabilidad, seguridad, propiedad intelectual o futura capacidad B2B, debe advertirse y corregirse o documentarse como deuda técnica consciente.
+- Esta regla prevalece salvo modificación expresa de Yol.
+

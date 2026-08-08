@@ -6,6 +6,31 @@
 
 Este documento define la intención de producto y empresarial que debe conservarse aunque el prompt de una tarea concreta no la repita. El estado técnico cambiante se consulta en `ORAKLO_PROJECT_CONTEXT.md`, el código real, `origin/main` y Supabase producción. Esta estrategia solo cambia mediante una decisión expresa de Yol.
 
+## 0. Ámbito permanente en Chat, Pro, Work y Codex
+
+Esta estrategia es transversal a todo el proyecto Atinara y se aplica automáticamente, aunque el encargo de turno no la repita, en:
+
+- conversaciones normales de Chat;
+- investigaciones y comparativas realizadas en modo Pro;
+- tareas ejecutadas o coordinadas desde Work;
+- implementaciones, revisiones y continuaciones realizadas por Codex;
+- conversaciones nuevas y conversaciones antiguas que se retomen dentro del proyecto.
+
+Al retomar una conversación antigua, el transcript histórico no congela el proyecto en aquel momento. Prevalecen el roadmap vigente, esta estrategia, `AGENTS.md`, `ORAKLO_PROJECT_CONTEXT.md`, `origin/main` y el estado real de Supabase cuando la tarea dependa de producción.
+
+Toda investigación, recomendación, diseño, auditoría, prueba, prompt, modificación o archivo nuevo debe valorar simultáneamente:
+
+1. la calidad y viabilidad inmediata de Atinara Social;
+2. la estrategia de captación y beta del Paso 13.6;
+3. la futura productización B2B de Atinara Engine del Paso 13.7;
+4. la separación absoluta entre Karma ficticio y una posible economía regulada;
+5. la modularidad, auditabilidad, seguridad, propiedad intelectual e integrabilidad futura;
+6. la prohibición de desarrollar o prometer dinero real antes de superar expresamente la Puerta regulatoria R1.
+
+Las investigaciones Pro deben distinguir hechos actuales, fuentes externas, inferencias y recomendaciones. Work debe reutilizar las comprobaciones vigentes ya realizadas y verificar solo lo que haya cambiado o resulte material para el riesgo. Codex debe recibir y respetar esas conclusiones mediante la documentación canónica del repositorio, evitando repetir auditorías sin necesidad.
+
+Si una solución puntual funciona hoy pero perjudica de forma relevante estos objetivos, debe señalarse antes de adoptarla y proponerse una alternativa compatible o dejarse documentada como deuda técnica consciente. Yol puede modificar esta estrategia de forma expresa; mientras no lo haga, se considera una instrucción permanente del proyecto.
+
 ## 1. Visión de producto
 
 Atinara debe desarrollarse como una red social competitiva de predicciones de calidad profesional, con mercados rigurosos, Karma ficticio, Prestigio, reputación, temporadas, comunidad e historial verificable.

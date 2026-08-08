@@ -1,6 +1,8 @@
 # Instrucciones permanentes de Atinara · nombre interno histórico Oraklo
 
 Estas instrucciones se aplican a todo el árbol del repositorio. Codex debe obedecerlas aunque el prompt de una tarea no repita la estrategia. Una conversación antigua o un resumen previo no sustituyen el estado actual del repositorio.
+La estrategia de producto es común a Chat, Pro, Work y Codex. Al retomar cualquier conversación del proyecto, nueva o antigua, debe aplicarse el estado vigente aunque el prompt concreto no lo repita. La documentación canónica y los sistemas reales prevalecen sobre transcripciones antiguas.
+
 
 ## 1. Lectura obligatoria antes de cualquier tarea
 

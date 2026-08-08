@@ -1,0 +1,73 @@
+MEMORIA ESTRATÉGICA PERMANENTE · ATINARA
+PASOS 13.6, 13.7 Y VISIÓN B2B/REGULADA
+Actualización: 8 de agosto de 2026
+
+Esta memoria establece como estado permanente del proyecto:
+
+1. Atinara Social será un producto completo de predicciones con Karma ficticio, reputación, temporadas y comunidad.
+2. El Karma no será convertible a dinero ni generará derechos económicos futuros.
+3. La visión a largo plazo contempla Atinara Engine, una infraestructura B2B modular y licenciable por operadores regulados, proveedores, agregadores, medios o instituciones.
+4. La vía prioritaria a estudiar combina Atinara Social, Atinara Engine y un operador regulado asociado responsable de dinero real, KYC, pagos, límites y licencias.
+5. El Paso 13.6 cubre captación, beta, atribución, onboarding, analítica, feedback, retención, referidos, Temporada Cero y posicionamiento regulatorio.
+6. El Paso 13.7 queda incorporado al roadmap después del 13.6 y de validar la beta.
+7. Antes de funciones monetarias deberá superarse la Puerta regulatoria R1.
+
+PASO 13.7 · PRODUCTIZACIÓN B2B Y PREPARACIÓN PARA OPERADORES
+
+13.7.1 Separación del producto
+- Atinara Social y Atinara Engine.
+- Separación de datos, lógica económica y configuración por cliente.
+- Protección de propiedad intelectual y núcleo B2B en repositorios privados cuando corresponda.
+
+13.7.2 Arquitectura modular
+- APIs versionadas, webhooks, adaptadores y marca blanca cuando exista necesidad.
+- Separación de UI, reglas, resolución, identidad, analítica e integraciones.
+- Compatibilidad futura con distintos modelos regulados sin acoplarse a un solo operador.
+
+13.7.3 Calidad y preparación regulatoria
+- Trazabilidad de creación, revisión, aprobación, modificación, cierre, anulación y resolución.
+- Roles, permisos mínimos, doble aprobación, logs, evidencias y operaciones idempotentes.
+- Pruebas, carga, recuperación, monitorización, copias de seguridad y despliegues reversibles.
+- Políticas de conflictos de interés, información privilegiada, mercados sensibles y fraude.
+
+13.7.4 Paquete comercial
+- Demostración profesional, documentación, soporte, integración y propuesta de valor.
+- Pilotos pagados, licencia recurrente y servicios gestionados.
+- Licenciar uso sin vender el núcleo ni aceptar exclusividad amplia sin mínimos garantizados.
+
+13.7.5 Descubrimiento con operadores
+- Mapa de operadores y proveedores.
+- Entrevistas de descubrimiento.
+- Pilotos basados en métricas reales.
+- Primer cliente de referencia, segundo replicable y tercero para reducir dependencia.
+
+13.7.6 Módulos conceptuales
+- Discover, Studio, Resolve, Engage, Connect y Core.
+- Core monetario queda bloqueado hasta superar R1.
+
+PUERTA R1
+- Estudio jurídico y regulatorio de DGOJ, CNMV cuando proceda, licencias, certificación, KYC, AML, pagos, fiscalidad, juego responsable, publicidad, jurisdicciones, costes y riesgos.
+- Ningún desarrollo de dinero real queda autorizado antes de aprobar expresamente R1.
+
+REGLA TRANSVERSAL
+Todo trabajo futuro debe comprobar modularidad, auditabilidad, seguridad, separación Karma/dinero real, propiedad intelectual, capacidad de integración, calidad de mercado, ausencia de dependencias innecesarias y proporcionalidad con la fase actual.
+
+Considerar esta visión no obliga a construir ahora todas las funciones B2B. Obliga a no cerrar esa puerta y a mantener una calidad profesional sin perjudicar la beta social.
+
+DIVISIÓN DE TRABAJO
+Work especifica, revisa GitHub/Supabase, prueba y valida. Codex implementa las partes complejas. Se evita repetir auditorías sin necesidad.
+
+OBJETIVO EMPRESARIAL
+Desarrollar Atinara con calidad suficiente para generar ingresos recurrentes, licenciar su tecnología y permitir una dedicación profesional sostenible al proyecto.
+
+9. ÁMBITO MULTIMODO Y MULTICONVERSACIÓN
+
+- Esta memoria se aplica automáticamente a Chat, investigaciones Pro, Work y Codex.
+- Se aplica tanto en conversaciones nuevas como en conversaciones antiguas que se retomen dentro del proyecto Atinara.
+- Un transcript antiguo no prevalece sobre el roadmap vigente, la estrategia canónica, origin/main o Supabase producción.
+- Todo análisis, investigación, recomendación, prompt, revisión, cambio o creación debe evaluar Atinara Social, el Paso 13.6, Atinara Engine/Paso 13.7 y la Puerta R1 cuando sean pertinentes.
+- Work y Pro deben reutilizar evidencia vigente y distinguir hechos, fuentes, inferencias y recomendaciones. Codex debe leer la documentación canónica y no repetir auditorías sin necesidad.
+- Ningún modo puede prometer conversión del Karma ni introducir dinero real antes de R1.
+- Si una solución inmediata perjudica la modularidad, auditabilidad, seguridad, propiedad intelectual o futura capacidad B2B, debe advertirse y corregirse o documentarse como deuda técnica consciente.
+- Esta regla prevalece salvo modificación expresa de Yol.
+
