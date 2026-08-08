@@ -236,3 +236,364 @@
   new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
   schedule();
 })();
+
+(function initAtinaraPublicationFlow() {
+  "use strict";
+
+  const root = document.querySelector("#admin-markets-root");
+  const client = window.orakloSupabase;
+  if (!root || !client) return;
+
+  const PUBLICATION_KEY = "atinara:last-published-market:v2";
+  const PUBLICATION_RELOAD_KEY = "atinara:publication-catalog-reload:v1";
+  const PUBLICATION_EVENT_KEY = "atinara:market-published-event:v1";
+  const PUBLICATION_CHANNEL = "atinara-market-catalog-v1";
+  let publicationInFlight = false;
+  let restoreTimer = null;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .admin-publication-inline-status {
+      display: grid;
+      gap: 4px;
+      margin-top: 12px;
+      padding: 11px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow-wrap: anywhere;
+    }
+    .admin-publication-inline-status[data-tone="info"] {
+      color: var(--accent-strong);
+      border-color: rgba(110, 168, 255, 0.48);
+      background: rgba(110, 168, 255, 0.08);
+    }
+    .admin-publication-inline-status[data-tone="success"] {
+      color: var(--green);
+      border-color: rgba(94, 224, 160, 0.52);
+      background: rgba(94, 224, 160, 0.08);
+    }
+    .admin-publication-inline-status[data-tone="error"] {
+      color: var(--danger);
+      border-color: rgba(255, 138, 138, 0.52);
+      background: rgba(255, 138, 138, 0.08);
+    }
+    .admin-publication-success-banner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      margin: 0 0 18px;
+      padding: 14px 16px;
+      border: 1px solid rgba(94, 224, 160, 0.55);
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(94, 224, 160, 0.12), rgba(110, 168, 255, 0.07));
+    }
+    .admin-publication-success-banner > div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .admin-publication-success-banner strong,
+    .admin-publication-success-banner span {
+      overflow-wrap: anywhere;
+    }
+    .admin-publication-success-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .admin-catalog-table tr.admin-market-just-published {
+      outline: 2px solid rgba(94, 224, 160, 0.72);
+      outline-offset: -2px;
+      background: rgba(94, 224, 160, 0.08);
+    }
+    .admin-binding-compatibility[data-compatible="true"] small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+    @media (max-width: 720px) {
+      .admin-publication-success-banner {
+        grid-template-columns: 1fr;
+      }
+      .admin-publication-success-actions,
+      .admin-publication-success-actions > * {
+        width: 100%;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+
+  const safeText = (value, max = 1200) => String(value ?? "").trim().slice(0, max);
+
+  function currentPublicationContext() {
+    const form = document.querySelector("#admin-market-form");
+    if (!form) return null;
+    const draftId = safeText(form.dataset.draftId, 100);
+    const version = Number(form.dataset.version);
+    const marketId = safeText(form.elements.market_slug?.value, 140);
+    const question = safeText(form.elements.question?.value, 500);
+    const scheduledValue = safeText(form.elements.scheduled_for?.value, 100);
+    if (!draftId || !Number.isSafeInteger(version) || version < 1 || !marketId) return null;
+    return { form, draftId, version, marketId, question, scheduledValue };
+  }
+
+  function inlineStatus(fieldset) {
+    let node = fieldset?.querySelector("[data-publication-inline-status]");
+    if (!node && fieldset) {
+      node = document.createElement("p");
+      node.className = "admin-publication-inline-status";
+      node.dataset.publicationInlineStatus = "true";
+      node.setAttribute("role", "status");
+      fieldset.appendChild(node);
+    }
+    return node;
+  }
+
+  async function detailedError(error) {
+    const details = [
+      error?.message,
+      error?.details,
+      error?.hint,
+      error?.code,
+      error?.context?.message
+    ].map((value) => safeText(value, 1000)).filter(Boolean);
+    try {
+      if (error?.context && typeof error.context.clone === "function") {
+        const payload = await error.context.clone().json();
+        details.unshift(
+          safeText(payload?.message, 1000),
+          safeText(payload?.error, 200),
+          safeText(payload?.details, 1000)
+        );
+      }
+    } catch {
+      // Se conserva la información segura ya disponible.
+    }
+    return details.filter(Boolean).join(" · ");
+  }
+
+  function friendlyPublicationError(raw) {
+    const text = safeText(raw, 2400);
+    const mappings = [
+      ["DRAFT_VERSION_MOVED", "El borrador cambió en otra operación. Vuelve a abrirlo antes de publicar."],
+      ["CURRENT_APPROVAL_AND_CONFIRMATION_REQUIRED", "La aprobación o la confirmación humana ya no coincide con esta versión."],
+      ["CURRENT_BINDING_COMPATIBILITY_REQUIRED", "El Plan de Resolución no coincide con el contenido actual del borrador."],
+      ["RESOLUTION_PLAN_NOT_LOCKED", "El Plan de Resolución no pudo validarse y bloquearse automáticamente."],
+      ["SOURCE_CONTRACT_NOT_LOCKED", "El contrato de resolución todavía no está validado."],
+      ["SOURCE_MONITOR_NOT_ARMED", "Este mercado necesita un monitor de fuente armado antes de publicarse."],
+      ["SOURCE_SCHEDULER_NOT_ENABLED", "Este mercado necesita activar previamente el scheduler autorizado del monitor."],
+      ["MARKET_PERIOD_ALREADY_ENDED", "El periodo del mercado ya terminó y no puede publicarse."],
+      ["MARKET_ID_ALREADY_EXISTS", "Ya existe un mercado publicado con este identificador."],
+      ["SCHEDULE_AFTER_MARKET_CLOSE", "La fecha programada debe ser anterior al cierre del mercado."],
+      ["ADMIN_REQUIRED", "La sesión actual no conserva permiso administrativo."],
+      ["AUTH_REQUIRED", "La sesión ha caducado. Inicia sesión de nuevo."]
+    ];
+    const match = mappings.find(([code]) => text.includes(code));
+    return match?.[1] || "La publicación no se completó. Atinara no aplicó cambios parciales y el borrador continúa seguro.";
+  }
+
+  function publicationPayload(context) {
+    let scheduledFor = null;
+    if (context.scheduledValue) {
+      const parsed = new Date(context.scheduledValue);
+      if (!Number.isFinite(parsed.getTime())) throw new Error("SCHEDULE_DATE_INVALID");
+      scheduledFor = parsed.toISOString();
+    }
+    return {
+      draft_id_input: context.draftId,
+      expected_version_input: context.version,
+      scheduled_for_input: scheduledFor
+    };
+  }
+
+  function announcePublication(payload) {
+    const eventPayload = { ...payload, nonce: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}` };
+    try {
+      const channel = new BroadcastChannel(PUBLICATION_CHANNEL);
+      channel.postMessage({ type: "market-published", payload: eventPayload });
+      channel.close();
+    } catch {
+      // La navegación directa sigue disponible cuando BroadcastChannel no existe.
+    }
+    try {
+      localStorage.setItem(PUBLICATION_EVENT_KEY, JSON.stringify(eventPayload));
+    } catch {
+      // El evento entre pestañas es una mejora; Supabase sigue siendo autoritativo.
+    }
+  }
+
+  function storePublication(result, context) {
+    const payload = {
+      marketId: safeText(result?.market_id || context.marketId, 140),
+      question: context.question,
+      publishedAt: result?.published_at || new Date().toISOString(),
+      status: safeText(result?.status || "published", 40),
+      publicPath: safeText(result?.public_path || `index.html?market=${encodeURIComponent(context.marketId)}`, 500),
+      adminHandled: false,
+      createdAt: new Date().toISOString()
+    };
+    sessionStorage.setItem(PUBLICATION_KEY, JSON.stringify(payload));
+    announcePublication(payload);
+    return payload;
+  }
+
+  function findCatalogRow(marketId) {
+    return [...document.querySelectorAll(".admin-catalog-table tbody tr")].find((row) => {
+      const identifiers = [...row.querySelectorAll("small")].map((node) => safeText(node.textContent, 300));
+      return identifiers.includes(marketId) || safeText(row.textContent, 5000).includes(marketId);
+    }) || null;
+  }
+
+  function renderCatalogSuccess(publication) {
+    const table = document.querySelector(".admin-catalog-table");
+    if (!table || !publication?.marketId) return false;
+    const row = findCatalogRow(publication.marketId);
+    if (!row) return false;
+
+    row.classList.add("admin-market-just-published");
+    row.setAttribute("aria-current", "true");
+
+    if (!document.querySelector("[data-publication-success-banner]")) {
+      const banner = document.createElement("section");
+      banner.className = "admin-publication-success-banner";
+      banner.dataset.publicationSuccessBanner = "true";
+      const publicUrl = `index.html?market=${encodeURIComponent(publication.marketId)}`;
+      const detailUrl = `market-detail.html?id=${encodeURIComponent(publication.marketId)}`;
+      banner.innerHTML = `
+        <div>
+          <strong>Mercado publicado y visible</strong>
+          <span>${safeText(publication.question || publication.marketId, 600)}</span>
+        </div>
+        <div class="admin-publication-success-actions">
+          <a class="primary-button" href="${publicUrl}">Abrir en Explorar mercados</a>
+          <a class="secondary-button" href="${detailUrl}">Abrir ficha pública</a>
+        </div>
+      `;
+      table.parentElement?.insertBefore(banner, table);
+    }
+
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    publication.adminHandled = true;
+    sessionStorage.setItem(PUBLICATION_KEY, JSON.stringify(publication));
+    sessionStorage.removeItem(PUBLICATION_RELOAD_KEY);
+    return true;
+  }
+
+  function openCatalog(publication) {
+    const started = Date.now();
+    const selectCatalog = () => {
+      const tab = document.querySelector('[data-admin-view="catalog"]');
+      if (tab) {
+        tab.click();
+        waitForCatalog();
+      } else if (Date.now() - started < 15000) {
+        setTimeout(selectCatalog, 100);
+      }
+    };
+    const waitForCatalog = () => {
+      if (renderCatalogSuccess(publication)) return;
+      if (Date.now() - started < 15000) {
+        setTimeout(waitForCatalog, 120);
+        return;
+      }
+      if (sessionStorage.getItem(PUBLICATION_RELOAD_KEY) !== publication.marketId) {
+        sessionStorage.setItem(PUBLICATION_RELOAD_KEY, publication.marketId);
+        window.location.reload();
+      }
+    };
+    selectCatalog();
+  }
+
+  async function runPublication(button) {
+    if (publicationInFlight) return;
+    const context = currentPublicationContext();
+    if (!context) return;
+
+    const isScheduled = Boolean(context.scheduledValue);
+    const verb = isScheduled ? "programar" : "publicar";
+    if (!window.confirm(`Supabase validará revisión, confirmación y Plan de Resolución antes de ${verb}. ¿Continuar?`)) return;
+
+    publicationInFlight = true;
+    const fieldset = button.closest(".admin-publish-controls");
+    const status = inlineStatus(fieldset);
+    const previousLabel = button.textContent;
+    button.disabled = true;
+    if (fieldset) fieldset.setAttribute("aria-busy", "true");
+    if (status) {
+      status.dataset.tone = "info";
+      status.innerHTML = "<strong>Validando y publicando…</strong><span>Atinara bloqueará automáticamente un Plan de Resolución compatible antes de materializar el mercado.</span>";
+    }
+
+    try {
+      const { data, error } = await client.rpc("publish_market_draft", publicationPayload(context));
+      if (error) throw error;
+
+      if (safeText(data?.status, 40) === "scheduled") {
+        if (status) {
+          status.dataset.tone = "success";
+          status.innerHTML = `<strong>Mercado programado</strong><span>Se publicará en la fecha autorizada y el Plan de Resolución ha quedado validado.</span>`;
+        }
+        setTimeout(() => window.location.reload(), 900);
+        return;
+      }
+
+      const publication = storePublication(data || {}, context);
+      if (status) {
+        status.dataset.tone = "success";
+        status.innerHTML = "<strong>Mercado publicado</strong><span>Abriendo el catálogo administrativo con el nuevo mercado resaltado.</span>";
+      }
+      openCatalog(publication);
+    } catch (error) {
+      const raw = await detailedError(error);
+      if (status) {
+        status.dataset.tone = "error";
+        status.innerHTML = `<strong>Publicación bloqueada de forma segura</strong><span>${friendlyPublicationError(raw)}</span>${raw ? `<small>${safeText(raw, 1200)}</small>` : ""}`;
+      }
+      button.disabled = false;
+      button.textContent = previousLabel;
+      if (fieldset) fieldset.removeAttribute("aria-busy");
+    } finally {
+      publicationInFlight = false;
+    }
+  }
+
+  function enhanceBindingMessage() {
+    const node = document.querySelector('.admin-binding-compatibility[data-compatible="true"]');
+    const button = document.querySelector("[data-publish-draft][data-state-allowed='true']");
+    if (!node || !button || node.querySelector("[data-auto-lock-hint]")) return;
+    const hint = document.createElement("small");
+    hint.dataset.autoLockHint = "true";
+    hint.textContent = "Atinara validará y bloqueará automáticamente este plan dentro de la misma transacción de publicación.";
+    node.appendChild(hint);
+  }
+
+  function restorePublication() {
+    clearTimeout(restoreTimer);
+    restoreTimer = setTimeout(() => {
+      enhanceBindingMessage();
+      let publication;
+      try {
+        publication = JSON.parse(sessionStorage.getItem(PUBLICATION_KEY) || "null");
+      } catch {
+        sessionStorage.removeItem(PUBLICATION_KEY);
+        return;
+      }
+      if (publication?.marketId && publication.adminHandled !== true) {
+        openCatalog(publication);
+      }
+    }, 100);
+  }
+
+  root.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-publish-draft]");
+    if (!button || button.disabled) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    runPublication(button);
+  }, true);
+
+  new MutationObserver(restorePublication).observe(root, { childList: true, subtree: true });
+  restorePublication();
+})();
