@@ -9,7 +9,46 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `942a51d928aa4c7666bb481cd55d449fb5ff00270decdb7889de8f584b15fc8e` y
 > `verify_jwt=true`. El cierre del Paso 13.5.2 añade memoria autoritativa de
 > borradores y revisiones; no activa Cron ni schedulers y no modifica mercados
-> publicados, predicciones, Karma, Prestigio o economía.
+> publicados, predicciones, Karma, Prestigio o economía. La migración
+> `20260808194234_fix_market_draft_human_confirmation_flow` corrige además la
+> puerta de confirmación para todos los Planes de Resolución con procedencia
+> válida; `20260808195500_add_market_admin_audit_provenance_index` mantiene
+> eficiente esa comprobación al crecer la auditoría. Ninguna confirma ni
+> publica por sí sola.
+
+### Corrección general de confirmación humana · 8 de agosto de 2026
+
+- La fuente local fue `origin/main = c70f044823429c503f9a073eeab656fa8c77c808`.
+  Los intentos reales de confirmación devolvían
+  `MARKET_EXPERT_ANALYSIS_REQUIRED`: la puerta heredada exigía siempre una
+  ejecución de `market_expert_runs`, aunque el Corrector hubiese creado un Plan
+  manual determinista válido y auditado con `expert_run_id=null`.
+- `private.market_source_binding_provenance(uuid)` admite dos procedencias
+  generales y cerradas: ejecución experta completada y coherente, o Plan manual
+  determinista con adaptador identificado, contrato y fuentes coincidentes,
+  instrucciones de revisión humana y auditoría interna. No contiene excepciones
+  por mercado, juego, pregunta ni versión concreta.
+- `private.assert_market_source_publication_ready(uuid)` vuelve a comprobar
+  validación, bloqueo, hash del contrato, monitor y procedencia antes de
+  confirmar, programar o publicar. Un origen desconocido, una ejecución experta
+  fallida, fuentes divergentes o un contrato alterado siguen bloqueados.
+- La interfaz muestra el resultado junto a los botones de revisión,
+  confirmación y publicación, enfoca el estado, impide dobles envíos y reconcilia
+  con Supabase si se pierde la respuesta de red. El éxito solo habilita publicar
+  cuando la confirmación persistida coincide con versión, huella y revisión
+  efectiva.
+- Los valores estructurados se convierten en texto seguro antes de escapar HTML;
+  ya no pueden aparecer como `[object Object]`. La caché pública coordinada es
+  `20260808-confirmation1` en los diez HTML.
+- Las dos migraciones están aplicadas en producción. La matriz SQL confirmó ambos
+  borradores y materializó una publicación dentro de una transacción con
+  `ROLLBACK`; después ambos conservaron `review_approved`,
+  `human_confirmed_at=null` y `market_id=null`. También pasaron los casos de
+  ejecución experta válida, experta fallida y procedencia determinista sin
+  auditoría.
+- Validación local: 63 archivos JavaScript con sintaxis válida, 184 pruebas
+  unitarias y TypeScript de Checkly. Yol sigue siendo la única persona que debe
+  efectuar la confirmación real y la publicación.
 
 ### Cierre del Paso 13.5.2 · memoria autoritativa · 8 de agosto de 2026
 
@@ -665,8 +704,9 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
 - Validación final: 62 archivos JavaScript, 178 pruebas unitarias, TypeScript, permisos, SQL transaccional con `ROLLBACK`, catálogo anónimo, invariantes económicas y asesores de Supabase sin errores.
 
 Siguiente paso operativo: subir a `main`, conservando rutas, el ZIP mínimo de
-este hito y hacer únicamente la comprobación visual final con recarga forzada.
-No repetir migraciones ni despliegues: el backend ya está activado. El mercado
+la corrección de confirmación y comprobar el clic real de Yol. No repetir
+migraciones ni despliegues: el backend ya está activado y la versión de caché
+ha cambiado. El mercado
 antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el
 catálogo, chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni
 compraventa secundaria.

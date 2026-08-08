@@ -21,6 +21,8 @@
     busy: false,
     notice: "",
     noticeTone: "info",
+    gateNotice: "",
+    gateNoticeTone: "info",
     draftDirty: false,
     draftBaseline: null,
     pendingAction: null,
@@ -116,7 +118,10 @@
   };
 
   function escapeHtml(value) {
-    return String(value ?? "")
+    const printable = value && typeof value === "object"
+      ? helpers.formatStructuredText(value)
+      : String(value ?? "");
+    return printable
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -251,12 +256,43 @@
   }
 
   function setNotice(message, tone = "info") {
-    state.notice = message;
+    state.notice = helpers.formatStructuredText(message);
     state.noticeTone = tone;
+  }
+
+  function setGateNotice(message, tone = "info") {
+    state.gateNotice = helpers.formatStructuredText(message);
+    state.gateNoticeTone = tone;
+  }
+
+  function clearGateNotice() {
+    state.gateNotice = "";
+    state.gateNoticeTone = "info";
   }
 
   function noticeMarkup() {
     return state.notice ? `<p class="admin-status-message admin-status-${escapeHtml(state.noticeTone)}" role="status">${escapeHtml(state.notice)}</p>` : "";
+  }
+
+  function gateNoticeMarkup() {
+    if (!state.gateNotice) return "";
+    const role = state.gateNoticeTone === "error" ? "alert" : "status";
+    return `<p class="admin-status-message admin-gate-status admin-status-${escapeHtml(state.gateNoticeTone)}" role="${role}" tabindex="-1" data-review-action-status>${escapeHtml(state.gateNotice)}</p>`;
+  }
+
+  function focusActionStatus({ preferGate = true } = {}) {
+    const status = preferGate
+      ? document.querySelector("[data-review-action-status]") || root.querySelector(".admin-status-message")
+      : root.querySelector(".admin-status-message") || document.querySelector("[data-review-action-status]");
+    if (!status) return;
+    status.scrollIntoView({ block: "nearest" });
+    status.focus({ preventScroll: true });
+  }
+
+  function operationError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
   }
 
   function feedbackComparableDraft(fields = {}) {
@@ -356,17 +392,28 @@
     const deterministic = Array.isArray(payload?.deterministic_issues) ? payload.deterministic_issues : [];
     const semantic = Array.isArray(latestContentReview?.semantic_issues) ? latestContentReview.semantic_issues : [];
     const issues = [...deterministic, ...semantic];
-    const issueItems = issues.map((issue, issueIndex) => `
-      <li id="admin-issue-${escapeHtml(issue.field)}-${issueIndex}" data-field="${escapeHtml(issue.field)}" data-content-issue="true">
-        <code>${escapeHtml(issue.code)}</code>
-        <strong>${escapeHtml(issue.field || "Revisión")}</strong>
-        <span>${escapeHtml(issue.message)}</span>
-      </li>`).join("");
+    const issueItems = issues.map((issue, issueIndex) => {
+      const issueField = helpers.formatStructuredText(issue?.field, "Revisión");
+      const issueCode = helpers.formatStructuredText(issue?.code, "REVIEW_ISSUE");
+      const issueMessage = helpers.formatStructuredText(issue?.message ?? issue, "La revisión detectó un motivo bloqueante.");
+      const escapedIssueMessage = issue?.message && typeof issue.message !== "object"
+        ? escapeHtml(issue.message)
+        : escapeHtml(issueMessage);
+      return `
+      <li id="admin-issue-${escapeHtml(issueField)}-${issueIndex}" data-field="${escapeHtml(issueField)}" data-content-issue="true">
+        <code>${escapeHtml(issueCode)}</code>
+        <strong>${escapeHtml(issueField)}</strong>
+        <span>${escapedIssueMessage}</span>
+      </li>`;
+    }).join("");
     const issueMarkup = issues.length
       ? `<ol class="admin-validation-reasons">${issueItems}</ol>`
       : '<p class="admin-empty-state">No hay motivos bloqueantes registrados para esta versión.</p>';
     const noteItems = Array.isArray(latestContentReview?.editorial_notes)
-      ? latestContentReview.editorial_notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")
+      ? latestContentReview.editorial_notes
+        .map((note) => helpers.formatStructuredText(note))
+        .filter(Boolean)
+        .map((note) => `<li>${escapeHtml(note)}</li>`).join("")
       : "";
     const notes = Array.isArray(latestContentReview?.editorial_notes) && latestContentReview.editorial_notes.length
       ? `<ul>${noteItems}</ul>` : "";
@@ -398,12 +445,16 @@
         </div>
       </details>`;
     const bindingReasons = Array.isArray(binding.reasons) ? binding.reasons : [];
+    const bindingReasonText = bindingReasons
+      .map((reason) => helpers.formatStructuredText(reason))
+      .filter(Boolean)
+      .join(", ");
     const bindingMarkup = `
       <p class="admin-binding-compatibility" data-compatible="${binding.compatible === true}">
         <strong>Plan de Resolución:</strong>
         ${binding.required === false ? "No requerido para este borrador manual." : binding.compatible === true
           ? `Compatible · plan v${escapeHtml(binding.plan_version || "—")} · ${escapeHtml(binding.binding_status || "draft")}`
-          : `No compatible · ${escapeHtml(bindingReasons.join(", ") || "requiere revisión")}`}
+          : `No compatible · ${escapeHtml(bindingReasonText || "requiere revisión")}`}
       </p>`;
     const canReview = ["draft_ready", "review_rejected", "review_inconclusive", "review_unavailable"].includes(draft.workflow_status) || technicalAttempt;
     const canConfirm = Boolean(effective)
@@ -431,6 +482,7 @@
         ${issueMarkup}
         ${notes}
         ${historyMarkup}
+        ${gateNoticeMarkup()}
         <div class="admin-gate-actions">
           <button class="primary-button" type="button" data-request-review data-state-allowed="${canReview && !locked}"${disabled()}${canReview && !locked ? "" : " disabled"}>${technicalAttempt ? "Reintentar revisión" : "Solicitar nueva revisión"}</button>
           <button class="secondary-button" type="button" data-confirm-review data-state-allowed="${canConfirm}"${disabled()}${canConfirm ? "" : " disabled"}>Confirmar humanamente</button>
@@ -1044,11 +1096,15 @@
       limit_count: 100,
       offset_count: 0
     }) || [];
-    if (!preserveSelection) state.selected = null;
+    if (!preserveSelection) {
+      state.selected = null;
+      clearGateNotice();
+    }
   }
 
   async function openDraft(id) {
     if (!canDiscardDraftChanges()) return;
+    clearGateNotice();
     state.busy = true;
     renderWorkspace();
     try {
@@ -1119,6 +1175,7 @@
       } else {
         result = await rpc("save_market_draft", args);
       }
+      if (result?.changed !== false) clearGateNotice();
       let feedbackWarning = false;
       if (intelligencePrefill?.expertRunId) {
         const changedFields = changedExpertFields(intelligencePrefill.proposedFields || {}, payload);
@@ -1170,10 +1227,49 @@
     }
   }
 
+  function confirmationMatchesDraft(payload, expectedDraft) {
+    const confirmedDraft = payload?.draft;
+    const effectiveReviewId = payload?.effective_review?.id;
+    return Boolean(confirmedDraft?.human_confirmed_at)
+      && confirmedDraft.workflow_status === "human_confirmed"
+      && Number(confirmedDraft.content_version) === Number(expectedDraft.content_version)
+      && confirmedDraft.content_fingerprint === expectedDraft.content_fingerprint
+      && confirmedDraft.human_confirmed_fingerprint === confirmedDraft.content_fingerprint
+      && effectiveReviewId !== null
+      && effectiveReviewId !== undefined
+      && String(confirmedDraft.human_confirmed_review_id) === String(effectiveReviewId);
+  }
+
+  function confirmationResponseMatches(result, expectedDraft, payload) {
+    const effectiveReviewId = payload?.effective_review?.id;
+    return result?.status === "human_confirmed"
+      && result?.confirmed_at
+      && result?.content_fingerprint === expectedDraft.content_fingerprint
+      && effectiveReviewId !== null
+      && effectiveReviewId !== undefined
+      && String(result?.effective_review_id) === String(effectiveReviewId);
+  }
+
+  function applyConfirmationResponseLocally(result) {
+    if (!state.selected?.draft) return;
+    state.selected = {
+      ...state.selected,
+      draft: {
+        ...state.selected.draft,
+        workflow_status: "human_confirmed",
+        human_confirmed_at: result.confirmed_at,
+        human_confirmed_fingerprint: result.content_fingerprint,
+        human_confirmed_review_id: result.effective_review_id
+      }
+    };
+  }
+
   async function requestReview() {
     const draft = state.selected?.draft;
-    if (!draft) return;
+    if (!draft || state.busy) return;
+    const previousAttemptId = state.selected?.latest_attempt?.id || null;
     state.busy = true;
+    setGateNotice("Revisión en curso. El mercado continúa privado.", "info");
     setNotice("Revisión en curso. El mercado continúa privado.", "info");
     renderWorkspace();
     try {
@@ -1187,66 +1283,158 @@
       });
       if (error) throw error;
       state.selected = await rpc("get_admin_market_draft", { draft_id_input: draft.id });
-      setNotice(data?.message || "Revisión terminada.", data?.status === "approved" ? "success" : "warning");
-      await loadDrafts();
+      const tone = data?.status === "approved" ? "success" : "warning";
+      const message = helpers.formatStructuredText(data?.message, "Revisión terminada.");
+      const listRefreshFailed = await loadDrafts().then(() => false).catch(() => true);
+      const finalMessage = listRefreshFailed
+        ? `${message} La lista no pudo actualizarse, pero el estado abierto sí es autoritativo.`
+        : message;
+      setGateNotice(finalMessage, listRefreshFailed ? "warning" : tone);
+      setNotice(finalMessage, listRefreshFailed ? "warning" : tone);
     } catch (error) {
-      state.selected = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => state.selected);
-      setNotice(helpers.getFriendlyError(error, "La revisión no se completó. El mercado continúa privado."), "error");
+      const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+      if (reconciled) state.selected = reconciled;
+      const latestAttempt = reconciled?.latest_attempt;
+      const finishedDespiteResponseLoss = latestAttempt?.id
+        && latestAttempt.id !== previousAttemptId
+        && latestAttempt.completed_at;
+      if (finishedDespiteResponseLoss) {
+        const approved = reconciled?.draft?.workflow_status === "review_approved";
+        const message = approved
+          ? "La respuesta de red se perdió, pero Supabase confirma que la revisión quedó aprobada."
+          : "La respuesta de red se perdió, pero Supabase confirma que la revisión terminó y el mercado sigue privado.";
+        setGateNotice(message, approved ? "success" : "warning");
+        setNotice(message, approved ? "success" : "warning");
+      } else {
+        const message = helpers.getFriendlyError(error, "La revisión no se completó. El mercado continúa privado.");
+        setGateNotice(message, "error");
+        setNotice(message, "error");
+      }
     } finally {
       state.busy = false;
       renderWorkspace();
+      focusActionStatus();
     }
   }
 
   async function confirmReview() {
     const draft = state.selected?.draft;
-    if (!draft) return;
+    if (!draft || state.busy) return;
     if (!window.confirm("¿Confirmas que has revisado personalmente la pregunta, criterios, periodo, fechas y fuentes de esta versión?")) return;
     state.busy = true;
+    setGateNotice("Registrando la confirmación humana en Supabase…", "info");
+    setNotice("Registrando la confirmación humana en Supabase…", "info");
     renderWorkspace();
+    let result = null;
+    let requestError = null;
     try {
-      await rpc("confirm_market_draft_review", { draft_id_input: draft.id, expected_version_input: draft.content_version });
-      state.selected = await rpc("get_admin_market_draft", { draft_id_input: draft.id });
-      await loadDrafts();
-      setNotice("Confirmación humana registrada. La publicación volverá a comprobar toda la versión.", "success");
+      result = await rpc("confirm_market_draft_review", {
+        draft_id_input: draft.id,
+        expected_version_input: draft.content_version
+      });
     } catch (error) {
-      setNotice(helpers.getFriendlyError(error, "No se pudo registrar la confirmación."), "error");
-    } finally {
-      state.busy = false;
-      renderWorkspace();
+      requestError = error;
     }
+
+    const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+    if (reconciled) state.selected = reconciled;
+    const persisted = confirmationMatchesDraft(reconciled, draft)
+      || confirmationResponseMatches(result, draft, state.selected);
+
+    if (persisted) {
+      if (!confirmationMatchesDraft(reconciled, draft)) applyConfirmationResponseLocally(result);
+      const listRefreshFailed = await loadDrafts().then(() => false).catch(() => true);
+      const message = listRefreshFailed
+        ? "Confirmación humana registrada. La lista no pudo actualizarse, pero ya puedes publicar esta versión."
+        : requestError
+          ? "La respuesta de red se perdió, pero Supabase confirma que la validación humana quedó registrada."
+          : "Confirmación humana registrada. La publicación volverá a comprobar toda la versión.";
+      setGateNotice(message, listRefreshFailed ? "warning" : "success");
+      setNotice(message, listRefreshFailed ? "warning" : "success");
+    } else {
+      const error = requestError || operationError(
+        "CONFIRMATION_NOT_PERSISTED",
+        "Supabase no devolvió la confirmación humana persistida."
+      );
+      const message = helpers.getFriendlyError(error, "No se pudo registrar la confirmación. El mercado continúa privado.");
+      setGateNotice(message, "error");
+      setNotice(message, "error");
+    }
+
+    state.busy = false;
+    renderWorkspace();
+    focusActionStatus();
   }
 
   async function publishDraft() {
     const draft = state.selected?.draft;
-    if (!draft) return;
+    if (!draft || state.busy) return;
     const scheduledValue = document.querySelector('[name="scheduled_for"]')?.value || "";
     const scheduledFor = scheduledValue
       ? helpers.toIsoOrEmpty(scheduledValue, draft.timezone || "Europe/Madrid")
       : null;
     if (scheduledValue && !scheduledFor) {
-      setNotice("La fecha programada no es válida en la zona horaria del mercado.", "error");
+      const message = "La fecha programada no es válida en la zona horaria del mercado.";
+      setGateNotice(message, "error");
+      setNotice(message, "error");
       renderWorkspace();
+      focusActionStatus();
       return;
     }
     const action = scheduledFor ? "programar" : "publicar";
     if (!window.confirm(`Supabase revalidará el rol y la revisión vigente antes de ${action}. ¿Continuar?`)) return;
     state.busy = true;
+    setGateNotice(`Supabase está revalidando la versión antes de ${action}…`, "info");
+    setNotice(`Supabase está revalidando la versión antes de ${action}…`, "info");
     renderWorkspace();
+    let result = null;
+    let requestError = null;
     try {
-      const result = await rpc("publish_market_draft", {
+      result = await rpc("publish_market_draft", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version,
         scheduled_for_input: scheduledFor
       });
-      await loadDrafts({ preserveSelection: false });
-      setNotice(result.status === "scheduled" ? "Mercado programado con aprobación vigente." : "Mercado publicado y estado LMSR inicializado de forma autoritativa.", "success");
     } catch (error) {
-      setNotice(helpers.getFriendlyError(error, "La publicación se bloqueó de forma segura."), "error");
-    } finally {
-      state.busy = false;
-      renderWorkspace();
+      requestError = error;
     }
+
+    const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+    const authoritativeStatus = ["scheduled", "published"].includes(result?.status)
+      ? result.status
+      : ["scheduled", "published"].includes(reconciled?.draft?.workflow_status)
+        ? reconciled.draft.workflow_status
+        : null;
+
+    if (authoritativeStatus) {
+      const listRefreshFailed = await loadDrafts({ preserveSelection: false }).then(() => false).catch(() => {
+        state.selected = null;
+        return true;
+      });
+      clearGateNotice();
+      const baseMessage = authoritativeStatus === "scheduled"
+        ? "Mercado programado con aprobación vigente."
+        : "Mercado publicado y estado LMSR inicializado de forma autoritativa.";
+      const message = requestError
+        ? `La respuesta de red se perdió, pero Supabase confirma el resultado. ${baseMessage}`
+        : listRefreshFailed
+          ? `${baseMessage} La lista privada se actualizará en la próxima carga.`
+          : baseMessage;
+      setNotice(message, listRefreshFailed ? "warning" : "success");
+    } else {
+      if (reconciled) state.selected = reconciled;
+      const error = requestError || operationError(
+        "PUBLICATION_NOT_PERSISTED",
+        "Supabase no devolvió un estado final de publicación."
+      );
+      const message = helpers.getFriendlyError(error, "La publicación se bloqueó de forma segura.");
+      setGateNotice(message, "error");
+      setNotice(message, "error");
+    }
+
+    state.busy = false;
+    renderWorkspace();
+    focusActionStatus({ preferGate: !authoritativeStatus });
   }
 
   function radarRequestPayload(refresh = false) {
@@ -1667,6 +1855,7 @@
 
   async function loadView(view) {
     if (state.view === "drafts" && view !== "drafts" && !canDiscardDraftChanges()) return;
+    clearGateNotice();
     state.view = view;
     state.busy = true;
     renderWorkspace();
@@ -1869,6 +2058,7 @@
 
   newDraftButton?.addEventListener("click", () => {
     if (!canDiscardDraftChanges()) return;
+    clearGateNotice();
     state.view = "drafts";
     state.selected = null;
     state.radarPrefill = null;

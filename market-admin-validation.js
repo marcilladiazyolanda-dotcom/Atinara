@@ -32,19 +32,58 @@
     ["SCHEDULE_AFTER_MARKET_CLOSE", "La publicación debe programarse antes del final del periodo."],
     ["INVALID_DRAFT_DATE", "Revisa las fechas, horas y zona horaria."],
     ["INVALID_MARKET_SLUG", "El identificador debe usar letras minúsculas, números y guiones."],
+    ["SOURCE_BINDING_PROVENANCE_REQUIRED", "El Plan de Resolución no tiene una procedencia verificable. Vuelve a corregir o revisar el borrador antes de confirmarlo."],
+    ["MARKET_EXPERT_ANALYSIS_REQUIRED", "Este Plan de Resolución exige un análisis del Agente Editor completado antes de la confirmación humana."],
+    ["SOURCE_BINDING_VALIDATION_REQUIRED", "El Plan de Resolución debe validarse de nuevo antes de confirmar."],
+    ["SOURCE_BINDING_CONTRACT_CHANGED", "El Plan de Resolución cambió después de bloquearse. Vuelve a generar y revisar el borrador."],
+    ["CURRENT_BINDING_COMPATIBILITY_REQUIRED", "El Plan de Resolución ya no coincide con la versión actual del borrador."],
+    ["RESOLUTION_PLAN_NOT_LOCKED", "El Plan de Resolución aún no está validado y bloqueado."],
+    ["SOURCE_CONTRACT_NOT_LOCKED", "El contrato de fuentes debe validarse de nuevo."],
+    ["SOURCE_MONITOR_NOT_ARMED", "El monitor de fuentes obligatorio todavía no está preparado."],
+    ["SOURCE_SCHEDULER_NOT_ENABLED", "La programación del monitor de fuentes obligatorio no está activa."],
+    ["CONFIRMATION_NOT_PERSISTED", "Supabase no confirmó que la validación humana quedara guardada. El mercado continúa privado."],
+    ["PUBLICATION_NOT_PERSISTED", "Supabase no confirmó un estado final de publicación. El mercado continúa privado."],
     ["EARLY_CLOSE_REASON_REQUIRED", "Explica por qué el resultado ya es público antes de cerrar participaciones."],
     ["CANCELLATION_REASON_REQUIRED", "Explica por qué el mercado debe anularse."]
   ];
 
   function getStatusLabel(value) {
-    return STATUS_LABELS[String(value || "").trim()] || String(value || "Estado desconocido");
+    const normalized = formatStructuredText(value, "Estado desconocido");
+    return STATUS_LABELS[normalized] || normalized;
+  }
+
+  function formatStructuredText(value, fallback = "") {
+    const visited = new Set();
+    const preferredKeys = [
+      "message", "text", "description", "detail", "reason", "label", "title",
+      "code", "field", "error", "hint"
+    ];
+
+    function visit(input, depth = 0) {
+      if (input === null || input === undefined) return "";
+      if (typeof input === "string") return input.trim();
+      if (["number", "boolean", "bigint"].includes(typeof input)) return String(input);
+      if (typeof input !== "object" || depth > 5 || visited.has(input)) return "";
+      visited.add(input);
+      const values = Array.isArray(input)
+        ? input
+        : [
+            ...preferredKeys.filter((key) => Object.hasOwn(input, key)).map((key) => input[key]),
+            ...Object.keys(input).filter((key) => !preferredKeys.includes(key)).sort().map((key) => input[key])
+          ];
+      const parts = values.map((item) => visit(item, depth + 1)).filter(Boolean);
+      return [...new Set(parts)].join(" · ");
+    }
+
+    return visit(value) || visit(fallback);
   }
 
   function getFriendlyError(error, fallback = "No se pudo completar la operación.") {
     const source = [error?.code, error?.message, error?.details, error?.hint]
+      .map((value) => formatStructuredText(value))
       .filter(Boolean).join(" ");
     const match = FRIENDLY_ERRORS.find(([code]) => source.includes(code));
-    return match ? match[1] : fallback;
+    return match ? match[1] : formatStructuredText(fallback, "No se pudo completar la operación.");
   }
 
   function normalizeUrl(value) {
@@ -274,6 +313,7 @@
     STATUS_LABELS,
     getStatusLabel,
     getFriendlyError,
+    formatStructuredText,
     normalizeUrl,
     toIsoOrEmpty,
     localDateTime,
