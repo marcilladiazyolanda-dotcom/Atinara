@@ -653,12 +653,23 @@ El alcance aprobado incluye recuperación completa de contraseña; administraci�
 
 Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que Penpot diseñara el comportamiento real y no la encuesta estática anterior. El diseño posterior quedó cerrado: la arquitectura 13.3A, la identidad A3, los activos 13.3C, las composiciones 13.3D y Atinara Sunset son la referencia definitiva de la beta v0.1.
 
-Siguiente paso operativo: activar el Radar v17 en el orden documentado —Edge
-Function, árbol coordinado y una actualización explícita— sin repetir
-migraciones ni secretos. Después debe hacerse la aceptación funcional con los
-casos de regresión indicados. El mercado antiguo de julio continúa sin aprobar
-ni liquidar. No ampliar todavía el catálogo, chat, GIF, feed algorítmico,
-temporadas, monetización, dinero real ni compraventa secundaria.
+### Hito 13.5.2 · Corrector Autónomo y familias de mercados (8 de agosto de 2026)
+
+- Producción incorpora las migraciones `20260808180729_add_autonomous_repair_and_market_families_v2`, `20260808182940_strengthen_generic_market_family_derivation`, `20260808183415_enforce_exact_candidate_family_duplicates` y `20260808185135_deduplicate_market_family_matches`.
+- `market-draft-fixer` v4 y `market-radar` v22 están activas con `verify_jwt=true`; no se redesplegó ninguna otra Edge Function.
+- El Corrector Autónomo trabaja por arquetipos generalizables, limita sus rondas, degrada con seguridad ante fallos de proveedor, crea o sincroniza el Plan de Resolución y revalida el resultado sin confirmar ni publicar.
+- Los borradores de aceptación de PS6 y del nuevo tráiler de GTA VI quedaron en versión 2, `review_approved`, con revisión aprobada, cero incidencias deterministas y Plan de Resolución v1. Ambos conservan `human_confirmed_at=null` y `market_id=null`.
+- Radar separa `exact_duplicate` de `sibling`: una proposición exacta se bloquea incluso dentro del mismo lote; fechas, umbrales o contenidos distintos del mismo evento se conservan como hijos económicos independientes.
+- Las familias atraviesan candidata, borrador y publicación. `get_public_market_family_catalog()` entrega metadatos públicos seguros y Explorar agrupa dos o más hijos bajo un encabezado sin probabilidad agregada ni mercado padre sintético.
+- El mercado publicado de GTA VI fue enlazado a `atinara:v1:grand-theft-auto-vi:release_date`, hijo `deadline:2026-08-31`, sin alterar 50/50, participantes, Karma ni estado económico.
+- Validación final: 62 archivos JavaScript, 178 pruebas unitarias, TypeScript, permisos, SQL transaccional con `ROLLBACK`, catálogo anónimo, invariantes económicas y asesores de Supabase sin errores.
+
+Siguiente paso operativo: subir a `main`, conservando rutas, el ZIP mínimo de
+este hito y hacer únicamente la comprobación visual final con recarga forzada.
+No repetir migraciones ni despliegues: el backend ya está activado. El mercado
+antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía el
+catálogo, chat, GIF, feed algorítmico, temporadas, monetización, dinero real ni
+compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

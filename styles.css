@@ -334,6 +334,107 @@ h3 {
   flex-wrap: wrap;
 }
 
+/* Familias de mercados: el padre es navegación, nunca un mercado económico. */
+.market-family-card {
+  grid-column: 1 / -1;
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 16px;
+  padding: clamp(16px, 2.4vw, 24px);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.market-family-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+}
+
+.market-family-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.market-family-header h3,
+.market-family-header p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.market-family-header h3 {
+  color: var(--text);
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+}
+
+.market-family-header p:not(.eyebrow) {
+  color: var(--muted);
+  max-width: 72ch;
+}
+
+.market-family-count {
+  align-self: start;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--blue);
+  background: var(--bg-soft);
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.market-family-toggle {
+  justify-self: start;
+  min-height: 44px;
+}
+
+.market-family-children {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.market-family-children[hidden] {
+  display: none;
+}
+
+.market-family-children .market-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 720px) {
+  .market-family-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-family-count,
+  .market-family-toggle {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .market-family-card {
+    padding: 14px;
+  }
+
+  .market-family-children {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .filter-fieldset {
   min-inline-size: 0;
   margin: 0;

@@ -304,6 +304,8 @@ function safeFilters(body: JsonRecord) {
 }
 
 async function loadExistingDefinitions(environment: Environment, authorization: string) {
+  const familyDefinitions = await rpc(environment, "get_admin_market_family_definitions", {}, authorization).catch(() => null);
+  if (Array.isArray(familyDefinitions)) return toRecordArray(familyDefinitions);
   const [catalog, drafts] = await Promise.all([
     rpc(environment, "get_admin_market_catalog", {}, authorization).catch(() => []),
     rpc(environment, "list_admin_market_drafts", { status_filter: null, query_filter: null, limit_count: 150, offset_count: 0 }, authorization).catch(() => []),

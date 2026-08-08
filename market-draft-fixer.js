@@ -76,9 +76,9 @@
   function needsRepair() {
     const gate = document.querySelector(".admin-review-gate");
     if (!gate) return false;
-    if (gate.dataset.latestAttemptClassification === "technical") return false;
     const hasContentIssues = gate.querySelectorAll("[data-content-issue='true']").length > 0;
-    return hasContentIssues && /(rejected|rechazad|inconclus|incomplet|contradic|ambigu)/i.test(gate.textContent || "");
+    const technicalAttempt = gate.dataset.latestAttemptClassification === "technical";
+    return hasContentIssues && (technicalAttempt || /(rejected|rechazad|inconclus|incomplet|contradic|ambigu)/i.test(gate.textContent || ""));
   }
 
   function enhance() {
@@ -92,10 +92,10 @@
     panel.dataset.expertRepairPanel = "true";
     panel.innerHTML = `
       <div>
-        <p class="eyebrow">Corrector experto · cambios mínimos y auditados</p>
+        <p class="eyebrow">Corrector Autónomo · hasta tres rondas auditadas</p>
         <h4>Resolver ${issueCount} ${issueCount === 1 ? "incongruencia" : "incongruencias"}</h4>
       </div>
-      <p>Atinara elegirá la regla más objetiva que esté respaldada por el borrador. En acontecimientos digitales globales normaliza el límite en UTC y define expresamente lanzamientos regionales, acceso anticipado, betas, demos y predescargas.</p>
+      <p>Atinara detectará el arquetipo, completará lo deducible, validará fuentes oficiales, sincronizará el Plan de Resolución y volverá a revisar. Los fallos técnicos se registran aparte y no se presentan como una falsa petición de edición humana.</p>
       <div class="admin-expert-repair-panel-actions">
         <button class="primary-button" type="button" data-expert-repair-draft>Aplicar correcciones y volver a revisar</button>
         <small>No confirma, programa ni publica por ti. La confirmación humana seguirá siendo obligatoria.</small>

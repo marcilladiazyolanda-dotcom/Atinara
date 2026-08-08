@@ -745,6 +745,7 @@
     const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
     const missing = Array.isArray(candidate.missing_fields) ? candidate.missing_fields : [];
     const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
+    const siblings = Array.isArray(candidate.family_matches) ? candidate.family_matches : [];
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
     return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
       <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
@@ -776,7 +777,9 @@
         <section><h3>Revisión necesaria</h3>
           ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Sin advertencias registradas.</p>"}
           ${missing.length ? `<p><strong>Campos sin información:</strong> ${escapeHtml(missing.join(", "))}</p>` : ""}
-          ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.status)}</strong> · ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : "<p>Sin duplicados deterministas.</p>"}
+          ${candidate.family_key ? `<p><strong>Familia:</strong> ${escapeHtml(candidate.family_title || candidate.family_key)} · <code>${escapeHtml(candidate.family_child_key)}</code></p>` : ""}
+          ${siblings.length ? `<p><strong>Mercados hermanos permitidos:</strong> ${escapeHtml(siblings.length)}. Comparten acontecimiento, pero conservan opción, precio y economía independientes.</p>` : ""}
+          ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.relationship || "exact_duplicate")}</strong> · ${escapeHtml(item.question || item.id || "Mercado existente")}</li>`).join("")}</ul>` : "<p>Sin duplicados exactos ni semánticos.</p>"}
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
         </section>
         <section><h3>Agente Editor</h3>${candidate.expert_analysis

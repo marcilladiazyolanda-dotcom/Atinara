@@ -285,10 +285,12 @@ test("Paso 13.5.2 · validate-market-draft usa Gemini vigente, JSON Schema y un 
   assert.doesNotMatch(validator, /console\.(?:log|error)\([^\n]*(?:authorization|geminiKey|secretKey)/i);
 });
 
-test("Paso 13.5.2 · el Corrector solo opera sobre errores reales de contenido", () => {
+test("Paso 13.5.2 · el Corrector separa incidencias técnicas y corrige contenido real", () => {
   assert.match(fixerUi, /latestAttemptClassification === "technical"/);
-  assert.match(fixer, /TECHNICAL_REVIEW_FAILURE_NOT_REPAIRABLE/);
-  assert.match(fixer, /repair_applicable!==true\|\|c\.technical_incident/);
+  assert.match(fixer, /AUTONOMOUS_REPAIR_MAX_ROUNDS/);
+  assert.match(fixer, /technical_incident/);
+  assert.match(fixer, /no se convirtió en una petición genérica de edición humana/);
+  assert.doesNotMatch(fixer, /TECHNICAL_REVIEW_FAILURE_NOT_REPAIRABLE/);
   assert.match(fixer, /functions\/v1\/validate-market-draft/);
   assert.doesNotMatch(fixer, /record_market_draft_review/);
 });

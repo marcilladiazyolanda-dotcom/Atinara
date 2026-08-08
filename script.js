@@ -160,13 +160,19 @@ async function loadMarketsFromSupabase() {
     throw new Error("Supabase no está disponible.");
   }
 
-  const { data, error } = await window.orakloSupabase.rpc("get_public_markets");
+  const [marketResult, familyResult] = await Promise.all([
+    window.orakloSupabase.rpc("get_public_markets"),
+    window.orakloSupabase.rpc("get_public_market_family_catalog")
+  ]);
 
-  if (error) {
-    throw error;
-  }
+  if (marketResult.error) throw marketResult.error;
+  if (familyResult.error) throw familyResult.error;
 
-  return (data || []).map(window.mapMarketFromSupabase);
+  const familyByMarket = new Map((familyResult.data || []).map((item) => [item.market_id, item]));
+  return (marketResult.data || []).map((row) => window.mapMarketFromSupabase({
+    ...row,
+    ...(familyByMarket.get(row.id) || {})
+  }));
 }
 
 function mapLeaderboardUser(row) {
@@ -269,14 +275,21 @@ async function loadActivityFromSupabase() {
 
 function getFilteredMarkets() {
   const query = normalizeText(activeFilters.query.trim());
+  const familyKeysMatchingQuery = new Set();
+  if (query) {
+    markets.forEach((market) => {
+      const helperText = window.AtinaraMarketFamilies?.searchableText(market) || "";
+      const searchable = normalizeText(`${helperText} ${market.resultadoResolucion || ""}`);
+      if (searchable.includes(query) && market.familyKey) familyKeysMatchingQuery.add(market.familyKey);
+    });
+  }
   let filtered = markets.filter((market) => {
     const effectiveStatus = getMarketTiming(market).effectiveStatus;
     const matchesCategory =
       activeFilters.category === "Todos" || market.categoria === activeFilters.category;
-    const searchable = normalizeText(
-      `${market.pregunta} ${market.categoria} ${effectiveStatus} ${market.resultadoResolucion || ""}`
-    );
-    const matchesQuery = query.length === 0 || searchable.includes(query);
+    const helperText = window.AtinaraMarketFamilies?.searchableText(market) || `${market.pregunta} ${market.categoria}`;
+    const searchable = normalizeText(`${helperText} ${effectiveStatus} ${market.resultadoResolucion || ""}`);
+    const matchesQuery = query.length === 0 || searchable.includes(query) || familyKeysMatchingQuery.has(market.familyKey);
 
     return matchesCategory && matchesQuery;
   });
@@ -343,6 +356,8 @@ function createMarketCard(market) {
   const timing = getMarketTiming(market);
   const card = document.createElement("article");
   card.className = "market-card";
+  card.dataset.marketId = market.id;
+  if (market.familyKey) card.dataset.familyKey = market.familyKey;
   card.innerHTML = `
     <div class="market-card-header">
       <span class="tag">${escapeHtml(market.categoria)}</span>
@@ -362,6 +377,45 @@ function createMarketCard(market) {
     </div>
   `;
 
+  return card;
+}
+
+function createMarketFamilyCard(group) {
+  const card = document.createElement("article");
+  const targetMarketId = new URLSearchParams(window.location.search).get("market") || "";
+  const expanded = Boolean(activeFilters.query.trim()) || group.children.some((market) => market.id === targetMarketId);
+  const controlsId = `family-${group.key.replace(/[^a-z0-9_-]/gi, "-")}`;
+  card.className = "market-family-card";
+  card.dataset.familyKey = group.key;
+  card.innerHTML = `
+    <header class="market-family-header">
+      <div>
+        <p class="eyebrow">Familia de mercados</p>
+        <h3>${escapeHtml(group.title)}</h3>
+        <p>${escapeHtml(window.AtinaraMarketFamilies.familySemanticsLabel(group))}</p>
+      </div>
+      <span class="market-family-count">${formatNumber(group.children.length)} mercados independientes</span>
+    </header>
+    <button class="secondary-button market-family-toggle" type="button" aria-expanded="${String(expanded)}" aria-controls="${escapeHtml(controlsId)}">
+      ${expanded ? "Ocultar mercados" : "Ver mercados"}
+    </button>
+    <div class="market-family-children" id="${escapeHtml(controlsId)}"${expanded ? "" : " hidden"}></div>
+  `;
+  const children = card.querySelector(".market-family-children");
+  group.children.forEach((market) => children.appendChild(createMarketCard(market)));
+  const toggle = card.querySelector(".market-family-toggle");
+  const setExpanded = (next) => {
+    toggle.setAttribute("aria-expanded", String(next));
+    toggle.textContent = next ? "Ocultar mercados" : "Ver mercados";
+    children.hidden = !next;
+  };
+  toggle.addEventListener("click", () => setExpanded(toggle.getAttribute("aria-expanded") !== "true"));
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && toggle.getAttribute("aria-expanded") === "true") {
+      setExpanded(false);
+      toggle.focus();
+    }
+  });
   return card;
 }
 
@@ -570,8 +624,11 @@ function renderMarkets() {
   const filteredMarkets = getFilteredMarkets();
   marketListNode.innerHTML = "";
 
-  filteredMarkets.forEach((market) => {
-    marketListNode.appendChild(createMarketCard(market));
+  const grouped = window.AtinaraMarketFamilies
+    ? window.AtinaraMarketFamilies.groupMarkets(filteredMarkets)
+    : filteredMarkets.map((market) => ({ kind: "market", market }));
+  grouped.forEach((item) => {
+    marketListNode.appendChild(item.kind === "family" ? createMarketFamilyCard(item) : createMarketCard(item.market));
   });
 
   const count = filteredMarkets.length;

@@ -63,6 +63,9 @@
 
   function cardForMarket() {
     if (!marketId) return null;
+    const directCard = [...document.querySelectorAll("#market-list .market-card[data-market-id]")]
+      .find((card) => card.dataset.marketId === marketId);
+    if (directCard) return directCard;
     const encoded = encodeURIComponent(marketId);
     return [...document.querySelectorAll("#market-list .market-card")].find((card) => {
       const hrefs = [...card.querySelectorAll("a[href]")].map((link) => link.getAttribute("href") || "");
@@ -74,6 +77,14 @@
   }
 
   function showArrival(card) {
+    const family = card.closest(".market-family-card");
+    const familyChildren = family?.querySelector(".market-family-children");
+    const familyToggle = family?.querySelector(".market-family-toggle");
+    if (familyChildren && familyToggle) {
+      familyChildren.hidden = false;
+      familyToggle.setAttribute("aria-expanded", "true");
+      familyToggle.textContent = "Ocultar mercados";
+    }
     card.classList.add("published-market-highlight");
     card.setAttribute("aria-current", "true");
 

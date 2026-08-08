@@ -1,5 +1,6 @@
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
 export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v3";
+export const RADAR_FAMILY_VERSION = "atinara-market-family-v1";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -500,11 +501,161 @@ export function adaptTavilyResults(payload, options = {}) {
   }, now, options.cacheMinutes ?? 180));
 }
 
-export function detectDuplicates(candidate, existing = []) {
+const FAMILY_MONTHS = Object.freeze({
+  january: 1, enero: 1, february: 2, febrero: 2, march: 3, marzo: 3,
+  april: 4, abril: 4, may: 5, mayo: 5, june: 6, junio: 6,
+  july: 7, julio: 7, august: 8, agosto: 8, september: 9, septiembre: 9, setiembre: 9,
+  october: 10, octubre: 10, november: 11, noviembre: 11, december: 12, diciembre: 12,
+});
+
+function familyDate(question) {
+  const source = normalizeComparableText(question);
+  let match = source.match(/(?:before|antes de|antes del)\s+(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(20\d{2})/);
+  if (match && FAMILY_MONTHS[match[2]]) {
+    const day = Number(match[1]);
+    const boundary = Date.UTC(Number(match[3]), FAMILY_MONTHS[match[2]] - 1, day);
+    const date = new Date(day === 1 ? boundary - 1_000 : boundary + 86_399_000);
+    return date.toISOString().slice(0, 10);
+  }
+  match = source.match(/\b(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(20\d{2})\b/);
+  if (match && FAMILY_MONTHS[match[2]]) {
+    return new Date(Date.UTC(Number(match[3]), FAMILY_MONTHS[match[2]] - 1, Number(match[1]), 23, 59, 59)).toISOString().slice(0, 10);
+  }
+  match = source.match(/(?:before\s+)?([a-z]+)\s+(\d{1,2})\s+(20\d{2})/);
+  if (match && FAMILY_MONTHS[match[1]]) {
+    const day = Number(match[2]);
+    const boundary = Date.UTC(Number(match[3]), FAMILY_MONTHS[match[1]] - 1, day);
+    const date = new Date(/\bbefore\b/.test(source) && day === 1 ? boundary - 1_000 : boundary + 86_399_000);
+    return date.toISOString().slice(0, 10);
+  }
+  match = source.match(/(?:before|antes de)\s+([a-z]+)\s+(?:de\s+)?(20\d{2})/);
+  if (match && FAMILY_MONTHS[match[1]]) {
+    return new Date(Date.UTC(Number(match[2]), FAMILY_MONTHS[match[1]] - 1, 1) - 1_000).toISOString().slice(0, 10);
+  }
+  match = source.match(/(?:before|antes de)\s+(20\d{2})\b/);
+  if (match) return `${Number(match[1]) - 1}-12-31`;
+  match = source.match(/\b(20\d{2})[ -](\d{2})[ -](\d{2})\b/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+}
+
+function familyDimension(question) {
+  if (/\b(trailer|teaser|avance|clip|gameplay video)\b/.test(question)) return { dimension: "official_content", type: "event_content_options" };
+  if (/\b(announce|announc\w*|anunci\w*|reveal\w*|present\w*)\b/.test(question)) return { dimension: "announcement_date", type: "deadline_ladder" };
+  if (/\b(releas\w*|launch\w*|lanz\w*|saldr\w*|debut)\b/.test(question)) return { dimension: "release_date", type: "deadline_ladder" };
+  if (/\b(cover|portada|participant|candidato|athlete|atleta|appear\w*|attend\w*|presence|aparec\w*|asist\w*)\b/.test(question)) return { dimension: "participant", type: "participant_options" };
+  if (/\b(platform|plataforma|playstation|xbox|switch|steam)\b/.test(question) && /\b(version|variant|variante)\b/.test(question)) return { dimension: "platform", type: "platform_variants" };
+  if (/\b(at least|al menos|more than|mas de|over|above|below|under|fewer than|less than|score|puntuacion|threshold|umbral|reach\w*|alcanz\w*|exceed\w*|super\w*)\b/.test(question)) return { dimension: "threshold", type: "milestone_thresholds" };
+  if (/\b(winner|ganador|award|premio|goty|which|cual|nominee|nominat\w*|nominad\w*|game of the year|juego del ano)\b/.test(question)) return { dimension: "outcome", type: "categorical_outcomes" };
+  return { dimension: "related", type: "generic_related" };
+}
+
+function familyEntity(candidate, normalizedQuestion, dimension) {
+  const sourceTitle = normalizeComparableText(candidate.source_title ?? candidate.title);
+  const structuredSubject = normalizeComparableText(candidate.subject ?? candidate.atinara_subject);
+  if (structuredSubject) return structuredSubject.slice(0, 120);
+  if (dimension === "participant" && sourceTitle.includes(":")) return sourceTitle.split(":")[0].trim();
+  let value = normalizedQuestion
+    .replace(/^(?:will|whether|can|could|is|are|sera|seran|se)\s+/, "")
+    .replace(/^(?:a|an|the|la|el|un|una)\s+/, "");
+  value = value
+    .replace(/^(?:announce\w*|anunci\w*|reveal\w*|present\w*|release\w*|launch\w*|lanz\w*|public\w*|reach\w*|alcanz\w*|exceed\w*|super\w*)\s+(?:officially|oficialmente)?\s*(?:a|an|the|la|el|los|las|un|una)?\s*/, "")
+    .replace(/^(?:officially|oficialmente)\s+/, "");
+  if (dimension === "official_content") {
+    const contentOf = value.match(/(?:new|nuevo|nueva|another)?\s*(?:trailer|teaser|avance|clip)(?:\s+official|\s+oficial)?\s+(?:of|de)\s+(.+?)(?:\s+(?:before|antes de|antes del|by)\b|$)/);
+    if (contentOf?.[1]) value = contentOf[1];
+    else value = value
+      .replace(/\b(?:new|nuevo|nueva|another|official|oficial)\b/g, " ")
+      .replace(/\b(?:trailer|teaser|avance|clip)\b/g, " ")
+      .replace(/^\s*(?:of|de)\s+/, "");
+  }
+  value = value.split(/\s+(?:will|be|is|sera|seran|se|before|antes|by|para|release\w*|launch\w*|lanz\w*|announce\w*|anunci\w*|public\w*|come out|nominat\w*|nominad\w*|win\w*|gan\w*|reach\w*|alcanz\w*|exceed\w*|super\w*|appear\w*|aparec\w*|attend\w*|asist\w*)\b/)[0];
+  value = value
+    .replace(/\b(?:release date|fecha de lanzamiento|official content|contenido oficial)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if ((value.length < 3 || /^(?:officially|oficialmente|new|nuevo|nueva)$/.test(value)) && sourceTitle) {
+    value = sourceTitle
+      .split(":")[0]
+      .replace(/\b(?:release date|fecha de lanzamiento|official content|contenido oficial)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return value.slice(0, 120);
+}
+
+function familySemantics(type) {
+  if (type === "deadline_ladder" || type === "milestone_thresholds") {
+    return { cumulative: true, mutually_exclusive: false, parent_is_market: false, aggregate_probability: false, economic_independence: true };
+  }
+  return { cumulative: false, mutually_exclusive: type === "categorical_outcomes", parent_is_market: false, aggregate_probability: false, economic_independence: true };
+}
+
+function familyThreshold(question) {
+  const source = normalizeComparableText(question);
+  const match = source.match(/(?:at least|al menos|more than|mas de|over|above|below|under|fewer than|less than|threshold|umbral)\s+(?:los?\s+)?(\d+(?:[.,]\d+)?)(?:\s*([a-z%]+))?/)
+    ?? source.match(/(?:reach\w*|alcanz\w*|exceed\w*|super\w*)\s+.*?\b(\d+(?:[.,]\d+)?)(?:\s*([a-z%]+))?/);
+  if (!match) return null;
+  const amount = match[1].replace(",", ".");
+  const unit = cleanText(match[2], 24).replace(/[^a-z%]+/g, "");
+  return `${amount}${unit ? `:${unit}` : ""}`;
+}
+
+export function deriveMarketFamily(candidate) {
+  const normalizedQuestion = normalizeComparableText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title);
+  if (!normalizedQuestion) return null;
+  const { dimension, type } = familyDimension(normalizedQuestion);
+  const entity = familyEntity(candidate ?? {}, normalizedQuestion, dimension);
+  if (!entity) return null;
+  const deadline = familyDate(normalizedQuestion);
+  const threshold = dimension === "threshold" ? familyThreshold(normalizedQuestion) : null;
+  const familyKey = `atinara:v1:${entity.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100)}:${dimension}`;
+  let childKey = threshold ? `threshold:${threshold}` : deadline ? `deadline:${deadline}` : `option:${stableFingerprint(normalizedQuestion)}`;
+  if (dimension === "official_content") {
+    const contentKind = /\bteaser\b/.test(normalizedQuestion) ? "teaser" : /\b(?:clip|avance)\b/.test(normalizedQuestion) ? "clip" : "trailer";
+    childKey = `content:${contentKind}:${deadline ?? stableFingerprint(normalizedQuestion)}`;
+  }
+  const childLabel = threshold
+    ? `Umbral ${threshold.replace(":", " ")}`
+    : deadline
+    ? `Hasta el ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${deadline}T12:00:00Z`))}`
+    : cleanText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question, 180);
+  const titlePrefix = type === "deadline_ladder"
+    ? (dimension === "announcement_date" ? "Anuncio oficial" : "Fecha de lanzamiento")
+    : dimension === "official_content" ? "Contenido oficial"
+      : dimension === "threshold" ? "Hitos"
+        : "Opciones";
+  return {
+    family_key: familyKey,
+    family_title: `${titlePrefix} · ${entity.replace(/\b(vi|vii|viii|ix|xi|xii)\b/gi, (part) => part.toUpperCase())}`,
+    family_type: type,
+    family_child_key: childKey,
+    family_child_label: childLabel,
+    family_sort_at: deadline ? `${deadline}T23:59:59.000Z` : safeIsoDate(candidate?.source_close_at),
+    family_relationship: "standalone",
+    family_semantics: familySemantics(type),
+    family_source_event_key: cleanText(candidate?.event_group_key ?? candidate?.external_event_id, 240) || null,
+    family_version: RADAR_FAMILY_VERSION,
+  };
+}
+
+function matchFamily(item) {
+  if (cleanText(item?.family_key, 240) && cleanText(item?.family_child_key, 240)) {
+    return {
+      family_key: cleanText(item.family_key, 240),
+      family_child_key: cleanText(item.family_child_key, 240),
+      family_title: cleanText(item.family_title, 300),
+    };
+  }
+  return deriveMarketFamily(item);
+}
+
+export function classifyMarketRelations(candidate, existing = []) {
   const source = normalizeComparableText(candidate.atinara_question ?? candidate.source_question);
-  if (!source) return [];
+  const candidateFamily = deriveMarketFamily(candidate);
+  if (!source || !candidateFamily) return { family: candidateFamily, duplicates: [], siblings: [] };
   const tokens = new Set(source.split(" ").filter((token) => token.length > 2));
-  const matches = [];
+  const duplicates = [];
+  const siblings = [];
   for (const item of existing) {
     const target = normalizeComparableText(item.question ?? item.title ?? item.atinara_question);
     if (!target) continue;
@@ -512,11 +663,30 @@ export function detectDuplicates(candidate, existing = []) {
     const intersection = [...tokens].filter((token) => targetTokens.has(token)).length;
     const union = new Set([...tokens, ...targetTokens]).size || 1;
     const similarity = intersection / union;
-    if (source === target || similarity >= 0.72) {
-      matches.push({ id: cleanText(item.id, 220) || null, question: cleanText(item.question ?? item.title, 500), similarity: Number(similarity.toFixed(3)) });
+    const existingFamily = matchFamily(item);
+    const base = {
+      id: cleanText(item.id, 220) || null,
+      question: cleanText(item.question ?? item.title, 500),
+      similarity: Number(similarity.toFixed(3)),
+      family_key: candidateFamily.family_key,
+      family_child_key: existingFamily?.family_child_key ?? null,
+      family_title: candidateFamily.family_title,
+    };
+    if (existingFamily?.family_key === candidateFamily.family_key) {
+      if (existingFamily.family_child_key === candidateFamily.family_child_key) {
+        duplicates.push({ ...base, relationship: "exact_duplicate", blocking: true });
+      } else {
+        siblings.push({ ...base, relationship: "sibling", blocking: false });
+      }
+    } else if (source === target || (similarity >= 0.9 && familyDimension(source).dimension === familyDimension(target).dimension)) {
+      duplicates.push({ ...base, relationship: source === target ? "exact_duplicate" : "semantic_duplicate", blocking: true });
     }
   }
-  return matches.slice(0, 5);
+  return { family: candidateFamily, duplicates: duplicates.slice(0, 5), siblings: siblings.slice(0, 12) };
+}
+
+export function detectDuplicates(candidate, existing = []) {
+  return classifyMarketRelations(candidate, existing).duplicates;
 }
 
 function popularityMetric(candidate) {
@@ -554,8 +724,10 @@ function uncertaintyScore(candidate) {
 }
 
 export function scoreCandidates(candidates, existing = [], now = new Date().toISOString()) {
+  const seenDefinitions = [...existing];
   return candidates.map((candidate) => {
-    const duplicateMatches = detectDuplicates(candidate, existing);
+    const relations = classifyMarketRelations(candidate, seenDefinitions);
+    const duplicateMatches = relations.duplicates;
     const popularity = popularityMetric(candidate);
     const relevance = relevanceScore(candidate);
     const clarity = clarityScore(candidate);
@@ -564,14 +736,25 @@ export function scoreCandidates(candidates, existing = [], now = new Date().toIS
     const novelty = duplicateMatches.length ? 0 : 20;
     const verification = Math.max(0, Math.min(100, safeNumber(candidate.verification_confidence) ?? 0));
     const total = popularity + relevance + clarity + recency + uncertainty + novelty;
-    const hardReasons = [...new Set([...(candidate.hard_reject_reasons ?? []), ...(duplicateMatches.length ? [RADAR_REASON_CODES.DUPLICATE_MARKET] : [])])];
-    return {
+    const priorHardReasons = (candidate.hard_reject_reasons ?? []).filter((reason) => reason !== RADAR_REASON_CODES.DUPLICATE_MARKET);
+    const hardReasons = [...new Set([...priorHardReasons, ...(duplicateMatches.length ? [RADAR_REASON_CODES.DUPLICATE_MARKET] : [])])];
+    const scored = {
       ...candidate,
+      ...(relations.family ?? {}),
       duplicate_matches: duplicateMatches,
+      family_matches: relations.siblings,
+      family_relationship: relations.siblings.length ? "sibling" : relations.family?.family_relationship,
       hard_reject_reasons: hardReasons,
       quality_score: total,
       score_breakdown: { popularity, relevance, clarity, recency, uncertainty, novelty, verification },
     };
+    seenDefinitions.push({
+      ...candidate,
+      ...(relations.family ?? {}),
+      id: candidate.id ?? candidate.external_id,
+      question: candidate.atinara_question ?? candidate.source_question,
+    });
+    return scored;
   }).sort((left, right) => right.quality_score - left.quality_score);
 }
 
@@ -1098,6 +1281,7 @@ export function isAdaptedIdeaComplete(candidate) {
 }
 
 export function buildDraftPrefill(candidate) {
+  const family = deriveMarketFamily(candidate);
   const sourceUrl = safePublicUrl(candidate.atinara_resolution_source_url ?? candidate.source_resolution_url);
   const question = cleanText(candidate.atinara_question ?? candidate.source_question, 700);
   const criteria = cleanText(candidate.atinara_resolution_criteria, 5000);
@@ -1136,6 +1320,7 @@ export function buildDraftPrefill(candidate) {
   }
   return {
     candidate_id: cleanText(candidate.id, 220) || null,
+    family,
     fields,
     origins,
     warnings: [...new Set(candidate.warnings ?? [])],
@@ -1156,6 +1341,10 @@ export function buildDraftPrefill(candidate) {
       verification_status: candidate.verification_status,
       verification_reason_code: candidate.verification_reason_code,
       verified_at: candidate.verified_at,
+      family_key: family?.family_key ?? null,
+      family_child_key: family?.family_child_key ?? null,
+      family_relationship: candidate.family_relationship ?? family?.family_relationship ?? "standalone",
+      family_version: family?.family_version ?? RADAR_FAMILY_VERSION,
     },
   };
 }

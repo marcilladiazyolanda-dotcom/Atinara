@@ -196,7 +196,17 @@ function mapMarketFromSupabase(row) {
     fechaPrecio: row.price_updated_at || null,
     inicioHistorialPrecio: row.price_history_started_at || null,
     modeloPrecio: row.pricing_model || "lmsr_v1",
-    liquidezMercado: toNumber(row.liquidity_parameter, 2000)
+    liquidezMercado: toNumber(row.liquidity_parameter, 2000),
+    familyKey: row.family_key || null,
+    familyTitle: row.family_title || "",
+    familyType: row.family_type || "",
+    familyChildKey: row.family_child_key || "",
+    familyChildLabel: row.family_child_label || "",
+    familySortAt: row.family_sort_at || null,
+    familyRelationship: row.family_relationship || "standalone",
+    familySemantics: row.family_semantics && typeof row.family_semantics === "object" ? row.family_semantics : {},
+    familySourceEventKey: row.family_source_event_key || null,
+    familyVersion: row.family_version || null
   };
 }
 
