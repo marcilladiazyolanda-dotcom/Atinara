@@ -3,7 +3,6 @@
 Estas instrucciones se aplican a todo el árbol del repositorio. Codex debe obedecerlas aunque el prompt de una tarea no repita la estrategia. Una conversación antigua o un resumen previo no sustituyen el estado actual del repositorio.
 La estrategia de producto es común a Chat, Pro, Work y Codex. Al retomar cualquier conversación del proyecto, nueva o antigua, debe aplicarse el estado vigente aunque el prompt concreto no lo repita. La documentación canónica y los sistemas reales prevalecen sobre transcripciones antiguas.
 
-
 ## 1. Lectura obligatoria antes de cualquier tarea
 
 Lee completos, en este orden:
@@ -85,22 +84,56 @@ Pensar en el futuro B2B no autoriza a añadir funciones fuera del alcance. Oblig
 - Ningún mercado se publica o programa sin validación vigente de claridad, coherencia y resolubilidad en servidor. Un cambio esencial invalida la aprobación anterior.
 - Temporadas y schedulers permanecen en el estado documentado y solo se activan mediante autorización expresa.
 
-## 6. Calidad profesional y auditabilidad
+## 6. Calidad profesional, reparación experta y auditabilidad
+
+### 6.1 Causa raíz y solución general
+
+- Ante cualquier incidencia identifica primero la **causa raíz** y la **clase general del problema**. No optimices únicamente para el ejemplo que hizo visible el fallo.
+- Antes de modificar, determina qué capas pueden estar implicadas: interfaz, dominio, backend, datos, Auth, RLS, RPC, Edge Functions, caché, concurrencia, proveedores externos, accesibilidad, rendimiento, observabilidad y producción.
+- La corrección debe resolver el patrón de fallo y los estados equivalentes previsibles. No se aceptan listas cerradas de excepciones, `if` por caso conocido, textos especiales, allowlists improvisadas ni hardcodes utilizados como sustituto de una regla de dominio.
+- Preserva comportamientos válidos, datos existentes y decisiones ajenas al alcance. Si cambia un contrato, crea compatibilidad o una transición explícita y segura.
+- Antes de eliminar o sustituir código, tablas, funciones, estados o campos, localiza dependencias y define recuperación o reversión.
+- Evita lógica duplicada, valores mágicos, funciones vacías, TODO en rutas productivas, mocks o fixtures en producción, fallos silenciosos y estados de éxito que no correspondan con el resultado real.
+- Un error técnico, timeout, respuesta inválida o caída de proveedor nunca equivale a una aprobación, un rechazo factual ni una resolución. Debe existir un estado explícito y recuperable de indisponibilidad o revisión.
+
+### 6.2 Agentes expertos y correctores
+
+- Los agentes expertos deben combinar políticas versionadas, reglas deterministas, datos verificables, fuentes con función explícita, precedentes aprobados, herramientas permitidas e incertidumbre declarada. No deben depender de una colección cerrada de casos particulares.
+- Separa diagnóstico, decisión de política, propuesta de corrección, aplicación, revalidación y auditoría. Una etapa no debe falsear el resultado de otra.
+- Si un detector o corrector encuentra una incidencia y la reparación está dentro del alcance autorizado, debe diagnosticar su causa, aplicar una corrección general cuando sea seguro hacerlo, registrar qué cambió y volver a ejecutar las validaciones afectadas.
+- Si la reparación automática no puede realizarse con seguridad, debe detenerse en un estado honesto y accionable con causa, evidencia y siguiente acción. No debe fingir éxito, ocultar la limitación ni degradar silenciosamente la validación.
+- Ningún corrector puede sortear una puerta de seguridad, rebajar un requisito, fabricar evidencia o autoaprobar un mercado para conseguir que el flujo termine en verde.
+- La autonomía técnica no sustituye las confirmaciones humanas exigidas. Ningún agente publica, programa, resuelve o liquida mercados sin la intervención humana establecida por el contrato.
+- Las decisiones reutilizables deben expresarse como reglas de dominio, políticas o componentes compartidos, no como conocimiento enterrado en prompts, cadenas de texto o ramas específicas del frontend.
+
+### 6.3 Calidad B2B y auditabilidad
 
 - Mantén trazabilidad de creación, edición, revisión, aprobación, publicación, cierre, anulación y resolución.
 - Usa versiones, locks, idempotencia y operaciones transaccionales en escrituras sensibles.
 - Conserva evidencias y fuentes de resolución verificables.
 - Aplica mínimos privilegios y separación de funciones.
-- Evita mezclar dominio, interfaz, proveedores externos y persistencia cuando una separación razonable reduzca futuras reescrituras.
+- Separa razonablemente interfaz, dominio, reglas de mercado, resolución, identidad, datos, analítica e integraciones cuando ello reduzca reescrituras o riesgos.
 - Antes de añadir lógica diferencial B2B o integraciones de operadores al repositorio público, evalúa y señala si debe residir en un repositorio privado.
-- No sacrifiques accesibilidad, rendimiento u onboarding por una arquitectura futura no validada.
+- Favorece contratos y límites que permitan futuras APIs, webhooks, adaptadores, configuración por operador o marca blanca sin bifurcar permanentemente el producto.
+- No construyas infraestructura B2B prematura ni sacrifiques accesibilidad, rendimiento, claridad u onboarding por escenarios todavía no validados.
+- Evita dependencia innecesaria de un único proveedor, cliente o jurisdicción. Cuando una dependencia sea necesaria, encapsúlala tras contratos y fallos controlados.
+
+### 6.4 Pruebas y definición de terminado
+
+- Define criterios de aceptación verificables antes de implementar una corrección significativa o una función nueva.
+- Ejecuta pruebas proporcionales al riesgo sobre lógica, integración, contratos de proveedores, permisos, RLS, migraciones, concurrencia, idempotencia, regresión, accesibilidad, responsive, rendimiento y fallos parciales.
+- Las pruebas deben recorrer la ruta real implementada. Los mocks sirven como apoyo, no como sustituto de comprobar la integración real cuando esta pueda verificarse.
+- En producción prioriza lecturas, observación de logs o pruebas transaccionales con rollback. No alteres datos reales solo para demostrar que una prueba pasa.
+- No declares algo corregido, activo, desplegado o terminado sin evidencia verificable.
+- Un trabajo solo está terminado cuando: se conoce la causa raíz; la implementación es completa y no decorativa; se cumplen los criterios de aceptación; pasan las pruebas relevantes; no existen regresiones materiales conocidas; permisos, seguridad y datos quedan protegidos; la documentación y memoria afectadas están actualizadas; producción se ha comprobado cuando forma parte del alcance; y los riesgos residuales se explican.
+- Si una prueba falla, una integración no puede verificarse o queda una limitación material, indícalo expresamente y no presentes la tarea como terminada.
 
 ## 7. Forma de trabajo acordada
 
 - Un único implementador por tarea. No coordines dos agentes editando los mismos archivos simultáneamente.
 - Inspecciona antes de cambiar y limita el alcance a lo pedido.
 - Work puede haber revisado GitHub, Supabase, SQL, pruebas o producción. No repitas esas comprobaciones sin necesidad; reutiliza evidencia vigente y verifica solo lo afectado o riesgoso.
-- Usa migraciones SQL versionadas para cambios de esquema. No repitas migraciones ya aplicadas.
+- Usa migraciones SQL versionadas para cambios de esquema. No edites ni repitas migraciones ya aplicadas.
 - No hagas `push`, despliegues, SQL productivo, activaciones, secretos o mutaciones externas salvo autorización expresa de Yol.
 - Tras cambios JavaScript, comprueba sintaxis. Revisa también HTML/CSS, rutas, flujo afectado y `git diff --check`.
 - Ejecuta las pruebas indicadas por el repositorio y las específicas del riesgo. Documenta lo que no pueda ejecutarse.
@@ -114,6 +147,7 @@ Pensar en el futuro B2B no autoriza a añadir funciones fuera del alcance. Oblig
 - Cuando se solicite ZIP, incluye **solo archivos modificados, añadidos o creados**, conservando sus rutas. No incluyas todo el repositorio.
 - Si la entrega supera 100 archivos, divídela en dos paquetes o grupos de commit claramente numerados y documenta el orden.
 - Entrega una lista exacta de archivos, migraciones, Edge Functions, secretos y pasos manuales.
+- Enumera por separado cualquier archivo que deba eliminarse. No incluyas `.git`, `node_modules`, `.env`, secretos, credenciales, temporales ni ZIP antiguos.
 
 ## 8. Criterios que nunca deben romperse
 
