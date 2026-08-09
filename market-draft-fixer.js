@@ -65,6 +65,22 @@
 
   const safeText = (value, max = 1200) => String(value ?? "").trim().slice(0, max);
 
+  function safeRepairErrorText(value, max = 800) {
+    if (typeof value !== "string") return "";
+    const text = safeText(value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " "), max);
+    if (!text || /^\[object\s+Object\]$/i.test(text)) return "";
+    const exposesSql = /(?:\bSQLSTATE\b|\bPL\/pgSQL\b|\bPostg(?:reSQL|REST)\b|\bSQL statement\b|\bCONTEXT:\s|\bERROR:\s|\$function\$|\b(?:private|public|auth|extensions)\.[a-z_][a-z0-9_]*\b|\b(?:select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from|alter\s+table|create\s+(?:or\s+replace\s+)?function|drop\s+(?:table|function))\b)/i.test(text);
+    return exposesSql ? "" : text;
+  }
+
+  function firstRepairErrorMessage(values) {
+    for (const value of values) {
+      const text = safeRepairErrorText(value, 800);
+      if (text && !/^[A-Z][A-Z0-9_]{2,}$/.test(text)) return text;
+    }
+    return "";
+  }
+
   function currentDraft() {
     const form = document.querySelector("#admin-market-form");
     if (!form) return null;
@@ -116,11 +132,20 @@
   }
 
   async function errorMessage(error) {
-    let message = safeText(error?.message || error?.context?.message, 800);
+    let message = firstRepairErrorMessage([
+      error?.message,
+      error?.context?.message
+    ]);
     try {
       if (error?.context && typeof error.context.clone === "function") {
         const body = await error.context.clone().json();
-        message = safeText(body?.message || body?.error || message, 800);
+        message = firstRepairErrorMessage([
+          body?.escalation?.reason,
+          body?.escalation?.message,
+          body?.message,
+          body?.error,
+          message
+        ]);
       }
     } catch {
       // El mensaje genérico sigue siendo seguro.
@@ -335,8 +360,10 @@
     const marketId = safeText(form.elements.market_slug?.value, 140);
     const question = safeText(form.elements.question?.value, 500);
     const scheduledValue = safeText(form.elements.scheduled_for?.value, 100);
+    const radarCandidateId = safeText(form.dataset.radarCandidateId, 100);
+    const draftFingerprint = safeText(form.dataset.contentFingerprint, 80);
     if (!draftId || !Number.isSafeInteger(version) || version < 1 || !marketId) return null;
-    return { form, draftId, version, marketId, question, scheduledValue };
+    return { form, draftId, version, marketId, question, scheduledValue, radarCandidateId, draftFingerprint };
   }
 
   function inlineStatus(fieldset) {
@@ -387,6 +414,10 @@
       ["MARKET_PERIOD_ALREADY_ENDED", "El periodo del mercado ya terminó y no puede publicarse."],
       ["MARKET_ID_ALREADY_EXISTS", "Ya existe un mercado publicado con este identificador."],
       ["SCHEDULE_AFTER_MARKET_CLOSE", "La fecha programada debe ser anterior al cierre del mercado."],
+      ["RADAR_EVENT_ALREADY_RESOLVED", "La fuente factual confirma que el resultado ya es conocido; el mercado no puede publicarse."],
+      ["RADAR_CANDIDATE_RESOLVED", "La fuente factual confirma que el resultado ya es conocido; el mercado no puede publicarse."],
+      ["RADAR_FACTUAL_REFRESH_REQUIRED", "No existe una comprobación factual vigente para publicar este borrador Radar."],
+      ["RADAR_REVALIDATION_REQUIRED", "La comprobación factual no concluyó y la publicación permanece bloqueada."],
       ["ADMIN_REQUIRED", "La sesión actual no conserva permiso administrativo."],
       ["AUTH_REQUIRED", "La sesión ha caducado. Inicia sesión de nuevo."]
     ];
@@ -406,6 +437,29 @@
       expected_version_input: context.version,
       scheduled_for_input: scheduledFor
     };
+  }
+
+  async function revalidateRadarPublication(context) {
+    if (!context.radarCandidateId) return null;
+    const { data, error } = await client.functions.invoke("market-radar", {
+      body: {
+        action: "revalidate",
+        candidate_id: context.radarCandidateId,
+        draft_id: context.draftId,
+        draft_version: context.version,
+        draft_fingerprint: context.draftFingerprint
+      }
+    });
+    if (error) throw error;
+    const candidate = data?.candidate || {};
+    if (candidate.fact_check_purpose !== "revalidate"
+      || candidate.fact_status !== "unresolved"
+      || candidate.verification_status !== "verified_open"
+      || !candidate.current_fact_check_id
+      || data?.legacy_fact_attestation?.ok !== true) {
+      throw new Error(data?.error || "RADAR_FACTUAL_REFRESH_REQUIRED");
+    }
+    return data;
   }
 
   function announcePublication(payload) {
@@ -527,6 +581,7 @@
     }
 
     try {
+      await revalidateRadarPublication(context);
       const { data, error } = await client.rpc("publish_market_draft", publicationPayload(context));
       if (error) throw error;
 

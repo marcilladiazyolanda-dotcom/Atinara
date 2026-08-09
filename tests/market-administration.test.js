@@ -289,7 +289,9 @@ test("Paso 13.5.2 · el Corrector separa incidencias técnicas y corrige conteni
   assert.match(fixerUi, /latestAttemptClassification === "technical"/);
   assert.match(fixer, /AUTONOMOUS_REPAIR_MAX_ROUNDS/);
   assert.match(fixer, /technical_incident/);
-  assert.match(fixer, /no se convirtió en una petición genérica de edición humana/);
+  assert.match(fixer, /error: "AUTOMATIC_REVIEW_TECHNICAL_INCOMPLETE"/);
+  assert.match(fixer, /repair_saved: allChanged\.size > 0/);
+  assert.match(fixer, /borrador continúa privado y sin aprobación/);
   assert.doesNotMatch(fixer, /TECHNICAL_REVIEW_FAILURE_NOT_REPAIRABLE/);
   assert.match(fixer, /functions\/v1\/validate-market-draft/);
   assert.doesNotMatch(fixer, /record_market_draft_review/);

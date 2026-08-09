@@ -35,6 +35,7 @@
       errors: [],
       selected: null,
       cached: false,
+      requiresFactualRefresh: true,
       cooldownUntil: 0,
       provider: "all",
       category: "",
@@ -46,6 +47,7 @@
     },
     radarPrefill: null,
     radarCooldownTimer: null,
+    radarFactualRefreshTimer: null,
     observatory: {
       providers: [],
       dashboard: { entities: [], signals: [], context_items: [], story_arcs: [], hypotheses: [], bindings: [], provider_runs: [], schedulers: {} },
@@ -64,7 +66,8 @@
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
   const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming", gemini: "Gemini" };
-  const RADAR_POLICY_VERSION = "atinara-prediction-policy-v3";
+  const RADAR_POLICY_VERSION = "atinara-prediction-policy-v4";
+  const RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2";
   const RADAR_REASON_LABELS = {
     EVENT_ALREADY_RESOLVED: "Evento ya resuelto",
     SOURCE_STALE: "Información desactualizada",
@@ -194,8 +197,30 @@
       : RADAR_REASON_DESCRIPTIONS[code] || "La candidata no cumple las condiciones para preparar un borrador.";
   }
 
+  function radarDiscoveryFactCurrent(candidate) {
+    const factCheckedAt = Date.parse(candidate?.fact_checked_at || "");
+    const factExpiresAt = Date.parse(candidate?.fact_check_expires_at || "");
+    const verificationExpiresAt = Date.parse(candidate?.verification_expires_at || "");
+    return candidate?.fact_snapshot_current === true
+      && candidate?.fact_check_purpose === "discovery"
+      && candidate?.fact_policy_version === RADAR_FACT_POLICY_VERSION
+      && Boolean(candidate?.current_fact_check_id)
+      && /^[a-f0-9]{64}$/i.test(String(candidate?.fact_context_fingerprint || ""))
+      && Number.isFinite(factCheckedAt)
+      && factCheckedAt <= Date.now() + 60_000
+      && Number.isFinite(factExpiresAt)
+      && factExpiresAt > Date.now()
+      && (candidate?.verification_status !== "verified_open"
+        || (candidate?.fact_status === "unresolved"
+          && Number.isFinite(verificationExpiresAt)
+          && verificationExpiresAt > Date.now()));
+  }
+
   function radarVerificationLabel(candidate) {
     if (!radarCandidatePolicyCurrent(candidate)) return "Pendiente de reevaluación";
+    if (state.radar.cached || state.radar.requiresFactualRefresh || !radarDiscoveryFactCurrent(candidate)) {
+      return "Pendiente de comprobación factual";
+    }
     if (candidate?.verification_status === "verified_open") return "Verificado";
     if (candidate?.verification_status === "needs_review") return "Revisión necesaria";
     return radarReasonLabel(candidate?.verification_reason_code);
@@ -560,7 +585,7 @@
 
     return `
       <article class="admin-draft-editor">
-        <form id="admin-market-form" novalidate data-draft-id="${escapeHtml(draft.id || "")}" data-version="${escapeHtml(draft.content_version || "")}">
+        <form id="admin-market-form" novalidate data-draft-id="${escapeHtml(draft.id || "")}" data-version="${escapeHtml(draft.content_version || "")}" data-content-fingerprint="${escapeHtml(draft.content_fingerprint || "")}" data-radar-candidate-id="${escapeHtml(draft.radar_candidate_id || "")}">
           <div class="admin-section-heading">
             <div><p class="eyebrow">Borrador privado</p><h2>${draft.id ? "Editar mercado" : "Crear mercado"}</h2></div>
             ${workflowBadge(draft.workflow_status || "draft_incomplete")}
@@ -710,12 +735,12 @@
   }
 
   function radarCandidateReady(candidate) {
-    const expiresAt = Date.parse(candidate.verification_expires_at || "");
-    return candidate.state === "available"
+    return !state.radar.cached
+      && !state.radar.requiresFactualRefresh
+      && candidate.state === "available"
       && candidate.verification_status === "verified_open"
       && candidate.eligibility_policy_version === RADAR_POLICY_VERSION
-      && Number.isFinite(expiresAt)
-      && expiresAt > Date.now()
+      && radarDiscoveryFactCurrent(candidate)
       && !candidate.is_stale
       && !radarBlockingDuplicateMatches(candidate).length;
   }
@@ -874,7 +899,7 @@
       ? `<aside class="radar-partial-error" role="status"><strong>Actualización parcial.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>La creación manual y las demás fuentes siguen disponibles.</span></aside>`
       : "";
     return `<section class="market-radar" aria-labelledby="market-radar-title">
-      <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.cached ? "Datos en caché" : "Última consulta disponible"}</span></header>
+      <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.cached ? "Comprobación factual pendiente" : "Última consulta verificada"}</span></header>
       ${radarFiltersMarkup()}
       ${radarProviderMarkup()}
       ${errors}
@@ -1171,6 +1196,10 @@
     form.dataset.idempotencyKey ||= crypto.randomUUID();
     payload._idempotency_key = form.dataset.idempotencyKey;
     payload._change_origin = state.radarPrefill ? "intelligence_form_save" : "manual_form_save";
+    if (state.radarPrefill?.candidateId) {
+      payload._radar_preparation_revision = state.radarPrefill.preparationRevision;
+      payload._radar_fact_check_id = state.radarPrefill.factCheckId;
+    }
     state.busy = true;
     root.setAttribute("aria-busy", "true");
     form.setAttribute("aria-busy", "true");
@@ -1350,7 +1379,10 @@
     renderWorkspace();
     let result = null;
     let requestError = null;
+    let confirmationRequested = false;
     try {
+      await revalidateRadarDraftFact(draft);
+      confirmationRequested = true;
       result = await rpc("confirm_market_draft_review", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version
@@ -1361,8 +1393,10 @@
 
     const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
     if (reconciled) state.selected = reconciled;
-    const persisted = confirmationMatchesDraft(reconciled, draft)
-      || confirmationResponseMatches(result, draft, state.selected);
+    const persisted = confirmationRequested && (
+      confirmationMatchesDraft(reconciled, draft)
+      || confirmationResponseMatches(result, draft, state.selected)
+    );
 
     if (persisted) {
       if (!confirmationMatchesDraft(reconciled, draft)) applyConfirmationResponseLocally(result);
@@ -1412,7 +1446,10 @@
     renderWorkspace();
     let result = null;
     let requestError = null;
+    let publicationRequested = false;
     try {
+      await revalidateRadarDraftFact(draft);
+      publicationRequested = true;
       result = await rpc("publish_market_draft", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version,
@@ -1423,9 +1460,9 @@
     }
 
     const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
-    const authoritativeStatus = ["scheduled", "published"].includes(result?.status)
+    const authoritativeStatus = publicationRequested && ["scheduled", "published"].includes(result?.status)
       ? result.status
-      : ["scheduled", "published"].includes(reconciled?.draft?.workflow_status)
+      : publicationRequested && ["scheduled", "published"].includes(reconciled?.draft?.workflow_status)
         ? reconciled.draft.workflow_status
         : null;
 
@@ -1497,9 +1534,27 @@
     }));
   }
 
-  async function loadRadar(refresh = false) {
+  function scheduleRadarFactualRefresh(cooldownMs) {
+    window.clearTimeout(state.radarFactualRefreshTimer);
+    state.radarFactualRefreshTimer = null;
+    if (!state.radar.requiresFactualRefresh || state.view !== "radar") return;
+    const delayMs = Math.max(250, Math.max(0, cooldownMs) + 250);
+    state.radarFactualRefreshTimer = window.setTimeout(() => {
+      state.radarFactualRefreshTimer = null;
+      if (state.view !== "radar" || !state.radar.requiresFactualRefresh) return;
+      if (state.busy) {
+        scheduleRadarFactualRefresh(500);
+        return;
+      }
+      loadRadar(true, { automatic: true });
+    }, delayMs);
+  }
+
+  async function loadRadar(refresh = false, { automatic = false } = {}) {
     state.busy = true;
-    if (refresh) setNotice("Actualizando fuentes. Los proveedores pueden fallar de forma independiente.", "info");
+    if (refresh) setNotice(automatic
+      ? "Atinara está repitiendo automáticamente la comprobación factual pendiente."
+      : "Actualizando fuentes. Los proveedores pueden fallar de forma independiente.", "info");
     renderWorkspace();
     try {
       const data = await invokeRadar("discover", radarRequestPayload(refresh));
@@ -1517,12 +1572,14 @@
       state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
       state.radar.cached = data.cached === true;
+      state.radar.requiresFactualRefresh = data.requires_factual_refresh === true;
       const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
       state.radar.cooldownUntil = Date.now() + cooldownMs;
       window.clearTimeout(state.radarCooldownTimer);
       state.radarCooldownTimer = cooldownMs
         ? window.setTimeout(() => renderWorkspace(), cooldownMs + 100)
         : null;
+      scheduleRadarFactualRefresh(state.radar.requiresFactualRefresh ? cooldownMs : 0);
       state.radar.selected = null;
       const reconciledResults = Math.max(0, Number(data.reconciled_provider_results) || 0);
       const reconciliationCopy = reconciledResults
@@ -1531,7 +1588,7 @@
       const radarNotice = (data.partial
         ? "Radar actualizado con incidencias parciales. Las fuentes disponibles siguen utilizables."
         : data.cached
-          ? "Radar cargado desde la caché privada sin consultar proveedores."
+          ? "La caché privada queda bloqueada como propuesta hasta que termine la actualización factual automática."
           : "Radar actualizado sin crear ni modificar ningún mercado.") + reconciliationCopy;
       setNotice(radarNotice, data.partial ? "warning" : "success");
     } catch (error) {
@@ -1577,11 +1634,13 @@
         || data.reservation?.preparation_revision
         || ""
       ).trim();
+      const factCheckId = String(data.fact_check_id || candidate.current_fact_check_id || "").trim();
       const fields = prefill.fields || {};
       const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
       state.radarPrefill = {
         candidateId,
         preparationRevision,
+        factCheckId,
         origins: prefill.origins || {},
         expertRunId: state.radar.selected?.id === candidateId ? state.radar.selected.expert_analysis?.id || null : null,
         proposedFields: fields
@@ -1605,7 +1664,7 @@
       setNotice("Formulario pre-rellenado. Revisa y completa la información: todavía no se ha guardado nada.", "warning");
       result = { ...data, preparation_revision: preparationRevision };
       document.dispatchEvent(new CustomEvent("atinara:radar-preparation-complete", {
-        detail: { candidateId, preparationRevision }
+        detail: { candidateId, preparationRevision, factCheckId }
       }));
     } catch (error) {
       failure = error;
@@ -1878,6 +1937,29 @@
       detail: { candidateId, preparationRevision }
     }));
     return { ...data, preparationRevision, preparation_revision: preparationRevision };
+  }
+
+  async function revalidateRadarDraftFact(draft) {
+    const candidateId = String(draft?.radar_candidate_id || "").trim();
+    if (!candidateId) return null;
+    const data = await invokeRadar("revalidate", {
+      candidate_id: candidateId,
+      draft_id: draft.id,
+      draft_version: draft.content_version,
+      draft_fingerprint: draft.content_fingerprint
+    });
+    const candidate = data?.candidate || {};
+    if (candidate.fact_check_purpose !== "revalidate"
+      || candidate.fact_status !== "unresolved"
+      || candidate.verification_status !== "verified_open"
+      || !candidate.current_fact_check_id
+      || data?.legacy_fact_attestation?.ok !== true) {
+      throw operationError(
+        "RADAR_FACTUAL_REFRESH_REQUIRED",
+        "La comprobación factual de publicación no quedó vinculada de forma autoritativa."
+      );
+    }
+    return data;
   }
 
   async function refreshRadarExpertAnalysis(candidateId, { force = true, preparationRevision = "" } = {}) {

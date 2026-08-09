@@ -59,7 +59,7 @@ begin
     'event_group_key', 'kalshi:ATINARA-REGRESSION-' || suffix,
     'fingerprint', 'transaction-fingerprint-' || suffix,
     'normalizer_version', 'atinara-radar-v2',
-    'eligibility_policy_version', 'atinara-prediction-policy-v3',
+    'eligibility_policy_version', 'atinara-prediction-policy-v4',
     'source_status', 'active',
     'source_title', 'Atinara regression release ' || suffix,
     'source_question', 'Will Atinara regression release ' || suffix || ' happen before 2027?',

@@ -4,11 +4,12 @@ Fecha de preparación: 4 de agosto de 2026. Activación y corrección operativa:
 
 Estado: **activado y aceptado técnicamente**. El catálogo ampliado de 24–36 mercados no se implementa en esta entrega. El Radar permanece privado y no creó borradores ni modificó datos públicos durante la aceptación.
 
-> **Continuación local separada:** el Paso 13.5.2 añade un Observatorio, un
-> Agente Editor compartido y monitorización de fuentes sin convertir el Radar en
-> una versión nueva ni mezclar su caché. Su contrato se documenta en
-> `STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`; la activación permanece pendiente
-> y no exige repetir ninguna migración histórica del Radar.
+> **Nota de continuidad:** este documento conserva la activación original del
+> Radar como registro histórico. El estado vigente es `market-radar` v26 con
+> política predictiva v4, puerta factual v2 y familia v4, documentado en
+> `ORAKLO_PROJECT_CONTEXT.md` y
+> `STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`. Ningún orden de despliegue de
+> este documento debe repetirse.
 
 ## 1. Alcance y garantías
 
@@ -132,14 +133,15 @@ Solo se envían, para cada candidata ya filtrada y con longitudes acotadas: prov
 
 La comprobación pública se hizo sin credenciales y sin persistir datos. Polymarket respondió 200 y ofreció 22 candidatas gaming normalizables para `video game gaming`. Kalshi respondió 200, publicó las etiquetas `Entertainment / Video games` y series gaming, pero esas series no tenían mercados abiertos en la fotografía del 4 de agosto de 2026. Este último punto requiere volver a comprobarse después del despliegue; no se finge con fixtures en la interfaz.
 
-## 11. Registro de activación completada
+## 11. Registro histórico de la activación original
 
 - GitHub Pages sirve las diez páginas con `v=20260804-radar1`.
 - Supabase registra `20260804213111 · add_market_radar`, procedente de `20260804194933_add_market_radar.sql`; LMSR y Cron no se repitieron.
 - `market-radar` está activa como versión 4 con `verify_jwt=true`; `publish-scheduled-markets` continúa en versión 2.
 - La aceptación autenticada cubrió actualización, caché, fallo parcial, detalle, descarte y pre-rellenado. Una cuenta normal recibió `ADMIN_REQUIRED`; no se publicó ninguna candidata.
 - La incidencia posterior de Gemini era un timeout interno de 24 s. Tras compactar la entrada y usar razonamiento mínimo, la prueba real terminó en 24,8 s con 12 adaptaciones y estado `available` sin error.
-- No hay que volver a aplicar migraciones, cambiar secretos ni desplegar funciones para esta corrección. Solo falta que GitHub reciba los archivos versionados de `market-radar` v4.
+- No hay que volver a aplicar estas migraciones, cambiar secretos ni desplegar
+  estas versiones. La referencia v4 de este registro quedó superada por v26.
 
 ## 12. Punto de parada
 
@@ -147,9 +149,15 @@ Estado correcto después de la aceptación y de la corrección de Gemini:
 
 `Paso 13.5 activado y aceptado técnicamente; market-radar v4 activa con JWT y Gemini disponible`.
 
-## 13. Paso 13.5.1 · corrección profesional preparada localmente
+## 13. Paso 13.5.1 · corrección profesional preparada localmente (histórico)
 
-Estado: **implementado localmente y pendiente de activación manual de Yol**.
+> Este apartado conserva el plan de activación de 6 de agosto de 2026 como
+> registro histórico. Sus migraciones y despliegues ya se ejecutaron y fueron
+> superados por la puerta factual B2B del 9 de agosto. No repetir el orden ni
+> usar estas versiones como estado vigente; consultar `ORAKLO_PROJECT_CONTEXT.md`.
+
+Estado en esa fotografía histórica: **implementado localmente y pendiente de
+activación manual de Yol**. El estado vigente está en el documento de contexto.
 Este apartado no modifica el registro histórico anterior: producción continúa
 con la migración y Edge Function ya activadas hasta completar el orden manual.
 
@@ -205,19 +213,19 @@ como rutas de evento.
 - Una URL inexistente o no canónica: `rejected_invalid_source`.
 - Un mercado caducado, cerrado o duplicado no puede preparar un borrador.
 
-### Migración y activación pendiente
+### Migración y activación históricas — completadas; no ejecutar
 
-La migración nueva es:
+En aquella fotografía, la migración nueva era:
 
 `supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql`
 
-Debe aplicarse una sola vez. Añade verificación, motivo, caducidad, evidencia,
+Fue aplicada una sola vez. Añade verificación, motivo, caducidad, evidencia,
 agrupación y URLs separadas; reemplaza las RPC necesarias con permisos mínimos;
 invalida candidatas v1 no preparadas; y conserva `prepared`, `dismissed` y todos
 los borradores. No ejecuta ni copia `20260804194933_add_market_radar.sql`, no
 modifica LMSR y no toca datos de mercados, predicciones, Karma o Prestigio.
 
-Orden manual seguro tras subir el árbol:
+Orden manual histórico, ya ejecutado y no reutilizable:
 
 1. Aplicar únicamente la migración nueva `20260806183627...`.
 2. Volver a desplegar únicamente `market-radar` con verificación JWT.

@@ -4,12 +4,18 @@ MVP de red social competitiva de predicciones gaming basada en Karma, Prestigio 
 
 Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
-## Estado local · Paso 13.5.2
+## Estado vigente · Atinara Engine B2B y Paso 13.5.2
 
-El árbol local incorpora el **Observatorio de Datos y tendencias**, un núcleo
-experto compartido y el **Agente Centinela** de fuentes de resolución. La
-implementación está preparada para revisión y activación manual; no está
-desplegada y no cambia el estado productivo vigente.
+Atinara conserva su producto social de predicciones con Karma ficticio y, sobre
+el mismo núcleo contractual, construye **Atinara Engine** como producto B2B. El
+árbol incorpora el **Observatorio de Datos y tendencias**, un Agente Editor
+compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
+infraestructura principal de este hito está activada en producción; los
+schedulers de descubrimiento y monitorización continúan apagados.
+
+El backend ya es compatible con este corte. El frontend coordinado se mantiene
+en la rama de entrega hasta superar revisión y checks; GitHub Pages continúa
+sirviendo el frontend anterior y falla cerrado frente a las nuevas puertas.
 
 - `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
   el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
@@ -18,22 +24,37 @@ desplegada y no cambia el estado productivo vigente.
   Observatorio bajo una sola Constitución versionada. Entrega JSON estructurado,
   separa hechos, contexto e inferencias, limita herramientas y nunca almacena
   cadena de pensamiento.
+- El Radar usa `atinara-prediction-policy-v4`: un proveedor abierto sirve para
+  descubrir, pero nunca demuestra que el hecho siga sin resolver. La puerta
+  factual conserva el evento canónico completo, vuelve a ejecutarse antes de
+  preparar y antes de cualquier confirmación, programación o publicación, y
+  registra dictámenes privados, inmutables y enlazados a la candidata.
+- El Corrector y el validador comparten una taxonomía cerrada y constructores
+  para los diez arquetipos admitidos. Cada incidencia tiene una disposición
+  explícita de reparación, investigación o escalado seguro. Las fuentes
+  primarias deben estar registradas, ser alcanzables y demostrar en su contenido
+  el sujeto y el predicado; pertenecer a un dominio conocido no basta.
 - `market-source-monitor` captura evidencias versionadas para la revisión humana.
   Un error, un dato oculto o la ausencia de un valor nunca equivalen a cero o a
   un resultado. `ready_to_resolve` no liquida el mercado.
 - La puerta de fuentes es aditiva: solo los borradores vinculados al nuevo
   sistema deben tener contrato vigente y, cuando corresponda, monitor armado.
   Los borradores manuales anteriores conservan su flujo.
-- La migración local pendiente es
-  `supabase/migrations/20260807163000_add_data_observatory_and_market_intelligence.sql`.
-  Las funciones nuevas son `data-observatory`, `market-expert` y
-  `market-source-monitor`, siempre con verificación JWT.
+- Las migraciones locales `20260809120000`, `20260809133000`, `20260809140000`,
+  `20260809145000`, `20260809150000`, `20260809160000` y `20260809170000`
+  forman el corte B2B vigente. La `140000` ya fue aplicada materialmente y su
+  historial se reconcilió mediante `145000`: **no se debe ejecutar otra vez**.
+  Las restantes también están aplicadas y registradas en producción.
+- `market-radar` v26, `market-draft-fixer` v7,
+  `validate-market-draft` v8 y `market-expert` v11 están activas con
+  `verify_jwt=true`. La identidad familiar vigente es v4.
 - Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
   configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
   Los dos schedulers preparados permanecen desactivados y son independientes.
 
-La arquitectura, los contratos, la activación y las pruebas se documentan en
-`STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`.
+La arquitectura, contratos, activación y pruebas se documentan en
+`STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`; el estado productivo autoritativo
+se conserva en `ORAKLO_PROJECT_CONTEXT.md`.
 
 ## Continuidad entre chats
 
@@ -42,13 +63,19 @@ La arquitectura, los contratos, la activación y las pruebas se documentan en
 - `LIVE_MARKET_ECONOMY.md` define el contrato económico aprobado del precio vivo y `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md` corrige los supuestos anteriores que no deben llegar al diseño definitivo.
 - Antes de editar, hay que leer estos documentos vinculantes y comprobar el estado actual de Git; el transcript anterior no debe ser la única fuente de contexto.
 
-## Estado actual · Radar v17
+## Antecedente histórico · Radar v17
+
+Registro histórico del 7 de agosto de 2026. No describe el estado vigente ni
+contiene instrucciones ejecutables.
 
 El Radar v16 está publicado y aceptado en `origin/main = 8255fd50645a6faea2131790c67c83288b8cae54`. Sobre esa base, el Radar v17 está implementado **solo en local** y pendiente de activación manual de Yol. Mantiene `atinara-radar-v2` para no repetir ni ampliar el esquema y añade la política funcional `atinara-prediction-policy-v3`: una fecha anunciada informa la probabilidad, pero no invalida un umbral futuro; un lanzamiento o anuncio puede predecirse aunque el producto no esté anunciado; un premio o una reseña sí exige que el sujeto exista; y un resultado publicado por el proveedor se archiva como resuelto.
 
 V17 descarta estados cerrados, resueltos, no binarios o inválidos antes de Tavily y Gemini; además consulta directamente un máximo acotado de resultados históricos de Kalshi para corregir descartes antiguos como Halo. La auditoría oculta por defecto eventos resueltos y evaluaciones del criterio anterior, permite filtrar por motivos en español y nunca muestra códigos internos. Las tarjetas con una sola opción ocupan las dos columnas y `Detalles` y `Abrir evento original` usan la misma jerarquía visual que `Preparar`.
 
-No hay migración nueva ni cambio de secretos. Las migraciones del Radar v16 ya están aplicadas y no deben repetirse. La activación coordinada debe desplegar primero la Edge Function, subir después los recursos `v=20260807-radar3` y terminar con una actualización explícita de fuentes para sustituir la caché de la política anterior.
+En aquel hito no hubo una migración nueva ni cambio de secretos. Sus migraciones
+quedaron aplicadas y su activación coordinada desplegó primero la Edge Function,
+publicó después los recursos `v=20260807-radar3` y terminó con una actualización
+explícita de fuentes. No repetir ahora esa secuencia histórica.
 
 Yol cerró el Paso 13.3 el 3 de agosto de 2026. La identidad oficial de la beta v0.1 es `A3 · Criterio modular` y la dirección cromática definitiva es **Atinara Sunset**. El sistema aprobado se implementa con SVG centralizados en `assets/brand/`, tokens CSS canónicos, cabecera tinta con línea Sunset, superficies claras, `Sí` turquesa, `No` coral y el glifo de Karma después de cada cantidad compacta.
 
@@ -137,9 +164,13 @@ Las claves se configuran únicamente como secretos `GEMINI_API_KEY` y `TAVILY_AP
 - Al pulsar el `@username` de cualquier cabecera se abre, sin abandonar la página, un menú flotante con el resumen de Karma, Prestigio y rango; accesos al perfil, personalización, mercados, predicciones y clasificación; ayuda, privacidad, panel administrativo cuando corresponda y cierre de sesión.
 - Las RPC públicas usan una lista cerrada de campos, `search_path` vacío y permisos explícitos. Es intencionado que puedan atravesar RLS para publicar solo el currículum y los resultados liquidados; nunca devuelven el saldo actual ni filas activas.
 
-Para activar la personalización hay que ejecutar una sola vez en Supabase el archivo:
+La personalización se materializó mediante el archivo:
 
 `supabase/migrations/20260715020000_add_profile_customization.sql`
+
+Su esquema ya fue verificado en producción aunque el historial remoto antiguo
+no sea completo. No ejecutar el fichero a ciegas; inspeccionar primero el estado
+material y reconciliar historial si fuera necesario.
 
 Los HTML llevan una versión de caché en los recursos locales para que GitHub Pages sirva conjuntamente la nueva estructura, estilos y scripts.
 
@@ -154,15 +185,16 @@ Los HTML llevan una versión de caché en los recursos locales para que GitHub P
 - `admin-community.html` es una cola privada de moderación humana para revisar reportes, ocultar o restaurar comentarios y aplicar o levantar restricciones sociales temporales. Cada decisión queda registrada en una auditoría privada.
 - Las tablas sociales tienen RLS y no conceden acceso directo a `anon` o `authenticated`: la API pública se limita a RPC con campos cerrados, `search_path` vacío y permisos explícitos.
 
-Para activar el Paso 11 hay que ejecutar una sola vez en Supabase, después de las migraciones anteriores:
+El Paso 11 se activó una sola vez mediante:
 
 `supabase/migrations/20260718143106_add_social_community_mvp.sql`
 
-Después debe aplicarse la corrección del contador público real:
+Después se aplicó la corrección del contador público real:
 
 `supabase/migrations/20260718182915_expose_real_market_comment_counts.sql`
 
 Ambas migraciones fueron aplicadas en producción y el MVP social se validó como invitada, con dos cuentas normales y con administradora el 18 de julio de 2026. La cuenta temporal de aceptación y sus datos se eliminaron al terminar.
+No deben ejecutarse de nuevo.
 
 La secuencia detallada de activación y pruebas está en `STEP_11_ACCEPTANCE_CHECKLIST.md`.
 

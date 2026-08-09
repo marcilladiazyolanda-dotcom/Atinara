@@ -1,6 +1,7 @@
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
-export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v3";
-export const RADAR_FAMILY_VERSION = "atinara-market-family-v2";
+export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4";
+export const RADAR_FAMILY_VERSION = "atinara-market-family-v4";
+export const RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -301,7 +302,8 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
     quality_status: "needs_review",
     score_breakdown: {},
     state: "needs_review",
-    fingerprint: stableFingerprint(provider, eventKey, title, input.question, RADAR_ELIGIBILITY_POLICY_VERSION),
+    fact_context_fingerprint: cleanText(input.fact_context_fingerprint, 120) || null,
+    fingerprint: stableFingerprint(provider, eventKey, title, input.question, input.fact_context_fingerprint, RADAR_ELIGIBILITY_POLICY_VERSION),
     fetched_at: now,
     first_seen_at: now,
     last_seen_at: now,
@@ -329,6 +331,23 @@ export function adaptPolymarketResponse(payload, options = {}) {
     const eventSlug = cleanText(event.slug, 400);
     const eventUrl = eventSlug ? safePublicUrl(`https://polymarket.com/event/${encodeURIComponent(eventSlug)}`, PROVIDER_PUBLIC_HOSTS.polymarket) : null;
     const eventValidated = event.canonical_url_verified === true || options.canonicalUrlVerified === true;
+    // Las candidatas tradables y el contexto factual son conceptos distintos.
+    // Cada hija conserva una proyección acotada de TODAS las hijas canónicas,
+    // incluidas las cerradas, para no perder un resultado ya publicado.
+    const canonicalMarkets = markets.filter(isRecord);
+    const canonicalEventChildren = canonicalMarkets.slice(0, 160).map((item) => {
+      const outcome = parsePolymarketOutcomes(item);
+      const closed = item.closed === true || item.archived === true || item.acceptingOrders === false || item.active === false;
+      return {
+        market_id: cleanText(item.id ?? item.conditionId ?? item.slug, 220),
+        question: cleanText(item.question, 700),
+        status: closed ? "closed" : "open",
+        result: normalizeProviderResult(item.result ?? item.resolutionResult ?? item.winningOutcome),
+        probability_yes: outcome.probability,
+        settled_at: safeIsoDate(item.resolvedAt ?? item.resolutionDate),
+      };
+    });
+    const factContextFingerprint = stableFingerprint(JSON.stringify(canonicalEventChildren));
     for (const marketValue of markets) {
       if (!isRecord(marketValue)) continue;
       const market = marketValue;
@@ -363,6 +382,7 @@ export function adaptPolymarketResponse(payload, options = {}) {
         external_event_slug: eventSlug,
         external_market_slug: marketSlug,
         event_group_key: `polymarket:${eventId || eventSlug}`,
+        fact_context_fingerprint: factContextFingerprint,
         external_event_url: eventValidated ? eventUrl : null,
         external_market_url: eventValidated ? eventUrl : null,
         provider_payload: {
@@ -373,6 +393,10 @@ export function adaptPolymarketResponse(payload, options = {}) {
           condition_id: cleanText(market.conditionId, 220) || null,
           outcomes: parsed.outcomes,
           result: normalizeProviderResult(market.result ?? market.resolutionResult ?? market.winningOutcome),
+          canonical_event_children: canonicalEventChildren,
+          canonical_event_children_total: canonicalMarkets.length,
+          canonical_event_children_complete: canonicalMarkets.length > 0 && canonicalEventChildren.length === canonicalMarkets.length,
+          fact_context_fingerprint: factContextFingerprint,
           canonical_url_verified: eventValidated,
         },
       }, now, cacheMinutes);
@@ -502,67 +526,923 @@ export function adaptTavilyResults(payload, options = {}) {
 }
 
 const FAMILY_MONTHS = Object.freeze({
-  january: 1, enero: 1, february: 2, febrero: 2, march: 3, marzo: 3,
-  april: 4, abril: 4, may: 5, mayo: 5, june: 6, junio: 6,
-  july: 7, julio: 7, august: 8, agosto: 8, september: 9, septiembre: 9, setiembre: 9,
-  october: 10, octubre: 10, november: 11, noviembre: 11, december: 12, diciembre: 12,
+  january: 1, jan: 1, enero: 1, ene: 1,
+  february: 2, feb: 2, febrero: 2,
+  march: 3, mar: 3, marzo: 3,
+  april: 4, apr: 4, abril: 4, abr: 4,
+  may: 5, mayo: 5,
+  june: 6, jun: 6, junio: 6,
+  july: 7, jul: 7, julio: 7,
+  august: 8, aug: 8, agosto: 8, ago: 8,
+  september: 9, sept: 9, sep: 9, septiembre: 9, setiembre: 9,
+  october: 10, oct: 10, octubre: 10,
+  november: 11, nov: 11, noviembre: 11,
+  december: 12, dec: 12, diciembre: 12, dic: 12,
 });
 
-function familyDate(question) {
+const FAMILY_TIMEZONE_ALIASES = Object.freeze({
+  utc: { id: "UTC", mode: "fixed_offset", offset_minutes: 0, label: "UTC" },
+  gmt: { id: "UTC", mode: "fixed_offset", offset_minutes: 0, label: "GMT" },
+  et: { id: "America/New_York", mode: "iana", offset_minutes: null, label: "ET" },
+  pt: { id: "America/Los_Angeles", mode: "iana", offset_minutes: null, label: "PT" },
+  mt: { id: "America/Denver", mode: "iana", offset_minutes: null, label: "MT" },
+  ct: { id: "America/Chicago", mode: "iana", offset_minutes: null, label: "CT" },
+  est: { id: "UTC-05:00", mode: "fixed_offset", offset_minutes: -300, label: "EST" },
+  edt: { id: "UTC-04:00", mode: "fixed_offset", offset_minutes: -240, label: "EDT" },
+  pst: { id: "UTC-08:00", mode: "fixed_offset", offset_minutes: -480, label: "PST" },
+  pdt: { id: "UTC-07:00", mode: "fixed_offset", offset_minutes: -420, label: "PDT" },
+  mst: { id: "UTC-07:00", mode: "fixed_offset", offset_minutes: -420, label: "MST" },
+  mdt: { id: "UTC-06:00", mode: "fixed_offset", offset_minutes: -360, label: "MDT" },
+  akst: { id: "UTC-09:00", mode: "fixed_offset", offset_minutes: -540, label: "AKST" },
+  akdt: { id: "UTC-08:00", mode: "fixed_offset", offset_minutes: -480, label: "AKDT" },
+  hst: { id: "UTC-10:00", mode: "fixed_offset", offset_minutes: -600, label: "HST" },
+  cet: { id: "UTC+01:00", mode: "fixed_offset", offset_minutes: 60, label: "CET" },
+  cest: { id: "UTC+02:00", mode: "fixed_offset", offset_minutes: 120, label: "CEST" },
+  eet: { id: "UTC+02:00", mode: "fixed_offset", offset_minutes: 120, label: "EET" },
+  eest: { id: "UTC+03:00", mode: "fixed_offset", offset_minutes: 180, label: "EEST" },
+  wet: { id: "UTC", mode: "fixed_offset", offset_minutes: 0, label: "WET" },
+  west: { id: "UTC+01:00", mode: "fixed_offset", offset_minutes: 60, label: "WEST" },
+  cst: { id: "AMBIGUOUS:CST", mode: "ambiguous", offset_minutes: null, label: "CST", ambiguous: true },
+  cdt: { id: "AMBIGUOUS:CDT", mode: "ambiguous", offset_minutes: null, label: "CDT", ambiguous: true },
+  ist: { id: "AMBIGUOUS:IST", mode: "ambiguous", offset_minutes: null, label: "IST", ambiguous: true },
+  bst: { id: "AMBIGUOUS:BST", mode: "ambiguous", offset_minutes: null, label: "BST", ambiguous: true },
+  ast: { id: "AMBIGUOUS:AST", mode: "ambiguous", offset_minutes: null, label: "AST", ambiguous: true },
+});
+
+const FAMILY_UNIT_ALIASES = Object.freeze({
+  "%": "percent", percent: "percent", percentage: "percent", porcentaje: "percent",
+  point: "points", points: "points", pt: "points", pts: "points", punto: "points", puntos: "points",
+  second: "seconds", seconds: "seconds", sec: "seconds", secs: "seconds", segundo: "seconds", segundos: "seconds",
+  minute: "minutes", minutes: "minutes", minuto: "minutes", minutos: "minutes",
+  hour: "hours", hours: "hours", hora: "hours", horas: "hours",
+  view: "views", views: "views", viewer: "views", viewers: "views", visualizacion: "views", visualizaciones: "views",
+  copy: "copies", copies: "copies", copia: "copies", copias: "copies",
+  game: "copies", games: "copies", juego: "copies", juegos: "copies", unit: "copies", units: "copies", unidades: "copies",
+  dollar: "usd", dollars: "usd", dolar: "usd", dolares: "usd", usd: "usd",
+  subscriber: "subscribers", subscribers: "subscribers", suscriptor: "subscribers", suscriptores: "subscribers",
+});
+
+function familySlug(value, maxLength = 120) {
+  return normalizeComparableText(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, maxLength);
+}
+
+function familyFoldText(value) {
+  return cleanText(value, 4000)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function familyCanonicalTimezone(value) {
+  const raw = cleanText(value, 100);
+  if (!raw) return null;
+  const alias = FAMILY_TIMEZONE_ALIASES[normalizeComparableText(raw).replace(/\s+/g, "")];
+  if (alias) return { ...alias };
+  const compact = raw.replace(/\s+/g, "");
+  const offset = compact.match(/^(?:UTC|GMT)?([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+  if (offset) {
+    const hours = Number(offset[2]);
+    const minutes = Number(offset[3] ?? 0);
+    if (hours <= 14 && minutes < 60 && !(hours === 14 && minutes !== 0)) {
+      const direction = offset[1] === "+" ? 1 : -1;
+      const offsetMinutes = direction * ((hours * 60) + minutes);
+      const sign = offsetMinutes < 0 ? "-" : "+";
+      const absolute = Math.abs(offsetMinutes);
+      return {
+        id: offsetMinutes === 0 ? "UTC" : `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`,
+        mode: "fixed_offset",
+        offset_minutes: offsetMinutes,
+        label: raw.toUpperCase(),
+      };
+    }
+  }
+  try {
+    const id = new Intl.DateTimeFormat("en-US", { timeZone: raw }).resolvedOptions().timeZone;
+    return { id, mode: id === "UTC" ? "fixed_offset" : "iana", offset_minutes: id === "UTC" ? 0 : null, label: raw };
+  } catch {
+    return {
+      id: `AMBIGUOUS:${familySlug(raw, 40).toUpperCase() || "TIMEZONE"}`,
+      mode: "ambiguous",
+      offset_minutes: null,
+      label: raw,
+      ambiguous: true,
+    };
+  }
+}
+
+function familyTimezone(candidate, source) {
+  const contextContracts = [];
+  let remaining = cleanText(source, 4000);
+  remaining = remaining.replace(/\b(?:UTC|GMT)\s*[+-]\s*\d{1,2}(?::?\d{2})?\b/gi, (value) => {
+    contextContracts.push(familyCanonicalTimezone(value));
+    return " ".repeat(value.length);
+  });
+  remaining = remaining.replace(/\b[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b/g, (value) => {
+    contextContracts.push(familyCanonicalTimezone(value));
+    return " ".repeat(value.length);
+  });
+  const abbreviations = /\b(UTC|GMT|ET|EST|EDT|PT|PST|PDT|MT|MST|MDT|CT|CST|CDT|AKST|AKDT|HST|CET|CEST|EET|EEST|WET|WEST|IST|BST|AST)\b/gi;
+  for (const match of remaining.matchAll(abbreviations)) contextContracts.push(familyCanonicalTimezone(match[1]));
+  const uniqueContext = [...new Map(contextContracts.filter(Boolean).map((contract) => [contract.id, contract])).values()];
+  if (uniqueContext.length === 1) return uniqueContext[0];
+  if (uniqueContext.length > 1) {
+    const labels = uniqueContext.map((contract) => contract.label).sort();
+    return {
+      id: `AMBIGUOUS:${labels.join("|")}`,
+      mode: "ambiguous",
+      offset_minutes: null,
+      label: labels.join(" / "),
+      ambiguous: true,
+    };
+  }
+  const explicit = [
+    candidate?.evaluation_timezone,
+    candidate?.timezone,
+    candidate?.source_timezone,
+    candidate?.provider_payload?.timezone,
+    candidate?.normalized_payload?.timezone,
+  ].filter((value) => cleanText(value, 100)).map(familyCanonicalTimezone).filter(Boolean);
+  const uniqueExplicit = [...new Map(explicit.map((contract) => [contract.id, contract])).values()];
+  if (uniqueExplicit.length === 1) return uniqueExplicit[0];
+  if (uniqueExplicit.length > 1) {
+    const labels = uniqueExplicit.map((contract) => contract.label).sort();
+    return {
+      id: `AMBIGUOUS:${labels.join("|")}`,
+      mode: "ambiguous",
+      offset_minutes: null,
+      label: labels.join(" / "),
+      ambiguous: true,
+    };
+  }
+  return { ...FAMILY_TIMEZONE_ALIASES.utc };
+}
+
+function familyLocalInstant(parts, timezoneContract) {
+  const target = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  if (timezoneContract.mode === "fixed_offset") {
+    return { instant: new Date(target - (timezoneContract.offset_minutes * 60_000)).toISOString(), ambiguous: false, candidates: [] };
+  }
+  if (timezoneContract.mode !== "iana") return { instant: null, ambiguous: true, reason: "ambiguous_timezone", candidates: [] };
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezoneContract.id,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hourCycle: "h23",
+  });
+  const view = (instantMs) => Object.fromEntries(
+    formatter.formatToParts(new Date(instantMs)).map((part) => [part.type, part.value]),
+  );
+  const offsets = new Set();
+  for (let deltaHours = -48; deltaHours <= 48; deltaHours += 6) {
+    const sample = target + (deltaHours * 3_600_000);
+    const viewed = view(sample);
+    offsets.add(Date.UTC(
+      Number(viewed.year), Number(viewed.month) - 1, Number(viewed.day),
+      Number(viewed.hour), Number(viewed.minute), Number(viewed.second),
+    ) - sample);
+  }
+  const candidates = [...offsets].map((offset) => target - offset).filter((candidate) => {
+    const viewed = view(candidate);
+    return Number(viewed.year) === parts.year
+      && Number(viewed.month) === parts.month
+      && Number(viewed.day) === parts.day
+      && Number(viewed.hour) === parts.hour
+      && Number(viewed.minute) === parts.minute
+      && Number(viewed.second) === parts.second;
+  }).filter((value, index, values) => values.indexOf(value) === index).sort((left, right) => left - right);
+  if (candidates.length !== 1) {
+    return {
+      instant: null,
+      ambiguous: true,
+      reason: candidates.length === 0 ? "nonexistent_local_time" : "repeated_local_time",
+      candidates: candidates.map((value) => new Date(value).toISOString()),
+    };
+  }
+  return { instant: new Date(candidates[0]).toISOString(), ambiguous: false, candidates: [] };
+}
+
+function familyTemporalOperator(source) {
+  if (/\b(on or before|no later than|at or before|by|hasta(?: el)?|a mas tardar|o antes)\b/.test(source)) return "lte";
+  if (/\b(before|prior to|earlier than|antes de|antes del|previo a)\b/.test(source)) return "lt";
+  if (/\b(on or after|no earlier than|at or after|desde|a partir de|o despues)\b/.test(source)) return "gte";
+  if (/\b(after|later than|despues de|posterior a)\b/.test(source)) return "gt";
+  if (/\b(exactly on|on exactly|exactamente el|el dia)\b/.test(source)) return "eq";
+  return "lte";
+}
+
+function familyClock(source) {
+  let match = source.match(/\b([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?\s*(am|pm)?\b/i);
+  const hasColon = Boolean(match);
+  if (!match) match = source.match(/\b(1[0-2]|0?\d)\s*(am|pm)\b/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const meridiem = ((hasColon ? match[4] : match[2]) ?? "").toLowerCase();
+  const minute = hasColon ? Number(match[2]) : 0;
+  const second = hasColon ? Number(match[3] ?? 0) : 0;
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  return { hour, minute, second, granularity: second ? "second" : "minute" };
+}
+
+function familyTemporalBoundary(candidate, question) {
+  const folded = familyFoldText(question);
   const source = normalizeComparableText(question);
-  let match = source.match(/(?:before|antes de|antes del)\s+(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(20\d{2})/);
-  if (match && FAMILY_MONTHS[match[2]]) {
-    const day = Number(match[1]);
-    const boundary = Date.UTC(Number(match[3]), FAMILY_MONTHS[match[2]] - 1, day);
-    const date = new Date(day === 1 ? boundary - 1_000 : boundary + 86_399_000);
-    return date.toISOString().slice(0, 10);
+  const timezoneContract = familyTimezone(candidate, `${question} ${candidate?.source_resolution_rules ?? ""}`);
+  const operator = familyTemporalOperator(source);
+  const clock = familyClock(folded);
+  let match;
+  let year;
+  let month;
+  let day;
+  let granularity;
+
+  match = folded.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  if (match) {
+    [, year, month, day] = match.map(Number);
+    granularity = "day";
   }
-  match = source.match(/\b(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(20\d{2})\b/);
-  if (match && FAMILY_MONTHS[match[2]]) {
-    return new Date(Date.UTC(Number(match[3]), FAMILY_MONTHS[match[2]] - 1, Number(match[1]), 23, 59, 59)).toISOString().slice(0, 10);
+  if (!granularity) {
+    match = source.match(/\b(\d{1,2})\s+(?:de\s+)?([a-z]+)\s+(?:de\s+)?(20\d{2})\b/);
+    if (match && FAMILY_MONTHS[match[2]]) {
+      day = Number(match[1]); month = FAMILY_MONTHS[match[2]]; year = Number(match[3]); granularity = "day";
+    }
   }
-  match = source.match(/(?:before\s+)?([a-z]+)\s+(\d{1,2})\s+(20\d{2})/);
-  if (match && FAMILY_MONTHS[match[1]]) {
-    const day = Number(match[2]);
-    const boundary = Date.UTC(Number(match[3]), FAMILY_MONTHS[match[1]] - 1, day);
-    const date = new Date(/\bbefore\b/.test(source) && day === 1 ? boundary - 1_000 : boundary + 86_399_000);
-    return date.toISOString().slice(0, 10);
+  if (!granularity) {
+    match = source.match(/\b([a-z]+)\s+(\d{1,2})(?:\s+de)?\s+(20\d{2})\b/);
+    if (match && FAMILY_MONTHS[match[1]]) {
+      month = FAMILY_MONTHS[match[1]]; day = Number(match[2]); year = Number(match[3]); granularity = "day";
+    }
   }
-  match = source.match(/(?:before|antes de)\s+([a-z]+)\s+(?:de\s+)?(20\d{2})/);
-  if (match && FAMILY_MONTHS[match[1]]) {
-    return new Date(Date.UTC(Number(match[2]), FAMILY_MONTHS[match[1]] - 1, 1) - 1_000).toISOString().slice(0, 10);
+  if (!granularity) {
+    match = source.match(/\b([a-z]+)\s+(?:de\s+)?(20\d{2})\b/);
+    if (match && FAMILY_MONTHS[match[1]]) {
+      month = FAMILY_MONTHS[match[1]]; year = Number(match[2]); granularity = "month";
+    }
   }
-  match = source.match(/(?:before|antes de)\s+(20\d{2})\b/);
-  if (match) return `${Number(match[1]) - 1}-12-31`;
-  match = source.match(/\b(20\d{2})[ -](\d{2})[ -](\d{2})\b/);
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+  if (!granularity) {
+    match = source.match(/\b(20\d{2})\b/);
+    if (match) {
+      year = Number(match[1]); granularity = "year";
+    }
+  }
+
+  const authoritativeCutoff = safeIsoDate(candidate?.evaluation_ends_at ?? candidate?.family_cutoff_at);
+  if (!granularity && !authoritativeCutoff) return null;
+  if (!granularity) granularity = "second";
+  const dateGranularity = granularity;
+  if (clock && ["day", "month", "year"].includes(granularity)) granularity = clock.granularity;
+
+  let instant = authoritativeCutoff;
+  let localInstant = null;
+  let localResolution = null;
+  if (!instant) {
+    if (dateGranularity === "year") {
+      month = ["lte", "gt"].includes(operator) ? 12 : 1;
+      day = ["lte", "gt"].includes(operator) ? 31 : 1;
+    } else if (dateGranularity === "month") {
+      day = ["lte", "gt"].includes(operator) ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 1;
+    }
+    const calendarProbe = new Date(Date.UTC(year, month - 1, day));
+    if (calendarProbe.getUTCFullYear() !== year
+        || calendarProbe.getUTCMonth() + 1 !== month
+        || calendarProbe.getUTCDate() !== day) return null;
+    const atEnd = !clock && ["lte", "gt"].includes(operator);
+    const localParts = {
+      year, month, day,
+      hour: clock?.hour ?? (atEnd ? 23 : 0),
+      minute: clock?.minute ?? (atEnd ? 59 : 0),
+      second: clock?.second ?? (atEnd ? 59 : 0),
+    };
+    localInstant = `${String(localParts.year).padStart(4, "0")}-${String(localParts.month).padStart(2, "0")}-${String(localParts.day).padStart(2, "0")}T${String(localParts.hour).padStart(2, "0")}:${String(localParts.minute).padStart(2, "0")}:${String(localParts.second).padStart(2, "0")}`;
+    localResolution = familyLocalInstant(localParts, timezoneContract);
+    instant = localResolution.instant;
+  }
+  let canonicalOperator = operator;
+  if (!clock && ["day", "month", "year"].includes(dateGranularity)
+      && ["lte", "gt"].includes(operator)) {
+    canonicalOperator = operator === "lte" ? "lt" : "gte";
+  }
+  if (timezoneContract.ambiguous || localResolution?.ambiguous) {
+    const originalLocal = localInstant ?? authoritativeCutoff;
+    const canonicalLocal = originalLocal && canonicalOperator !== operator
+      ? new Date(Date.parse(`${originalLocal.replace(/Z$/, "")}Z`) + 1_000).toISOString().replace(/\.000Z$/, "")
+      : originalLocal;
+    return {
+      operator,
+      instant: null,
+      canonical_operator: canonicalOperator,
+      canonical_instant: null,
+      local_instant: originalLocal,
+      canonical_local_instant: canonicalLocal,
+      timezone: timezoneContract.id,
+      timezone_label: timezoneContract.label,
+      timezone_mode: timezoneContract.mode,
+      offset_minutes: null,
+      timezone_ambiguous: true,
+      ambiguity_reason: localResolution?.reason ?? "ambiguous_timezone",
+      candidate_instants: localResolution?.candidates ?? [],
+      identity_ambiguous: true,
+      granularity,
+    };
+  }
+  if (!safeIsoDate(instant)) return null;
+  let canonicalInstant = safeIsoDate(instant);
+  if (!clock && ["day", "month", "year"].includes(dateGranularity)
+      && ["lte", "gt"].includes(operator)) {
+    canonicalInstant = new Date(Date.parse(canonicalInstant) + 1_000).toISOString();
+  }
+  return {
+    operator,
+    instant: safeIsoDate(instant),
+    canonical_operator: canonicalOperator,
+    canonical_instant: canonicalInstant,
+    timezone: timezoneContract.id,
+    timezone_label: timezoneContract.label,
+    timezone_mode: timezoneContract.mode,
+    offset_minutes: timezoneContract.offset_minutes,
+    timezone_ambiguous: false,
+    granularity,
+  };
+}
+
+function familyCanonicalNumber(value, scale) {
+  const rawValue = String(value).trim();
+  const separators = [...rawValue.matchAll(/[.,]/g)].map((match) => ({ value: match[0], index: match.index }));
+  let normalizedValue = rawValue;
+  if (separators.length === 1) {
+    const decimalLength = rawValue.length - separators[0].index - 1;
+    if (decimalLength === 3) return { value: null, ambiguous: true, raw_value: rawValue };
+    normalizedValue = rawValue.replace(separators[0].value, ".");
+  } else if (separators.length > 1) {
+    const last = separators.at(-1);
+    const decimalLength = rawValue.length - last.index - 1;
+    const prior = separators.slice(0, -1);
+    const priorSeparator = prior[0]?.value;
+    const groupedIntegerParts = rawValue.slice(0, last.index).split(priorSeparator);
+    const groupingValid = prior.every((separator) => separator.value === priorSeparator)
+      && groupedIntegerParts[0].length >= 1 && groupedIntegerParts[0].length <= 3
+      && groupedIntegerParts.slice(1).every((group) => group.length === 3);
+    if (last.value === priorSeparator && decimalLength === 3 && groupingValid) {
+      normalizedValue = rawValue.split(last.value).join("");
+    } else if (last.value !== priorSeparator && decimalLength !== 3 && groupingValid) {
+      normalizedValue = `${rawValue.slice(0, last.index).split(priorSeparator).join("")}.${rawValue.slice(last.index + 1)}`;
+    } else {
+      return { value: null, ambiguous: true, raw_value: rawValue };
+    }
+  }
+  const parsed = Number(normalizedValue);
+  if (!Number.isFinite(parsed)) return null;
+  const multiplier = /^(?:thousand|mil)$/.test(scale) ? 1_000
+    : /^(?:million|millions|millon|millones)$/.test(scale) ? 1_000_000
+      : /^(?:billion|billions|billon|billones)$/.test(scale) ? 1_000_000_000 : 1;
+  const scaled = parsed * multiplier;
+  if (!Number.isFinite(scaled)) return null;
+  return {
+    value: Number.isInteger(scaled) ? String(scaled) : scaled.toFixed(8).replace(/0+$/, "").replace(/\.$/, ""),
+    ambiguous: false,
+    raw_value: rawValue,
+  };
+}
+
+function familyCanonicalUnit(percentSign, rawUnit) {
+  if (percentSign) return "percent";
+  return FAMILY_UNIT_ALIASES[normalizeComparableText(rawUnit).replace(/\s+/g, "")] ?? "count";
+}
+
+function familyMetricUnit(value) {
+  const source = normalizeComparableText(value);
+  if (/\b(metacritic|score|scores|puntuacion|puntuaciones|points|puntos)\b/.test(source)) return "points";
+  if (/\b(view|views|viewer|viewers|visualizacion|visualizaciones)\b/.test(source)) return "views";
+  if (/\b(copy|copies|copia|copias|sales|ventas|units|unidades|games|juegos)\b/.test(source)) return "copies";
+  if (/\b(subscriber|subscribers|suscriptor|suscriptores)\b/.test(source)) return "subscribers";
+  return "count";
+}
+
+function familyThreshold(value) {
+  const source = familyFoldText(value).replace(/[^a-z0-9%.,<>=]+/g, " ").trim();
+  if (!source) return null;
+  const amount = "(\\d+(?:[.,]\\d+)*)\\s*(%)?";
+  const quantifiedAmount = `(?:[a-z]+\\s+){0,12}${amount}`;
+  const patterns = [
+    ["lte", `<=\\s*${quantifiedAmount}`],
+    ["gte", `>=\\s*${quantifiedAmount}`],
+    ["gt", `>(?!=)\\s*${quantifiedAmount}`],
+    ["lt", `<(?!=)\\s*${quantifiedAmount}`],
+    ["lte", `\\b(?:at most|no more than|como maximo|a lo sumo)\\s+${quantifiedAmount}`],
+    ["gte", `\\b(?:at least|no less than|minimum(?: of)?|al menos|minimo(?: de)?|como minimo)\\s+${quantifiedAmount}`],
+    ["gt", `\\b(?:above|over|more than|greater than|exceed\\w*|superior a|super\\w*|mas de)\\s+${quantifiedAmount}`],
+    ["lt", `\\b(?:below|under|less than|fewer than|inferior a|menos de)\\s+${quantifiedAmount}`],
+    ["eq", `\\b(?:exactly|equal to|exactamente|igual a)\\s+${quantifiedAmount}`],
+    ["gte", `\\b(?:reach\\w*|alcanz\\w*)\\s+${quantifiedAmount}`],
+  ];
+  for (const [operator, pattern] of patterns) {
+    const match = source.match(new RegExp(pattern));
+    if (!match) continue;
+    let remainder = source.slice((match.index ?? 0) + match[0].length);
+    const scaleMatch = remainder.match(/^\s*(thousand|million|millions|billion|billions|mil|millon|millones|billon|billones)\b/);
+    if (scaleMatch) remainder = remainder.slice(scaleMatch[0].length);
+    remainder = remainder.replace(/^\s*(?:of|de)\b/, "");
+    const unitMatch = remainder.match(/^\s*(percent|percentage|porcentaje|point|points|pt|pts|punto|puntos|second|seconds|sec|secs|segundo|segundos|minute|minutes|minuto|minutos|hour|hours|hora|horas|view|views|viewer|viewers|visualizacion|visualizaciones|copy|copies|copia|copias|game|games|juego|juegos|unit|units|unidades|dollar|dollars|dolar|dolares|usd|subscriber|subscribers|suscriptor|suscriptores)\b/);
+    const number = familyCanonicalNumber(match[1], scaleMatch?.[1]);
+    if (!number) return null;
+    const explicitUnit = familyCanonicalUnit(match[2], unitMatch?.[1]);
+    return {
+      operator,
+      value: number.value,
+      unit: explicitUnit === "count" ? familyMetricUnit(source) : explicitUnit,
+      ambiguous: number.ambiguous,
+      raw_value: number.raw_value,
+    };
+  }
+  return null;
 }
 
 function familyDimension(question) {
-  if (/\b(trailer|teaser|avance|clip|gameplay video)\b/.test(question)) return { dimension: "official_content", type: "event_content_options" };
-  if (/\b(announce|announc\w*|anunci\w*|reveal\w*|present\w*)\b/.test(question)) return { dimension: "announcement_date", type: "deadline_ladder" };
-  if (/\b(releas\w*|launch\w*|lanz\w*|saldr\w*|debut)\b/.test(question)) return { dimension: "release_date", type: "deadline_ladder" };
-  if (/\b(cover|portada|participant|candidato|athlete|atleta|appear\w*|attend\w*|presence|aparec\w*|asist\w*)\b/.test(question)) return { dimension: "participant", type: "participant_options" };
-  if (/\b(platform|plataforma|playstation|xbox|switch|steam)\b/.test(question) && /\b(version|variant|variante)\b/.test(question)) return { dimension: "platform", type: "platform_variants" };
-  if (/\b(at least|al menos|more than|mas de|over|above|below|under|fewer than|less than|score|puntuacion|threshold|umbral|reach\w*|alcanz\w*|exceed\w*|super\w*)\b/.test(question)) return { dimension: "threshold", type: "milestone_thresholds" };
-  if (/\b(winner|ganador|award|premio|goty|which|cual|nominee|nominat\w*|nominad\w*|game of the year|juego del ano)\b/.test(question)) return { dimension: "outcome", type: "categorical_outcomes" };
+  const source = normalizeComparableText(question);
+  // La dimensión la gobierna el predicado cuantificado de la pregunta. Un
+  // sustantivo como "tráiler" no convierte un umbral de visualizaciones en
+  // contenido oficial, y los números de las reglas nunca entran aquí.
+  if (familyThreshold(question)) return { dimension: "threshold", type: "milestone_thresholds" };
+  if (/\b(trailer|teaser|avance|clip|gameplay video)\b/.test(source)) return { dimension: "official_content", type: "event_content_options" };
+  if (/\b(announce|announc\w*|anunci\w*|reveal\w*|present\w*)\b/.test(source)) return { dimension: "announcement_date", type: "deadline_ladder" };
+  if (/\b(releas\w*|launch\w*|lanz\w*|saldr\w*|debut|come out)\b/.test(source)) return { dimension: "release_date", type: "deadline_ladder" };
+  if (/\b(cover|portada|participant|candidato|athlete|atleta|appear\w*|attend\w*|presence|aparec\w*|asist\w*)\b/.test(source)) return { dimension: "participant", type: "participant_options" };
+  if (/\b(platform|plataforma|playstation|xbox|switch|steam)\b/.test(source) && /\b(version|variant|variante)\b/.test(source)) return { dimension: "platform", type: "platform_variants" };
+  if (/\b(score|puntuacion|threshold|umbral|views|visualizaciones|copies|copias|ventas|sales)\b/.test(source)) return { dimension: "threshold", type: "milestone_thresholds" };
+  if (/\b(winner|ganador|award|premio|goty|which|cual|nominee|nominat\w*|nominad\w*|game of the year|juego del ano)\b/.test(source)) return { dimension: "outcome", type: "categorical_outcomes" };
   return { dimension: "related", type: "generic_related" };
 }
 
-function familyEntity(candidate, normalizedQuestion, dimension) {
-  const sourceTitle = normalizeComparableText(candidate.source_title ?? candidate.title);
-  const structuredSubject = normalizeComparableText(candidate.subject ?? candidate.atinara_subject);
-  if (structuredSubject) return structuredSubject.slice(0, 120);
-  // Kalshi expone a menudo la pregunta padre en `title` y el hijo real en
-  // `yes_sub_title` (por ejemplo, "Above 95" o "Cairn"). En familias de
-  // umbrales/resultados el título del evento es, por tanto, la entidad estable.
-  if (["threshold", "outcome"].includes(dimension) && sourceTitle) {
-    return sourceTitle.slice(0, 120);
+function familyCanonicalAlias(value) {
+  return normalizeComparableText(value).replace(/\s+/g, " ").trim();
+}
+
+function familyCanonicalAliasTokens(value) {
+  const tokens = familyCanonicalAlias(value).split(" ").filter(Boolean);
+  const suffix = tokens.at(-1);
+  const roman = ({ "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v", "6": "vi", "7": "vii", "8": "viii", "9": "ix", "10": "x", "11": "xi", "12": "xii" })[suffix];
+  return roman ? [...tokens.slice(0, -1), roman] : tokens;
+}
+
+function familyEntityIdentity(value) {
+  const canonical = familyCanonicalAlias(value);
+  const tokens = canonical.split(" ").filter(Boolean);
+  const rawSuffix = tokens.at(-1);
+  if (tokens.length < 2 || !/^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|[1-9]|1[0-2])$/.test(rawSuffix)) {
+    return familySlug(canonical, 100);
   }
-  if (dimension === "participant" && sourceTitle.includes(":")) return sourceTitle.split(":")[0].trim();
+  const suffix = ({ "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v", "6": "vi", "7": "vii", "8": "viii", "9": "ix", "10": "x", "11": "xi", "12": "xii" })[rawSuffix] ?? rawSuffix;
+  const core = tokens.slice(0, -1);
+  const acronym = core.length === 1
+    ? (/^[a-z]{2,8}$/.test(core[0]) ? core[0] : "")
+    : core.map((token) => token[0]).join("");
+  return acronym.length >= 2 ? `${acronym}${suffix}`.slice(0, 100) : familySlug(canonical, 100);
+}
+
+function familyAliasesEquivalent(left, right) {
+  const leftValue = familyCanonicalAlias(left);
+  const rightValue = familyCanonicalAlias(right);
+  if (!leftValue || !rightValue) return false;
+  if (leftValue === rightValue || leftValue.replace(/\s/g, "") === rightValue.replace(/\s/g, "")) return true;
+  if (familyEntityIdentity(leftValue) !== familyEntityIdentity(rightValue)) return false;
+  const [shortValue, longValue] = leftValue.length <= rightValue.length
+    ? [leftValue, rightValue] : [rightValue, leftValue];
+  const shortTokens = familyCanonicalAliasTokens(shortValue);
+  const longTokens = familyCanonicalAliasTokens(longValue);
+  if (shortTokens.join(" ") === longTokens.join(" ")) return true;
+  const sharedSuffix = shortTokens.length > 1 && shortTokens.at(-1) === longTokens.at(-1) ? shortTokens.at(-1) : null;
+  const shortCore = sharedSuffix ? shortTokens.slice(0, -1) : shortTokens;
+  const longCore = sharedSuffix ? longTokens.slice(0, -1) : longTokens;
+  return shortCore.length === 1 && longCore.length > 1
+    && longCore.map((token) => token[0]).join("") === shortCore[0];
+}
+
+function familyTitleEntity(value) {
+  const firstSegment = cleanText(value, 500).split(/\s+(?:-|–|—|\|)\s+/)[0];
+  return familyCanonicalAlias(firstSegment)
+    .replace(/\b(?:new|next|another|nuevo|nueva|proximo|proxima)?\s*(?:trailer|teaser|avance|clip)(?:\s+(?:release date|fecha de lanzamiento))?\b.*$/, " ")
+    .replace(/\b(?:release date|fecha de lanzamiento|cover athlete|atleta de portada|metacritic score|puntuacion de metacritic)\b.*$/, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const SPECULATIVE_EVIDENCE_PATTERN = /\b(?:rumou?r(?:s|ed)?|reportedly|allegedly|leak(?:s|ed)?|speculat(?:e|ion|ive)|predict(?:s|ed|ion|ions)?|forecast(?:s|ed)?|might|may|could|would|possibly|potential(?:ly)?|likely|unlikely|hope(?:s|d)?|wish(?:es|ed)?|vote|voting|poll|fan favou?rite|concept|mockup|guess|opinion|rumor(?:es)?|se rumorea|filtracion|filtrado|prediccion(?:es)?|pronostico|podria|podrian|puede que|quiza|quizas|tal vez|posible|probable|votacion|encuesta|favorito de (?:los )?fans|concepto)\b/;
+const FACTUAL_RELEASE_TERMINAL_PATTERN = /\b(?:(?:is|are|was|were|became)\s+(?:already\s+|now\s+)?(?:available|playable|on\s+sale|in\s+stores)|(?:available|playable|out|officially\s+out)\s+now|(?:has|have|had)\s+(?:already\s+|now\s+)?(?:been\s+)?(?:released|launched|shipped|published|debuted|dropped)|(?:has|have|had)\s+(?:already\s+)?(?:hit\s+stores|gone\s+on\s+sale|gone\s+live)|(?:hit\s+stores|went\s+on\s+sale|went\s+live|arrived\s+in\s+stores)|(?:released|launched|shipped|published|debuted|dropped)\s+(?:today|yesterday|already|worldwide|globally)|(?:now\s+playable|playable\s+now|available\s+to\s+(?:buy|purchase|play|download)|(?:players?|customers?|users?|you)\s+can\s+now\s+(?:buy|purchase|play|download)|can\s+now\s+be\s+(?:bought|purchased|played|downloaded))|(?:ya\s+)?(?:esta|estan)\s+(?:ya\s+)?(?:disponible|disponibles|a\s+la\s+venta|en\s+tiendas)|(?:ya\s+)?(?:salio|salieron|ha\s+salido|han\s+salido)\s+a\s+la\s+venta|(?:se\s+puso|se\s+pusieron)\s+a\s+la\s+venta|(?:ya\s+)?se\s+(?:puede|pueden)\s+(?:ya\s+)?(?:comprar|jugar|descargar)|(?:llego|llegaron|ha\s+llegado|han\s+llegado)\s+a\s+(?:las\s+)?tiendas|(?:ha|han|fue|fueron)\s+(?:sido\s+)?(?:lanzado|lanzados|publicado|publicados|distribuido|distribuidos)|(?:fue\s+lanzado|se\s+lanzo|ya\s+disponible))\b/;
+const FACTUAL_RELEASE_MATERIAL_PATTERN = /\b(?:release|released|launch|launched|availability|available|playable|played|shipping|shipped|rollout|debut|sale|stores?|live|lanzamiento|lanzado|disponibilidad|disponible|jugable|estreno|estrenado|venta|tiendas?|salida|publicado|distribuido)\b/;
+const FACTUAL_TERMINAL_STATE_PATTERN = /\b(?:today|yesterday|now|currently|already|complete|completed|finished|concluded|took\s+place|has\s+occurred|is\s+live|went\s+live|hoy|ayer|ahora|actualmente|ya|completo|completado|finalizado|concluido|tuvo\s+lugar|se\s+produjo|se\s+estreno)\b/;
+
+export function hasSpeculativeEvidenceLanguage(value) {
+  return SPECULATIVE_EVIDENCE_PATTERN.test(normalizeComparableText(value));
+}
+
+export function isVerifiedOfficialEvidence(item, requireDirect = true) {
+  if (!isRecord(item)
+      || cleanText(item.source_type, 80) !== "official"
+      || !safePublicUrl(item.url)
+      || cleanText(item.retrieval_status, 80) !== "verified_content"
+      || cleanText(item.evidence_basis, 80) !== "retrieved_content"
+      || cleanText(item.parser_version, 100) !== "atinara-official-content-v1"
+      || item.claim_verifiable !== true
+      || !/^[0-9a-f]{64}$/.test(cleanText(item.content_sha256, 80))
+      || !safeIsoDate(item.retrieved_at)
+      || !cleanText(item.supports, 500)) return false;
+  if (!requireDirect) return true;
+  return item.direct_claim === true
+    && cleanText(item.claim_status, 40) === "direct"
+    && !hasSpeculativeEvidenceLanguage(`${item.title ?? ""} ${item.supports ?? ""}`);
+}
+
+export function isVerifiedProviderFactEvidence(item) {
+  return isRecord(item)
+    && cleanText(item.source_type, 80) === "provider"
+    && Boolean(safePublicUrl(item.url))
+    && cleanText(item.retrieval_status, 80) === "verified_provider_api"
+    && cleanText(item.evidence_basis, 80) === "provider_api"
+    && item.direct_claim === true
+    && cleanText(item.claim_status, 40) === "direct"
+    && item.claim_verifiable === true
+    && Boolean(cleanText(item.supports, 500));
+}
+
+export function isVerifiedTerminalEvidence(item) {
+  return isVerifiedOfficialEvidence(item, true) || isVerifiedProviderFactEvidence(item);
+}
+
+export function evidenceSupportsReasonCode(item, reasonCode) {
+  if (!isVerifiedTerminalEvidence(item)) return false;
+  return Array.isArray(item.supported_reason_codes)
+    && item.supported_reason_codes.some((code) => cleanText(code, 100) === cleanText(reasonCode, 100));
+}
+
+export function evidenceHasPotentialTerminalClaim(item, candidateOrKind = "other", now = new Date().toISOString()) {
+  if (!isVerifiedOfficialEvidence(item, true)) return false;
+  const contractKind = typeof candidateOrKind === "string"
+    ? candidateOrKind
+    : predictionContractKind(candidateOrKind);
+  const rawText = cleanText(`${item.title ?? ""}. ${item.supports ?? ""}`, 4_000)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const text = normalizeComparableText(rawText);
+  const sentences = rawText.split(/(?<=[.!?])\s+/).map(normalizeComparableText).filter(Boolean);
+  if (contractKind === "announcement") {
+    if (/\b(?:has|have|was|were|is now)\s+(?:officially\s+)?(?:announced|revealed|unveiled|presented)\b|\b(?:announced|revealed|unveiled|presented)\s+(?:today|yesterday)\b|\b(?:ha sido|fue|ya fue)\s+(?:anunciado|revelado|presentado)\b/.test(text)) return true;
+    const scheduledWording = /\b(?:will\s+(?:be\s+)?(?:officially\s+)?(?:announced|revealed|unveiled|presented)|(?:announcement|reveal)\s+(?:is\s+)?(?:scheduled|set|planned|due)|se\s+(?:anunciara|revelara|presentara))\b/.test(text);
+    return scheduledWording && !(typeof candidateOrKind === "object"
+      && isDeterministicUnresolvedEvidence(item, candidateOrKind, now));
+  }
+  if (contractKind === "release") {
+    const requiredPlatforms = typeof candidateOrKind === "object"
+      ? factualCandidatePlatformScope(candidateOrKind)
+      : [];
+    if (sentences.some((sentence) =>
+      factualTerminalClaim("release", sentence)
+      && factualTerminalMatchesPlatformScope(sentence, requiredPlatforms)
+    )) return true;
+    const datedOrAmbiguousWording = /\b(?:launches|releases|arrives|becomes available|goes on sale|available worldwide from|launching|releasing|lanzara|estara disponible|saldra a la venta|llegara)\b/.test(text);
+    return datedOrAmbiguousWording && !(typeof candidateOrKind === "object"
+      && isDeterministicUnresolvedEvidence(item, candidateOrKind, now));
+  }
+  if (contractKind === "milestone") {
+    if (/\b(?:trailer|teaser|avance)\b.{0,120}\b(?:is out|is available|has (?:been )?released|was released|premiered|debuted|ya disponible|fue publicado|se estreno)\b/.test(text)) return true;
+    const scheduledWording = /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:will (?:be )?(?:released|premiered|debuted)|releases|premieres|debuts|se publicara|se estrenara)\b/.test(text)
+      || /\b(?:will (?:be )?(?:released|premiered|debuted)|releases|premieres|debuts|se publicara|se estrenara)\b.{0,120}\b(?:trailer|teaser|avance)\b/.test(text);
+    return scheduledWording && !(typeof candidateOrKind === "object"
+      && isDeterministicUnresolvedEvidence(item, candidateOrKind, now));
+  }
+  if (contractKind === "award") {
+    return /\b(?:wins?|winner|awarded|award goes to|named .{0,60} winner|gana|ganador|premiado|el premio es para)\b/.test(text);
+  }
+  if (contractKind === "review") {
+    return /\b(?:metacritic|opencritic|review score|critic score|puntuacion|nota)\b.{0,80}\b(?:[0-9]{1,3}(?:\.[0-9]+)?|published|publicada)\b/.test(text);
+  }
+  return /\b(?:occurred|completed|concluded|finished|participated|signed|executed|published|released|launched|available|arrived|opened|closed|won|winner|selected|announced|revealed|held|took place|sucedio|ocurrio|completo|finalizo|participo|firmo|publicado|lanzado|disponible|gano|ganador|seleccionado|anunciado|revelado|se celebro|tuvo lugar)\b/.test(text)
+    || /\b(?:complete|full|entire|all)\b.{0,90}\b(?:cover|portada|lineup|selection|seleccion)\b/.test(text);
+}
+
+export function isDeterministicUnresolvedEvidence(item, candidate, now = new Date().toISOString()) {
+  if (!isVerifiedOfficialEvidence(item, true)
+      || item.unresolved_proof !== true
+      || cleanText(item.unresolved_proof_basis, 100) !== "official_future_date_v1"
+      || !cleanText(item.unresolved_proof_excerpt, 700)
+      || !/^[0-9a-f]{64}$/.test(cleanText(item.unresolved_proof_excerpt_sha256, 80))
+      || !normalizeComparableText(item.supports).includes(normalizeComparableText(item.unresolved_proof_excerpt))
+      || !Array.isArray(item.supported_fact_statuses)
+      || !item.supported_fact_statuses.includes("unresolved")
+      || !Array.isArray(item.supported_contract_kinds)
+      || !item.supported_contract_kinds.includes(predictionContractKind(candidate))) return false;
+  const unresolvedUntil = Date.parse(cleanText(item.unresolved_until, 100));
+  const checkedAt = Date.parse(now);
+  return Number.isFinite(unresolvedUntil) && Number.isFinite(checkedAt) && unresolvedUntil > checkedAt;
+}
+
+const FACT_SOURCE_MONTHS = Object.freeze({
+  january: 1, jan: 1, enero: 1,
+  february: 2, feb: 2, febrero: 2,
+  march: 3, mar: 3, marzo: 3,
+  april: 4, apr: 4, abril: 4,
+  may: 5, mayo: 5,
+  june: 6, jun: 6, junio: 6,
+  july: 7, jul: 7, julio: 7,
+  august: 8, aug: 8, agosto: 8,
+  september: 9, sept: 9, sep: 9, septiembre: 9, setiembre: 9,
+  october: 10, oct: 10, octubre: 10,
+  november: 11, nov: 11, noviembre: 11,
+  december: 12, dec: 12, diciembre: 12,
+});
+const FACT_IDENTITY_STOPWORDS = new Set([
+  "about", "above", "after", "announce", "announced", "anuncio", "antes", "athlete", "before",
+  "below", "between", "candidate", "como", "complete", "con", "cover", "deadline", "del", "desde",
+  "does", "during", "edition", "edicion", "event", "evento", "fecha", "for", "game", "games", "ganador",
+  "happen", "happened", "happens", "hasta", "juego", "juegos", "launch", "lanzamiento", "las", "lineup",
+  "los", "market", "milestone", "month", "months", "oficial", "official", "para", "player", "players",
+  "portada", "release", "result", "resultado", "score", "scored", "scoring", "season", "selection", "sera",
+  "sobre", "the", "threshold", "una", "will", "winner", "with", "year", "yes",
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+  "november", "december", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+  "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+]);
+
+function factualIdentityTokens(value) {
+  return [...new Set(cleanText(value, 3_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().match(/[a-z0-9]{2,}/g) ?? [])]
+    .filter((token) => !FACT_IDENTITY_STOPWORDS.has(token))
+    .filter((token) => !/^20[0-9]{2}$/.test(token) && !/^[0-9]+$/.test(token))
+    .filter((token) => !/^(?:announc|anunci|reveal|present|releas|launch|lanz|debut|arriv|public|occur|happen)/.test(token))
+    .slice(0, 8);
+}
+
+function factualIdentityTokenSets(group) {
+  const sets = [];
+  const seen = new Set();
+  const push = (value) => {
+    const tokens = factualIdentityTokens(value);
+    if (!tokens.length) return;
+    const key = [...tokens].sort().join(":");
+    if (seen.has(key)) return;
+    seen.add(key);
+    sets.push(tokens);
+  };
+  for (const candidate of (Array.isArray(group?.candidates) ? group.candidates : []).filter(isRecord)) {
+    push(candidate.subject ?? candidate.atinara_subject);
+    push(candidate.source_title);
+    push(candidate.atinara_question ?? candidate.source_question);
+  }
+  push(group?.title);
+  return sets.slice(0, 24);
+}
+
+function factualPlatformScopeFromText(valueInput) {
+  const value = normalizeComparableText(valueInput);
+  const platforms = [];
+  const add = (platform) => { if (!platforms.includes(platform)) platforms.push(platform); };
+  if (/\bsteam\b/.test(value)) add("steam");
+  else if (/\bepic\s+games?\s+store\b/.test(value)) add("epic");
+  else if (/\b(?:pc|windows(?:\s+pc)?)\b/.test(value)) add("pc");
+  if (/\b(?:playstation\s*5|ps5)\b/.test(value)) add("ps5");
+  else if (/\b(?:playstation\s*4|ps4)\b/.test(value)) add("ps4");
+  else if (/\bplaystation\b/.test(value)) add("playstation");
+  if (/\bxbox\s+series\s+[xs](?:\s*\/\s*[xs])?\b/.test(value)) add("xbox-series");
+  else if (/\bxbox\b/.test(value)) add("xbox");
+  if (/\b(?:nintendo\s+)?switch\s*2\b/.test(value)) add("switch-2");
+  else if (/\b(?:nintendo\s+)?switch\b/.test(value)) add("switch");
+  if (/\b(?:ios|iphone|ipad)\b/.test(value)) add("ios");
+  if (/\bandroid\b/.test(value)) add("android");
+  if (/\b(?:macos|mac)\b/.test(value)) add("macos");
+  if (/\blinux\b/.test(value)) add("linux");
+  if (!platforms.length && /\b(?:console|consoles)\b/.test(value)) add("console");
+  if (!platforms.length && /\bmobile\b/.test(value)) add("mobile");
+  return platforms.sort();
+}
+
+function factualCandidatePlatformScope(candidate) {
+  return factualPlatformScopeFromText([
+    candidate?.source_question,
+    candidate?.atinara_question,
+    candidate?.source_resolution_rules,
+    candidate?.atinara_resolution_criteria,
+  ].filter(Boolean).join(" "));
+}
+
+function factualGroupPlatformScope(group) {
+  const scopes = (Array.isArray(group?.candidates) ? group.candidates : []).filter(isRecord)
+    .map(factualCandidatePlatformScope);
+  const unique = new Map(scopes.map((platforms) => [platforms.join(":"), platforms]));
+  if (unique.size > 1) return { ambiguous: true, platforms: [] };
+  return { ambiguous: false, platforms: unique.values().next().value ?? [] };
+}
+
+function factualWindowMatchesPlatformScope(window, requiredPlatforms) {
+  if (!Array.isArray(requiredPlatforms) || !requiredPlatforms.length) return true;
+  const patterns = {
+    steam: /\bsteam\b/,
+    epic: /\bepic\s+games?\s+store\b/,
+    pc: /\b(?:pc|windows(?:\s+pc)?|computer)\b/,
+    ps5: /\b(?:playstation\s*5|ps5)\b/,
+    ps4: /\b(?:playstation\s*4|ps4)\b/,
+    playstation: /\b(?:playstation|ps[45])\b/,
+    "xbox-series": /\bxbox\s+series\s+[xs](?:\s*\/\s*[xs])?\b/,
+    xbox: /\bxbox\b/,
+    "switch-2": /\b(?:nintendo\s+)?switch\s*2\b/,
+    switch: /\b(?:nintendo\s+)?switch\b/,
+    ios: /\b(?:ios|iphone|ipad)\b/,
+    android: /\bandroid\b/,
+    macos: /\b(?:macos|mac)\b/,
+    linux: /\blinux\b/,
+    console: /\b(?:console|consoles|playstation|ps[45]|xbox|switch)\b/,
+    mobile: /\b(?:mobile|ios|iphone|ipad|android)\b/,
+  };
+  return requiredPlatforms.every((platform) => patterns[platform]?.test(window) === true);
+}
+
+function factualTerminalMatchesPlatformScope(window, requiredPlatforms) {
+  if (!Array.isArray(requiredPlatforms) || !requiredPlatforms.length) return true;
+  if (factualWindowMatchesPlatformScope(window, requiredPlatforms)) return true;
+  // Un claim terminal sin plataforma es materialmente genérico: no demuestra
+  // una edición distinta y por tanto prevalece. Solo se excluye si el propio
+  // claim identifica de forma positiva otra plataforma contractual.
+  const terminalPlatforms = factualPlatformScopeFromText(window);
+  if (!terminalPlatforms.length) return true;
+  const ancestors = {
+    steam: ["steam", "pc"],
+    epic: ["epic", "pc"],
+    pc: ["pc"],
+    ps5: ["ps5", "playstation", "console"],
+    ps4: ["ps4", "playstation", "console"],
+    playstation: ["playstation", "console"],
+    "xbox-series": ["xbox-series", "xbox", "console"],
+    xbox: ["xbox", "console"],
+    "switch-2": ["switch-2", "switch", "console"],
+    switch: ["switch", "console"],
+    console: ["console"],
+    ios: ["ios", "mobile"],
+    android: ["android", "mobile"],
+    mobile: ["mobile"],
+    macos: ["macos"],
+    linux: ["linux"],
+  };
+  return requiredPlatforms.some((required) => terminalPlatforms.some((terminal) =>
+    (ancestors[required] ?? [required]).includes(terminal)
+    || (ancestors[terminal] ?? [terminal]).includes(required)
+  ));
+}
+
+function factualWindowMatchesIdentity(window, identitySets) {
+  const tokens = new Set(window.match(/[a-z0-9]{2,}/g) ?? []);
+  return identitySets.some((identity) => {
+    const matches = identity.filter((token) => tokens.has(token)).length;
+    if (identity.length === 1) return identity[0].length >= 5 && matches === 1;
+    if (identity.length <= 4) return matches === identity.length;
+    return matches >= Math.max(3, Math.ceil(identity.length * 0.6));
+  });
+}
+
+function factualContractPredicate(kind, window) {
+  if (kind === "announcement") {
+    return /\b(?:will\s+(?:be\s+)?(?:officially\s+)?(?:announced|revealed|unveiled|presented)|(?:announcement|reveal)\s+(?:is\s+)?(?:scheduled|set|planned|due)|se\s+(?:anunciara|revelara|presentara))\b/.test(window);
+  }
+  if (kind === "release") {
+    return /\b(?:will\s+(?:be\s+)?(?:released|launched|available)|will\s+(?:release|launch)|(?:releases|launches|arrives|becomes available|goes on sale)\b|(?:release|launch)\s+(?:is\s+)?(?:scheduled|set|planned|due)|se\s+lanzara|estara\s+disponible|saldra\s+a\s+la\s+venta|llegara)\b/.test(window);
+  }
+  if (kind === "milestone") {
+    return /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:will\s+(?:be\s+)?(?:released|premiered|debuted)|releases|premieres|debuts|se\s+publicara|se\s+estrenara)\b/.test(window)
+      || /\b(?:will\s+(?:be\s+)?(?:released|premiered|debuted)|releases|premieres|debuts|se\s+publicara|se\s+estrenara)\b.{0,120}\b(?:trailer|teaser|avance)\b/.test(window);
+  }
+  return false;
+}
+
+function factualTerminalClaim(kind, window) {
+  if (kind === "announcement") {
+    return /\b(?:has|have|was|were|is now)\s+(?:officially\s+)?(?:announced|revealed|unveiled|presented)\b|\b(?:announced|revealed|unveiled|presented)\s+(?:today|yesterday)\b|\b(?:ha sido|fue|ya fue)\s+(?:anunciado|revelado|presentado)\b/.test(window);
+  }
+  if (kind === "release") {
+    if (FACTUAL_RELEASE_TERMINAL_PATTERN.test(window)) return true;
+    if (/\bshipped\b/.test(window)
+        && !/\b(?:will|scheduled|expected|due|set|planned)\b.{0,40}\bshipped\b/.test(window)) return true;
+    return FACTUAL_RELEASE_MATERIAL_PATTERN.test(window)
+      && FACTUAL_TERMINAL_STATE_PATTERN.test(window);
+  }
+  if (kind === "milestone") {
+    return /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:is\s+out|is\s+available|has\s+(?:been\s+)?released|was\s+released|premiered|debuted|ya\s+disponible|fue\s+publicado|se\s+estreno)\b/.test(window);
+  }
+  return false;
+}
+
+function factualObservationDays(candidate) {
+  const contract = cleanText([
+    candidate.source_question,
+    candidate.atinara_question,
+    candidate.source_resolution_rules,
+    candidate.atinara_resolution_criteria,
+  ].filter(Boolean).join(" "), 4_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const words = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  };
+  const match = contract.match(/\b([0-9]{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+(?:calendar\s+)?d(?:ay|ia)s?\s+(?:after|despues\s+de)\s+(?:the\s+|su\s+|el\s+)?(?:release|launch|lanzamiento)\b/);
+  if (!match) return null;
+  const days = /^[0-9]+$/.test(match[1]) ? Number(match[1]) : words[match[1]];
+  return Number.isSafeInteger(days) && days >= 1 && days <= 30 ? days : null;
+}
+
+function factualSourceDate(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
+
+export function deriveDeterministicUnresolvedProof(content, group, retrievedAt) {
+  const allCandidates = (Array.isArray(group?.candidates) ? group.candidates : []).filter(isRecord);
+  const contractKinds = [...new Set(allCandidates
+    .map((candidate) => predictionContractKind(candidate))
+    .filter((kind) => ["announcement", "release", "milestone", "review"].includes(kind)))];
+  if (!contractKinds.length) return null;
+  const directKinds = contractKinds.filter((kind) => kind !== "review");
+  const identitySets = factualIdentityTokenSets(group);
+  if (!identitySets.length) return null;
+  const groupPlatformScope = factualGroupPlatformScope(group);
+  if (directKinds.length && groupPlatformScope.ambiguous) return null;
+  const checkedAt = Date.parse(retrievedAt);
+  if (!Number.isFinite(checkedAt)) return null;
+  const normalized = cleanText(content, 300_000).normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const dates = [];
+  const add = (yearValue, monthValue, dayValue, index) => {
+    const year = Number(yearValue);
+    const month = typeof monthValue === "number" ? monthValue : FACT_SOURCE_MONTHS[String(monthValue).toLowerCase()];
+    const day = Number(dayValue);
+    const date = factualSourceDate(year, month, day);
+    if (date && date.getTime() >= checkedAt - (10 * 365 * 86_400_000)
+        && date.getTime() <= checkedAt + (10 * 365 * 86_400_000)) dates.push({ date, index });
+  };
+  for (const match of normalized.matchAll(/\b(20[0-9]{2})-(0?[1-9]|1[0-2])-(0?[1-9]|[12][0-9]|3[01])\b/g)) {
+    add(match[1], Number(match[2]), match[3], match.index ?? 0);
+  }
+  const monthNames = Object.keys(FACT_SOURCE_MONTHS).join("|");
+  for (const match of normalized.matchAll(new RegExp(`\\b(${monthNames})\\s+([0-3]?[0-9])(?:st|nd|rd|th)?(?:,|\\s)+\\s*(20[0-9]{2})\\b`, "g"))) {
+    add(match[3], match[1], match[2], match.index ?? 0);
+  }
+  for (const match of normalized.matchAll(new RegExp(`\\b([0-3]?[0-9])(?:st|nd|rd|th)?\\s+(?:de\\s+)?(${monthNames})(?:\\s+de|,)?\\s+(20[0-9]{2})\\b`, "g"))) {
+    add(match[3], match[2], match[1], match.index ?? 0);
+  }
+  const claimWindow = (index) => {
+    const prior = Math.max(normalized.lastIndexOf(".", index), normalized.lastIndexOf("!", index), normalized.lastIndexOf("?", index));
+    const following = [normalized.indexOf(".", index), normalized.indexOf("!", index), normalized.indexOf("?", index)]
+      .filter((value) => value >= 0).sort((left, right) => left - right)[0] ?? normalized.length;
+    return cleanText(normalized.slice(Math.max(prior + 1, index - 320), Math.min(following + 1, index + 380)), 400);
+  };
+  const boundClaims = dates.map((dated) => {
+    const window = claimWindow(dated.index);
+    const kinds = directKinds.filter((kind) => factualContractPredicate(kind, window));
+    return {
+      ...dated,
+      window,
+      kinds,
+      identity: factualWindowMatchesIdentity(window, identitySets),
+      platform: factualWindowMatchesPlatformScope(window, groupPlatformScope.platforms),
+    };
+  }).filter((dated) => dated.identity && dated.platform && dated.kinds.length && !hasSpeculativeEvidenceLanguage(dated.window));
+  const terminalConflict = boundClaims.some((dated) =>
+    dated.date.getTime() <= checkedAt + 60_000
+    || dated.kinds.some((kind) => factualTerminalClaim(kind, dated.window))
+  ) || normalized.split(/(?<=[.!?])\s+/).some((sentence) =>
+    factualTerminalMatchesPlatformScope(sentence, groupPlatformScope.platforms)
+    && directKinds.some((kind) => factualTerminalClaim(kind, sentence))
+  );
+  if (terminalConflict && directKinds.length) return null;
+  const supported = boundClaims.filter((dated) => dated.date.getTime() > checkedAt + 60_000)
+    .sort((left, right) => left.date.getTime() - right.date.getTime());
+  if (supported.length) {
+    return { until: supported[0].date.toISOString(), contractKinds: supported[0].kinds, excerpt: supported[0].window };
+  }
+
+  const reviewProofs = [];
+  for (const candidate of allCandidates.filter((item) => predictionContractKind(item) === "review")) {
+    const candidatePlatformScope = factualCandidatePlatformScope(candidate);
+    const observationAt = safeIsoDate(candidate.evaluation_ends_at ?? candidate.source_close_at);
+    const resolutionDeadline = safeIsoDate(candidate.source_resolution_deadline ?? candidate.resolution_deadline ?? observationAt);
+    const observationMs = Date.parse(observationAt ?? "");
+    const deadlineMs = Date.parse(resolutionDeadline ?? "");
+    const offsetDays = factualObservationDays(candidate);
+    if (!observationAt || !Number.isFinite(observationMs) || observationMs <= checkedAt + 60_000
+        || !Number.isFinite(deadlineMs) || deadlineMs < observationMs - 60_000 || !offsetDays) continue;
+    const anchors = dates.map((dated) => ({ ...dated, window: claimWindow(dated.index) }))
+      .filter((dated) => factualWindowMatchesIdentity(dated.window, identitySets)
+        && factualWindowMatchesPlatformScope(dated.window, candidatePlatformScope)
+        && (factualContractPredicate("release", dated.window) || factualTerminalClaim("release", dated.window))
+        && !hasSpeculativeEvidenceLanguage(dated.window)
+        && dated.date.getTime() <= observationMs);
+    const anchor = anchors.find((dated) =>
+      Math.abs((dated.date.getTime() + (offsetDays * 86_400_000)) - observationMs) <= 18 * 60 * 60 * 1_000
+    );
+    if (anchor) reviewProofs.push({ until: observationAt, excerpt: anchor.window });
+  }
+  if (!reviewProofs.length) return null;
+  reviewProofs.sort((left, right) => Date.parse(left.until) - Date.parse(right.until));
+  return { until: reviewProofs[0].until, contractKinds: ["review"], excerpt: reviewProofs[0].excerpt };
+}
+
+function familyQuestionEntity(normalizedQuestion, dimension) {
   let value = normalizedQuestion
     .replace(/^(?:will|whether|can|could|is|are|sera|seran|se)\s+/, "")
-    .replace(/^(?:a|an|the|la|el|un|una)\s+/, "");
+    .replace(/^(?:a|an|la|el|un|una|another|next|otro|otra|proximo|proxima)\s+/, "");
   value = value
     .replace(/^(?:announce\w*|anunci\w*|reveal\w*|present\w*|release\w*|launch\w*|lanz\w*|public\w*|reach\w*|alcanz\w*|exceed\w*|super\w*)\s+(?:officially|oficialmente)?\s*(?:a|an|the|la|el|los|las|un|una)?\s*/, "")
     .replace(/^(?:officially|oficialmente)\s+/, "");
@@ -570,40 +1450,54 @@ function familyEntity(candidate, normalizedQuestion, dimension) {
     const contentOf = value.match(/(?:new|nuevo|nueva|another)?\s*(?:trailer|teaser|avance|clip)(?:\s+official|\s+oficial)?\s+(?:of|de)\s+(.+?)(?:\s+(?:before|antes de|antes del|by)\b|$)/);
     if (contentOf?.[1]) value = contentOf[1];
     else value = value
-      .replace(/\b(?:new|nuevo|nueva|another|official|oficial)\b/g, " ")
+      .replace(/\b(?:new|nuevo|nueva|another|next|official|oficial|proximo|proxima)\b/g, " ")
       .replace(/\b(?:trailer|teaser|avance|clip)\b/g, " ")
       .replace(/^\s*(?:of|de)\s+/, "");
   }
-  value = value.split(/\s+(?:will|be|is|sera|seran|se|before|antes|by|para|release\w*|launch\w*|lanz\w*|announce\w*|anunci\w*|public\w*|come out|nominat\w*|nominad\w*|win\w*|gan\w*|reach\w*|alcanz\w*|exceed\w*|super\w*|appear\w*|aparec\w*|attend\w*|asist\w*)\b/)[0];
+  value = value.split(/\s+(?:will|be|is|sera|seran|se|before|antes|by|hasta|para|release\w*|launch\w*|lanz\w*|announce\w*|anunci\w*|public\w*|come out|nominat\w*|nominad\w*|win\w*|gan\w*|reach\w*|alcanz\w*|score\w*|puntuar\w*|exceed\w*|super\w*|appear\w*|aparec\w*|attend\w*|asist\w*)\b/)[0];
+  if (dimension === "threshold") {
+    value = value.replace(/\s+(?:the|los|las|un|una)?\s*(?:at least|at most|more than|less than|above|below|over|under|al menos|como maximo|mas de|menos de)?\s*\d+(?:[.,]\d+)*(?:\s*(?:%|percent\w*|porcentaje|point\w*|punto\w*|view\w*|visualizacion\w*|cop\w*|venta\w*|subscriber\w*|suscriptor\w*))?.*$/, " ");
+  }
   value = value
-    .replace(/\b(?:release date|fecha de lanzamiento|official content|contenido oficial)\b/g, " ")
+    .replace(/\b(?:release date|fecha de lanzamiento|official content|contenido oficial|metacritic score|puntuacion de metacritic)\b/g, " ")
+    .replace(/\b(?:next|another|nuevo|nueva|proximo|proxima)\b/g, " ")
+    .replace(/^\s*(?:trailer|teaser|avance|clip)\s+(?:of|de)\s+/, "")
+    .replace(/\b(?:trailer|teaser|avance|clip)\s*$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if ((value.length < 3 || /^(?:officially|oficialmente|new|nuevo|nueva)$/.test(value)) && sourceTitle) {
-    value = sourceTitle
-      .split(":")[0]
-      .replace(/\b(?:release date|fecha de lanzamiento|official content|contenido oficial)\b/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-  return value.slice(0, 120);
+  return familyCanonicalAlias(value);
 }
 
-function familySemantics(type) {
+function familyEntity(candidate, normalizedQuestion, dimension) {
+  const questionEntity = familyQuestionEntity(normalizedQuestion, dimension);
+  const structuredSubject = familyCanonicalAlias(candidate.subject ?? candidate.atinara_subject);
+  const titleEntity = familyTitleEntity(candidate.source_title ?? candidate.title);
+  const sourceTitle = normalizeComparableText(candidate.source_title ?? candidate.title);
+  const stableTitle = /^(?:will|whether|can|could|is|are|sera|seran|se)\b/.test(sourceTitle) ? "" : titleEntity;
+  let value = structuredSubject
+    || (["threshold", "outcome"].includes(dimension) ? stableTitle : "")
+    || questionEntity
+    || titleEntity;
+  for (const alias of [questionEntity, titleEntity, structuredSubject]) {
+    if (alias && familyAliasesEquivalent(value, alias) && alias.length > value.length) value = alias;
+  }
+  return familyCanonicalAlias(value).slice(0, 120);
+}
+
+function familySemantics(type, modifiers = {}) {
   if (type === "deadline_ladder" || type === "milestone_thresholds") {
-    return { cumulative: true, mutually_exclusive: false, parent_is_market: false, aggregate_probability: false, economic_independence: true };
+    return { cumulative: true, mutually_exclusive: false, parent_is_market: false, aggregate_probability: false, economic_independence: true, ...modifiers };
   }
-  return { cumulative: false, mutually_exclusive: type === "categorical_outcomes", parent_is_market: false, aggregate_probability: false, economic_independence: true };
+  return { cumulative: false, mutually_exclusive: type === "categorical_outcomes", parent_is_market: false, aggregate_probability: false, economic_independence: true, ...modifiers };
 }
 
-function familyThreshold(question) {
-  const source = normalizeComparableText(question);
-  const match = source.match(/(?:at least|al menos|more than|mas de|over|above|below|under|fewer than|less than|threshold|umbral)\s+(?:los?\s+)?(\d+(?:[.,]\d+)?)(?:\s*([a-z%]+))?/)
-    ?? source.match(/(?:reach\w*|alcanz\w*|exceed\w*|super\w*)\s+.*?\b(\d+(?:[.,]\d+)?)(?:\s*([a-z%]+))?/);
-  if (!match) return null;
-  const amount = match[1].replace(",", ".");
-  const unit = cleanText(match[2], 24).replace(/[^a-z%]+/g, "");
-  return `${amount}${unit ? `:${unit}` : ""}`;
+function officialContentContract(candidate, question) {
+  const durationThreshold = familyThreshold(`${question} ${candidate?.source_resolution_rules ?? ""}`);
+  const duration = durationThreshold?.unit === "seconds" ? Number(durationThreshold.value) : null;
+  const durationContract = Number.isSafeInteger(duration) && duration > 0 && duration <= 3_600
+    ? durationThreshold : null;
+  const kind = /\bteaser\b/.test(question) ? "teaser" : /\b(?:clip|avance)\b/.test(question) ? "clip" : "trailer";
+  return { kind, duration: durationContract };
 }
 
 function familyProviderPayload(candidate) {
@@ -616,20 +1510,25 @@ function familyStructuredChild(candidate, dimension) {
   const payload = familyProviderPayload(candidate);
   const rawYesLabel = cleanText(payload.yes_sub_title, 500);
   const normalizedYesLabel = normalizeComparableText(rawYesLabel);
-  const thresholdPattern = /\b(above|over|more than|greater than|at least|below|under|less than|fewer than|at most)\s+(\d+(?:[.,]\d+)?)(?:\s*(%|points?|pts?|thousand|million|billion|usd|dollars?|games?|copies?))?/;
-  const thresholdMatch = normalizedYesLabel.match(thresholdPattern)
-    ?? normalizeComparableText(candidate?.source_resolution_rules).match(thresholdPattern);
-  if (thresholdMatch) {
-    const direction = ["below", "under", "less than", "fewer than", "at most"].includes(thresholdMatch[1])
-      ? "below"
-      : "above";
-    const amount = thresholdMatch[2].replace(",", ".");
-    const unit = cleanText(thresholdMatch[3], 24).replace(/[^a-z%]+/g, "");
+  let threshold = dimension === "threshold" && rawYesLabel
+    ? familyThreshold(rawYesLabel)
+    : null;
+  if (threshold?.unit === "count") {
+    threshold = {
+      ...threshold,
+      unit: familyMetricUnit(`${candidate?.source_title ?? ""} ${candidate?.source_question ?? ""} ${candidate?.atinara_question ?? ""} ${candidate?.source_resolution_rules ?? ""}`),
+    };
+  }
+  if (threshold) {
+    const thresholdChild = threshold.ambiguous
+      ? `threshold:ambiguous:${familySlug(threshold.raw_value, 80)}:${threshold.unit}`
+      : `threshold:${threshold.operator}:${threshold.value}:${threshold.unit}`;
     return {
       dimension: "threshold",
       type: "milestone_thresholds",
-      child_key: `threshold:${direction}:${amount}${unit ? `:${unit}` : ""}`,
-      child_label: rawYesLabel || `${direction === "above" ? "Por encima de" : "Por debajo de"} ${amount}`,
+      child_key: thresholdChild,
+      child_label: rawYesLabel || `Umbral ${threshold.operator} ${threshold.value} ${threshold.unit}`,
+      threshold,
     };
   }
   if (["outcome", "participant", "platform"].includes(dimension)
@@ -650,31 +1549,46 @@ function familyStructuredChild(candidate, dimension) {
 }
 
 export function deriveMarketFamily(candidate) {
-  const normalizedQuestion = normalizeComparableText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title);
+  const rawQuestion = candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title;
+  const normalizedQuestion = normalizeComparableText(rawQuestion);
   if (!normalizedQuestion) return null;
-  const detected = familyDimension(normalizedQuestion);
+  const detected = familyDimension(rawQuestion);
   const structuredChild = familyStructuredChild(candidate ?? {}, detected.dimension);
   const dimension = structuredChild?.dimension ?? detected.dimension;
-  const type = structuredChild?.type ?? detected.type;
+  const boundary = familyTemporalBoundary(candidate ?? {}, candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title);
+  const contentContract = dimension === "official_content" ? officialContentContract(candidate ?? {}, normalizedQuestion) : null;
+  const type = structuredChild?.type ?? (dimension === "official_content" && boundary ? "deadline_ladder" : detected.type);
   const entity = familyEntity(candidate ?? {}, normalizedQuestion, dimension);
   if (!entity) return null;
-  const deadline = familyDate(normalizedQuestion);
-  const threshold = dimension === "threshold" && !structuredChild ? familyThreshold(normalizedQuestion) : null;
-  const familyKey = `atinara:v1:${entity.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100)}:${dimension}`;
+  const threshold = dimension === "threshold" ? structuredChild?.threshold ?? familyThreshold(rawQuestion) : null;
+  const contentInvariant = contentContract
+    ? `:${contentContract.kind}${contentContract.duration ? `:duration-${contentContract.duration.operator}-${contentContract.duration.value}-${contentContract.duration.unit}` : ""}`
+    : "";
+  const familyKey = `atinara:v4:${familyEntityIdentity(entity)}:${dimension}${contentInvariant}`;
+  const temporalChild = boundary
+    ? (boundary.identity_ambiguous
+      ? `deadline:ambiguous-timezone:${familySlug(boundary.timezone, 80)}:${familySlug(boundary.ambiguity_reason, 40)}:${boundary.canonical_operator}:${familySlug(boundary.canonical_local_instant ?? boundary.local_instant, 80)}:${boundary.granularity}`
+      : `deadline:${boundary.canonical_operator}:${boundary.canonical_instant}:${boundary.granularity}`)
+    : null;
   let childKey = structuredChild?.child_key
-    ?? (threshold ? `threshold:${threshold}` : deadline ? `deadline:${deadline}` : `option:${stableFingerprint(normalizedQuestion)}`);
+    ?? (threshold ? threshold.ambiguous
+      ? `threshold:ambiguous:${familySlug(threshold.raw_value, 80)}:${threshold.unit}`
+      : `threshold:${threshold.operator}:${threshold.value}:${threshold.unit}`
+      : temporalChild ?? `option:${familySlug(normalizedQuestion, 120)}`);
   if (dimension === "official_content") {
-    const contentKind = /\bteaser\b/.test(normalizedQuestion) ? "teaser" : /\b(?:clip|avance)\b/.test(normalizedQuestion) ? "clip" : "trailer";
-    childKey = `content:${contentKind}:${deadline ?? stableFingerprint(normalizedQuestion)}`;
+    const contentKind = contentContract?.kind ?? "trailer";
+    childKey = `content:${contentKind}:${temporalChild ?? `option:${familySlug(normalizedQuestion, 120)}`}`;
   }
   const childLabel = structuredChild?.child_label || (threshold
-    ? `Umbral ${threshold.replace(":", " ")}`
-    : deadline
-    ? `Hasta el ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${deadline}T12:00:00Z`))}`
+    ? (threshold.ambiguous
+      ? `Umbral ambiguo ${threshold.raw_value} ${threshold.unit}`
+      : `Umbral ${threshold.operator} ${threshold.value} ${threshold.unit}`)
+    : boundary
+    ? `${boundary.operator} ${boundary.instant ?? boundary.local_instant} (${boundary.timezone_label ?? boundary.timezone}, ${boundary.granularity})`
     : cleanText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question, 180));
-  const titlePrefix = type === "deadline_ladder"
+  const titlePrefix = dimension === "official_content" ? "Contenido oficial"
+    : type === "deadline_ladder"
     ? (dimension === "announcement_date" ? "Anuncio oficial" : "Fecha de lanzamiento")
-    : dimension === "official_content" ? "Contenido oficial"
       : dimension === "threshold" ? "Hitos"
         : "Opciones";
   return {
@@ -683,20 +1597,39 @@ export function deriveMarketFamily(candidate) {
     family_type: type,
     family_child_key: childKey,
     family_child_label: childLabel,
-    family_sort_at: deadline ? `${deadline}T23:59:59.000Z` : safeIsoDate(candidate?.source_close_at),
+    family_sort_at: boundary?.canonical_instant ?? safeIsoDate(candidate?.source_close_at),
     family_relationship: "standalone",
-    family_semantics: familySemantics(type),
+    family_semantics: familySemantics(type, contentContract ? {
+      entity_label: entity,
+      content_kind: contentContract.kind,
+      duration_contract: contentContract.duration,
+      temporal_boundary: boundary,
+      ...(boundary?.identity_ambiguous ? { identity_ambiguous: true } : {}),
+    } : threshold ? {
+      entity_label: entity,
+      threshold,
+      ...(boundary ? { temporal_boundary: boundary } : {}),
+      ...(threshold.ambiguous || boundary?.identity_ambiguous ? { identity_ambiguous: true } : {}),
+    }
+      : boundary ? {
+        entity_label: entity,
+        temporal_boundary: boundary,
+        ...(boundary.identity_ambiguous ? { identity_ambiguous: true } : {}),
+      } : { entity_label: entity }),
     family_source_event_key: cleanText(candidate?.event_group_key ?? candidate?.external_event_id, 240) || null,
     family_version: RADAR_FAMILY_VERSION,
   };
 }
 
 function matchFamily(item) {
-  if (cleanText(item?.family_key, 240) && cleanText(item?.family_child_key, 240)) {
+  if (cleanText(item?.family_version, 100) === RADAR_FAMILY_VERSION
+      && cleanText(item?.family_key, 240) && cleanText(item?.family_child_key, 240)) {
     return {
       family_key: cleanText(item.family_key, 240),
       family_child_key: cleanText(item.family_child_key, 240),
       family_title: cleanText(item.family_title, 300),
+      entity_label: cleanText(item?.family_semantics?.entity_label, 120),
+      identity_ambiguous: item?.family_semantics?.identity_ambiguous === true,
     };
   }
   return deriveMarketFamily(item);
@@ -722,25 +1655,34 @@ export function isBlockingDuplicateMatch(match) {
   if (!isRecord(match)) return false;
   const relationship = cleanText(match.relationship, 80);
   return match.blocking !== false
-    && ["exact_duplicate", "semantic_duplicate"].includes(relationship);
+    && relationship === "exact_duplicate"
+    && cleanText(match.family_version, 100) === RADAR_FAMILY_VERSION;
 }
 
 export function classifyMarketRelations(candidate, existing = []) {
-  const source = normalizeComparableText(candidate.atinara_question ?? candidate.source_question);
+  const source = normalizeComparableText(candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title);
   const candidateFamily = deriveMarketFamily(candidate);
-  if (!source || !candidateFamily) return { family: candidateFamily, duplicates: [], siblings: [] };
+  if (!source || !candidateFamily) return { family: candidateFamily, duplicates: [], siblings: [], ambiguous: [] };
   const tokens = new Set(source.split(" ").filter((token) => token.length > 2));
   const duplicates = [];
   const siblings = [];
+  const ambiguous = [];
+  const candidateIdentityAmbiguous = candidateFamily.family_semantics?.identity_ambiguous === true;
+  const expansionLabels = new Set();
+  const rememberExpansion = (value) => {
+    const tokens = familyCanonicalAliasTokens(value);
+    if (tokens.length > 2) expansionLabels.add(tokens.join(" "));
+  };
+  rememberExpansion(candidateFamily.family_semantics?.entity_label);
   for (const item of existing) {
     if (sameCandidateIdentity(candidate, item)) continue;
+    const existingFamily = matchFamily(item);
+    if (!existingFamily) continue;
     const target = normalizeComparableText(item.question ?? item.title ?? item.atinara_question ?? item.source_question);
-    if (!target) continue;
     const targetTokens = new Set(target.split(" ").filter((token) => token.length > 2));
     const intersection = [...tokens].filter((token) => targetTokens.has(token)).length;
     const union = new Set([...tokens, ...targetTokens]).size || 1;
     const similarity = intersection / union;
-    const existingFamily = matchFamily(item);
     const base = {
       id: cleanText(item.id, 220) || null,
       question: cleanText(item.question ?? item.title ?? item.atinara_question ?? item.source_question, 500),
@@ -748,18 +1690,36 @@ export function classifyMarketRelations(candidate, existing = []) {
       family_key: candidateFamily.family_key,
       family_child_key: existingFamily?.family_child_key ?? null,
       family_title: candidateFamily.family_title,
+      family_version: RADAR_FAMILY_VERSION,
     };
     if (existingFamily?.family_key === candidateFamily.family_key) {
-      if (existingFamily.family_child_key === candidateFamily.family_child_key) {
+      const candidateEntity = candidateFamily.family_semantics?.entity_label;
+      const existingEntity = existingFamily.entity_label
+        || deriveMarketFamily(item)?.family_semantics?.entity_label;
+      rememberExpansion(existingEntity);
+      const targetIdentityAmbiguous = existingFamily.identity_ambiguous === true
+        || deriveMarketFamily(item)?.family_semantics?.identity_ambiguous === true;
+      if (candidateIdentityAmbiguous || targetIdentityAmbiguous
+          || !familyAliasesEquivalent(candidateEntity, existingEntity)) {
+        ambiguous.push({ ...base, relationship: "identity_ambiguous", blocking: false });
+      } else if (existingFamily.family_child_key === candidateFamily.family_child_key) {
         duplicates.push({ ...base, relationship: "exact_duplicate", blocking: true });
       } else {
         siblings.push({ ...base, relationship: "sibling", blocking: false });
       }
-    } else if (source === target || (similarity >= 0.9 && familyDimension(source).dimension === familyDimension(target).dimension)) {
-      duplicates.push({ ...base, relationship: source === target ? "exact_duplicate" : "semantic_duplicate", blocking: true });
     }
   }
-  return { family: candidateFamily, duplicates: duplicates.slice(0, 5), siblings: siblings.slice(0, 12) };
+  if (expansionLabels.size > 1) {
+    ambiguous.push(...duplicates.splice(0).map((match) => ({ ...match, relationship: "identity_ambiguous", blocking: false })));
+    ambiguous.push(...siblings.splice(0).map((match) => ({ ...match, relationship: "identity_ambiguous", blocking: false })));
+  }
+  const deterministic = (left, right) => `${left.id ?? ""}:${left.family_child_key ?? ""}`.localeCompare(`${right.id ?? ""}:${right.family_child_key ?? ""}`);
+  return {
+    family: candidateFamily,
+    duplicates: duplicates.sort(deterministic).slice(0, 5),
+    siblings: siblings.sort(deterministic).slice(0, 12),
+    ambiguous: ambiguous.sort(deterministic).slice(0, 12),
+  };
 }
 
 export function detectDuplicates(candidate, existing = []) {
@@ -841,11 +1801,15 @@ export function reasonCopy(code) {
 
 export function predictionContractKind(candidate) {
   const question = normalizeComparableText(candidate?.atinara_question ?? candidate?.source_question ?? candidate?.source_title);
-  if (/(?:\bannounc|\banunci|\breveal|\bpresent)/.test(question)) return "announcement";
-  if (/(?:\breleas|\blaunch|\blanz|\bsaldr|\bdebut)/.test(question)) return "release";
-  if (/(?:\btrailer|\bavance|\bdelay|\bretras)/.test(question)) return "milestone";
+  // Las palabras "release/lanzamiento" pueden ser solo el ancla temporal de
+  // una métrica, un premio o un hito. Clasifica primero el predicado que
+  // realmente resuelve el contrato para no convertir esos mercados en una
+  // predicción de lanzamiento distinta.
   if (/(?:\bmetacritic|\breview|\bresena|\bscore|\bpuntuacion)/.test(question)) return "review";
   if (/(?:\bgame of the year|\bgoty|\baward|\bpremio|\bnomina|\bwin\b|\bganar|\bgana)/.test(question)) return "award";
+  if (/(?:\btrailer|\bavance|\bdelay|\bretras)/.test(question)) return "milestone";
+  if (/(?:\bannounc|\banunci|\breveal|\bpresent)/.test(question)) return "announcement";
+  if (/(?:\breleas|\blaunch|\blanz|\bsaldr|\bdebut)/.test(question)) return "release";
   return "other";
 }
 
@@ -856,12 +1820,35 @@ function isNamedAwardCandidate(question) {
 function providerEvidence(candidate) {
   const url = safePublicUrl(candidate?.external_market_url ?? candidate?.external_event_url);
   if (!url) return [];
+  const result = cleanText(candidate?.source_result, 40);
+  const hardReasons = new Set(candidate?.hard_reject_reasons ?? []);
+  const supportedReasonCodes = [];
+  if (normalizeProviderResult(candidate?.source_result)) supportedReasonCodes.push(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED);
+  for (const reason of [
+    RADAR_REASON_CODES.PROVIDER_NOT_OPEN,
+    RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+    RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
+  ]) {
+    if (hardReasons.has(reason)) supportedReasonCodes.push(reason);
+  }
   return [{
-    title: "Resultado publicado por el proveedor original",
+    title: result ? "Resultado publicado por el proveedor original" : "Estado canónico del proveedor original",
     url,
     published_at: safeIsoDate(candidate?.source_settled_at),
     source_type: "provider",
-    supports: cleanText(candidate?.source_result, 40)
+    retrieved_at: safeIsoDate(candidate?.fetched_at ?? candidate?.verified_at ?? candidate?.source_settled_at),
+    retrieval_status: "verified_provider_api",
+    evidence_basis: "provider_api",
+    parser_version: cleanText(candidate?.normalizer_version, 100) || RADAR_NORMALIZER_VERSION,
+    content_type: "application/json",
+    direct_claim: true,
+    claim_status: "direct",
+    claim_verifiable: true,
+    supported_reason_codes: supportedReasonCodes,
+    supported_fact_statuses: result ? ["fully_resolved"] : [],
+    supported_contract_kinds: [],
+    unresolved_proof: false,
+    supports: result
       ? `Resultado: ${providerResultLabel(candidate.source_result)}`
       : "Estado oficial del mercado de origen.",
   }];
@@ -1024,14 +2011,86 @@ export function canApplyPredictivePolicyOverride(candidate, decision = {}, now =
 }
 
 export function applyEligibilityDecision(candidate, decision = {}, now = new Date().toISOString()) {
-  const hardReasons = [...new Set(candidate.hard_reject_reasons ?? [])];
+  const initialHardReasons = [...new Set(candidate.hard_reject_reasons ?? [])];
+  let hardReasons = [...initialHardReasons];
+  const evidence = Array.isArray(decision.evidence) ? decision.evidence.filter(isRecord).slice(0, 20).map((item) => ({
+    title: cleanText(item.title, 300),
+    url: safePublicUrl(item.url),
+    published_at: safeIsoDate(item.published_at),
+    source_type: cleanText(item.source_type, 80) || "secondary",
+    supports: cleanText(item.supports, 500),
+    retrieved_at: safeIsoDate(item.retrieved_at),
+    retrieval_status: cleanText(item.retrieval_status, 80) || null,
+    evidence_basis: cleanText(item.evidence_basis, 80) || null,
+    parser_version: cleanText(item.parser_version, 100) || null,
+    content_sha256: cleanText(item.content_sha256, 80) || null,
+    content_type: cleanText(item.content_type, 100) || null,
+    claim_status: cleanText(item.claim_status, 40) || null,
+    direct_claim: item.direct_claim === true,
+    claim_verifiable: item.claim_verifiable === true,
+    relevance_score: safeNumber(item.relevance_score),
+    selection_complete: item.selection_complete === true,
+    supported_reason_codes: Array.isArray(item.supported_reason_codes)
+      ? item.supported_reason_codes.map((code) => cleanText(code, 100)).filter(Boolean).slice(0, 12)
+      : [],
+    supported_fact_statuses: Array.isArray(item.supported_fact_statuses)
+      ? item.supported_fact_statuses.map((status) => cleanText(status, 40)).filter(Boolean).slice(0, 6)
+      : [],
+    supported_contract_kinds: Array.isArray(item.supported_contract_kinds)
+      ? item.supported_contract_kinds.map((kind) => cleanText(kind, 40)).filter(Boolean).slice(0, 6)
+      : [],
+    unresolved_proof: item.unresolved_proof === true,
+    unresolved_proof_basis: cleanText(item.unresolved_proof_basis, 100) || null,
+    unresolved_until: safeIsoDate(item.unresolved_until),
+    unresolved_proof_excerpt: cleanText(item.unresolved_proof_excerpt, 700) || null,
+    unresolved_proof_excerpt_sha256: cleanText(item.unresolved_proof_excerpt_sha256, 80) || null,
+  })).filter((item) => item.url) : [];
+  const requestedFactStatus = cleanText(decision.fact_status, 40);
+  const factStatusBlocksApproval = ["partially_resolved", "conflicting", "unknown", "fully_resolved"].includes(requestedFactStatus);
+  // Una salida del modelo no es una comprobacion factual por si sola. Para abrir
+  // la puerta debe ser concluyente y estar respaldada por al menos una fuente
+  // publica conservada en el snapshot. Los estados parciales o contradictorios
+  // permanecen siempre en revision.
+  const evidencedApproval = decision.eligible === true
+    && decision.conclusive === true
+    && evidence.some((item) => isDeterministicUnresolvedEvidence(item, candidate, now))
+    && !evidence.some((item) => evidenceHasPotentialTerminalClaim(item, candidate, now))
+    && !factStatusBlocksApproval;
   const requestedFactualCode = cleanText(decision.reason_code, 100);
   const factualCode = Object.values(RADAR_REASON_CODES).includes(requestedFactualCode)
     ? requestedFactualCode
     : RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+  const terminalEvidenceRequired = new Set([
+    RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+    RADAR_REASON_CODES.SOURCE_STALE,
+    RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+    RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
+    RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
+    RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
+  ]);
+  const providerFactUrl = safePublicUrl(candidate?.external_market_url ?? candidate?.external_event_url);
+  const providerResultBound = Boolean(normalizeProviderResult(candidate?.source_result))
+    && Boolean(providerFactUrl)
+    && evidence.some((item) => isVerifiedProviderFactEvidence(item) && safePublicUrl(item.url) === providerFactUrl);
+  const deterministicSelectionComplete = evidence.some((item) =>
+    isVerifiedOfficialEvidence(item, true) && item.selection_complete === true
+  );
+  const structurallyBound = (reason) => initialHardReasons.includes(reason)
+    && [
+      RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
+      RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+      RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
+    ].includes(reason);
+  const evidenceSupportsReason = (reason) => reason === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED
+    ? providerResultBound || deterministicSelectionComplete
+    : structurallyBound(reason) || evidence.some((item) => evidenceSupportsReasonCode(item, reason));
+  hardReasons = hardReasons.filter((reason) =>
+    !terminalEvidenceRequired.has(reason) || evidenceSupportsReason(reason)
+  );
   const conclusiveFactualRejection = decision.eligible === false
     && decision.conclusive === true
-    && factualCode !== RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+    && factualCode !== RADAR_REASON_CODES.VERIFICATION_REQUIRED
+    && (!terminalEvidenceRequired.has(factualCode) || evidenceSupportsReason(factualCode));
   if (conclusiveFactualRejection) hardReasons.push(factualCode);
   const duplicate = hardReasons.includes(RADAR_REASON_CODES.DUPLICATE_MARKET);
   const mappedStatus = hardReasons.includes(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED) ? "rejected_resolved"
@@ -1041,7 +2100,7 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     : hardReasons.includes(RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE) || hardReasons.includes(RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND) || hardReasons.includes(RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND) ? "rejected_invalid_source"
     : duplicate ? "rejected_duplicate"
     : hardReasons.length ? "rejected_ineligible"
-    : decision.eligible === true && decision.conclusive === true ? "verified_open"
+    : evidencedApproval ? "verified_open"
     : "needs_review";
   const primaryCode = mappedStatus === "verified_open" ? null
     : mappedStatus === "needs_review" ? RADAR_REASON_CODES.VERIFICATION_REQUIRED
@@ -1053,13 +2112,13 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
                 : mappedStatus === "rejected_duplicate" ? RADAR_REASON_CODES.DUPLICATE_MARKET
                   : conclusiveFactualRejection ? factualCode
                     : hardReasons[0] ?? RADAR_REASON_CODES.VERIFICATION_REQUIRED;
-  const evidence = Array.isArray(decision.evidence) ? decision.evidence.filter(isRecord).slice(0, 20).map((item) => ({
-    title: cleanText(item.title, 300),
-    url: safePublicUrl(item.url),
-    published_at: safeIsoDate(item.published_at),
-    source_type: cleanText(item.source_type, 80) || "secondary",
-    supports: cleanText(item.supports, 500),
-  })).filter((item) => item.url) : [];
+  const factStatus = mappedStatus === "rejected_resolved" ? "fully_resolved"
+    : ["partially_resolved", "conflicting"].includes(requestedFactStatus) ? requestedFactStatus
+    : requestedFactStatus === "fully_resolved" ? "unknown"
+    : requestedFactStatus === "unknown" ? "unknown"
+    : mappedStatus === "verified_open" ? "unresolved"
+      : mappedStatus === "needs_review" ? "unknown"
+        : cleanText(candidate.fact_status, 40) || "unknown";
   return {
     ...candidate,
     hard_reject_reasons: [...new Set(hardReasons)],
@@ -1070,6 +2129,9 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     verification_expires_at: verificationExpiry(now, safeNumber(decision.ttl_minutes) ?? 360),
     verification_evidence: evidence,
     verification_confidence: Math.max(0, Math.min(100, safeNumber(decision.confidence) ?? (mappedStatus === "verified_open" ? 85 : 0))),
+    fact_status: factStatus,
+    fact_checked_at: now,
+    fact_policy_version: RADAR_FACT_POLICY_VERSION,
     quality_status: mappedStatus === "verified_open" ? "fit" : mappedStatus === "needs_review" ? "needs_review" : "rejected",
     state: mappedStatus === "verified_open" ? "available" : mappedStatus === "needs_review" ? "needs_review" : "rejected",
   };
@@ -1218,7 +2280,12 @@ export function canReuseRadarVerification(cached, candidate, now = new Date().to
   if (cleanText(cached.fingerprint, 120) !== cleanText(candidate.fingerprint, 120)) return false;
   if (cleanText(cached.verification_status, 80) === "needs_review") return false;
   if (cleanText(cached.verification_reason_code, 100) === RADAR_REASON_CODES.VERIFICATION_REQUIRED) return false;
-  if (cleanText(cached.verification_status, 80) === "verified_open" && !isAdaptedIdeaComplete(cached)) return false;
+  // Un estado abierto nunca es terminal: antes de cada descubrimiento explícito
+  // y de cada preparación se vuelve a comprobar el hecho externo.
+  if (cleanText(cached.verification_status, 80) === "verified_open") return false;
+  if (cleanText(cached.fact_policy_version, 100) !== RADAR_FACT_POLICY_VERSION) return false;
+  if (!cleanText(cached.fact_context_fingerprint, 120)
+      || cleanText(cached.fact_context_fingerprint, 120) !== cleanText(candidate.fact_context_fingerprint, 120)) return false;
   const expiresAt = Date.parse(cleanText(cached.verification_expires_at, 100));
   const nowMs = Date.parse(now);
   return Number.isFinite(expiresAt) && Number.isFinite(nowMs) && expiresAt > nowMs;
@@ -1228,43 +2295,117 @@ export function selectVerifiedResolutionUrl(candidate, evidence = []) {
   const existing = safePublicUrl(candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url);
   if (existing) return existing;
   const official = (Array.isArray(evidence) ? evidence : [])
-    .find((item) => isRecord(item) && cleanText(item.source_type, 80) === "official" && safePublicUrl(item.url));
+    .find((item) => isVerifiedOfficialEvidence(item, true));
   return safePublicUrl(official?.url);
 }
 
+function selectionQuestion(value) {
+  const question = normalizeComparableText(value).replace(/\?$/, "");
+  const patterns = [
+    /^will (.+?) be (?:on )?the cover of (.+)$/,
+    /^will (.+?) (?:appear|feature) (?:on|in) the cover of (.+)$/,
+    /^(?:estara|estará) (.+?) en la portada de (.+)$/,
+    /^sera (.+?) (?:el|la) (?:atleta|protagonista) de portada de (.+)$/,
+  ];
+  for (const pattern of patterns) {
+    const match = question.match(pattern);
+    if (match) return { name: match[1], subject: match[2] };
+  }
+  return null;
+}
+
+function selectionEntries(candidates) {
+  const values = [];
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    values.push(candidate);
+    const payload = familyProviderPayload(candidate);
+    for (const child of Array.isArray(payload.canonical_event_children) ? payload.canonical_event_children : []) {
+      if (isRecord(child)) values.push({ source_question: child.question });
+    }
+  }
+  const seen = new Set();
+  return values.map((candidate) => selectionQuestion(candidate?.source_question ?? candidate?.atinara_question))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = `${item.subject}:${item.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 export function detectOfficialCoverEventResolution(candidates = [], evidence = []) {
-  const source = Array.isArray(candidates) ? candidates : [];
-  const parsed = source.map((candidate) => {
-    const question = normalizeComparableText(candidate?.source_question ?? candidate?.atinara_question);
-    const match = question.match(/^will (.+?) be (?:on )?the cover of (.+)$/);
-    return match ? { name: match[1], subject: match[2] } : null;
+  const parsed = selectionEntries(candidates);
+  if (parsed.length < 2) return null;
+  const subjectCounts = new Map();
+  for (const item of parsed) subjectCounts.set(item.subject, (subjectCounts.get(item.subject) ?? 0) + 1);
+  const subject = [...subjectCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
+  if (!subject || (subjectCounts.get(subject) ?? 0) < 2) return null;
+  const subjectEntries = parsed.filter((item) => item.subject === subject);
+  const contextComplete = (Array.isArray(candidates) ? candidates : []).some((candidate) => {
+    const payload = familyProviderPayload(candidate);
+    const children = Array.isArray(payload.canonical_event_children) ? payload.canonical_event_children : [];
+    const total = safeNumber(payload.canonical_event_children_total);
+    return payload.canonical_event_children_complete === true
+      && Number.isInteger(total)
+      && total > 0
+      && children.length === total;
   });
-  if (source.length < 2 || parsed.some((item) => !item)) return null;
-  const subjects = new Set(parsed.map((item) => item.subject));
-  if (subjects.size !== 1) return null;
-  const subject = parsed[0].subject;
+  if (!contextComplete) return null;
   const matchedNames = new Map();
   const relevantEvidence = [];
+  let exhaustiveEvidence = false;
   for (const item of Array.isArray(evidence) ? evidence : []) {
-    if (!isRecord(item) || cleanText(item.source_type, 80) !== "official" || !safePublicUrl(item.url)) continue;
+    if (!isVerifiedOfficialEvidence(item, true)) continue;
     const text = normalizeComparableText(`${item.title ?? ""} ${item.supports ?? ""}`);
-    if (!text.includes(subject)) continue;
+    const compactText = text.replace(/\s+/g, "");
+    const compactSubject = subject.replace(/\s+/g, "");
+    if (!text.includes(subject) && !compactText.includes(compactSubject)) continue;
+    const definitive = /\b(cover star|cover stars|cover athlete|cover athletes|cover lineup|official cover|cover art|on the cover|portada oficial|atleta de portada|protagonista de portada)\b/.test(text)
+      || /\b(announce\w*|reveal\w*|present\w*|welcome\w*|anunci\w*|revel\w*|present\w*)\b.{0,180}\b(cover|portada)\b/.test(text)
+      || /\b(cover|portada)\b.{0,180}\b(show\w*|feature\w*|star\w*|present\w*|muestra|incluye)\b/.test(text);
+    if (!definitive) continue;
+    const continuationCue = /\b(?:more|additional|other|remaining|regional|select markets?|later|coming soon|to be (?:announced|revealed)|mas adelante|más adelante|otras? portadas?|regional)\b/.test(text);
+    const completeEditionScope = /\bstandard(?: edition)?\b/.test(text)
+      && /\bultimate edition\b/.test(text)
+      && /\bultimate plus(?: edition)?\b/.test(text)
+      && /\b(?:cover|portada)s?\b/.test(text);
+    const exhaustive = !continuationCue && (
+      /\b(?:complete|full|entire|all)\b.{0,90}\b(?:cover|portada|lineup|selection|seleccion)\b/.test(text)
+      || /\b(?:cover|portada|lineup|selection|seleccion)\b.{0,90}\b(?:complete|full|entire|all)\b/.test(text)
+      || completeEditionScope
+    );
+    if (!exhaustive) continue;
     const windows = [];
-    let coverIndex = text.indexOf("cover");
-    while (coverIndex >= 0) {
-      windows.push(text.slice(Math.max(0, coverIndex - 180), coverIndex + 220));
-      coverIndex = text.indexOf("cover", coverIndex + 5);
+    for (const term of ["cover", "portada", "welcome", "announc", "reveal"]) {
+      let index = text.indexOf(term);
+      while (index >= 0) {
+        windows.push(text.slice(Math.max(0, index - 240), index + 280));
+        index = text.indexOf(term, index + term.length);
+      }
     }
-    for (const candidate of parsed) {
-      if (windows.some((window) => window.includes(subject) && window.includes(candidate.name))) {
+    for (const candidate of subjectEntries) {
+      if (windows.some((window) => (window.includes(subject) || window.replace(/\s+/g, "").includes(compactSubject)) && window.includes(candidate.name))) {
         matchedNames.set(candidate.name, candidate.name);
-        if (!relevantEvidence.includes(item)) relevantEvidence.push(item);
+        exhaustiveEvidence = true;
+        if (!relevantEvidence.some((evidenceItem) => evidenceItem.url === item.url)) {
+          relevantEvidence.push({
+            ...item,
+            selection_complete: true,
+            supported_reason_codes: [RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED],
+            supported_fact_statuses: ["fully_resolved"],
+          });
+        }
       }
     }
   }
-  if (matchedNames.size !== 1 || !relevantEvidence.length) return null;
+  if (matchedNames.size < 1 || !relevantEvidence.length || !exhaustiveEvidence) return null;
+  const outcomeNames = [...matchedNames.values()].map((name) => name.split(" ").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" "));
   return {
-    winner_name: [...matchedNames.values()][0].split(" ").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" "),
+    winner_name: outcomeNames[0],
+    outcome_names: outcomeNames,
+    selection_complete: true,
+    fact_status: "fully_resolved",
     evidence: relevantEvidence.slice(0, 6),
   };
 }
@@ -1277,13 +2418,13 @@ export function buildCoverResolutionSignals(candidates = [], now = new Date().to
     const resolved = group.candidates.filter((candidate) => candidate.verification_status === "rejected_resolved"
       && (safeNumber(candidate.verification_confidence) ?? 0) >= 85
       && Array.isArray(candidate.verification_evidence)
-      && candidate.verification_evidence.some((item) => isRecord(item) && cleanText(item.source_type, 80) === "official" && safePublicUrl(item.url)));
-    if (resolved.length < 2 || resolved.length / group.candidates.length < 0.75) continue;
+      && candidate.verification_evidence.some((item) => isVerifiedOfficialEvidence(item, true) && item.selection_complete === true));
+    if (!resolved.length) continue;
     const evidenceByUrl = new Map();
     for (const candidate of resolved) {
       for (const item of candidate.verification_evidence) {
         const url = isRecord(item) ? safePublicUrl(item.url) : null;
-        if (url && cleanText(item.source_type, 80) === "official" && !evidenceByUrl.has(url)) evidenceByUrl.set(url, item);
+        if (url && isVerifiedOfficialEvidence(item, true) && item.selection_complete === true && !evidenceByUrl.has(url)) evidenceByUrl.set(url, item);
       }
     }
     const evidence = [...evidenceByUrl.values()].slice(0, 6);
@@ -1298,6 +2439,7 @@ export function buildCoverResolutionSignals(candidates = [], now = new Date().to
         confidence: safeNumber(strongest.verification_confidence) ?? 100,
         ttl_minutes: 360,
         evidence,
+        selection_complete: true,
       });
     }
   }
@@ -1329,9 +2471,12 @@ export function propagateResolvedEventGroups(candidates = [], resolutions = [], 
     if (!isRecord(resolution)) continue;
     const eventGroupKey = cleanText(resolution.event_group_key, 240);
     const candidateIdentity = cleanText(resolution.candidate_identity, 300);
-    const evidence = Array.isArray(resolution.evidence) ? resolution.evidence.filter(isRecord) : [];
+    const evidence = Array.isArray(resolution.evidence)
+      ? resolution.evidence.filter((item) => isRecord(item) && isVerifiedTerminalEvidence(item))
+      : [];
     const confidence = Math.max(0, Math.min(100, safeNumber(resolution.confidence) ?? 0));
-    if (!eventGroupKey || !candidateIdentity || !safeIsoDate(resolution.resolved_at) || !evidence.length || confidence < 85) continue;
+    if (!eventGroupKey || !candidateIdentity || !safeIsoDate(resolution.resolved_at)
+        || resolution.selection_complete !== true || !evidence.length || confidence < 85) continue;
     if (!signalsByGroup.has(eventGroupKey)) signalsByGroup.set(eventGroupKey, new Map());
     const signals = signalsByGroup.get(eventGroupKey);
     const current = signals.get(candidateIdentity);
@@ -1340,7 +2485,8 @@ export function propagateResolvedEventGroups(candidates = [], resolutions = [], 
   const resolvedGroups = new Map();
   for (const [eventGroupKey, signals] of signalsByGroup.entries()) {
     const groupSize = groupSizes.get(eventGroupKey) ?? 0;
-    if (signals.size < 2 || groupSize < 2 || signals.size / groupSize < 0.75) continue;
+    const selectionComplete = [...signals.values()].some((signal) => signal.selection_complete === true);
+    if (!selectionComplete || groupSize < 1) continue;
     const strongest = [...signals.values()].sort((left, right) => right.confidence - left.confidence)[0];
     resolvedGroups.set(eventGroupKey, strongest);
   }
@@ -1357,6 +2503,33 @@ export function propagateResolvedEventGroups(candidates = [], resolutions = [], 
       evidence: resolution.evidence,
     }, now);
   });
+}
+
+export function buildRadarFactCheck(candidate) {
+  if (!isRecord(candidate) || !cleanText(candidate.provider, 40) || !cleanText(candidate.external_id, 220)) return null;
+  const evidence = Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence.filter(isRecord).slice(0, 20) : [];
+  const factStatus = cleanText(candidate.fact_status, 40) || "unknown";
+  return {
+    provider: cleanText(candidate.provider, 40),
+    external_id: cleanText(candidate.external_id, 220),
+    event_group_key: cleanText(candidate.event_group_key, 240) || null,
+    fact_context_fingerprint: cleanText(candidate.fact_context_fingerprint, 120) || cleanText(candidate.fingerprint, 120),
+    fact_policy_version: cleanText(candidate.fact_policy_version, 100) || RADAR_FACT_POLICY_VERSION,
+    fact_status: factStatus,
+    verification_status: cleanText(candidate.verification_status, 80),
+    reason_code: cleanText(candidate.verification_reason_code, 100) || null,
+    reason: cleanText(candidate.verification_reason, 1_000) || null,
+    confidence: Math.max(0, Math.min(100, safeNumber(candidate.verification_confidence) ?? 0)),
+    evidence,
+    checked_at: safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
+    decision_hash: stableFingerprint(
+      RADAR_FACT_POLICY_VERSION,
+      factStatus,
+      candidate.verification_status,
+      candidate.verification_reason_code,
+      JSON.stringify(evidence),
+    ),
+  };
 }
 
 export function isAdaptedIdeaComplete(candidate) {
@@ -1421,6 +2594,11 @@ export function buildDraftPrefill(candidate) {
       external_market_url: safePublicUrl(candidate.external_market_url),
       normalizer_version: candidate.normalizer_version,
       eligibility_policy_version: candidate.eligibility_policy_version,
+      fact_policy_version: candidate.fact_policy_version,
+      fact_status: candidate.fact_status,
+      fact_check_id: candidate.current_fact_check_id,
+      fact_context_fingerprint: candidate.fact_context_fingerprint,
+      fact_checked_at: candidate.fact_checked_at,
       verification_status: candidate.verification_status,
       verification_reason_code: candidate.verification_reason_code,
       verified_at: candidate.verified_at,

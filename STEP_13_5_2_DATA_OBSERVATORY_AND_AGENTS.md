@@ -1,10 +1,15 @@
 # Paso 13.5.2 · Observatorio de datos y agentes de mercado
 
-Fecha de preparación local: 7 de agosto de 2026.
+Fecha de preparación original: 7 de agosto de 2026. Último endurecimiento: 9 de
+agosto de 2026.
 
-Estado: **implementado localmente y pendiente de activación manual de Yol**.
-GitHub, GitHub Pages, Supabase, Edge Functions remotas y datos reales no fueron
-modificados durante esta entrega.
+Estado vigente: **backend B2B activado y frontend coordinado en este árbol**.
+Supabase conserva las puertas factuales, de revisión y de fuentes primarias; los
+schedulers opcionales de descubrimiento y monitorización siguen desactivados.
+El frontend de este árbol aún no está fusionado en `main`, por lo que GitHub
+Pages continúa sirviendo la versión anterior hasta que el PR supere sus checks.
+El smoke visual con una sesión administrativa real continúa pendiente y nunca
+debe crear, confirmar, publicar, predecir ni resolver un mercado.
 
 ## 1. Fronteras del sistema
 
@@ -21,9 +26,10 @@ El Paso 13.5.2 añade tres capacidades privadas y deliberadamente separadas:
    resolver un mercado. Reúne evidencia, pero nunca elige ni liquida un
    resultado sin confirmación humana.
 
-El Radar conserva `atinara-radar-v2` y la política
-`atinara-prediction-policy-v3`. Este paso no crea una versión 18, no cambia su
-ingesta Polymarket/Kalshi y no repite sus migraciones.
+El diseño original conservaba `atinara-radar-v2` y la política
+`atinara-prediction-policy-v3`. El endurecimiento del 9 de agosto de 2026 eleva
+la política factual a `atinara-prediction-policy-v4`; no cambia el principio de
+separación entre Radar, Observatorio y agentes ni repite migraciones aplicadas.
 
 ## 2. Constitución y contratos versionados
 
@@ -189,7 +195,11 @@ La activación futura debe realizarse en dos decisiones separadas:
 No se incluyen comandos con credenciales ni se activa ningún job en esta
 entrega.
 
-## 10. Orden seguro de activación manual
+## 10. Orden histórico de activación manual
+
+Esta secuencia documenta la activación original del Observatorio. Está
+superada por el corte productivo de la sección 13 y no debe reutilizarse para
+repetir migraciones o Edge Functions ya activas.
 
 1. Subir a GitHub el contenido descomprimido del ZIP.
 2. Confirmar las migraciones ya aplicadas.
@@ -212,9 +222,10 @@ entrega.
 19. Revisar costes, cuotas, cooldown, retención y auditoría.
 20. Confirmar que ningún scheduler publica ni resuelve automáticamente.
 
-## 11. Validación local y smoke tests pendientes
+## 11. Fotografía histórica de validación y smoke tests pendientes
 
-Comprobado localmente:
+Esta sección conserva la fotografía del 7 de agosto y queda superada por la
+validación vigente de la sección 13. En aquella entrega se comprobó localmente:
 
 - sintaxis de 57 archivos JavaScript;
 - 153 pruebas unitarias, incluidas 36 específicas de inteligencia de mercados;
@@ -224,7 +235,7 @@ Comprobado localmente:
 - separación del Radar, privacidad, autorización, inmutabilidad, ausencia frente
   a cero, contrato de fuentes, prompt injection y no resolución automática.
 
-Pendiente de activación y smoke test real:
+En aquella entrega quedaban pendientes de activación y smoke test real:
 
 - disponibilidad y cuotas reales de IGDB, Twitch, YouTube, Tavily y Gemini;
 - aplicación de la migración y permisos efectivos en Supabase;
@@ -235,9 +246,64 @@ Pendiente de activación y smoke test real:
 Estas comprobaciones pendientes no se presentan como superadas. Ningún smoke
 test debe crear mercados públicos, predicciones o resoluciones reales.
 
-## 12. Alcance preservado
+## 12. Alcance original preservado — fotografía histórica
 
 No se ha modificado el LMSR, el contrato `legacy_fixed_v1`, la migración viva,
 predicciones, mercados, Karma, Prestigio, autenticación, publicación programada,
 Radar v17 ni proveedores externos. No hay catálogo de 24–36 mercados, scraping
 global, redes sociales nuevas, dinero real o resolución autónoma por IA.
+
+## 13. Endurecimiento B2B activado el 9 de agosto de 2026
+
+Este añadido registra el estado vigente y prevalece sobre las instrucciones de
+activación manual de las secciones anteriores:
+
+- El proveedor externo es una fuente de descubrimiento, no la autoridad sobre
+  si un hecho continúa abierto. La elegibilidad requiere una puerta factual
+  independiente antes de puntuar y antes de preparar.
+- `market-radar` v26 conserva el evento canónico completo para evaluar hijos
+  abiertos, cerrados y resueltos. Una respuesta cacheada no devuelve propuestas
+  y una candidata solo puede avanzar con una comprobación factual v2 vigente,
+  inmutable y ligada a su revisión y sus huellas.
+- Una fuente primaria que demuestre una selección completa puede cerrar la
+  familia aunque el proveedor mantenga contratos abiertos. Evidencia parcial,
+  secundaria, modal o contradictoria degrada a revisión; Tavily y Gemini no
+  originan por sí solos un estado terminal ni `verified_open`.
+- La identidad de familia v4 separa invariantes y eje variable. Los mercados de
+  distintos meses son hermanos independientes y un número incidental dentro de
+  las reglas no los convierte en el mismo umbral. Dos fronteras no ambiguas con
+  el mismo instante UTC son el mismo hijo aunque una use ET y otra UTC.
+- `market-draft-fixer` v7 y `validate-market-draft` v8 comparten una taxonomía
+  cerrada de incidencias y constructores para los diez arquetipos admitidos. El
+  Corrector repara lo deducible, investiga lo verificable y escala con estado
+  estructurado lo que no puede demostrar; nunca inventa fuente, métrica,
+  agregación, sujeto, predicado o ancla temporal.
+- Las fuentes primarias del Corrector deben estar registradas para rol y
+  categoría, ser alcanzables mediante redirecciones seguras y demostrar en el
+  cuerpo identidad y predicado. La administración B2B del registro usa RPC
+  auditadas y no expone DML directo.
+- El corte de migraciones local `120000 → 133000 → 140000 → 145000 → 150000 →
+  160000 → 170000` ya está aplicado. La `140000` fue reconciliada mediante el
+  preflight material de `145000` y no debe ejecutarse de nuevo. El mapeo exacto
+  de versiones remotas está fijado en `ORAKLO_PROJECT_CONTEXT.md`.
+- `market-radar` v26, `market-draft-fixer` v7,
+  `validate-market-draft` v8 y `market-expert` v11 están desplegadas con JWT
+  obligatorio y su contenido remoto coincide con el árbol local.
+- Tras la aplicación se mantuvieron exactamente 15 mercados, 9 predicciones, 2
+  perfiles, 2027 Karma total y 40 Prestigio total. Cinco falsas duplicidades de
+  tráiler se reclasificaron como hijos mensuales `sibling`; las filas ya
+  preparadas se preservaron y dejaron de aparecer como rechazos vigentes.
+- La política v4 caducó las 22 opciones FC27 que conservaban una aprobación v3:
+  dejaron de ser propuestas aptas. El siguiente ciclo administrativo deberá
+  recuperar la fuente oficial y guardar el dictamen terminal; el estado abierto
+  del proveedor no puede rehabilitarlas.
+- Confirmar, programar, publicar y materializar vuelven a exigir una
+  revalidación factual vigente. Un borrador Radar no puede desligarse de su
+  procedencia para eludir la puerta; el bridge heredado de `145000` solo enlaza
+  después de una revalidación fresca y nunca confirma ni publica.
+- La validación local completa terminó con sintaxis de 67 archivos JavaScript,
+  287 pruebas unitarias, TypeScript, monitorización y `git diff --check`.
+- El smoke visual autenticado sigue pendiente porque no hubo una sesión gráfica
+  administrativa controlable. Debe limitarse a revalidar y aplicar el Corrector
+  al borrador privado de Marvel y lanzar un ciclo explícito del Radar, sin
+  confirmar ni publicar. No repetir migraciones ni despliegues para realizarlo.

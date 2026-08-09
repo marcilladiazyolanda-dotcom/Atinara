@@ -1,6 +1,11 @@
 # Economía del mercado predictivo vivo de Atinara
 
-> **Estado de implementación, 3 de agosto de 2026:** este contrato continúa vigente y manda sobre el Paso 13.4. El frontend local conserva la cotización y confirmación autoritativas, el histórico real, `PRICE_MOVED`, la liquidación por contratos y la compatibilidad `legacy_fixed_v1`. La administración y la puerta previa añadidas en `20260803143000_add_market_administration_gate.sql` son aditivas, no cambian este modelo y todavía no se han ejecutado en Supabase.
+> **Estado vigente, 9 de agosto de 2026:** este contrato continúa vigente y
+> manda sobre el Paso 13.4. La administración, la puerta factual Radar y la
+> revisión B2B son aditivas y ya están activas; no cambian LMSR,
+> `legacy_fixed_v1`, cotización, liquidación ni privacidad. El postcheck del
+> último corte conservó 15 mercados, 9 predicciones, 2 perfiles, 2027 Karma, 40
+> Prestigio, 15 estados maker y 17 puntos históricos con sus hashes previos.
 
 Fecha de aprobación: 1 de agosto de 2026.
 

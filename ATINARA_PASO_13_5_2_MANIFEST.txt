@@ -2,7 +2,10 @@ ATINARA · PASO 13.5.2 · MANIFIESTO DE ENTREGA
 Fecha: 2026-08-07
 Base canónica: origin/main 56e6f58ccc7feaf7c71f30ac4da2387ccc5b893d
 Rama local: codex/paso-13-5-2
-Estado: implementado localmente; pendiente de activación manual y aceptación de Yol.
+Estado: SNAPSHOT HISTÓRICO de la entrega original. Su orden manual fue ejecutado
+y quedó superado por el corte B2B del 9 de agosto de 2026. No aplicar sus
+migraciones ni desplegar sus funciones siguiendo este manifiesto; consultar
+ORAKLO_PROJECT_CONTEXT.md para el estado productivo autoritativo.
 
 ARCHIVOS NUEVOS
 - ATINARA_PASO_13_5_2_MANIFEST.txt
@@ -71,7 +74,7 @@ VALIDACIÓN LOCAL
   y oscuro a 1648, 1366, 1280, 1024, 768, 430, 390, 375 y 320 px.
 - Sin secretos, datos privados, cadenas de pensamiento, mercados o predicciones.
 
-ORDEN MANUAL SEGURO
+ORDEN MANUAL HISTÓRICO — NO EJECUTAR DE NUEVO
 1. Descomprimir el ZIP y subir su contenido completo a la raíz de main.
 2. Aplicar una sola vez la migración 20260807163000_add_data_observatory_and_market_intelligence.sql.
 3. Comprobar sin revelar valores que GEMINI_API_KEY y TAVILY_API_KEY continúan disponibles.

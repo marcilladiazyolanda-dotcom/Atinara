@@ -149,9 +149,9 @@ begin
 
   beginning := public.begin_market_draft_review_v2(
     draft_id_value, 1, gen_random_uuid(),
-    'atinara-market-gate-v2',
-    'atinara-market-review-policy-v2',
-    'atinara-market-draft-schema-v2',
+    'atinara-market-gate-v3',
+    'atinara-market-review-policy-v3',
+    'atinara-market-draft-schema-v3',
     false
   );
   if beginning ->> 'status' <> 'in_progress' then
@@ -179,9 +179,9 @@ begin
   ] loop
     beginning := public.begin_market_draft_review_v2(
       draft_id_value, 1, gen_random_uuid(),
-      'atinara-market-gate-v2',
-      'atinara-market-review-policy-v2',
-      'atinara-market-draft-schema-v2',
+      'atinara-market-gate-v3',
+      'atinara-market-review-policy-v3',
+      'atinara-market-draft-schema-v3',
       true
     );
     attempt_id := (beginning ->> 'attempt_id')::uuid;
@@ -231,9 +231,9 @@ begin
 
   beginning := public.begin_market_draft_review_v2(
     draft_id_value, 1, gen_random_uuid(),
-    'atinara-market-gate-v2',
-    'atinara-market-review-policy-v2',
-    'atinara-market-draft-schema-v2',
+    'atinara-market-gate-v3',
+    'atinara-market-review-policy-v3',
+    'atinara-market-draft-schema-v3',
     true
   );
   stale_attempt_id := (beginning ->> 'attempt_id')::uuid;
@@ -312,9 +312,9 @@ begin
 
   beginning := public.begin_market_draft_review_v2(
     draft_id_value, 3, gen_random_uuid(),
-    'atinara-market-gate-v2',
-    'atinara-market-review-policy-v2',
-    'atinara-market-draft-schema-v2',
+    'atinara-market-gate-v3',
+    'atinara-market-review-policy-v3',
+    'atinara-market-draft-schema-v3',
     true
   );
   perform set_config(

@@ -1,20 +1,22 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 8 de agosto de 2026.
+Última actualización del contexto: 9 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** el Radar funcional v17 continúa activo e intacto. Supabase
-> lo enumera internamente como despliegue 18, con hash
-> `942a51d928aa4c7666bb481cd55d449fb5ff00270decdb7889de8f584b15fc8e` y
-> `verify_jwt=true`. El cierre del Paso 13.5.2 añade memoria autoritativa de
-> borradores y revisiones; no activa Cron ni schedulers y no modifica mercados
-> publicados, predicciones, Karma, Prestigio o economía. La migración
-> `20260808194234_fix_market_draft_human_confirmation_flow` corrige además la
-> puerta de confirmación para todos los Planes de Resolución con procedencia
-> válida; `20260808195500_add_market_admin_audit_provenance_index` mantiene
-> eficiente esa comprobación al crecer la auditoría. Ninguna confirma ni
-> publica por sí sola.
+> **Estado vigente:** Atinara Engine usa `market-radar` v26,
+> `market-draft-fixer` v7, `validate-market-draft` v8 y `market-expert` v11,
+> todas activas con `verify_jwt=true`. La puerta factual v2 gobierna
+> descubrimiento, preparación y todas las transiciones hacia publicación; la
+> identidad familiar vigente es v4 y la revisión automática usa política v3.
+> Los schedulers opcionales del Observatorio y del monitor siguen apagados. El
+> corte preservó exactamente mercados publicados, predicciones, Karma,
+> Prestigio, maker state e histórico; ninguna migración o Edge Function de este
+> hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
+> visual administrativo de Marvel y FC27 continúa pendiente y debe hacerse sin
+> confirmar ni publicar. GitHub Pages aún sirve el frontend de `origin/main`
+> anterior a este corte; la sincronización debe hacerse mediante rama y PR,
+> nunca con un push directo no revisado a `main`.
 
 ### Corrección general de confirmación humana · 8 de agosto de 2026
 
@@ -659,8 +661,49 @@ Orden actual:
     en producción el 3 de agosto de 2026. Añade borradores privados, revisión,
     confirmación humana, programación, auditoría, coherencia temporal y permisos
     mínimos. No repetir.
+11. `20260809120000_harden_terminal_fact_gate_and_family_identity_v3.sql` —
+    aplicada una sola vez y registrada remotamente como
+    `20260808233502_harden_terminal_fact_gate_and_family_identity_v3`. Añade la
+    primera puerta factual inmutable, separa preparados de rechazos vigentes y
+    corrige las falsas duplicidades iniciales. No repetir.
+12. `20260809133000_sync_prediction_policy_v4_guards.sql` — aplicada una sola
+    vez y registrada remotamente como
+    `20260808234810_sync_prediction_policy_v4_guards`. Sincroniza la preparación
+    con la política v4 e invalida de forma cerrada toda aprobación
+    `verified_open` heredada. No repetir.
+13. `20260809140000_authoritative_radar_fact_gate_v1.sql` — aplicada
+    materialmente una sola vez el 9 de agosto de 2026. Su manifiesto exacto de
+    funciones, columnas, índices, restricciones, triggers y permisos fue
+    comprobado antes de reconciliar el asiento remoto exacto
+    `20260809140000_authoritative_radar_fact_gate_v1`. **No ejecutar este
+    fichero otra vez**.
+14. `20260809145000_reconcile_authoritative_radar_fact_gate_v2.sql` — aplicada
+    y registrada remotamente como
+    `20260809053000_reconcile_authoritative_radar_fact_gate_v2`. Verifica el
+    manifiesto material de `140000`, repara de forma cerrada su historial e
+    instala la atestación puntual para borradores Radar heredados. No repetir.
+15. `20260809150000_complete_family_identity_v4_cutover.sql` — aplicada y
+    registrada remotamente como
+    `20260809053100_complete_family_identity_v4_cutover`. Completa el backfill
+    familiar v4 y la paridad JS/SQL de fronteras temporales. No repetir.
+16. `20260809160000_harden_market_review_policy_v3.sql` — aplicada y registrada
+    remotamente como `20260809053248_harden_market_review_policy_v3`. Caduca
+    aprobaciones automáticas incompatibles y alinea la memoria de revisión con
+    la taxonomía v3. No repetir.
+17. `20260809170000_require_registered_primary_source_checks_v1.sql` — aplicada
+    y registrada remotamente como
+    `20260809053353_require_registered_primary_source_checks_v1`. Exige una
+    atestación vigente de fuente primaria y añade administración B2B auditada
+    del registro, sin conceder escritura directa. No repetir.
 
 No debe suponerse que toda función antigua del Supabase vivo está versionada aquí. Antes de escribir SQL nuevo, inspeccionar esquema, firmas, políticas, permisos y migraciones existentes.
+
+**Historial remoto autoritativo:** las versiones locales `120000`, `133000`,
+`145000`, `150000`, `160000` y `170000` tienen timestamps remotos distintos;
+`140000` figura con su timestamp exacto después de la reconciliación. No ejecutar
+un `db push` ciego ni intentar igualarlos reejecutando SQL: comparar primero el
+mapeo 11–17, el estado material y `supabase_migrations.schema_migrations`. Toda
+discrepancia debe abortar la operación; `140000` nunca debe reaplicarse.
 
 ## 6. Roadmap acordado
 
@@ -685,8 +728,19 @@ Orden acordado para el Paso 13:
    Vault y Cron activados; frontend y sincronización de
    `publish-scheduled-markets` v2 subidos a `main`. Pendiente de aceptación
    funcional final de Yol; no declarar el paso cerrado todavía.
-6. **13.5 · Radar y catálogo:** Radar administrativo activado y aceptado técnicamente; migración aplicada una sola vez y `market-radar` v4 activa con JWT. El catálogo ampliado de 24–36 mercados no forma parte de esta entrega.
-7. **13.6 · QA integral y beta:** aceptación completa después de activar el árbol coordinado.
+6. **13.5 / 13.5.2 · Radar y calidad editorial:** backend endurecido con
+   `market-radar` v26, política predictiva v4, puerta factual v2 y familias v4;
+   frontend y smoke administrativo pendientes para cerrar el hito. El catálogo
+   ampliado de 24–36 mercados no forma parte de esta entrega.
+7. **13.6 · Infraestructura de Beta y Crecimiento:** captación, atribución,
+   onboarding, analítica, feedback, retención, referidos y Temporada Cero.
+8. **13.7 · Productización B2B:** convertir Atinara Engine en infraestructura
+   modular y licenciable para operadores, proveedores, agregadores, medios e
+   instituciones después de validar la beta.
+
+Este corte constituye una base técnica de Atinara Engine; no declara completada
+la productización comercial B2B del Paso 13.7, que continúa después del Paso
+13.6 y de validar Atinara Social.
 
 El alcance aprobado incluye recuperación completa de contraseña; administración cotidiana de mercados desde Atinara; resolución asistida segura; datos honestos y contenido escapado; mercado de precios vivos y cotización autoritativa; accesibilidad, responsive, rendimiento y trazabilidad; y el sistema visual definitivo con emblemas y avatares propios. La creación y publicación debe asegurar que la pregunta, opciones, criterios, fuentes y periodo forman un mercado inequívoco y resoluble. Un borrador puede estar incompleto, pero Supabase debe impedir publicarlo hasta que supere la revisión automática sin omisión y la confirmación humana.
 
@@ -716,12 +770,88 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
 - Integridad Radar final: 229 candidatas, cero autocoincidencias, cero hermanas bloqueantes y cero elementos no bloqueantes dentro de `duplicate_matches`; los 54 duplicados reales siguen bloqueados.
 - Validación final: 63 archivos JavaScript, 186 pruebas unitarias, TypeScript, `git diff --check`, publicación y confirmación idempotentes, RPC pública del mercado, JWT obligatorio y asesores de seguridad/rendimiento de Supabase sin avisos.
 
-Siguiente paso operativo: subir a `main`, conservando rutas, el ZIP mínimo de
-esta corrección para que GitHub Pages cargue la nueva interfaz y la versión de
-caché `20260808-radar-e2e1`. No repetir la migración ni el despliegue de
-`market-radar`: el backend ya está activo. El mercado antiguo de julio continúa
-sin aprobar ni liquidar. No ampliar todavía el catálogo, chat, GIF, feed
-algorítmico, temporadas, monetización, dinero real ni compraventa secundaria.
+### Endurecimiento B2B del Corrector, puerta factual y familias v4 (9 de agosto de 2026)
+
+- El corte local `120000 → 133000 → 140000 → 145000 → 150000 → 160000 →
+  170000` está aplicado y registrado con el mapeo remoto fijado en la sección 5.
+  La `140000` quedó materialmente completa antes de tener asiento de historial;
+  `145000` verificó su manifiesto exacto y reconcilió ese asiento dentro de una
+  migración cerrada. No volver a ejecutar ninguna de las siete.
+- `market-radar` v26, `market-draft-fixer` v7,
+  `validate-market-draft` v8 y `market-expert` v11 están activas y su contenido
+  remoto coincide con el árbol local; todas conservan `verify_jwt=true`.
+- Atinara Engine separa desde este hito tres conceptos que ningún proveedor o
+  puntuación puede volver a fusionar: descubrimiento externo, estado factual y
+  elegibilidad contractual. Que Polymarket o Kalshi mantengan un contrato
+  abierto nunca acredita que el hecho del mundo siga sin resolver.
+- El Radar conserva todos los hijos del evento canónico como contexto factual,
+  aunque solo los hijos operables puedan ser candidatos. Una caché nunca se
+  presenta como propuesta. Descubrimiento, preparación, confirmación,
+  programación y materialización exigen una comprobación factual v2 vigente y
+  ligada por huellas; ningún score ni dictamen Gemini puede acreditar por sí
+  mismo que el hecho continúa abierto.
+- Las conclusiones factuales usan contenido recuperado de una fuente registrada,
+  hash, fecha y claim directo. Rumores, predicciones, votaciones, snippets o una
+  página meramente relacionada degradan a revisión. Una afirmación terminal en
+  una página oficial relevante domina una fecha futura, salvo que ambas estén
+  vinculadas de forma explícita a plataformas realmente disjuntas.
+- La identidad familiar v4 deriva por separado entidad, predicado, invariantes
+  y eje del hijo. Un número incidental de los criterios no convierte una
+  escalera de fechas en una familia de umbrales; distintos meses continúan como
+  hermanos económicos independientes. Fronteras equivalentes ET, EDT y UTC
+  comparten hijo; EST conserva su instante distinto; gaps, folds y abreviaturas
+  ambiguas fallan de forma cerrada.
+- El Corrector comparte una taxonomía cerrada de incidencias con el validador y
+  registra una disposición explícita para cada código: reparar, investigar o
+  escalar de forma segura. Repara todo lo deducible, investiga lo demostrable y
+  emite un escalado específico cuando la información no basta; nunca transforma
+  incertidumbre en una corrección inventada.
+- Para métricas, el contrato conserva operador, umbral, fuente, plataforma,
+  edición, agregación, ausencia de dato e instante de observación. Las anclas
+  temporales usan la fecha autoritativa ya disponible, offset y zona; distingue
+  observación de resolución, agrupaciones locales de millares y User Score de
+  Metascore. Una ancla no demostrada nunca se inventa.
+- La fuente primaria del Corrector debe pertenecer al registro B2B, admitir el
+  rol y la categoría, responder mediante una cadena de redirecciones segura y
+  demostrar en el cuerpo tanto identidad como predicado. El registro se gestiona
+  mediante RPC administrativas auditadas, sin DML directo de `service_role`.
+- El caso de aceptación de *Marvel Tokon: Fighting Souls* se reproduce como
+  `metric_threshold`, Metascore de crítica `> 95`, máximo entre plataformas
+  elegibles y observación el 13 de agosto de 2026 a las 10:00
+  `America/New_York`, sin degradarlo a un mercado de lanzamiento. Su borrador
+  heredado se puede enlazar mediante la atestación puntual de `145000` después
+  de una revalidación fresca; el puente no confirma ni publica.
+- El backfill v4 dejó los hijos mensuales de tráiler con una familia común y
+  claves temporales distintas, clasificados como `sibling`; las filas ya
+  preparadas se conservaron y dejaron de mezclarse con rechazos vigentes.
+- La activación de v4 caducó las 22 opciones FC27 que conservaban una aprobación
+  anterior y dejó cero candidatas `verified_open` reutilizables. Ya no se
+  muestran como aptas. El siguiente ciclo administrativo recuperará la página
+  oficial completa y persistirá el rechazo terminal; no puede volver a
+  proponerlas por el simple estado abierto de Polymarket.
+- Invariantes económicas posteriores: 15 mercados, 9 predicciones, 2 perfiles,
+  2027 Karma total y 40 Prestigio total; también se conservaron los hashes de
+  mercados, predicciones, maker state e histórico. La corrección no publicó,
+  confirmó, predijo ni liquidó ningún mercado.
+- Validación final local: sintaxis de 67 archivos JavaScript, 287 pruebas
+  unitarias, TypeScript, configuración de monitorización y
+  `git diff --check`. Las matrices SQL de las puertas se ejecutaron de forma
+  controlada; la reconciliación final de `145000` abortó una primera vez antes
+  de escribir, se corrigió contra el esquema real y después se aplicó completa.
+- Queda pendiente únicamente el smoke visual autenticado del botón del
+  Corrector y del siguiente ciclo explícito del Radar, porque no hubo una sesión
+  gráfica administrativa controlable. El backend ya está activo y falla cerrado;
+  no presentar ese recorrido de interfaz como ejecutado hasta completarlo.
+
+Siguiente paso operativo: publicar este árbol y su caché administrativa
+`20260809-terminal-fact1` mediante una rama y un PR con checks verdes; no hacer
+push directo a `main`. No repetir migraciones ni despliegues.
+En la siguiente sesión administrativa autenticada, revalidar y aplicar el Corrector al
+borrador privado de Marvel y ejecutar un ciclo explícito del Radar para cerrar
+la aceptación visual, sin confirmar ni publicar. El mercado antiguo de julio
+continúa sin aprobar ni liquidar. No ampliar todavía el catálogo, chat, GIF,
+feed algorítmico, temporadas, monetización, dinero real ni compraventa
+secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

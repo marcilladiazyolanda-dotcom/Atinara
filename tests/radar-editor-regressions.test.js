@@ -8,7 +8,9 @@ const { before, test } = require("node:test");
 const root = join(__dirname, "..");
 const corePath = join(root, "supabase/functions/_shared/market-radar.mjs");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminMarkets = readFileSync(join(root, "admin-markets.js"), "utf8");
 const marketExpert = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
+const policyMigration = readFileSync(join(root, "supabase/migrations/20260809133000_sync_prediction_policy_v4_guards.sql"), "utf8");
 let radar;
 
 const now = "2026-08-08T12:00:00.000Z";
@@ -30,7 +32,7 @@ function completeCandidate(question, overrides = {}) {
     atinara_resolution_source_url: "https://www.playstation.com/en-us/",
     source_close_at: "2027-01-01T00:00:00.000Z",
     hard_reject_reasons: [],
-    eligibility_policy_version: "atinara-prediction-policy-v3",
+    eligibility_policy_version: "atinara-prediction-policy-v4",
     ...overrides,
   };
 }
@@ -178,7 +180,7 @@ test("Kalshi identifica los hijos de umbral por yes_sub_title aunque compartan t
   assert.equal(families[0].family_key, families[1].family_key);
   assert.deepEqual(
     new Set(families.map((family) => family.family_child_key)),
-    new Set(["threshold:above:90", "threshold:above:95"]),
+    new Set(["threshold:gt:90:points", "threshold:gt:95:points"]),
   );
 
   const scored = radar.scoreCandidates(candidates, [], now);
@@ -230,25 +232,47 @@ test("VERIFICATION_REQUIRED solo admite override directo con fuente, ventana y p
   ), false);
 });
 
-test("la caducidad factual es exclusiva: un milisegundo futuro sirve y el límite exacto no", () => {
+test("un estado abierto nunca se reutiliza; un rechazo terminal idéntico sí caduca de forma exclusiva", () => {
   const candidate = {
     fingerprint: "fingerprint-1",
-    eligibility_policy_version: "atinara-prediction-policy-v3",
+    fact_context_fingerprint: "fact-fingerprint-1",
+    eligibility_policy_version: "atinara-prediction-policy-v4",
   };
   const verified = {
     normalizer_version: "atinara-radar-v2",
-    eligibility_policy_version: "atinara-prediction-policy-v3",
+    eligibility_policy_version: "atinara-prediction-policy-v4",
     fingerprint: "fingerprint-1",
     verification_status: "verified_open",
     verification_reason_code: null,
     verification_expires_at: "2026-08-08T12:00:00.001Z",
+    fact_policy_version: "atinara-terminal-fact-gate-v2",
+    fact_context_fingerprint: "fact-fingerprint-1",
     atinara_question: "Will Valve announce Half-Life 3 before 2027?",
     atinara_category: "Lanzamientos",
     atinara_resolution_criteria: "Sí si Valve lo anuncia oficialmente.",
     atinara_resolution_source_url: "https://www.valvesoftware.com/",
   };
-  assert.equal(radar.canReuseRadarVerification(verified, candidate, now), true);
+  assert.equal(radar.canReuseRadarVerification(verified, candidate, now), false);
   assert.equal(radar.canReuseRadarVerification({ ...verified, verification_expires_at: now }, candidate, now), false);
+  const terminal = {
+    ...verified,
+    verification_status: "rejected_resolved",
+    verification_reason_code: "EVENT_ALREADY_RESOLVED",
+  };
+  assert.equal(radar.canReuseRadarVerification(terminal, candidate, now), true);
+  assert.equal(radar.canReuseRadarVerification({ ...terminal, verification_expires_at: now }, candidate, now), false);
+});
+
+test("la política factual v4 coincide en Radar, interfaz, Editor y reservas SQL", () => {
+  const policy = "atinara-prediction-policy-v4";
+  assert.equal(radar.RADAR_ELIGIBILITY_POLICY_VERSION, policy);
+  assert.match(adminMarkets, new RegExp(`RADAR_POLICY_VERSION = "${policy}"`));
+  assert.match(marketExpert, new RegExp(`RADAR_ELIGIBILITY_POLICY_VERSION = "${policy}"`));
+  assert.equal((policyMigration.match(new RegExp(policy, "g")) || []).length >= 3, true);
+  assert.doesNotMatch(policyMigration, /atinara-prediction-policy-v3/);
+  assert.match(policyMigration, /verification_status = 'verified_open'/);
+  assert.match(policyMigration, /state = 'expired'/);
+  assert.match(policyMigration, /preparation_revision = candidate\.preparation_revision \+ 1/);
 });
 
 test("loadPackage comparte inflight y una respuesta vieja no sobrescribe una revisión nueva", async () => {
