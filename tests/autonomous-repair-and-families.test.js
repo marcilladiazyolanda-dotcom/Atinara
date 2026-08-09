@@ -125,7 +125,7 @@ test("Corrector · PS6 usa official_announcement, fecha inclusiva UTC y criterio
       "Sony Interactive Entertainment official news about PlayStation 6 / PS6.",
     ),
   ]);
-  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v7");
+  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v8");
   assert.equal(result.archetype, "official_announcement");
   assert.match(result.patch.subject, /PlayStation 6 \/ PS6/);
   assert.equal(result.patch.evaluation_ends_at, "2026-12-31T23:59:59.000Z");

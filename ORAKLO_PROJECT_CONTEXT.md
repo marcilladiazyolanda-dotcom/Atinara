@@ -889,13 +889,59 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
   mostrar una hora nueva y el Radar debe devolver eventos o errores parciales
   por proveedor. No preparar, confirmar ni publicar todavía.
 
+### Ciclo experto resistente Radar → Editor → Corrector (9 de agosto de 2026)
+
+- La incidencia posterior no era otro timeout. Polymarket perdía su primer lote
+  y Kalshi conservaba exactamente 72 filas porque un registro incompatible
+  hacía rollback de un lote atómico de 24 y el cliente descartaba la regla SQL.
+  Radar v28 biseca únicamente errores de datos hasta aislar una fila, conserva
+  las sanas y difiere el resto al agotar un presupuesto real de 64 RPC o 20 s;
+  errores de infraestructura, timeout o concurrencia nunca se cuarentenan como
+  si fueran datos malos.
+- Gemini respeta `Retry-After`, backoff exponencial y jitter. El primer `429`
+  abre un circuito que impide programar más lotes, conserva las decisiones ya
+  válidas y registra el recuento real como `partial_error` o `unavailable`.
+  Todo final de Polymarket, Kalshi, Tavily o Gemini deja además historia
+  append-only; el snapshot operativo continúa separado.
+- Analizar con el Agente Editor ya no prepara ni revalida Radar. Un expediente
+  factual bloqueado sigue siendo legible y devuelve un dictamen tipado; la
+  preparación se ejecuta únicamente después de que un paquete vigente permita
+  `can_prefill` y `can_save_private_draft`. Un intento factual negativo se
+  audita con UUID propia sin sustituir `current_fact_check_id` ni incrementar la
+  revisión autoritativa.
+- El Corrector v8 nunca usa incidencias semánticas v2 para reparar un borrador
+  v3. Primero obtiene una revisión compatible de la versión y huella exactas;
+  después investiga por claims pendientes. Reconoce anclas EN/ES/PT completas o
+  abreviadas e ISO, exige identidad suficiente, conserva `>95` como umbral
+  válido de Metascore, limpia el sujeto editorial y obliga a que el deadline de
+  resolución sea estrictamente posterior a la evaluación.
+- Producción tiene aplicada `harden_expert_market_cycle_v1` y activas, siempre
+  con `verify_jwt=true`, `market-radar` v28, `market-expert` v12,
+  `market-draft-fixer` v8 y `validate-market-draft` v9. La candidata Kalshi de
+  la captura vuelve a ser legible con `can_analyze=true` y dictamen ausente como
+  `null`, no como `{}` ni como 503. El borrador Marvel conserva el review v2
+  solo como historia y expone como incidencia determinista vigente
+  `RESOLUTION_DEADLINE_INVALID`.
+- La validación local completa pasa sintaxis de 70 archivos, 303 pruebas y
+  TypeScript. La migración se parseó en 35 sentencias y el finalizador/historial
+  append-only se probó dentro de una transacción revertida. Tras el despliegue
+  permanecen idénticos recuentos, agregados y SHA-256 de 15 mercados, 9
+  predicciones, 2 perfiles, 15 estados LMSR y 17 puntos de histórico; siguen
+  siendo 2.027 Karma y 40 Prestigio.
+- No se creó, confirmó, programó, publicó, predijo, resolvió ni liquidó ningún
+  mercado durante esta corrección. El último smoke visual autenticado requiere
+  que Yol suba el frontend incremental y use su sesión administrativa; no debe
+  falsearse como ejecutado desde una sesión inexistente. La publicación real
+  continúa exigiendo revisión v3 efectiva y confirmación humana.
+
 Siguiente paso operativo: sincronizar este árbol mediante la subida manual
-revisada de Yol; el backend v27 ya está activo y no se deben repetir la migración
-ni el despliegue. En la siguiente sesión administrativa autenticada, ejecutar
-primero un ciclo explícito del Radar para confirmar esta corrección y después
-revalidar y aplicar el Corrector al borrador privado de Marvel, siempre sin
-confirmar ni publicar. El mercado antiguo de julio continúa sin aprobar ni
-liquidar. No ampliar todavía el catálogo, chat, GIF, feed algorítmico,
+revisada de Yol; el backend v28 ya está activo y no se deben repetir la migración
+ni el despliegue. En la sesión administrativa autenticada, recargar con
+`Ctrl+F5`, ejecutar un ciclo explícito del Radar, analizar una candidata
+bloqueada, preparar una apta y aplicar el Corrector al borrador privado de
+Marvel. Confirmar o publicar seguirá siendo una decisión humana separada. El
+mercado antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía
+el catálogo, chat, GIF, feed algorítmico,
 temporadas, monetización, dinero real ni compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:

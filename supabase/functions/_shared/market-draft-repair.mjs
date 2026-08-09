@@ -1,21 +1,21 @@
-export const AUTONOMOUS_REPAIR_VERSION = "atinara-draft-repair-v7";
+export const AUTONOMOUS_REPAIR_VERSION = "atinara-draft-repair-v8";
 export const AUTONOMOUS_REPAIR_MAX_ROUNDS = 3;
 export const PRIMARY_SOURCE_REGISTRY_ROLE = "primary_resolution";
 export const PRIMARY_SOURCE_VALIDATION_VERSION = "atinara-primary-source-validation-v1";
 
 const MONTHS = Object.freeze({
-  enero: 1, january: 1,
-  febrero: 2, february: 2,
-  marzo: 3, march: 3,
-  abril: 4, april: 4,
-  mayo: 5, may: 5,
-  junio: 6, june: 6,
-  julio: 7, july: 7,
-  agosto: 8, august: 8,
-  septiembre: 9, setiembre: 9, september: 9,
-  octubre: 10, october: 10,
-  noviembre: 11, november: 11,
-  diciembre: 12, december: 12,
+  enero: 1, ene: 1, january: 1, jan: 1, janeiro: 1,
+  febrero: 2, feb: 2, february: 2, fevereiro: 2, fev: 2,
+  marzo: 3, mar: 3, march: 3, marco: 3,
+  abril: 4, abr: 4, april: 4, apr: 4,
+  mayo: 5, may: 5, maio: 5, mai: 5,
+  junio: 6, jun: 6, june: 6, junho: 6,
+  julio: 7, jul: 7, july: 7, julho: 7,
+  agosto: 8, ago: 8, august: 8, aug: 8,
+  septiembre: 9, setiembre: 9, september: 9, sep: 9, sept: 9, setembro: 9, set: 9,
+  octubre: 10, oct: 10, october: 10, outubro: 10, out: 10,
+  noviembre: 11, nov: 11, november: 11, novembro: 11,
+  diciembre: 12, dic: 12, december: 12, dec: 12, dezembro: 12, dez: 12,
 });
 
 export const REPAIR_ARCHETYPES = Object.freeze([
@@ -887,15 +887,22 @@ export function inferRelativeTemporalContract(context) {
 
 function evidenceMentionsSubject(value, subject) {
   const evidence = normalize(value);
-  const tokens = normalize(subject).split(" ").filter((token) => token.length >= 4 && ![
+  const normalizedSubject = normalize(subject);
+  const tokens = [...new Set(normalizedSubject.split(" ").filter((token) => token.length >= 4 && ![
     "game", "juego", "project", "proyecto", "official", "oficial",
-  ].includes(token));
-  return tokens.length > 0 && tokens.some((token) => evidence.includes(token));
+  ].includes(token)))];
+  if (!tokens.length) return false;
+  // Una coincidencia parcial como «Marvel» no puede atribuir a Fighting Souls
+  // la fecha de otro producto. La frase completa o dos tokens distintivos son
+  // el mínimo; para nombres de una sola palabra se exige un token largo exacto.
+  if (normalizedSubject.length >= 8 && evidence.includes(normalizedSubject)) return true;
+  const matched = tokens.filter((token) => new RegExp(`\\b${token}\\b`).test(evidence));
+  return tokens.length === 1 ? tokens[0].length >= 8 && matched.length === 1 : matched.length >= 2;
 }
 
 function anchorDateFromText(value) {
   const normalized = normalize(value);
-  const cue = "(?:release|released|launch|launched|launches|lanzamiento|lanzara|lanza|estreno|announcement|announced|anuncio|reveal|revealed|revelacion)";
+  const cue = "(?:release|released|releases|launch|launched|launches|arrives|available|lanzamiento|lanzara|lanza|estreno|announcement|announced|anuncio|reveal|revealed|revelacion|lancamento|lancado|lancada|lancara|chega|disponivel)";
   const monthNames = Object.keys(MONTHS).sort((left, right) => right.length - left.length).join("|");
   const englishDate = `(${monthNames})\\s+(\\d{1,2})\\s+(20\\d{2})`;
   const spanishDate = `(\\d{1,2})\\s+(?:de\\s+)?(${monthNames})\\s+(?:de\\s+)?(20\\d{2})`;
@@ -920,6 +927,20 @@ function anchorDateFromText(value) {
     return { year: Number(iso[1]), month: Number(iso[2]), day: Number(iso[3]) };
   }
   return null;
+}
+
+// Superficie pura y acotada para que el orquestador investigue por claim. Una
+// fuente relacionada con la entidad no satisface el slot temporal hasta que el
+// contenido recuperado contenga una fecha de ancla inequívoca.
+export function extractTemporalAnchorDate(value, subject = "") {
+  const anchor = anchorDateFromText(value);
+  if (!anchor || (subject && !evidenceMentionsSubject(value, subject))) return null;
+  return {
+    year: anchor.year,
+    month: anchor.month,
+    day: anchor.day,
+    iso_date: `${anchor.year}-${String(anchor.month).padStart(2, "0")}-${String(anchor.day).padStart(2, "0")}`,
+  };
 }
 
 function zonedDateTimeIso(year, month, day, hour, minute, timezone) {
@@ -1698,11 +1719,24 @@ export function inferSubject(context, archetype = null) {
   const candidate = isRecord(context?.radar_candidate) ? context.radar_candidate : {};
   const cover = coverContract(context);
   if (cover && !cover.ambiguous) return cover.product;
-  const explicit = titleCaseSubject(draft.subject);
+  const structured = structuredSubject(context, archetype);
+  const familySemantics = isRecord(candidate.family_semantics) ? candidate.family_semantics : {};
+  const familyEntity = titleCaseSubject(isRecord(candidate.family_semantics)
+    ? candidate.family_semantics.entity_label : "");
+  const familyIdentityTrusted = candidate.family_version === "atinara-market-family-v4"
+    && familySemantics.identity_ambiguous !== true
+    && familyEntity.length >= 2
+    && (!structured || evidenceMentionsSubject(structured, familyEntity));
+  if (familyIdentityTrusted) return familyEntity;
+  // En contratos métricos, la proposición estructurada es más autoritativa que
+  // un subject editorial que pudo guardar el sufijo «: Metacritic score».
+  if (archetype === "metric_threshold" && structured) return structured;
+  const explicit = titleCaseSubject(archetype === "metric_threshold"
+    ? subjectCandidate(draft.subject, archetype)
+    : draft.subject);
   if (explicit.length >= 2 && !/^(?:se|will|será|sera|tendrá|tendra|ganará|ganara|superará|superara|aparecerá|aparecera)\b/i.test(explicit)) {
     return explicit;
   }
-  const structured = structuredSubject(context, archetype);
   if (structured) {
     const compactStructured = normalize(structured).replace(/\s+/g, "");
     if (/^[a-z]{2,8}\d{1,3}$/.test(compactStructured)) {
@@ -1791,6 +1825,9 @@ function sourceObject(value) {
       ? { registry_categories: value.registry_categories.map((category) => cleanText(category, 120)).filter(Boolean).slice(0, 20) } : {}),
     ...(cleanText(value.draft_category, 120) ? { draft_category: cleanText(value.draft_category, 120) } : {}),
     ...(cleanText(value.validation_version, 120) ? { validation_version: cleanText(value.validation_version, 120) } : {}),
+    ...(Array.isArray(value.claim_slots)
+      ? { claim_slots: [...new Set(value.claim_slots.map((slot) => cleanText(slot, 80).toUpperCase()).filter(Boolean))].slice(0, 12) }
+      : {}),
   };
 }
 

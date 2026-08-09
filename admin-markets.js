@@ -289,9 +289,22 @@
     } catch {
       // El cuerpo puede no ser JSON; se conserva un error seguro y acotado.
     }
-    const wrapped = new Error(helpers.formatStructuredText(payload?.message || fallback, fallback));
-    wrapped.code = helpers.formatStructuredText(payload?.error || error?.code, "EDGE_FUNCTION_ERROR");
-    wrapped.details = helpers.formatStructuredText(payload?.details || payload?.message, "");
+    const payloadError = payload?.error && typeof payload.error === "object" ? payload.error : null;
+    const rawCode = payloadError?.code
+      || (typeof payload?.error === "string" ? payload.error : "")
+      || payload?.code
+      || error?.code;
+    const code = /^[A-Z][A-Z0-9_]{2,99}$/.test(String(rawCode || "").trim())
+      ? String(rawCode).trim()
+      : "EDGE_FUNCTION_ERROR";
+    const wrapped = operationError(
+      code,
+      helpers.formatStructuredText(payloadError?.message || payload?.message || fallback, fallback),
+      helpers.formatStructuredText(payload?.details || payloadError?.details || "", "")
+    );
+    wrapped.status = Number(error?.context?.status) || null;
+    wrapped.retryable = payload?.retryable === true || wrapped.status === 429 || wrapped.status >= 500;
+    wrapped.gate = payload?.gate && typeof payload.gate === "object" ? payload.gate : null;
     return wrapped;
   }
 
@@ -329,10 +342,22 @@
     status.focus({ preventScroll: true });
   }
 
-  function operationError(code, message) {
+  function operationError(code, message, details = "") {
     const error = new Error(message);
     error.code = code;
+    error.details = details;
     return error;
+  }
+
+  function expertRun(value) {
+    const candidate = value?.run && typeof value.run === "object" ? value.run : value;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    if (!String(candidate.id || "").trim() || candidate.status !== "completed") return null;
+    return candidate;
+  }
+
+  function expertErrorMessage(error, fallback) {
+    return helpers.getFriendlyError(error, "") || String(error?.message || "").trim() || fallback;
   }
 
   function feedbackComparableDraft(fields = {}) {
@@ -847,6 +872,7 @@
     const duplicates = Array.isArray(candidate.duplicate_matches) ? candidate.duplicate_matches : [];
     const siblings = Array.isArray(candidate.family_matches) ? candidate.family_matches : [];
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
+    const currentExpertRun = expertRun(candidate.expert_analysis);
     return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
       <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
       <div class="radar-detail-grid">
@@ -882,11 +908,11 @@
           ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.relationship || "exact_duplicate")}</strong> · ${escapeHtml(item.question || item.id || "Mercado existente")}</li>`).join("")}</ul>` : "<p>Sin duplicados exactos ni semánticos.</p>"}
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
         </section>
-        <section><h3>Agente Editor</h3>${candidate.expert_analysis
-          ? `<p><strong>${escapeHtml(candidate.expert_analysis.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(candidate.expert_analysis.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
+        <section><h3>Agente Editor</h3>${currentExpertRun
+          ? `<p><strong>${escapeHtml(currentExpertRun.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
           : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
       </div>
-      <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${candidate.expert_analysis ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
+      <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
     </section>`;
   }
 
@@ -1607,7 +1633,7 @@
       state.radar.selected = data.candidate || null;
       if (state.radar.selected) {
         const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId }).catch(() => null);
-        state.radar.selected.expert_analysis = expert?.run || null;
+        state.radar.selected.expert_analysis = expertRun(expert);
       }
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo abrir el detalle del candidato."), "error");
@@ -1642,7 +1668,7 @@
         preparationRevision,
         factCheckId,
         origins: prefill.origins || {},
-        expertRunId: state.radar.selected?.id === candidateId ? state.radar.selected.expert_analysis?.id || null : null,
+        expertRunId: state.radar.selected?.id === candidateId ? expertRun(state.radar.selected.expert_analysis)?.id || null : null,
         proposedFields: fields
       };
       state.selected = {
@@ -1668,7 +1694,7 @@
       }));
     } catch (error) {
       failure = error;
-      setNotice(helpers.getFriendlyError(error, "No se pudo preparar el borrador. El candidato no se ha modificado."), "error");
+      setNotice(expertErrorMessage(error, "No se pudo preparar el borrador. No se ha abierto ni guardado ningún borrador."), "error");
     } finally {
       state.busy = false;
       renderWorkspace();
@@ -1974,7 +2000,13 @@
         origin_type: "radar_candidate",
         origin_id: candidateId
       });
-      const run = data.run || analysis.run || null;
+      const run = expertRun(data) || expertRun(analysis);
+      if (!run) {
+        throw operationError(
+          "MARKET_EXPERT_ANALYSIS_NOT_PERSISTED",
+          "El Agente Editor no devolvió un dictamen persistido y vigente. La candidata no se ha preparado."
+        );
+      }
       if (state.radar.selected?.id === candidateId) {
         state.radar.selected = { ...state.radar.selected, expert_analysis: run };
       }
@@ -1992,14 +2024,13 @@
 
   async function analyzeRadarCandidate(candidateId) {
     state.busy = true;
-    setNotice("Revalidando la candidata en Radar antes de actualizar el análisis experto…", "info");
+    setNotice("El Agente Editor está analizando el expediente en modo de solo lectura…", "info");
     renderWorkspace();
     try {
-      const { preparationRevision } = await revalidateRadarCandidate(candidateId);
-      await refreshRadarExpertAnalysis(candidateId, { force: true, preparationRevision });
-      setNotice("Comprobación factual y dictamen experto actualizados para la revisión vigente.", "success");
+      await refreshRadarExpertAnalysis(candidateId, { force: true });
+      setNotice("Dictamen experto actualizado sin preparar, guardar ni publicar ningún mercado.", "success");
     } catch (error) {
-      setNotice(helpers.getFriendlyError(error, "El análisis experto no está disponible. El Radar sigue operativo."), "error");
+      setNotice(expertErrorMessage(error, "El análisis experto no está disponible. El Radar sigue operativo."), "error");
     } finally {
       state.busy = false;
       renderWorkspace();

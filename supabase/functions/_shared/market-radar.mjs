@@ -130,6 +130,11 @@ export function safeStringArray(value, maxItems = 30) {
   return [...new Set(source.map((item) => cleanText(item, 1000)).filter(Boolean))].slice(0, maxItems);
 }
 
+/**
+ * @param {unknown} value
+ * @param {string[] | null} allowedHosts
+ * @returns {string | null}
+ */
 export function safePublicUrl(value, allowedHosts = null) {
   const candidate = cleanText(value, 2048);
   if (!candidate) return null;
@@ -1074,6 +1079,12 @@ export function evidenceSupportsReasonCode(item, reasonCode) {
     && item.supported_reason_codes.some((code) => cleanText(code, 100) === cleanText(reasonCode, 100));
 }
 
+/**
+ * @param {Record<string, unknown>} item
+ * @param {Record<string, unknown> | string} candidateOrKind
+ * @param {string} now
+ * @returns {boolean}
+ */
 export function evidenceHasPotentialTerminalClaim(item, candidateOrKind = "other", now = new Date().toISOString()) {
   if (!isVerifiedOfficialEvidence(item, true)) return false;
   const contractKind = typeof candidateOrKind === "string"
@@ -2628,6 +2639,8 @@ export function publicProviderError(provider, code, status = 502) {
     PROVIDER_TIMEOUT: "El proveedor tardó demasiado en responder.",
     RADAR_PERSISTENCE_TIMEOUT: "La escritura de este proveedor superó el tiempo disponible. Los demás proveedores y los lotes ya validados siguen disponibles.",
     RADAR_PERSISTENCE_FAILED: "No se pudo guardar este proveedor. Los demás proveedores y los lotes ya validados siguen disponibles.",
+    RADAR_CANDIDATES_QUARANTINED: "Algunas candidatas no superaron la validación autoritativa. Las filas sanas siguen disponibles.",
+    RADAR_PERSISTENCE_ISOLATION_DEFERRED: "El aislamiento alcanzó su límite seguro. Los lotes confirmados siguen disponibles y el resto queda diferido.",
   };
   return { provider: safeProvider, code: safeCode, status, message: messages[safeCode] ?? "No se pudo actualizar este proveedor. Puedes reintentarlo más tarde." };
 }

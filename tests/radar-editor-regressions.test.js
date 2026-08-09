@@ -286,6 +286,12 @@ test("loadPackage comparte inflight y una respuesta vieja no sobrescribe una rev
     const packageCache = new Map();
     const pendingPackages = new Map();
     const packageRequestVersions = new Map();
+    const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+    const typedCode = (value, fallback = "MARKET_EXPERT_DOSSIER_UNAVAILABLE") => {
+      const code = String(value || "").trim().slice(0, 100);
+      return /^[A-Z][A-Z0-9_]{2,99}$/.test(code) ? code : fallback;
+    };
+    const reasonLabels = {};
     ${extractBridgeFunction("invalidatePackage", "loadPackage")}
     ${extractBridgeFunction("loadPackage", "preparationRevisionFrom")}
     return { packageCache, pendingPackages, invalidatePackage, loadPackage };
@@ -346,15 +352,17 @@ test("la sesión guarda candidato, revisión y paquete como una unidad y descart
   assert.equal(bridge.readPreparedPackage("candidate-7"), null);
 });
 
-test("Aplicar prepara, reanaliza y obtiene el paquete en ese orden sin temporizador fijo", () => {
+test("Aplicar exige un expediente apto antes de preparar y vuelve a ligarlo después", () => {
   const applyStart = adminHtml.indexOf("        if (target) {");
   const applyEnd = adminHtml.indexOf("        const analyzeButton", applyStart);
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "No se encontró el manejador Aplicar");
   const applyFlow = adminHtml.slice(applyStart, applyEnd);
   const prepareIndex = applyFlow.indexOf("await bridge.prepareRadarCandidate(candidateId");
   const reanalyzeIndex = applyFlow.indexOf("await bridge.refreshRadarExpertAnalysis(candidateId");
-  const packageIndex = applyFlow.indexOf("await loadPackage(candidateId, true)");
-  assert.ok(prepareIndex >= 0, "Aplicar debe revalidar y reservar primero en Radar");
+  const preflightPackageIndex = applyFlow.indexOf("await loadPackage(candidateId, true)");
+  const packageIndex = applyFlow.indexOf("await loadPackage(candidateId, true)", reanalyzeIndex);
+  assert.ok(preflightPackageIndex >= 0 && preflightPackageIndex < prepareIndex, "Aplicar debe validar el expediente antes de reservar en Radar");
+  assert.ok(prepareIndex >= 0, "Aplicar debe reservar en Radar después del gate experto");
   assert.ok(reanalyzeIndex > prepareIndex, "El análisis debe ejecutarse después de la revisión autoritativa");
   assert.ok(packageIndex > reanalyzeIndex, "El paquete debe cargarse después del nuevo análisis");
   assert.ok(applyFlow.indexOf("clearPreparedPackage(candidateId)") < prepareIndex);
@@ -372,9 +380,12 @@ test("Aplicar prepara, reanaliza y obtiene el paquete en ese orden sin temporiza
   const dossierStart = adminHtml.indexOf("      function dossierMarkup(");
   const dossierEnd = adminHtml.indexOf("      async function enhanceDetail(", dossierStart);
   const dossierSource = adminHtml.slice(dossierStart, dossierEnd);
-  assert.match(dossierSource, /if \(!pkg\?\.available\)[\s\S]+data-expert-apply/);
-  assert.ok(dossierSource.includes("MARKET_EXPERT_ANALYSIS_STALE"));
-  assert.ok(dossierSource.includes("RADAR_FACTUAL_VERIFICATION_REQUIRED"));
+  assert.match(dossierSource, /if \(!pkg\?\.available\)[\s\S]+blockedDossierMarkup/);
+  const blockedStart = adminHtml.indexOf("      function blockedDossierMarkup(");
+  const blockedEnd = adminHtml.indexOf("      function dossierMarkup(", blockedStart);
+  const blockedSource = adminHtml.slice(blockedStart, blockedEnd);
+  assert.ok(blockedSource.includes("data-radar-expert"));
+  assert.ok(!blockedSource.includes("data-expert-apply"));
 });
 
 test("el paquete experto lleva revisión y fingerprints y falla cerrado si el origen cambió", () => {

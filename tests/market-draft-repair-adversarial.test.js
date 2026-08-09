@@ -137,7 +137,7 @@ function releaseContext(overrides = {}) {
 }
 
 test("Corrector adversarial · before es una frontera estricta en cualquier día del mes", () => {
-  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v7");
+  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v8");
   assert.equal(
     repair.inferInclusiveDeadline("Will Project Aurora release before August 31, 2026?").iso,
     "2026-08-30T23:59:59.000Z",

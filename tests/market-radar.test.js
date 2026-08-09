@@ -707,11 +707,11 @@ test("la vista solo expone candidatas evaluadas con la política predictiva vige
 });
 
 test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
-  assert.match(edge, /record_market_radar_provider_success/);
+  assert.match(edge, /finalizeProviderRefresh\([\s\S]*?"gemini"/);
   assert.match(edge, /persistProcessorPartialFailure/);
-  assert.match(edge, /status_input: "partial_error"/);
-  assert.match(edge, /processedDecisions === 0/);
-  assert.match(edge, /deferredCandidates: plan\.deferred\.length/);
+  assert.match(edge, /"partial_error",[\s\S]*?processedDecisions/);
+  assert.match(edge, /Math\.min\(Math\.max\(processedDecisions, 0\), MAX_GEMINI_CANDIDATES\)/);
+  assert.match(edge, /deferredCandidates: plan\.deferred\.length \+ quotaDeferredCandidates/);
   assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
@@ -734,7 +734,7 @@ test("la preparación revalida proveedor y aplica verificación y revisión en u
   assert.match(edge, /prepareRevalidationError/);
   assert.match(edge, /RESOLUTION_SOURCE_REQUIRED/);
   assert.match(edge, /const authoritativeCandidate = toRecord\(applied\.candidate\)/);
-  assert.match(edge, /const factCheck = await buildAuthoritativeFactCheck\(factuallyRevalidated, purpose, checkedAt\)/);
+  assert.match(edge, /const factCheck = await buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt/);
   assert.match(edge, /purpose === "prepare"[\s\S]*apply_market_radar_prepare_fact_verification_v1[\s\S]*apply_market_radar_revalidation_fact_v1/);
   assert.match(edge, /fact_check_input: factCheck/);
   assert.match(edge, /const factualReadiness = candidateReady\(authoritativeCandidate\)/);
@@ -794,7 +794,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260809-terminal-fact1/);
+  assert.match(adminHtml, /v=20260809-expert-cycle1/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 

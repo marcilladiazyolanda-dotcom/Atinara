@@ -23,6 +23,7 @@ import {
   diversifyGroups,
   detectOfficialCoverEventResolution,
   deriveDeterministicUnresolvedProof,
+  evidenceHasPotentialTerminalClaim,
   evidenceSupportsReasonCode,
   evaluateDeterministicEligibility,
   evaluatePredictiveEligibility,
@@ -32,6 +33,7 @@ import {
   indexGeminiDecisions,
   isAdaptedIdeaComplete,
   isBlockingDuplicateMatch,
+  isDeterministicUnresolvedEvidence,
   isRecord,
   isVerifiedOfficialEvidence,
   isVerifiedTerminalEvidence,
@@ -58,6 +60,9 @@ const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const MAX_PROVIDER_PAGES = 3;
 const MAX_NORMALIZED_PER_PROVIDER = 240;
 const RADAR_PERSISTENCE_BATCH_SIZE = 24;
+const MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER = 64;
+const PERSISTENCE_ISOLATION_BUDGET_MS = 20_000;
+const PERSISTENCE_RPC_START_MARGIN_MS = 750;
 const MAX_VISIBLE_GROUPS = 60;
 const MAX_GEMINI_GROUPS = 30;
 const MAX_GEMINI_CANDIDATES = 180;
@@ -77,6 +82,8 @@ const MAX_OFFICIAL_SOURCE_BYTES = 750_000;
 const OFFICIAL_SOURCE_FETCH_TIMEOUT_MS = 5_000;
 const OFFICIAL_SOURCE_BUDGET_MS = 10_000;
 const OFFICIAL_SOURCE_CONCURRENCY = 4;
+const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
+const PROVIDER_RETRY_JITTER_MS = 250;
 
 const KALSHI_API_ROOT = "https://api.elections.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA_ROOT = "https://gamma-api.polymarket.com";
@@ -160,27 +167,127 @@ function jsonResponse(body: JsonRecord, status = 200): Response {
   });
 }
 
+type RadarCandidateQuarantine = {
+  provider: string;
+  external_id: string;
+  fingerprint: string | null;
+  stage: "authoritative_persistence";
+  code: string;
+  database_code: string | null;
+  operation: string;
+};
+
+type RadarPersistenceDeferredBatch = {
+  provider: string;
+  external_ids: string[];
+  candidate_count: number;
+  stage: "authoritative_persistence";
+  code: "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
+};
+
+type PersistenceIsolationBudget = {
+  deadlineAt: number;
+  remainingRpcCalls: number;
+  usedRpcCalls: number;
+};
+
+type ProviderPersistenceOutcome = {
+  persistedCount: number;
+  quarantined: RadarCandidateQuarantine[];
+  deferred: RadarPersistenceDeferredBatch[];
+  persistenceRpcCalls: number;
+  failure: ReturnType<typeof publicProviderError> | null;
+};
+
+type RadarPreparationBlockedDiagnostics = {
+  candidate: JsonRecord | null;
+  attempt_fact_check_id: number | null;
+  authoritative_fact_check_id: number | null;
+  preparation_revision: number | null;
+  persisted: boolean;
+  authoritative_pointer_unchanged: boolean;
+};
+
+type FetchJsonOptions = {
+  onRateLimit?: (error: ProviderRequestError) => void;
+};
+
+type RpcOptions = {
+  signal?: AbortSignal;
+};
+
+class ProviderRequestError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(code: string, status: number, retryAfterMs: number | null = null) {
+    super(code);
+    this.name = "ProviderRequestError";
+    this.code = code;
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 class RadarRpcError extends Error {
   readonly operation: string;
   readonly status: number;
   readonly databaseCode: string;
+  readonly databaseMessage: string;
 
-  constructor(operation: string, status: number, databaseCode: string) {
+  constructor(operation: string, status: number, databaseCode: string, databaseMessage: string) {
     super(`RADAR_RPC_${status}`);
     this.name = "RadarRpcError";
     this.operation = operation;
     this.status = status;
     this.databaseCode = databaseCode;
+    this.databaseMessage = databaseMessage;
   }
 }
 
 class RadarPersistenceError extends Error {
   readonly failure: ReturnType<typeof publicProviderError>;
+  readonly outcome: ProviderPersistenceOutcome;
 
-  constructor(failure: ReturnType<typeof publicProviderError>) {
+  constructor(failure: ReturnType<typeof publicProviderError>, outcome: ProviderPersistenceOutcome) {
     super(failure.code);
     this.name = "RadarPersistenceError";
     this.failure = failure;
+    this.outcome = outcome;
+  }
+}
+
+class RadarPreparationBlockedError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly diagnostics: RadarPreparationBlockedDiagnostics;
+
+  constructor(code: string, recordedAttempt: JsonRecord) {
+    const safeCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(code) ? code : "RADAR_REVALIDATION_REQUIRED";
+    super(safeCode);
+    this.name = "RadarPreparationBlockedError";
+    this.code = safeCode;
+    this.retryable = !new Set([
+      "RADAR_CANDIDATE_RESOLVED",
+      "RADAR_CANDIDATE_INELIGIBLE",
+      "RADAR_CONFIRMED_DUPLICATE",
+      "CANDIDATE_NOT_PREPARABLE",
+    ]).has(safeCode);
+    const attemptFactCheckId = Number(recordedAttempt.attempt_fact_check_id);
+    const authoritativeFactCheckId = Number(recordedAttempt.authoritative_fact_check_id);
+    const preparationRevision = Number(recordedAttempt.preparation_revision);
+    this.diagnostics = {
+      candidate: toRecord(recordedAttempt.candidate),
+      attempt_fact_check_id: Number.isSafeInteger(attemptFactCheckId) && attemptFactCheckId > 0 ? attemptFactCheckId : null,
+      authoritative_fact_check_id: Number.isSafeInteger(authoritativeFactCheckId) && authoritativeFactCheckId > 0
+        ? authoritativeFactCheckId
+        : null,
+      preparation_revision: Number.isSafeInteger(preparationRevision) && preparationRevision >= 0 ? preparationRevision : null,
+      persisted: recordedAttempt.persisted === true,
+      authoritative_pointer_unchanged: recordedAttempt.authoritative_pointer_unchanged === true
+        || recordedAttempt.idempotency_replay === true,
+    };
   }
 }
 
@@ -228,19 +335,34 @@ function restHeaders(key: string, authorization?: string): Record<string, string
   return headers;
 }
 
-async function rpc(environment: Environment, name: string, args: JsonRecord, authorization?: string, service = false): Promise<unknown> {
+async function rpc(
+  environment: Environment,
+  name: string,
+  args: JsonRecord,
+  authorization?: string,
+  service = false,
+  options: RpcOptions = {},
+): Promise<unknown> {
   const key = service ? environment.secretKey : environment.publishableKey;
   const response = await fetch(`${environment.supabaseUrl}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers: restHeaders(key, service ? undefined : authorization),
     body: JSON.stringify(args),
+    signal: options.signal,
   });
   const payload = await response.json().catch(() => ({})) as unknown;
   if (!response.ok) {
     const errorPayload = toRecord(payload);
     const databaseCode = cleanText(errorPayload?.code, 40);
-    console.error("Radar RPC failed", JSON.stringify({ name, status: response.status, code: databaseCode || null }));
-    throw new RadarRpcError(name, response.status, databaseCode);
+    const rawMessage = cleanText(errorPayload?.message, 120);
+    const databaseMessage = /^[A-Z][A-Z0-9_]{2,100}$/.test(rawMessage) ? rawMessage : "";
+    console.error("Radar RPC failed", JSON.stringify({
+      name,
+      status: response.status,
+      code: databaseCode || null,
+      rule: databaseMessage || null,
+    }));
+    throw new RadarRpcError(name, response.status, databaseCode, databaseMessage);
   }
   return payload;
 }
@@ -262,15 +384,39 @@ function validateApiUrl(url: URL): boolean {
   return url.protocol === "https:" && RADAR_API_HOSTS.includes(url.hostname.toLowerCase());
 }
 
-async function fetchJson(url: URL, init: RequestInit = {}, timeoutMs = PROVIDER_TIMEOUT_MS): Promise<unknown> {
+function retryAfterMilliseconds(headers: Headers, nowMs = Date.now()): number | null {
+  const value = cleanText(headers.get("retry-after"), 100);
+  if (!value) return null;
+  if (/^[0-9]+(?:\.[0-9]+)?$/.test(value)) {
+    return Math.max(0, Math.ceil(Number(value) * 1_000));
+  }
+  const dateValue = Date.parse(value);
+  return Number.isFinite(dateValue) ? Math.max(0, dateValue - nowMs) : null;
+}
+
+function providerRetryDelay(attempt: number): number {
+  const jitter = Math.floor(Math.random() * (PROVIDER_RETRY_JITTER_MS + 1));
+  return Math.min(MAX_PROVIDER_RETRY_DELAY_MS, (500 * (2 ** attempt)) + jitter);
+}
+
+function isProviderRateLimit(error: unknown): error is ProviderRequestError {
+  return error instanceof ProviderRequestError
+    ? error.code === "PROVIDER_RATE_LIMITED" || error.status === 429
+    : error instanceof Error && /PROVIDER_RATE_LIMITED|HTTP_429/.test(error.message);
+}
+
+async function fetchJson(
+  url: URL,
+  init: RequestInit = {},
+  timeoutMs = PROVIDER_TIMEOUT_MS,
+  options: FetchJsonOptions = {},
+): Promise<unknown> {
   if (!validateApiUrl(url)) throw new Error("PROVIDER_HOST_NOT_ALLOWED");
-  let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      lastStatus = response.status;
       if (response.ok) {
         const text = await response.text();
         if (text.length > 3_000_000) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
@@ -280,16 +426,36 @@ async function fetchJson(url: URL, init: RequestInit = {}, timeoutMs = PROVIDER_
           throw new Error("PROVIDER_INVALID_RESPONSE");
         }
       }
-      if (response.status !== 429 && response.status < 500) throw new Error(`PROVIDER_HTTP_${response.status}`);
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (response.status === 429) {
+        const retryAfterMs = retryAfterMilliseconds(response.headers);
+        const rateLimitError = new ProviderRequestError("PROVIDER_RATE_LIMITED", 429, retryAfterMs);
+        options.onRateLimit?.(rateLimitError);
+        const delayMs = retryAfterMs ?? providerRetryDelay(attempt);
+        if (attempt === 0 && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw rateLimitError;
+      }
+      if (response.status >= 500) {
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, providerRetryDelay(attempt)));
+          continue;
+        }
+        throw new ProviderRequestError(`PROVIDER_HTTP_${response.status}`, response.status);
+      }
+      throw new ProviderRequestError(`PROVIDER_HTTP_${response.status}`, response.status);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw new Error("PROVIDER_TIMEOUT");
-      if (attempt === 1 || (error instanceof Error && /INVALID|NOT_ALLOWED|TOO_LARGE|HTTP_4(?!29)/.test(error.message))) throw error;
+      if (error instanceof ProviderRequestError
+        || attempt === 1
+        || (error instanceof Error && /INVALID|NOT_ALLOWED|TOO_LARGE|HTTP_4(?!29)/.test(error.message))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, providerRetryDelay(attempt)));
     } finally {
       clearTimeout(timeout);
     }
   }
-  throw new Error(lastStatus === 429 ? "PROVIDER_RATE_LIMITED" : "PROVIDER_UNAVAILABLE");
+  throw new Error("PROVIDER_UNAVAILABLE");
 }
 
 async function verifyPublicUrl(value: string, allowedHost: string): Promise<string | null> {
@@ -326,6 +492,55 @@ function persistenceFailure(error: unknown, provider: string) {
     timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
     timedOut ? 503 : 502,
   );
+}
+
+const QUARANTINABLE_PERSISTENCE_RULES = new Set([
+  "INVALID_RADAR_CANDIDATE",
+  "INCOMPLETE_RADAR_VERIFICATION",
+  "RADAR_BATCH_TOO_LARGE",
+  "INVALID_RADAR_FACT_CHECK_V2",
+  "INVALID_RADAR_FACT_SNAPSHOT_V2",
+  "INVALID_RADAR_FACT_CHECK_DATE",
+  "RADAR_FACT_EVIDENCE_REQUIRED",
+  "RADAR_FACT_STATUS_CONFLICT",
+  "RADAR_PROVIDER_FACT_REQUIRED",
+]);
+
+function isQuarantinablePersistenceError(error: unknown): error is RadarRpcError {
+  if (!(error instanceof RadarRpcError)
+    || error.operation !== "upsert_market_radar_batch_with_fact_checks_v1"
+    || error.databaseCode === "57014"
+    || error.status === 504) return false;
+  if (error.status === 413) return true;
+  if (error.databaseMessage) return QUARANTINABLE_PERSISTENCE_RULES.has(error.databaseMessage);
+  return [
+    "22001",
+    "22003",
+    "22007",
+    "22008",
+    "22P02",
+    "23502",
+    "23503",
+    "23514",
+  ].includes(error.databaseCode);
+}
+
+function quarantineFromPersistenceError(
+  provider: string,
+  candidate: JsonRecord,
+  error: RadarRpcError,
+): RadarCandidateQuarantine {
+  return {
+    provider: cleanText(provider, 40),
+    external_id: cleanText(candidate.external_id, 220),
+    fingerprint: /^[a-f0-9]{64}$/i.test(cleanText(candidate.fingerprint, 80))
+      ? cleanText(candidate.fingerprint, 80)
+      : null,
+    stage: "authoritative_persistence",
+    code: error.databaseMessage || "RADAR_CANDIDATE_DATA_INVALID",
+    database_code: error.databaseCode || null,
+    operation: error.operation,
+  };
 }
 
 function safeFilters(body: JsonRecord) {
@@ -680,6 +895,7 @@ async function buildAuthoritativeFactCheck(
   candidate: JsonRecord,
   purpose: "discovery" | "prepare" | "revalidate",
   checkedAt = new Date().toISOString(),
+  attemptId: string = crypto.randomUUID(),
 ): Promise<JsonRecord> {
   const contextSnapshot = factContextSnapshot(candidate);
   const sourceSnapshot = toRecordArray(candidate.verification_evidence).slice(0, 20).map((item) => ({
@@ -748,7 +964,6 @@ async function buildAuthoritativeFactCheck(
   }
   const contextSha256 = await sha256Hex(contextSnapshot);
   const sourceSha256 = await sha256Hex(sourceSnapshot);
-  const attemptId = crypto.randomUUID();
   const expiresAt = new Date(Date.parse(checkedAt) + FACT_CHECK_TTL_MINUTES * 60_000).toISOString();
   const factStatus = cleanText(candidate.fact_status, 40) || "unknown";
   const decision = {
@@ -1032,8 +1247,9 @@ async function reconcileRejectedKalshiOutcomes(
     }, now) as JsonRecord;
   });
   const reconciled = checked.flatMap((item) => item.status === "fulfilled" && item.value ? [item.value] : []);
-  if (reconciled.length) await persistProviderResult(environment, "kalshi", `${cacheKey}:resultados`, reconciled);
-  return reconciled.length;
+  if (!reconciled.length) return 0;
+  const outcome = await persistProviderResult(environment, "kalshi", `${cacheKey}:resultados`, reconciled);
+  return outcome.persistedCount;
 }
 
 async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[], authoritativeDomains: ReadonlySet<string>) {
@@ -1135,6 +1351,11 @@ type GeminiVerificationOutcome = {
   firstError: unknown | null;
 };
 
+type GeminiQuotaCircuit = {
+  stopped: boolean;
+  firstRateLimit: ProviderRequestError | null;
+};
+
 function candidateIdentity(candidate: JsonRecord): string {
   return `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
 }
@@ -1192,7 +1413,14 @@ function officialEventResolutionSignals(candidates: JsonRecord[], evidenceByGrou
   return signals;
 }
 
-async function verifyGeminiBatch(apiKey: string, candidates: JsonRecord[], existing: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, now: string): Promise<GeminiBatchResult> {
+async function verifyGeminiBatch(
+  apiKey: string,
+  candidates: JsonRecord[],
+  existing: JsonRecord[],
+  evidenceByGroup: Map<string, JsonRecord[]>,
+  now: string,
+  quotaCircuit: GeminiQuotaCircuit,
+): Promise<GeminiBatchResult> {
   const candidateIndexes = new Map(candidates.map((candidate, index) => [candidateIdentity(candidate), index]));
   const groups = groupCandidates(candidates);
   const safeGroups = groups.map((group) => ({
@@ -1220,7 +1448,12 @@ async function verifyGeminiBatch(apiKey: string, candidates: JsonRecord[], exist
         thinkingConfig: { thinkingLevel: "minimal" },
       },
     }),
-  }, GEMINI_TIMEOUT_MS)) ?? {};
+  }, GEMINI_TIMEOUT_MS, {
+    onRateLimit: (error) => {
+      quotaCircuit.stopped = true;
+      quotaCircuit.firstRateLimit ??= error;
+    },
+  })) ?? {};
   const decisions = parseGeminiAdaptations(payload) as JsonRecord[];
   if (!decisions.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   const byIndex = indexGeminiDecisions(decisions, candidates.length) as Map<number, JsonRecord>;
@@ -1330,22 +1563,63 @@ async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[]
     batchSize: GEMINI_BATCH_SIZE,
   }) as { batches: JsonRecord[][]; deferred: JsonRecord[] };
   if (!plan.batches.length) {
-    return { candidates, processedDecisions: 0, failedBatches: 0, incompleteCandidates: 0, deferredCandidates: plan.deferred.length, firstError: null };
+    return {
+      candidates,
+      processedDecisions: 0,
+      failedBatches: 0,
+      incompleteCandidates: plan.deferred.length,
+      deferredCandidates: plan.deferred.length,
+      firstError: null,
+    };
   }
-  const settled = await mapWithConcurrency(
-    plan.batches,
-    GEMINI_CONCURRENCY,
-    (batch) => verifyGeminiBatch(apiKey, batch, existing, evidenceByGroup, now),
-  );
+  const quotaCircuit: GeminiQuotaCircuit = { stopped: false, firstRateLimit: null };
+  const settled: Array<PromiseSettledResult<GeminiBatchResult> | undefined> = new Array(plan.batches.length);
+  let batchCursor = 0;
+  async function runGeminiWorker() {
+    while (!quotaCircuit.stopped) {
+      const index = batchCursor++;
+      if (index >= plan.batches.length) return;
+      try {
+        settled[index] = {
+          status: "fulfilled",
+          value: await verifyGeminiBatch(apiKey, plan.batches[index], existing, evidenceByGroup, now, quotaCircuit),
+        };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+        if (isProviderRateLimit(reason)) {
+          quotaCircuit.stopped = true;
+          if (reason instanceof ProviderRequestError) quotaCircuit.firstRateLimit ??= reason;
+        }
+      }
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(GEMINI_CONCURRENCY, plan.batches.length) },
+    runGeminiWorker,
+  ));
   const verifiedByIdentity = new Map<string, JsonRecord>();
   const eventResolutions: JsonRecord[] = [];
   let processedDecisions = 0;
   let failedBatches = 0;
   let incompleteCandidates = 0;
+  let quotaDeferredCandidates = 0;
   let firstError: unknown | null = null;
   for (let index = 0; index < settled.length; index += 1) {
     const result = settled[index];
     const batch = plan.batches[index];
+    if (!result) {
+      quotaDeferredCandidates += batch.length;
+      incompleteCandidates += batch.length;
+      for (const candidate of failClosedCandidates(
+        batch,
+        now,
+        "La cuota del proveedor se agotó; la candidata queda diferida y permanece en revisión.",
+        5,
+      )) {
+        verifiedByIdentity.set(candidateIdentity(candidate), candidate);
+      }
+      continue;
+    }
     if (result.status === "fulfilled") {
       processedDecisions += result.value.decisionCount;
       incompleteCandidates += result.value.incompleteCount;
@@ -1370,9 +1644,9 @@ async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[]
     candidates: propagateResolvedEventGroups(verified, eventResolutions, now),
     processedDecisions,
     failedBatches,
-    incompleteCandidates,
-    deferredCandidates: plan.deferred.length,
-    firstError,
+    incompleteCandidates: incompleteCandidates + plan.deferred.length,
+    deferredCandidates: plan.deferred.length + quotaDeferredCandidates,
+    firstError: quotaCircuit.firstRateLimit ?? firstError,
   };
 }
 
@@ -1406,80 +1680,222 @@ async function finalizeProviderRefresh(
   }, undefined, true);
 }
 
-async function persistProviderResult(environment: Environment, provider: string, cacheKey: string, candidates: JsonRecord[]) {
-  let persistedCount = 0;
+type AuthoritativePersistenceEntry = {
+  candidate: JsonRecord;
+  factCheck: JsonRecord;
+};
+
+async function writeAuthoritativePersistenceBatch(
+  environment: Environment,
+  provider: string,
+  cacheKey: string,
+  entries: AuthoritativePersistenceEntry[],
+  deadlineAt: number,
+) {
+  const remainingMs = Math.max(1, deadlineAt - Date.now());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), remainingMs);
+  try {
+    await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v1", {
+      provider_input: provider,
+      cache_key_input: cacheKey,
+      normalizer_version_input: RADAR_NORMALIZER_VERSION,
+      candidates_input: entries.map(({ candidate, factCheck }) => ({
+        ...candidate,
+        fact_context_fingerprint: factCheck.context_sha256,
+        fact_policy_version: RADAR_FACT_POLICY_VERSION,
+      })),
+      fact_checks_input: entries.map(({ factCheck }) => factCheck),
+      fact_policy_version_input: RADAR_FACT_POLICY_VERSION,
+      provider_status_input: {
+        status: "partial_error",
+        is_cached: false,
+        error_code: "RADAR_REFRESH_IN_PROGRESS",
+        error_message: "La actualización del proveedor todavía no ha finalizado.",
+      },
+    }, undefined, true, { signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("RADAR_PERSISTENCE_TIMEOUT");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function persistenceIsolationBudgetAvailable(budget: PersistenceIsolationBudget): boolean {
+  return budget.remainingRpcCalls > 0
+    && Date.now() + PERSISTENCE_RPC_START_MARGIN_MS < budget.deadlineAt;
+}
+
+function deferPersistenceBatch(
+  provider: string,
+  entries: AuthoritativePersistenceEntry[],
+  outcome: ProviderPersistenceOutcome,
+) {
+  const deferral: RadarPersistenceDeferredBatch = {
+    provider: cleanText(provider, 40),
+    external_ids: entries.map(({ candidate }) => cleanText(candidate.external_id, 220)).filter(Boolean),
+    candidate_count: entries.length,
+    stage: "authoritative_persistence",
+    code: "RADAR_PERSISTENCE_ISOLATION_DEFERRED",
+  };
+  outcome.deferred.push(deferral);
+  console.warn("Radar persistence batch deferred", JSON.stringify(deferral));
+}
+
+async function persistBatchWithDataIsolation(
+  environment: Environment,
+  provider: string,
+  cacheKey: string,
+  entries: AuthoritativePersistenceEntry[],
+  outcome: ProviderPersistenceOutcome,
+  budget: PersistenceIsolationBudget,
+): Promise<void> {
+  if (!entries.length) return;
+  if (!persistenceIsolationBudgetAvailable(budget)) {
+    deferPersistenceBatch(provider, entries, outcome);
+    return;
+  }
+  budget.remainingRpcCalls -= 1;
+  budget.usedRpcCalls += 1;
+  outcome.persistenceRpcCalls = budget.usedRpcCalls;
+  try {
+    await writeAuthoritativePersistenceBatch(environment, provider, cacheKey, entries, budget.deadlineAt);
+    outcome.persistedCount += entries.length;
+  } catch (error) {
+    if (!isQuarantinablePersistenceError(error)) throw error;
+    if (entries.length > 1) {
+      const middle = Math.ceil(entries.length / 2);
+      await persistBatchWithDataIsolation(environment, provider, cacheKey, entries.slice(0, middle), outcome, budget);
+      await persistBatchWithDataIsolation(environment, provider, cacheKey, entries.slice(middle), outcome, budget);
+      return;
+    }
+    const quarantine = quarantineFromPersistenceError(provider, entries[0].candidate, error);
+    outcome.quarantined.push(quarantine);
+    console.warn("Radar candidate quarantined", JSON.stringify(quarantine));
+  }
+}
+
+function quarantinedProviderFailure(provider: string, count: number) {
+  return {
+    ...publicProviderError(provider, "RADAR_CANDIDATES_QUARANTINED", 206),
+    message: `${count} candidata${count === 1 ? "" : "s"} no superaron la validación autoritativa. Las filas sanas sí se conservaron.`,
+  };
+}
+
+function deferredPersistenceCandidateCount(outcome: ProviderPersistenceOutcome): number {
+  return outcome.deferred.reduce((total, batch) => total + batch.candidate_count, 0);
+}
+
+function partialPersistenceFailure(provider: string, outcome: ProviderPersistenceOutcome) {
+  const deferredCount = deferredPersistenceCandidateCount(outcome);
+  if (!deferredCount) return quarantinedProviderFailure(provider, outcome.quarantined.length);
+  return {
+    ...publicProviderError(provider, "RADAR_PERSISTENCE_ISOLATION_DEFERRED", 206),
+    message: `${deferredCount} candidata${deferredCount === 1 ? " quedó" : "s quedaron"} diferida${deferredCount === 1 ? "" : "s"} al agotarse el presupuesto de aislamiento. Las ${outcome.persistedCount} filas confirmadas se conservaron.`,
+  };
+}
+
+async function persistProviderResult(
+  environment: Environment,
+  provider: string,
+  cacheKey: string,
+  candidates: JsonRecord[],
+): Promise<ProviderPersistenceOutcome> {
+  const outcome: ProviderPersistenceOutcome = {
+    persistedCount: 0,
+    quarantined: [],
+    deferred: [],
+    persistenceRpcCalls: 0,
+    failure: null,
+  };
+  const isolationBudget: PersistenceIsolationBudget = {
+    deadlineAt: Date.now() + PERSISTENCE_ISOLATION_BUDGET_MS,
+    remainingRpcCalls: MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER,
+    usedRpcCalls: 0,
+  };
   try {
     for (let offset = 0; offset < candidates.length; offset += RADAR_PERSISTENCE_BATCH_SIZE) {
       const batch = candidates.slice(offset, offset + RADAR_PERSISTENCE_BATCH_SIZE);
-      const factChecks = await Promise.all(batch.map((candidate) => buildAuthoritativeFactCheck(
+      const entries = await Promise.all(batch.map(async (candidate) => ({
         candidate,
-        "discovery",
-        safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
-      )));
-      const authoritativeCandidates = batch.map((candidate, index) => ({
-        ...candidate,
-        fact_context_fingerprint: factChecks[index].context_sha256,
-        fact_policy_version: RADAR_FACT_POLICY_VERSION,
-      }));
-      await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v1", {
-        provider_input: provider,
-        cache_key_input: cacheKey,
-        normalizer_version_input: RADAR_NORMALIZER_VERSION,
-        candidates_input: authoritativeCandidates,
-        fact_checks_input: factChecks,
-        fact_policy_version_input: RADAR_FACT_POLICY_VERSION,
-        provider_status_input: {
-          status: "partial_error",
-          is_cached: false,
-          error_code: "RADAR_REFRESH_IN_PROGRESS",
-          error_message: "La actualización del proveedor todavía no ha finalizado.",
-        },
-      }, undefined, true);
-      persistedCount += batch.length;
+        factCheck: await buildAuthoritativeFactCheck(
+          candidate,
+          "discovery",
+          safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
+        ),
+      })));
+      await persistBatchWithDataIsolation(environment, provider, cacheKey, entries, outcome, isolationBudget);
     }
-    await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount);
-    return persistedCount;
+    if (outcome.quarantined.length || outcome.deferred.length) {
+      outcome.failure = partialPersistenceFailure(provider, outcome);
+      await finalizeProviderRefresh(
+        environment,
+        provider,
+        cacheKey,
+        outcome.persistedCount > 0 ? "partial_error" : "unavailable",
+        outcome.persistedCount,
+        outcome.failure,
+      );
+    } else {
+      const persistedCount = outcome.persistedCount;
+      await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount);
+    }
+    return outcome;
   } catch (error) {
     const failure = persistenceFailure(error, provider);
+    outcome.failure = failure;
     await finalizeProviderRefresh(
       environment,
       provider,
       cacheKey,
-      persistedCount > 0 ? "partial_error" : "unavailable",
-      persistedCount,
+      outcome.persistedCount > 0 ? "partial_error" : "unavailable",
+      outcome.persistedCount,
       failure,
     ).catch(() => null);
-    throw new RadarPersistenceError(failure);
+    throw new RadarPersistenceError(failure, outcome);
   }
 }
 
 async function persistProviderFailure(environment: Environment, provider: string, cacheKey: string, failure: ReturnType<typeof providerFailure>) {
-  await rpc(environment, "record_market_radar_provider_failure", {
-    provider_input: provider,
-    cache_key_input: cacheKey,
-    status_input: failure.code === "PROVIDER_RATE_LIMITED" ? "rate_limited" : "unavailable",
-    error_code_input: failure.code,
-    error_message_input: failure.message,
-  }, undefined, true).catch(() => null);
+  await finalizeProviderRefresh(
+    environment,
+    provider,
+    cacheKey,
+    "unavailable",
+    0,
+    failure,
+  ).catch(() => null);
 }
 
 async function persistProcessorSuccess(environment: Environment, cacheKey: string, resultCount: number) {
-  await rpc(environment, "record_market_radar_provider_success", {
-    provider_input: "gemini",
-    cache_key_input: cacheKey,
-    result_count_input: Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES),
-  }, undefined, true).catch(() => null);
+  await finalizeProviderRefresh(
+    environment,
+    "gemini",
+    cacheKey,
+    "available",
+    Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES),
+  ).catch(() => null);
 }
 
 async function persistProcessorPartialFailure(environment: Environment, cacheKey: string, failure: JsonRecord, processedDecisions: number) {
   const message = `${cleanText(failure.message, 220) || "La verificación automática quedó incompleta."} Decisiones válidas: ${Math.max(processedDecisions, 0)}.`;
-  await rpc(environment, "record_market_radar_provider_failure", {
-    provider_input: "gemini",
-    cache_key_input: cacheKey,
-    status_input: "partial_error",
-    error_code_input: cleanText(failure.code, 80) || "PROCESSING_INCOMPLETE",
-    error_message_input: message,
-  }, undefined, true).catch(() => null);
+  const status = processedDecisions === 0 ? "unavailable" : "partial_error";
+  await finalizeProviderRefresh(
+    environment,
+    "gemini",
+    cacheKey,
+    status,
+    Math.min(Math.max(processedDecisions, 0), MAX_GEMINI_CANDIDATES),
+    {
+      provider: "gemini",
+      code: cleanText(failure.code, 80) || "PROCESSING_INCOMPLETE",
+      status: Number(failure.status) || 206,
+      message,
+    },
+  ).catch(() => null);
 }
 
 function hasCurrentDiscoveryFact(candidate: JsonRecord, checkedAt = Date.now()): boolean {
@@ -1646,6 +2062,8 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   let evidenceByGroup = new Map<string, JsonRecord[]>();
   let newlyVerified: JsonRecord[] = [];
   let deferredVerificationCount = 0;
+  let processedVerificationCount = 0;
+  let failedVerificationBatches = 0;
   if (needsVerification.length) {
     try {
       evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, needsVerification, authoritativeDomains);
@@ -1661,16 +2079,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       const outcome = await verifyAndAdaptWithGemini(environment.geminiKey, needsVerification, existing, evidenceByGroup, now);
       newlyVerified = outcome.candidates;
       deferredVerificationCount = outcome.deferredCandidates;
+      processedVerificationCount = outcome.processedDecisions;
+      failedVerificationBatches = outcome.failedBatches;
       if (outcome.failedBatches > 0 || outcome.incompleteCandidates > 0) {
         const failure = outcome.firstError
           ? providerFailure(outcome.firstError, "gemini")
           : { provider: "gemini", code: "PROCESSING_INCOMPLETE", status: 206, message: "Una parte de las candidatas queda en revisión para el siguiente lote automático." };
         errors.push(failure);
-        if (outcome.processedDecisions === 0 && outcome.failedBatches > 0) {
-          await persistProviderFailure(environment, "gemini", cacheKey, failure as ReturnType<typeof providerFailure>);
-        } else {
-          await persistProcessorPartialFailure(environment, cacheKey, failure, outcome.processedDecisions);
-        }
+        await persistProcessorPartialFailure(environment, cacheKey, failure, outcome.processedDecisions);
       } else {
         await persistProcessorSuccess(environment, cacheKey, outcome.processedDecisions);
       }
@@ -1679,7 +2095,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         ? publicProviderError("gemini", "PROVIDER_NOT_CONFIGURED", 503)
         : providerFailure(error, "gemini");
       errors.push(failure);
-      await persistProviderFailure(environment, "gemini", cacheKey, failure);
+      await persistProcessorPartialFailure(environment, cacheKey, failure, 0);
       newlyVerified = failClosedCandidates(needsVerification, now, "La verificación automática no está disponible; el evento permanece bloqueado para preparación.", 60);
     }
   }
@@ -1704,18 +2120,48 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   });
 
   const scored = scoreCandidates(candidates, existing, now) as JsonRecord[];
+  const quarantinedCandidates: RadarCandidateQuarantine[] = [];
+  const deferredPersistenceBatches: RadarPersistenceDeferredBatch[] = [];
   for (const provider of discoveredByProvider.keys()) {
     try {
-      await persistProviderResult(
+      const outcome = await persistProviderResult(
         environment,
         provider,
         cacheKey,
         scored.filter((candidate) => candidate.provider === provider).slice(0, MAX_NORMALIZED_PER_PROVIDER),
       );
+      quarantinedCandidates.push(...outcome.quarantined);
+      deferredPersistenceBatches.push(...outcome.deferred);
+      if (outcome.failure) {
+        errors.push({
+          ...outcome.failure,
+          quarantined_count: outcome.quarantined.length,
+          quarantined: outcome.quarantined,
+          deferred_count: deferredPersistenceCandidateCount(outcome),
+          deferred_batches: outcome.deferred,
+          persisted_count: outcome.persistedCount,
+          persistence_rpc_count: outcome.persistenceRpcCalls,
+        });
+      }
     } catch (error) {
       const failure = error instanceof RadarPersistenceError
         ? error.failure
         : persistenceFailure(error, provider);
+      if (error instanceof RadarPersistenceError) {
+        quarantinedCandidates.push(...error.outcome.quarantined);
+        deferredPersistenceBatches.push(...error.outcome.deferred);
+        if (error.outcome.quarantined.length || error.outcome.deferred.length) {
+          errors.push({
+            ...partialPersistenceFailure(provider, error.outcome),
+            quarantined_count: error.outcome.quarantined.length,
+            quarantined: error.outcome.quarantined,
+            deferred_count: deferredPersistenceCandidateCount(error.outcome),
+            deferred_batches: error.outcome.deferred,
+            persisted_count: error.outcome.persistedCount,
+            persistence_rpc_count: error.outcome.persistenceRpcCalls,
+          });
+        }
+      }
       errors.push(failure);
     }
   }
@@ -1733,6 +2179,15 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     partial: errors.length > 0,
     errors,
     deferred_verification_count: deferredVerificationCount,
+    processed_verification_count: processedVerificationCount,
+    failed_verification_batches: failedVerificationBatches,
+    quarantined_candidate_count: quarantinedCandidates.length,
+    quarantined_candidates: quarantinedCandidates,
+    deferred_persistence_candidate_count: deferredPersistenceBatches.reduce(
+      (total, batch) => total + batch.candidate_count,
+      0,
+    ),
+    deferred_persistence_batches: deferredPersistenceBatches,
     reconciled_provider_results: reconciledProviderResults,
     cooldown_seconds: Math.ceil(REFRESH_COOLDOWN_MS / 1000),
     limits: {
@@ -1795,6 +2250,73 @@ function candidateReady(candidate: JsonRecord): { ok: true } | { ok: false; erro
     return { ok: false, error: "FACT_CHECK_EXPIRED", message: "El snapshot factual ha caducado y debe repetirse." };
   }
   if (cleanText(candidate.state, 40) !== "available") return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
+  return { ok: true };
+}
+
+function evidenceDomainAllowed(item: JsonRecord, authoritativeDomains: ReadonlySet<string>): boolean {
+  const publicUrl = safePublicUrl(item.url);
+  if (!publicUrl) return false;
+  try {
+    const hostname = new URL(publicUrl).hostname.toLowerCase();
+    return [...authoritativeDomains].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+async function candidateReadyForPrepareAttempt(
+  candidate: JsonRecord,
+  factCheck: JsonRecord,
+  checkedAt: string,
+  authoritativeDomains: ReadonlySet<string>,
+): Promise<{ ok: true } | { ok: false; error: string; message: string }> {
+  if (cleanText(candidate.verification_status, 80) !== "verified_open") {
+    return { ok: false, error: "VERIFICATION_REQUIRED", message: "La comprobación factual no permite preparar esta candidata." };
+  }
+  if (cleanText(candidate.fact_status, 40) !== "unresolved"
+    || cleanText(factCheck.fact_status, 40) !== "unresolved"
+    || cleanText(factCheck.fact_policy_version, 100) !== RADAR_FACT_POLICY_VERSION
+    || cleanText(factCheck.purpose, 40) !== "prepare") {
+    return { ok: false, error: "FACT_CHECK_REQUIRED", message: "La preparación no conserva un snapshot factual no resuelto y autoritativo." };
+  }
+  if (!isAdaptedIdeaComplete(candidate)) {
+    return { ok: false, error: "RESOLUTION_SOURCE_REQUIRED", message: "Faltan la pregunta, los criterios o una fuente de resolución verificable." };
+  }
+  const verificationExpiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
+  if (!Number.isFinite(verificationExpiresAt) || verificationExpiresAt <= Date.parse(checkedAt)) {
+    return { ok: false, error: "VERIFICATION_EXPIRED", message: "La verificación factual ha caducado." };
+  }
+  const factExpiresAt = Date.parse(cleanText(factCheck.expires_at, 100));
+  if (!Number.isFinite(factExpiresAt) || factExpiresAt <= Date.parse(checkedAt)) {
+    return { ok: false, error: "FACT_CHECK_EXPIRED", message: "El snapshot factual de preparación ha caducado." };
+  }
+  const evidence = toRecordArray(factCheck.source_snapshot);
+  const checkedAtMs = Date.parse(checkedAt);
+  let hasCurrentProof = false;
+  for (const item of evidence) {
+    if (!evidenceDomainAllowed(item, authoritativeDomains)
+      || evidenceHasPotentialTerminalClaim(item, candidate, checkedAt)) {
+      return { ok: false, error: "RADAR_FACT_EVIDENCE_REQUIRED", message: "La evidencia primaria ya no supera la validación autoritativa." };
+    }
+    if (!isDeterministicUnresolvedEvidence(item, candidate, checkedAt)) continue;
+    const retrievedAt = Date.parse(cleanText(item.retrieved_at, 100));
+    const unresolvedUntil = Date.parse(cleanText(item.unresolved_until, 100));
+    const excerpt = cleanText(item.unresolved_proof_excerpt, 700);
+    const excerptHash = cleanText(item.unresolved_proof_excerpt_sha256, 80);
+    if (Number.isFinite(checkedAtMs)
+      && Number.isFinite(retrievedAt)
+      && retrievedAt >= checkedAtMs - (10 * 60_000)
+      && retrievedAt <= checkedAtMs + 60_000
+      && Number.isFinite(unresolvedUntil)
+      && unresolvedUntil > checkedAtMs + 60_000
+      && unresolvedUntil <= checkedAtMs + (10 * 365.25 * 24 * 60 * 60_000)
+      && await sha256Hex(excerpt) === excerptHash) {
+      hasCurrentProof = true;
+    }
+  }
+  if (!hasCurrentProof) {
+    return { ok: false, error: "RADAR_FACT_EVIDENCE_REQUIRED", message: "No existe evidencia primaria vigente que demuestre que el contrato continúa sin resolver." };
+  }
   return { ok: true };
 }
 
@@ -1871,6 +2393,7 @@ async function revalidateCandidateForPreparation(
   authorization: string,
   candidate: JsonRecord,
   purpose: "prepare" | "revalidate" = "prepare",
+  attemptId: string = crypto.randomUUID(),
 ): Promise<{ candidate: JsonRecord; checkedAt: string; reservation: JsonRecord }> {
   let providerCandidate: JsonRecord | null = null;
   let providerUnavailable = false;
@@ -1885,7 +2408,7 @@ async function revalidateCandidateForPreparation(
     providerUnavailable = true;
   }
 
-  const checkedAt = new Date().toISOString();
+  let checkedAt = new Date().toISOString();
   const providerDecision = providerCandidate ? evaluateProviderEligibility(providerCandidate, checkedAt) as JsonRecord | null : null;
   let factuallyRevalidated = !providerCandidate
     ? refreshCandidateCacheLease(applyEligibilityDecision(candidate, {
@@ -1931,13 +2454,66 @@ async function revalidateCandidateForPreparation(
   // Una fila conocida no vuelve a pasar por el UPSERT de descubrimiento. Prepare
   // reserva una sola vez; revalidate agrega un snapshot post-preparación sin
   // reservar ni revisar el borrador ligado.
+  checkedAt = new Date().toISOString();
+  factuallyRevalidated = refreshCandidateCacheLease(factuallyRevalidated, checkedAt);
   const expectedRevision = Number(candidate.preparation_revision);
-  const factCheck = await buildAuthoritativeFactCheck(factuallyRevalidated, purpose, checkedAt);
+  const factCheck = await buildAuthoritativeFactCheck(
+    factuallyRevalidated,
+    purpose,
+    checkedAt,
+    purpose === "prepare" ? attemptId : crypto.randomUUID(),
+  );
   const authoritativeVerification = {
     ...factuallyRevalidated,
     fact_context_fingerprint: factCheck.context_sha256,
     fact_policy_version: RADAR_FACT_POLICY_VERSION,
   };
+  if (purpose === "prepare") {
+    const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
+    const readiness = await candidateReadyForPrepareAttempt(
+      authoritativeVerification,
+      factCheck,
+      checkedAt,
+      authoritativeDomains,
+    );
+    if (!readiness.ok) {
+      const blockedVerification = {
+        ...authoritativeVerification,
+        verification_status: "needs_review",
+        verification_reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+        verification_reason: readiness.message,
+        verification_confidence: 0,
+        verification_expires_at: null,
+        fact_status: "unknown",
+      };
+      const blockedFactCheck = await buildAuthoritativeFactCheck(
+        blockedVerification,
+        "prepare",
+        checkedAt,
+        attemptId,
+      );
+      const recordedAttempt = toRecord(await rpc(
+        environment,
+        "record_market_radar_prepare_attempt_v1",
+        {
+          candidate_id_input: cleanText(candidate.id, 80),
+          expected_preparation_revision_input: Number.isSafeInteger(expectedRevision) ? expectedRevision : null,
+          normalizer_version_input: RADAR_NORMALIZER_VERSION,
+          verification_checked_at_input: checkedAt,
+          verification_input: blockedVerification,
+          fact_check_input: blockedFactCheck,
+          attempt_id_input: attemptId,
+        },
+        undefined,
+        true,
+      ));
+      if (recordedAttempt?.persisted !== true) throw new Error("RADAR_PREPARE_ATTEMPT_NOT_RECORDED");
+      throw new RadarPreparationBlockedError(
+        cleanText(recordedAttempt.error, 100) || readiness.error,
+        recordedAttempt,
+      );
+    }
+  }
   const rpcName = purpose === "prepare"
     ? "apply_market_radar_prepare_fact_verification_v1"
     : "apply_market_radar_revalidation_fact_v1";
@@ -2026,12 +2602,17 @@ async function handleAction(
     }
     let result: { candidate: JsonRecord; checkedAt: string; reservation: JsonRecord };
     let legacyAttestation: JsonRecord | null = null;
+    const requestedOperationId = cleanText(body.operation_id, 80);
+    const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedOperationId)
+      ? requestedOperationId
+      : crypto.randomUUID();
     try {
       result = await revalidateCandidateForPreparation(
         environment,
         authorization,
         candidate,
         action === "prepare" ? "prepare" : "revalidate",
+        operationId,
       );
       if (legacyDraftId) {
         const candidateRevision = Number(result.candidate.preparation_revision);
@@ -2074,6 +2655,8 @@ async function handleAction(
         VERIFICATION_EXPIRED: { status: 409, message: "La comprobación factual ha caducado y debe repetirse." },
         FACT_CHECK_REQUIRED: { status: 409, message: "Falta el snapshot factual autoritativo de esta preparación." },
         FACT_CHECK_EXPIRED: { status: 409, message: "El snapshot factual ha caducado y debe repetirse." },
+        RADAR_FACT_EVIDENCE_REQUIRED: { status: 409, message: "No existe evidencia primaria vigente de que el contrato continúe sin resolver." },
+        RESOLUTION_SOURCE_REQUIRED: { status: 409, message: "Faltan la pregunta, los criterios o una fuente de resolución verificable." },
         PREPARATION_REVISION_MISMATCH: { status: 409, message: "La candidata cambió durante la comprobación. Vuelve a aplicar para usar su versión actual." },
         CANDIDATE_NOT_REVALIDATABLE: { status: 409, message: "La candidata ya no admite una comprobación factual de publicación." },
         CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
@@ -2084,6 +2667,23 @@ async function handleAction(
         RADAR_LEGACY_ATTESTATION_REJECTED: { status: 409, message: "La atestación factual heredada no coincide con el borrador actual." },
         RADAR_LEGACY_ATTESTATION_FAILED: { status: 409, message: "No se pudo atestar de forma atómica el origen factual heredado." },
       };
+      if (error instanceof RadarPreparationBlockedError) {
+        const failure = errors[error.code] ?? {
+          status: 409,
+          message: "La comprobación factual quedó registrada, pero no permite preparar esta candidata.",
+        };
+        return jsonResponse({
+          error: error.code,
+          message: failure.message,
+          retryable: error.retryable,
+          candidate: error.diagnostics.candidate,
+          attempt_fact_check_id: error.diagnostics.attempt_fact_check_id,
+          authoritative_fact_check_id: error.diagnostics.authoritative_fact_check_id,
+          preparation_revision: error.diagnostics.preparation_revision,
+          persisted: error.diagnostics.persisted,
+          authoritative_pointer_unchanged: error.diagnostics.authoritative_pointer_unchanged,
+        }, 409);
+      }
       const failure = errors[code] ?? { status: 503, message: "No se pudo repetir la comprobación factual. La candidata permanece bloqueada y no se ha preparado ningún borrador." };
       return jsonResponse({ error: code, message: failure.message }, failure.status);
     }

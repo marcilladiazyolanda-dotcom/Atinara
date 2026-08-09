@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260809-terminal-fact1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260809-terminal-fact1">
-  <script src="observability-config.js?v=20260809-terminal-fact1"></script>
-  <script src="monitoring.js?v=20260809-terminal-fact1"></script>
+  <script src="theme.js?v=20260809-expert-cycle1"></script>
+  <link rel="stylesheet" href="styles.css?v=20260809-expert-cycle1">
+  <script src="observability-config.js?v=20260809-expert-cycle1"></script>
+  <script src="monitoring.js?v=20260809-expert-cycle1"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -263,14 +263,14 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260809-terminal-fact1"></script>
-  <script src="password-security.js?v=20260809-terminal-fact1"></script>
-  <script src="password-recovery.js?v=20260809-terminal-fact1"></script>
-  <script src="site-ui.js?v=20260809-terminal-fact1"></script>
-  <script src="auth.js?v=20260809-terminal-fact1"></script>
-  <script src="market-admin-validation.js?v=20260809-terminal-fact1"></script>
-  <script src="admin-markets.js?v=20260809-terminal-fact1"></script>
-  <script src="market-draft-fixer.js?v=20260809-terminal-fact1"></script>
+  <script src="supabaseClient.js?v=20260809-expert-cycle1"></script>
+  <script src="password-security.js?v=20260809-expert-cycle1"></script>
+  <script src="password-recovery.js?v=20260809-expert-cycle1"></script>
+  <script src="site-ui.js?v=20260809-expert-cycle1"></script>
+  <script src="auth.js?v=20260809-expert-cycle1"></script>
+  <script src="market-admin-validation.js?v=20260809-expert-cycle1"></script>
+  <script src="admin-markets.js?v=20260809-expert-cycle1"></script>
+  <script src="market-draft-fixer.js?v=20260809-expert-cycle1"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
@@ -334,6 +334,14 @@
         EXPERT_NOT_CONFIGURED: "El análisis editorial avanzado no está configurado.",
         MARKET_EXPERT_ANALYSIS_REQUIRED: "Primero debe completarse un análisis experto.",
         MARKET_EXPERT_ANALYSIS_STALE: "El análisis experto pertenece a una revisión anterior de la candidata.",
+        MARKET_EXPERT_ANALYSIS_NOT_PERSISTED: "El análisis no quedó guardado como dictamen vigente.",
+        MARKET_EXPERT_DOSSIER_UNAVAILABLE: "No se pudo recuperar el expediente experto.",
+        RADAR_FACTUAL_REFRESH_REQUIRED: "La candidata necesita nueva evidencia factual antes de poder avanzar.",
+        RADAR_REVALIDATION_REQUIRED: "La comprobación factual todavía no permite preparar un borrador.",
+        CANDIDATE_NOT_REVALIDATABLE: "La candidata no admite una acción de preparación en su estado actual.",
+        PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente las consultas.",
+        PROVIDER_TIMEOUT: "El proveedor no respondió dentro del tiempo seguro.",
+        SERVICE_UNAVAILABLE: "El servicio experto no está disponible temporalmente.",
         RADAR_FACTUAL_VERIFICATION_REQUIRED: "La comprobación factual debe actualizarse antes de continuar.",
         RADAR_CANDIDATE_NOT_PREPARABLE: "La candidata no cumple todavía las condiciones para preparar un borrador.",
         RADAR_NORMALIZER_OUTDATED: "La candidata debe actualizarse con la versión actual del normalizador.",
@@ -372,11 +380,52 @@
         return helpers.localDateTime(value, timeZone);
       }
 
+      function isRecord(value) {
+        return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+      }
+
+      function typedCode(value, fallback = "MARKET_EXPERT_DOSSIER_UNAVAILABLE") {
+        const code = String(value || "").trim().slice(0, 100);
+        return /^[A-Z][A-Z0-9_]{2,99}$/.test(code) ? code : fallback;
+      }
+
+      function localTypedError(code, message) {
+        const error = new Error(String(message || "").trim().slice(0, 1_000));
+        error.code = typedCode(code);
+        return error;
+      }
+
+      async function expertInvocationError(error, fallback) {
+        let payload = null;
+        try {
+          if (error?.context && typeof error.context.clone === "function") {
+            payload = await error.context.clone().json();
+          }
+        } catch {
+          // El cuerpo puede no ser JSON. Nunca se muestra una respuesta cruda.
+        }
+        const payloadError = isRecord(payload?.error) ? payload.error : null;
+        const code = typedCode(
+          payloadError?.code
+          || (typeof payload?.error === "string" ? payload.error : "")
+          || payload?.code
+          || error?.code
+        );
+        const wrapped = localTypedError(
+          code,
+          payloadError?.message || payload?.message || reasonLabels[code] || fallback
+        );
+        wrapped.status = Number(error?.context?.status) || null;
+        wrapped.retryable = payload?.retryable === true || wrapped.status === 429 || wrapped.status >= 500;
+        wrapped.gate = isRecord(payload?.gate) ? payload.gate : null;
+        return wrapped;
+      }
+
       async function invokeExpert(action, payload) {
         const { data, error } = await client.functions.invoke("market-expert", {
           body: { action, ...(payload || {}) }
         });
-        if (error) throw error;
+        if (error) throw await expertInvocationError(error, "No se pudo completar la operación del Agente Editor.");
         return data || {};
       }
 
@@ -396,7 +445,28 @@
           origin_type: "radar_candidate",
           origin_id: candidateId
         }).then((data) => {
-          const value = data.package || { available: false };
+          const rawPackage = isRecord(data.package) ? data.package : {};
+          const rawGate = isRecord(rawPackage.gate) ? rawPackage.gate : isRecord(data.gate) ? data.gate : {};
+          const fallbackCode = typedCode(
+            isRecord(data.error) ? data.error.code : data.error || data.code,
+            "MARKET_EXPERT_ANALYSIS_REQUIRED"
+          );
+          const value = {
+            ...rawPackage,
+            available: rawPackage.available === true,
+            gate: {
+              status: "blocked",
+              can_prefill: false,
+              can_save_private_draft: false,
+              hard_blocks: rawPackage.available === true ? [] : [fallbackCode],
+              warnings: [],
+              ...rawGate,
+            },
+            error: rawPackage.error || (data.error || data.message ? {
+              code: fallbackCode,
+              message: data.message || reasonLabels[fallbackCode] || "El expediente está bloqueado."
+            } : null),
+          };
           if (packageRequestVersions.get(candidateId) === requestVersion) {
             packageCache.set(candidateId, value);
           }
@@ -506,15 +576,52 @@
           <li><code>${escapeHtml(code)}</code><span>${escapeHtml(reasonLabels[code] || code)}</span></li>`).join("")}</ul>`;
       }
 
+      function packageCanApply(pkg, candidateId = "") {
+        return pkg?.available === true
+          && pkg?.origin?.type === "radar_candidate"
+          && Boolean(pkg?.origin?.id)
+          && (!candidateId || pkg.origin.id === candidateId)
+          && Boolean(pkg?.run?.id)
+          && pkg?.gate?.can_prefill === true
+          && pkg?.gate?.can_save_private_draft === true;
+      }
+
+      function packageFailure(pkg) {
+        const gate = isRecord(pkg?.gate) ? pkg.gate : {};
+        const hardBlocks = Array.isArray(gate.hard_blocks) ? gate.hard_blocks.filter(Boolean) : [];
+        const embedded = isRecord(pkg?.error) ? pkg.error : {};
+        const code = typedCode(
+          embedded.code || (typeof pkg?.error === "string" ? pkg.error : "") || pkg?.code || hardBlocks[0],
+          "MARKET_EXPERT_ANALYSIS_REQUIRED"
+        );
+        return {
+          code,
+          message: String(embedded.message || pkg?.message || reasonLabels[code] || "El expediente está bloqueado.").trim().slice(0, 1_000),
+          retryable: embedded.retryable === true || pkg?.retryable === true,
+          hardBlocks: [...new Set([code, ...hardBlocks.map((item) => typedCode(item, String(item).slice(0, 100)))])],
+        };
+      }
+
+      function blockedDossierMarkup(pkg, candidateId) {
+        const gate = isRecord(pkg?.gate) ? pkg.gate : {};
+        const failure = packageFailure(pkg);
+        return `<div class="market-expert-dossier-heading">
+            <div><p class="eyebrow">Expediente experto · lectura segura</p><h3>Agente Editor</h3></div>
+            <span class="market-expert-dossier-status">${escapeHtml(labels.gate[gate.status] || "Propuesta bloqueada")}</span>
+          </div>
+          <p>${escapeHtml(failure.message)}</p>
+          <div><h4>Estado tipado</h4>${listMarkup(failure.hardBlocks, "error")}</div>
+          <div class="market-expert-dossier-actions">
+            <button class="primary-button" type="button" data-radar-expert="${escapeHtml(candidateId)}">Analizar con el Agente Editor</button>
+            <small>${failure.retryable
+              ? "La incidencia es temporal. Analizar vuelve a solicitar un dictamen sin preparar, guardar ni publicar nada."
+              : "Analizar crea o actualiza el dictamen sin preparar, guardar, confirmar ni publicar ningún mercado."}</small>
+          </div>`;
+      }
+
       function dossierMarkup(pkg, candidateId) {
         if (!pkg?.available) {
-          const isApplying = applyingCandidates.has(candidateId);
-          return `<h3>Agente Editor</h3>
-            <p>No existe un dictamen vigente para la revisión actual de esta candidata.</p>
-            <div class="market-expert-dossier-actions">
-              <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${isApplying ? " disabled" : ""}>${isApplying ? "Preparando propuesta…" : "Revalidar y aplicar propuesta"}</button>
-              <small>Radar comprobará primero los hechos y después generará el dictamen exacto de esa revisión. Si existe un bloqueo real, se mostrará su causa concreta.</small>
-            </div>`;
+          return blockedDossierMarkup(pkg, candidateId);
         }
         const verdict = pkg.verdict || {};
         const fields = pkg.fields || {};
@@ -524,22 +631,8 @@
         const hardBlocks = Array.isArray(gate.hard_blocks) ? gate.hard_blocks : [];
         const warnings = Array.isArray(gate.warnings) ? gate.warnings : [];
         const isApplying = applyingCandidates.has(candidateId);
-        const retryableHardBlocks = new Set([
-          "MARKET_EXPERT_ANALYSIS_REQUIRED",
-          "MARKET_EXPERT_ANALYSIS_STALE",
-          "RADAR_FACTUAL_VERIFICATION_REQUIRED",
-          "RADAR_CANDIDATE_NOT_PREPARABLE",
-          "RADAR_RESOLUTION_SOURCE_REQUIRED"
-        ]);
-        const canRefreshAndApply = hardBlocks.length > 0
-          && hardBlocks.every((code) => retryableHardBlocks.has(code))
-          && hardBlocks.some((code) => [
-            "MARKET_EXPERT_ANALYSIS_REQUIRED",
-            "MARKET_EXPERT_ANALYSIS_STALE",
-            "RADAR_FACTUAL_VERIFICATION_REQUIRED"
-          ].includes(code));
         const gateAllowsApply = gate.can_prefill === true && gate.can_save_private_draft === true;
-        const canApply = (gateAllowsApply || canRefreshAndApply) && !isApplying;
+        const canApply = packageCanApply(pkg, candidateId) && !isApplying;
         const sourceMarkup = sources.length
           ? `<ul class="market-expert-source-list">${sources.map((source) => `<li>
               <strong>${escapeHtml(source.role || "Fuente")}</strong>
@@ -597,8 +690,6 @@
               ? "Revalidando Radar y actualizando el dictamen antes de cargar el formulario."
               : gateAllowsApply
               ? "Solo pre-rellena. El borrador se guardará cuando tú pulses Guardar y conservará Radar, dictamen, contrato y fuentes en una única transacción."
-              : canRefreshAndApply
-              ? "Se repetirá primero la comprobación factual y el dictamen; solo se aplicará si la revisión resultante queda lista."
               : "La propuesta no puede pasar al borrador mientras conserve bloqueos o no tenga fecha y fuente primaria."}</small>
           </div>`;
       }
@@ -621,10 +712,24 @@
           if (!target.isConnected || target.dataset.expertPackageRequest !== requestId) return;
           target.dataset.gate = pkg?.gate?.status || "blocked";
           target.innerHTML = dossierMarkup(pkg, candidateId);
-        } catch {
+        } catch (error) {
           if (!target.isConnected || target.dataset.expertPackageRequest !== requestId) return;
           target.dataset.gate = "blocked";
-          target.innerHTML = `<h3>Agente Editor</h3><p>No se pudo cargar el expediente. El Radar y la creación manual continúan disponibles.</p>`;
+          target.innerHTML = blockedDossierMarkup({
+            available: false,
+            gate: error?.gate || {
+              status: "blocked",
+              can_prefill: false,
+              can_save_private_draft: false,
+              hard_blocks: [typedCode(error?.code)],
+              warnings: [],
+            },
+            error: {
+              code: typedCode(error?.code),
+              message: error?.message || "No se pudo cargar el expediente experto.",
+              retryable: error?.retryable === true,
+            },
+          }, candidateId);
         }
       }
 
@@ -907,19 +1012,32 @@
           applyingCandidates.add(candidateId);
           target.disabled = true;
           clearPreparedPackage(candidateId);
-          setBridgeStatus("Revalidando la candidata en Radar antes de actualizar el dictamen experto…", "warning");
+          setBridgeStatus("Comprobando el expediente y sus puertas antes de preparar…", "warning");
           try {
+            const currentPackage = await loadPackage(candidateId, true);
+            if (!packageCanApply(currentPackage, candidateId)) {
+              const failure = packageFailure(currentPackage);
+              throw localTypedError(failure.code, failure.message);
+            }
+            const currentRevision = preparationRevisionFrom(currentPackage);
+            if (!currentRevision || !packageMatchesPreparation(currentPackage, currentRevision)) {
+              throw localTypedError(
+                "MARKET_EXPERT_ANALYSIS_STALE",
+                "El expediente no corresponde a la revisión factual vigente. Analiza de nuevo antes de preparar."
+              );
+            }
             const bridge = window.atinaraMarketAdminBridge;
             if (typeof bridge?.prepareRadarCandidate !== "function" || typeof bridge?.refreshRadarExpertAnalysis !== "function") {
-              throw new Error("La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
+              throw localTypedError("RADAR_PREPARATION_UNAVAILABLE", "La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
             }
+            setBridgeStatus("Expediente apto. Radar está reservando una revisión privada…", "warning");
             const preparation = await bridge.prepareRadarCandidate(candidateId, { throwOnError: true });
             const preparationRevision = preparationRevisionFrom(preparation);
             if (!preparationRevision) {
               throw new Error("Radar no devolvió una revisión de preparación válida. La propuesta no se ha aplicado.");
             }
             invalidatePackage(candidateId);
-            setBridgeStatus("Radar revalidado. Actualizando el análisis experto para esta revisión…", "warning");
+            setBridgeStatus("Radar preparado. Actualizando el dictamen para la revisión reservada…", "warning");
             await bridge.refreshRadarExpertAnalysis(candidateId, {
               force: true,
               preparationRevision
@@ -933,7 +1051,7 @@
             if (!packageMatchesPreparation(pkg, preparationRevision)) {
               throw new Error("El expediente experto no corresponde a la revisión actual de Radar. Vuelve a aplicar la propuesta.");
             }
-            if (pkg?.gate?.can_prefill !== true || pkg?.gate?.can_save_private_draft !== true) {
+            if (!packageCanApply(pkg, candidateId)) {
               throw new Error("La propuesta conserva bloqueos o carece de fecha y fuente primaria.");
             }
             const form = await waitForForm();
@@ -942,7 +1060,8 @@
             setBridgeStatus("", "success");
           } catch (error) {
             clearPreparedPackage(candidateId);
-            setBridgeStatus(error?.message || "No se pudo aplicar la propuesta.", "error");
+            const code = typedCode(error?.code, "MARKET_EXPERT_APPLY_BLOCKED");
+            setBridgeStatus(`${code} · ${error?.message || reasonLabels[code] || "No se pudo aplicar la propuesta."}`, "error");
           } finally {
             applyingCandidates.delete(candidateId);
             target.disabled = false;
@@ -971,6 +1090,13 @@
       });
 
       document.addEventListener("atinara:radar-expert-analysis-complete", (event) => {
+        const candidateId = event.detail?.candidateId;
+        if (!candidateId) return;
+        invalidatePackage(candidateId);
+        scheduleScan(true);
+      });
+
+      document.addEventListener("atinara:radar-expert-analysis-failed", (event) => {
         const candidateId = event.detail?.candidateId;
         if (!candidateId) return;
         invalidatePackage(candidateId);

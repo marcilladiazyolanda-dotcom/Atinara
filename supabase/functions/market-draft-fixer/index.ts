@@ -12,8 +12,10 @@ import {
   cleanText,
   detectIrreducibleAmbiguity,
   discoverRegisteredPrimarySource,
+  extractTemporalAnchorDate,
   inferArchetype,
   inferRepairCategory,
+  inferRelativeTemporalContract,
   inferSubject,
   isRecord,
   mergeAlternativeSources,
@@ -233,6 +235,14 @@ function sourceIsRelevant(
   const entityMatch = requiredMatches > 0 && matches.length >= requiredMatches;
   const propositionMatch = archetype !== "content_release" || /\b(trailer|teaser|avance)\b/.test(titleAndExcerpt);
   return propositionMatch && entityMatch;
+}
+
+function verifiedClaimSlots(context: JsonRecord, subject: string, excerpt: string): string[] {
+  const slots: string[] = [];
+  if (inferRelativeTemporalContract(context) && extractTemporalAnchorDate(excerpt, subject)) {
+    slots.push("TEMPORAL_ANCHOR");
+  }
+  return slots;
 }
 
 async function readLimitedExcerpt(response: Response): Promise<string> {
@@ -469,7 +479,13 @@ async function discoverOfficialAlternatives(
     const relevant = Boolean(validated && sourceIsRelevant(
       { url: validated.url, excerpt: validated.excerpt }, subject, archetype, primaryUrl, authoritativeDomains, false,
     ));
-    evidenceChecked.push({ url: safePublicUrl(candidate.url), accepted: relevant, source: "provenance", authority: "private_source_registry_v1" });
+    evidenceChecked.push({
+      url: safePublicUrl(candidate.url),
+      accepted: relevant,
+      source: "provenance",
+      authority: "private_source_registry_v1",
+      claim_slots: validated && relevant ? verifiedClaimSlots(context, subject, validated.excerpt) : [],
+    });
     if (validated && relevant) accepted.push({
       url: validated.url,
       title: cleanText(candidate.title ?? candidate.name, 240),
@@ -480,11 +496,19 @@ async function discoverOfficialAlternatives(
       relevance_verified: true,
       authority_basis: "private_source_registry_v1",
       relevance_basis: "fetched_content_v1",
+      claim_slots: verifiedClaimSlots(context, subject, validated.excerpt),
     });
-    if (accepted.length >= 3) break;
+    if (accepted.length >= 3 && (!inferRelativeTemporalContract(context)
+      || accepted.some((source) => Array.isArray(source.claim_slots)
+        && source.claim_slots.includes("TEMPORAL_ANCHOR")))) break;
   }
 
-  if (!accepted.length) {
+  const temporalAnchorRequired = Boolean(inferRelativeTemporalContract(context));
+  const temporalAnchorVerified = () => accepted.some((source) => Array.isArray(source.claim_slots)
+    && source.claim_slots.includes("TEMPORAL_ANCHOR"));
+  // La investigación es dirigida por slots: una página puede ser oficial y
+  // relevante para la entidad sin demostrar todavía la fecha del hecho ancla.
+  if (!accepted.length || (temporalAnchorRequired && !temporalAnchorVerified())) {
     const search = await searchTavily(
       env, subject, archetype, authoritativeDomains, deadlineAt, requestSignal,
     );
@@ -502,7 +526,13 @@ async function discoverOfficialAlternatives(
       const relevant = Boolean(validated && sourceIsRelevant(
         { url: validated.url, excerpt: validated.excerpt }, subject, archetype, primaryUrl, authoritativeDomains, false,
       ));
-      evidenceChecked.push({ url: safePublicUrl(candidate.url), accepted: relevant, source: "tavily", authority: "private_source_registry_v1" });
+      evidenceChecked.push({
+        url: safePublicUrl(candidate.url),
+        accepted: relevant,
+        source: "tavily",
+        authority: "private_source_registry_v1",
+        claim_slots: validated && relevant ? verifiedClaimSlots(context, subject, validated.excerpt) : [],
+      });
       if (validated && relevant) accepted.push({
         url: validated.url,
         title: cleanText(candidate.title ?? candidate.name, 240),
@@ -513,8 +543,9 @@ async function discoverOfficialAlternatives(
         relevance_verified: true,
         authority_basis: "private_source_registry_v1",
         relevance_basis: "fetched_content_v1",
+        claim_slots: verifiedClaimSlots(context, subject, validated.excerpt),
       });
-      if (accepted.length >= 3) break;
+      if (accepted.length >= 3 && (!temporalAnchorRequired || temporalAnchorVerified())) break;
     }
   }
 
@@ -872,6 +903,7 @@ async function repairAndRevalidate(
   let archetype = "generic_binary_event";
   const repairRequestIds = Array.from({ length: AUTONOMOUS_REPAIR_MAX_ROUNDS }, () => crypto.randomUUID());
   const reviewAttemptIds = Array.from({ length: AUTONOMOUS_REPAIR_MAX_ROUNDS }, () => crypto.randomUUID());
+  const compatibilityReviewAttemptId = crypto.randomUUID();
   const seenRoundSignatures = new Set<string>();
   const sourceValidationDeadlineAt = Date.now() + SOURCE_VALIDATION_BUDGET_MS;
   const sourceValidationSignal = AbortSignal.timeout(SOURCE_VALIDATION_BUDGET_MS);
@@ -899,6 +931,64 @@ async function repairAndRevalidate(
       resolves: false,
     }, repairSaved ? 200 : 503);
   };
+
+  // Nunca se compila una reparación desde un rechazo de otra política o
+  // esquema. Primero se obtiene una revisión v3 sobre la versión exacta; solo
+  // sus incidencias compatibles pueden alimentar el plan de corrección.
+  const initialContext = await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization);
+  const initialDraft = isRecord(initialContext.draft) ? initialContext.draft : null;
+  if (!initialDraft) throw new Error("DRAFT_NOT_FOUND");
+  if (Number(initialDraft.content_version) !== expectedVersion) throw new Error("DRAFT_VERSION_MOVED");
+  if (initialContext.review_refresh_required === true || initialContext.review_compatible !== true) {
+    const compatibleReview = await revalidate(
+      env, authorization, draftId, expectedVersion, compatibilityReviewAttemptId,
+    );
+    if (compatibleReview.classification === "technical") {
+      return jsonResponse({
+        ok: false,
+        error: "COMPATIBLE_REVIEW_REQUIRED",
+        classification: "technical",
+        technical_code: compatibleReview.technical_code || null,
+        review: compatibleReview,
+        repair_applied: false,
+        review_completed: false,
+        review_approved: false,
+        message: "La revisión vigente no pudo completarse; no se reutilizó el rechazo obsoleto y no se escribió ninguna corrección.",
+        draft_private: true,
+        publishes: false,
+        confirms: false,
+        resolves: false,
+      }, 503);
+    }
+    if (compatibleReview.status === "approved") {
+      return jsonResponse({
+        ok: true,
+        repair_applied: false,
+        rounds: 0,
+        changed_fields: [],
+        review_completed: true,
+        review_approved: true,
+        review: compatibleReview,
+        message: "La versión ya supera la revisión vigente; no había errores compatibles que corregir.",
+        draft_private: true,
+        publishes: false,
+        confirms: false,
+        resolves: false,
+      });
+    }
+    if (["already_in_progress", "started"].includes(cleanText(compatibleReview.status, 80))) {
+      return jsonResponse({
+        ok: false,
+        error: "COMPATIBLE_REVIEW_IN_PROGRESS",
+        review: compatibleReview,
+        repair_applied: false,
+        draft_private: true,
+        publishes: false,
+        confirms: false,
+        resolves: false,
+      }, 202);
+    }
+  }
 
   for (let round = 1; round <= AUTONOMOUS_REPAIR_MAX_ROUNDS; round += 1) {
     if (Date.now() >= sourceValidationDeadlineAt || sourceValidationSignal.aborted) return budgetResponse();

@@ -470,7 +470,7 @@ test("descubrimiento, preparación y persistencia usan la única puerta atómica
   assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_v2"/);
   assert.doesNotMatch(edge, /rpc\(environment, "record_market_radar_fact_checks"/);
   assert.doesNotMatch(edge, /rpc\(environment, "apply_market_radar_prepare_verification"/);
-  assert.match(edge, /buildAuthoritativeFactCheck\(factuallyRevalidated, purpose, checkedAt\)/);
+  assert.match(edge, /buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt,[\s\S]*?purpose === "prepare" \? attemptId : crypto\.randomUUID\(\)[\s\S]*?\)/);
   assert.ok(edge.indexOf("apply_market_radar_prepare_fact_verification_v1") < edge.indexOf("if (!applied?.ok)"));
   assert.match(edge, /requires_factual_refresh: true/);
   assert.match(edge, /providerUnavailable \? RADAR_REASON_CODES\.VERIFICATION_REQUIRED/);
@@ -674,7 +674,7 @@ test("un borrador Radar se revalida al confirmar, programar y materializar", () 
   const schedulerBody = administrationGate.slice(schedulerStart, administrationGate.indexOf("create or replace function public.close_market_participation_early", schedulerStart));
   assert.match(schedulerBody, /private\.materialize_market_draft/);
 
-  assert.match(edge, /buildAuthoritativeFactCheck\(factuallyRevalidated, purpose, checkedAt\)/);
+  assert.match(edge, /buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt,[\s\S]*?purpose === "prepare" \? attemptId : crypto\.randomUUID\(\)[\s\S]*?\)/);
   assert.match(edge, /purpose === "prepare"[\s\S]*apply_market_radar_prepare_fact_verification_v1[\s\S]*apply_market_radar_revalidation_fact_v1/);
   assert.match(edge, /action === "prepare" \? "prepare" : "revalidate"/);
   const confirmStartUi = admin.indexOf("async function confirmReview");

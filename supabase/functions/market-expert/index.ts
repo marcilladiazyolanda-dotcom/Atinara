@@ -11,7 +11,7 @@ type SupabaseEnvironment = {
 const MARKET_INTELLIGENCE_POLICY_VERSION = "atinara-market-constitution-v1";
 const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
-const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v3";
+const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v4";
 const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
 const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -121,6 +121,24 @@ function records(value: unknown): JsonRecord[] {
     : [];
 }
 
+function record(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
+}
+
+class MarketExpertRpcError extends Error {
+  readonly status: number;
+  readonly databaseCode: string;
+  readonly detail: string;
+
+  constructor(code: string, status: number, databaseCode = "", detail = "") {
+    super(code);
+    this.name = "MarketExpertRpcError";
+    this.status = status;
+    this.databaseCode = databaseCode;
+    this.detail = detail;
+  }
+}
+
 function uniqueStrings(values: unknown[]): string[] {
   return [...new Set(values.map((value) => text(value, 200)).filter(Boolean))];
 }
@@ -182,8 +200,13 @@ async function rpc(
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    console.error("Market expert RPC failed", JSON.stringify({ name, status: response.status }));
-    throw new Error(`RPC_${response.status}`);
+    const errorPayload = record(payload);
+    const domainCode = text(errorPayload?.message, 120);
+    const databaseCode = text(errorPayload?.code, 40);
+    const detail = text(errorPayload?.details, 300);
+    const safeCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(domainCode) ? domainCode : `RPC_${response.status}`;
+    console.error("Market expert RPC failed", JSON.stringify({ name, status: response.status, code: databaseCode || null }));
+    throw new MarketExpertRpcError(safeCode, response.status, databaseCode, detail);
   }
   return payload;
 }
@@ -312,7 +335,8 @@ function handleEdgeError(error: unknown, fallbackMessage: string): Response {
     ? 400
     : code.includes("AUTH") ? 401
       : code.includes("ADMIN") ? 403
-        : ["PREPARATION_REVISION_MISMATCH", "MARKET_EXPERT_ANALYSIS_STALE"].includes(code) ? 409 : 503;
+        : ["PREPARATION_REVISION_MISMATCH", "MARKET_EXPERT_ANALYSIS_STALE", "RADAR_FACTUAL_REFRESH_REQUIRED"].includes(code) ? 409
+          : code === "INTELLIGENCE_ORIGIN_NOT_FOUND" ? 404 : 503;
   const message = code === "PREPARATION_REVISION_MISMATCH"
     ? "La candidata cambió durante el análisis. Vuelve a aplicar para usar su revisión vigente."
     : fallbackMessage;
@@ -1385,11 +1409,11 @@ async function analyzeOrigin(
     implementation: MARKET_EXPERT_IMPLEMENTATION_VERSION,
   });
   if (body.force !== true) {
-    const cached = await rpc(environment, "get_market_expert_analysis", {
+    const cached = record(await rpc(environment, "get_market_expert_analysis", {
       origin_type_input: originType,
       origin_id_input: originId,
-    }, { authorization }) as JsonRecord;
-    if (cached.status === "completed" && cached.analysis_fingerprint === analysisFingerprint) {
+    }, { authorization }));
+    if (cached?.status === "completed" && cached.analysis_fingerprint === analysisFingerprint) {
       const deterministic = createDeterministicVerdict(origin, originType);
       const reconciled = reconcileSavedVerdict(cached.result_json, deterministic, origin);
       return jsonResponse({ ok: true, cached: true, run: cached, verdict: reconciled, draft_package: packageFromRun(cached, reconciled, originType, originId, origin) });
@@ -1518,14 +1542,15 @@ async function getDraftPackage(
   if (!["radar_candidate", "observatory_signal", "context_story_arc"].includes(originType) || !originId) {
     throw new Error("INTELLIGENCE_ORIGIN_INVALID");
   }
-  const [origin, run] = await Promise.all([
+  const [origin, rawRun] = await Promise.all([
     loadOrigin(environment, authorization, originType, originId),
     rpc(environment, "get_market_expert_analysis", {
       origin_type_input: originType,
       origin_id_input: originId,
-    }, { authorization }) as Promise<JsonRecord>,
+    }, { authorization }),
   ]);
-  if (run.status !== "completed" || !run.id) {
+  const run = record(rawRun);
+  if (run?.status !== "completed" || !run.id) {
     return jsonResponse({
       ok: true,
       package: {
@@ -1744,10 +1769,10 @@ async function handleAction(
     return discoverOpportunities(environment, authorization, body);
   }
   if (action === "get-analysis") {
-    const run = await rpc(environment, "get_market_expert_analysis", {
+    const run = record(await rpc(environment, "get_market_expert_analysis", {
       origin_type_input: text(body.origin_type, 40),
       origin_id_input: text(body.origin_id, 100),
-    }, { authorization });
+    }, { authorization }));
     return jsonResponse({ ok: true, run });
   }
   if (action === "get-applicable-precedents") {

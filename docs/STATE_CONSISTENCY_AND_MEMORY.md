@@ -59,6 +59,29 @@ Para recuperar estado desde otro navegador se usa `get_admin_market_draft`. Devu
 
 Una recuperación normal de una versión usa `restore_market_draft_version`. La reparación puntual del incidente heredado usa `restore_market_draft_review_memory`; falla de forma cerrada si no puede demostrar la equivalencia y nunca llama a Gemini, confirma ni publica.
 
+## Separación de lectura, análisis y avance
+
+Desde `harden_expert_market_cycle_v1`, leer y analizar una candidata Radar nunca
+reservan una revisión ni sustituyen su hecho autoritativo. Son operaciones
+distintas:
+
+- `get_market_intelligence_origin` devuelve siempre un expediente administrable
+  y un `advancement_gate`; un bloqueo factual impide avanzar, no diagnosticar.
+- `market-expert` puede guardar un dictamen bloqueado, pero solo un paquete
+  vigente con ambas capacidades explícitas permite iniciar `prepare`.
+- un `prepare` negativo se registra mediante
+  `record_market_radar_prepare_attempt_v1` como snapshot append-only desligado;
+  el puntero, la revisión y el estado autoritativos permanecen sin cambios;
+- la persistencia del Radar aísla solo errores de fila y deja visibles los IDs
+  externos cuarentenados o diferidos; cada final de proveedor queda en historia
+  append-only además del snapshot operativo;
+- el Corrector solicita primero una revisión v3 compatible con versión, huella,
+  política y esquema. Un rechazo v2 puede mostrarse como historia, pero nunca
+  entra en `repairable_content_issues` ni borra campos de inferencia.
+
+Estas reglas no suavizan ninguna puerta: preparar, guardar, confirmar, programar
+y publicar siguen revalidando sus contratos autoritativos en el backend.
+
 ## Inventario de escrituras
 
 | Acción | Inicio | Backend autoritativo | Versión / concurrencia | Atomicidad e idempotencia | Doble clic / retry | Auditoría y resultado |
