@@ -4,7 +4,7 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine usa `market-radar` v26,
+> **Estado vigente:** Atinara Engine usa `market-radar` v27,
 > `market-draft-fixer` v7, `validate-market-draft` v8 y `market-expert` v11,
 > todas activas con `verify_jwt=true`. La puerta factual v2 gobierna
 > descubrimiento, preparación y todas las transiciones hacia publicación; la
@@ -14,9 +14,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
 > hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
 > visual administrativo de Marvel y FC27 continúa pendiente y debe hacerse sin
-> confirmar ni publicar. GitHub Pages aún sirve el frontend de `origin/main`
-> anterior a este corte; la sincronización debe hacerse mediante rama y PR,
-> nunca con un push directo no revisado a `main`.
+> confirmar ni publicar. GitHub Pages ya sirve el frontend administrativo
+> coordinado; tras la corrección v27 hay que repetir una sola actualización
+> explícita del Radar. La fuente local se entregará para la subida manual de Yol;
+> no hacer un push directo no revisado a `main`.
 
 ### Corrección general de confirmación humana · 8 de agosto de 2026
 
@@ -729,7 +730,7 @@ Orden acordado para el Paso 13:
    `publish-scheduled-markets` v2 subidos a `main`. Pendiente de aceptación
    funcional final de Yol; no declarar el paso cerrado todavía.
 6. **13.5 / 13.5.2 · Radar y calidad editorial:** backend endurecido con
-   `market-radar` v26, política predictiva v4, puerta factual v2 y familias v4;
+   `market-radar` v27, política predictiva v4, puerta factual v2 y familias v4;
    frontend y smoke administrativo pendientes para cerrar el hito. El catálogo
    ampliado de 24–36 mercados no forma parte de esta entrega.
 7. **13.6 · Infraestructura de Beta y Crecimiento:** captación, atribución,
@@ -843,15 +844,59 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
   gráfica administrativa controlable. El backend ya está activo y falla cerrado;
   no presentar ese recorrido de interfaz como ejecutado hasta completarlo.
 
-Siguiente paso operativo: publicar este árbol y su caché administrativa
-`20260809-terminal-fact1` mediante una rama y un PR con checks verdes; no hacer
-push directo a `main`. No repetir migraciones ni despliegues.
-En la siguiente sesión administrativa autenticada, revalidar y aplicar el Corrector al
-borrador privado de Marvel y ejecutar un ciclo explícito del Radar para cerrar
-la aceptación visual, sin confirmar ni publicar. El mercado antiguo de julio
-continúa sin aprobar ni liquidar. No ampliar todavía el catálogo, chat, GIF,
-feed algorítmico, temporadas, monetización, dinero real ni compraventa
-secundaria.
+### Corrección operativa del timeout del Radar (9 de agosto de 2026)
+
+- La actualización explícita mostrada por Yol sí terminó el descubrimiento de
+  Polymarket, Kalshi y el procesado de Gemini, pero la escritura autoritativa
+  final devolvió `500` después de 54,528 s. Los logs PostgreSQL del mismo
+  instante registraron `canceling statement due to statement timeout`; las
+  llamadas REST ejecutadas por `authenticator` heredaban el límite de 8 s.
+- La causa concreta estaba en la identidad familiar v4. El patrón de contexto
+  aceptaba cualquier token `A/B` como posible zona horaria: en las 229
+  candidatas reales aparecían 192 instancias de `and/or` y 10 de `X/S`. Cada
+  falso token materializaba `pg_timezone_names`; la derivación completa tardaba
+  unos 19,698 s y la puerta factual volvía a ejecutarla durante el enlace de su
+  snapshot.
+- `20260809180000_fix_radar_refresh_timeout.sql` limita el reconocimiento en
+  texto a prefijos IANA canónicos, valida zonas explícitas con
+  `timezone(text,timestamp)` y reutiliza la identidad familiar autoritativa en
+  la segunda escritura cuando ninguna entrada contractual ha cambiado. No hace
+  backfill ni contiene DML sobre mercados, predicciones, perfiles o economía.
+- La misma migración añade
+  `finalize_market_radar_provider_refresh_v1`, revocada para `anon` y
+  `authenticated` y concedida solo a `service_role`. Producción la registra como
+  `20260809114843 · fix_radar_refresh_timeout`; no debe volver a aplicarse.
+- `market-radar` v27 está activa con `verify_jwt=true` y su bundle remoto
+  coincide con los dos archivos locales. Persiste secuencialmente lotes de 24,
+  mantiene cada lote y sus comprobaciones factuales atómicos, registra el total
+  final exacto y degrada solo el proveedor que falle. La respuesta general
+  continúa en `200 partial` con los lotes válidos en lugar de caer en
+  `RADAR_FAILED`.
+- La matriz transaccional nueva completa 160 derivaciones con los textos
+  problemáticos bajo `statement_timeout=8s` y conserva `America/New_York`,
+  `Europe/Madrid` y `ET`. En producción, las 229 derivaciones pasaron de
+  19,698 s a 3,337 s. La validación local completa pasa sintaxis de 68 archivos,
+  292 pruebas unitarias, TypeScript y `git diff --check`.
+- Antes y después del corte siguen idénticos tanto los recuentos como las
+  huellas de 15 mercados, 9 predicciones, 2 perfiles, 15 estados LMSR y 17
+  puntos de histórico. También permanecen 2.027 Karma y 40 Prestigio; la
+  corrección no confirmó, publicó, predijo, resolvió ni liquidó nada. El Radar
+  conserva 229 candidatas y cero comprobaciones factuales vigentes hasta que
+  Yol repita la actualización explícita.
+- Siguiente prueba exacta: recargar `admin-markets.html` con `Ctrl+F5`, esperar
+  a que termine el cooldown si aparece y pulsar una sola vez `Actualizar
+  fuentes`. Debe desaparecer el aviso general de carga, los proveedores deben
+  mostrar una hora nueva y el Radar debe devolver eventos o errores parciales
+  por proveedor. No preparar, confirmar ni publicar todavía.
+
+Siguiente paso operativo: sincronizar este árbol mediante la subida manual
+revisada de Yol; el backend v27 ya está activo y no se deben repetir la migración
+ni el despliegue. En la siguiente sesión administrativa autenticada, ejecutar
+primero un ciclo explícito del Radar para confirmar esta corrección y después
+revalidar y aplicar el Corrector al borrador privado de Marvel, siempre sin
+confirmar ni publicar. El mercado antiguo de julio continúa sin aprobar ni
+liquidar. No ampliar todavía el catálogo, chat, GIF, feed algorítmico,
+temporadas, monetización, dinero real ni compraventa secundaria.
 
 Backlog social que la usuaria quiere retomar después del MVP para dar más contenido a la plataforma:
 

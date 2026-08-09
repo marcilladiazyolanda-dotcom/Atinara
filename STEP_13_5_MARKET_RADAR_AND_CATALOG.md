@@ -5,7 +5,7 @@ Fecha de preparación: 4 de agosto de 2026. Activación y corrección operativa:
 Estado: **activado y aceptado técnicamente**. El catálogo ampliado de 24–36 mercados no se implementa en esta entrega. El Radar permanece privado y no creó borradores ni modificó datos públicos durante la aceptación.
 
 > **Nota de continuidad:** este documento conserva la activación original del
-> Radar como registro histórico. El estado vigente es `market-radar` v26 con
+> Radar como registro histórico. El estado vigente es `market-radar` v27 con
 > política predictiva v4, puerta factual v2 y familia v4, documentado en
 > `ORAKLO_PROJECT_CONTEXT.md` y
 > `STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`. Ningún orden de despliegue de

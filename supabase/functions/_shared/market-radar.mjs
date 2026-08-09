@@ -2626,6 +2626,8 @@ export function publicProviderError(provider, code, status = 502) {
     PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente las consultas.",
     PROVIDER_INVALID_RESPONSE: "El proveedor devolvió una respuesta que no se pudo validar.",
     PROVIDER_TIMEOUT: "El proveedor tardó demasiado en responder.",
+    RADAR_PERSISTENCE_TIMEOUT: "La escritura de este proveedor superó el tiempo disponible. Los demás proveedores y los lotes ya validados siguen disponibles.",
+    RADAR_PERSISTENCE_FAILED: "No se pudo guardar este proveedor. Los demás proveedores y los lotes ya validados siguen disponibles.",
   };
   return { provider: safeProvider, code: safeCode, status, message: messages[safeCode] ?? "No se pudo actualizar este proveedor. Puedes reintentarlo más tarde." };
 }

@@ -13,9 +13,10 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El backend ya es compatible con este corte. El frontend coordinado se mantiene
-en la rama de entrega hasta superar revisión y checks; GitHub Pages continúa
-sirviendo el frontend anterior y falla cerrado frente a las nuevas puertas.
+El frontend coordinado ya está publicado en GitHub Pages. El backend corrector
+del Radar está activo en producción; este árbol conserva la fuente que Yol debe
+sincronizar mediante su subida manual revisada, sin repetir migraciones ni
+despliegues.
 
 - `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
   el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
@@ -44,10 +45,14 @@ sirviendo el frontend anterior y falla cerrado frente a las nuevas puertas.
   `20260809145000`, `20260809150000`, `20260809160000` y `20260809170000`
   forman el corte B2B vigente. La `140000` ya fue aplicada materialmente y su
   historial se reconcilió mediante `145000`: **no se debe ejecutar otra vez**.
-  Las restantes también están aplicadas y registradas en producción.
-- `market-radar` v26, `market-draft-fixer` v7,
+  Las restantes también están aplicadas y registradas en producción. La
+  corrección operativa `20260809180000_fix_radar_refresh_timeout.sql` también
+  está aplicada y no debe repetirse.
+- `market-radar` v27, `market-draft-fixer` v7,
   `validate-market-draft` v8 y `market-expert` v11 están activas con
-  `verify_jwt=true`. La identidad familiar vigente es v4.
+  `verify_jwt=true`. La identidad familiar vigente es v4. El Radar escribe en
+  lotes de 24 y aísla cualquier fallo de persistencia por proveedor, por lo que
+  una fuente no puede volver a derribar la respuesta completa.
 - Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
   configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
   Los dos schedulers preparados permanecen desactivados y son independientes.

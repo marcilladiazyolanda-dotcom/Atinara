@@ -57,6 +57,7 @@ const GEMINI_TIMEOUT_MS = 20_000;
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const MAX_PROVIDER_PAGES = 3;
 const MAX_NORMALIZED_PER_PROVIDER = 240;
+const RADAR_PERSISTENCE_BATCH_SIZE = 24;
 const MAX_VISIBLE_GROUPS = 60;
 const MAX_GEMINI_GROUPS = 30;
 const MAX_GEMINI_CANDIDATES = 180;
@@ -159,6 +160,30 @@ function jsonResponse(body: JsonRecord, status = 200): Response {
   });
 }
 
+class RadarRpcError extends Error {
+  readonly operation: string;
+  readonly status: number;
+  readonly databaseCode: string;
+
+  constructor(operation: string, status: number, databaseCode: string) {
+    super(`RADAR_RPC_${status}`);
+    this.name = "RadarRpcError";
+    this.operation = operation;
+    this.status = status;
+    this.databaseCode = databaseCode;
+  }
+}
+
+class RadarPersistenceError extends Error {
+  readonly failure: ReturnType<typeof publicProviderError>;
+
+  constructor(failure: ReturnType<typeof publicProviderError>) {
+    super(failure.code);
+    this.name = "RadarPersistenceError";
+    this.failure = failure;
+  }
+}
+
 function getPublishableKey(): string {
   const configured = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS");
   if (configured) {
@@ -212,8 +237,10 @@ async function rpc(environment: Environment, name: string, args: JsonRecord, aut
   });
   const payload = await response.json().catch(() => ({})) as unknown;
   if (!response.ok) {
-    console.error("Radar RPC failed", JSON.stringify({ name, status: response.status }));
-    throw new Error(`RPC_${response.status}`);
+    const errorPayload = toRecord(payload);
+    const databaseCode = cleanText(errorPayload?.code, 40);
+    console.error("Radar RPC failed", JSON.stringify({ name, status: response.status, code: databaseCode || null }));
+    throw new RadarRpcError(name, response.status, databaseCode);
   }
   return payload;
 }
@@ -288,6 +315,17 @@ function providerFailure(error: unknown, provider: string) {
       : raw.includes("INVALID") || raw.includes("TOO_LARGE") || raw.includes("HTTP_400") ? "PROVIDER_INVALID_RESPONSE"
         : "PROVIDER_UNAVAILABLE";
   return publicProviderError(provider, code, code === "PROVIDER_RATE_LIMITED" ? 429 : 502);
+}
+
+function persistenceFailure(error: unknown, provider: string) {
+  const timedOut = error instanceof RadarRpcError
+    ? error.databaseCode === "57014" || error.status === 504
+    : error instanceof Error && /TIMEOUT|ABORT/i.test(error.message);
+  return publicProviderError(
+    provider,
+    timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
+    timedOut ? 503 : 502,
+  );
 }
 
 function safeFilters(body: JsonRecord) {
@@ -1350,26 +1388,69 @@ function failClosedCandidates(candidates: JsonRecord[], now: string, reason: str
   }, now));
 }
 
-async function persistProviderResult(environment: Environment, provider: string, cacheKey: string, candidates: JsonRecord[]) {
-  const factChecks = await Promise.all(candidates.map((candidate) => buildAuthoritativeFactCheck(
-    candidate,
-    "discovery",
-    safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
-  )));
-  const authoritativeCandidates = candidates.map((candidate, index) => ({
-    ...candidate,
-    fact_context_fingerprint: factChecks[index].context_sha256,
-    fact_policy_version: RADAR_FACT_POLICY_VERSION,
-  }));
-  await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v1", {
+async function finalizeProviderRefresh(
+  environment: Environment,
+  provider: string,
+  cacheKey: string,
+  status: "available" | "partial_error" | "unavailable",
+  resultCount: number,
+  failure?: ReturnType<typeof publicProviderError>,
+) {
+  await rpc(environment, "finalize_market_radar_provider_refresh_v1", {
     provider_input: provider,
     cache_key_input: cacheKey,
-    normalizer_version_input: RADAR_NORMALIZER_VERSION,
-    candidates_input: authoritativeCandidates,
-    fact_checks_input: factChecks,
-    fact_policy_version_input: RADAR_FACT_POLICY_VERSION,
-    provider_status_input: { status: "available", is_cached: false },
+    status_input: status,
+    result_count_input: resultCount,
+    error_code_input: failure?.code ?? null,
+    error_message_input: failure?.message ?? null,
   }, undefined, true);
+}
+
+async function persistProviderResult(environment: Environment, provider: string, cacheKey: string, candidates: JsonRecord[]) {
+  let persistedCount = 0;
+  try {
+    for (let offset = 0; offset < candidates.length; offset += RADAR_PERSISTENCE_BATCH_SIZE) {
+      const batch = candidates.slice(offset, offset + RADAR_PERSISTENCE_BATCH_SIZE);
+      const factChecks = await Promise.all(batch.map((candidate) => buildAuthoritativeFactCheck(
+        candidate,
+        "discovery",
+        safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
+      )));
+      const authoritativeCandidates = batch.map((candidate, index) => ({
+        ...candidate,
+        fact_context_fingerprint: factChecks[index].context_sha256,
+        fact_policy_version: RADAR_FACT_POLICY_VERSION,
+      }));
+      await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v1", {
+        provider_input: provider,
+        cache_key_input: cacheKey,
+        normalizer_version_input: RADAR_NORMALIZER_VERSION,
+        candidates_input: authoritativeCandidates,
+        fact_checks_input: factChecks,
+        fact_policy_version_input: RADAR_FACT_POLICY_VERSION,
+        provider_status_input: {
+          status: "partial_error",
+          is_cached: false,
+          error_code: "RADAR_REFRESH_IN_PROGRESS",
+          error_message: "La actualización del proveedor todavía no ha finalizado.",
+        },
+      }, undefined, true);
+      persistedCount += batch.length;
+    }
+    await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount);
+    return persistedCount;
+  } catch (error) {
+    const failure = persistenceFailure(error, provider);
+    await finalizeProviderRefresh(
+      environment,
+      provider,
+      cacheKey,
+      persistedCount > 0 ? "partial_error" : "unavailable",
+      persistedCount,
+      failure,
+    ).catch(() => null);
+    throw new RadarPersistenceError(failure);
+  }
 }
 
 async function persistProviderFailure(environment: Environment, provider: string, cacheKey: string, failure: ReturnType<typeof providerFailure>) {
@@ -1624,7 +1705,19 @@ async function runDiscovery(environment: Environment, authorization: string, bod
 
   const scored = scoreCandidates(candidates, existing, now) as JsonRecord[];
   for (const provider of discoveredByProvider.keys()) {
-    await persistProviderResult(environment, provider, cacheKey, scored.filter((candidate) => candidate.provider === provider).slice(0, MAX_NORMALIZED_PER_PROVIDER));
+    try {
+      await persistProviderResult(
+        environment,
+        provider,
+        cacheKey,
+        scored.filter((candidate) => candidate.provider === provider).slice(0, MAX_NORMALIZED_PER_PROVIDER),
+      );
+    } catch (error) {
+      const failure = error instanceof RadarPersistenceError
+        ? error.failure
+        : persistenceFailure(error, provider);
+      errors.push(failure);
+    }
   }
   // Una respuesta marcada como fresca solo puede contener snapshots creados por
   // esta ejecución. Si un proveedor falló, su antigua caché no reaparece como
