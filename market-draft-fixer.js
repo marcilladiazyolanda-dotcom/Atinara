@@ -457,10 +457,12 @@
       ["MARKET_PERIOD_ALREADY_ENDED", "El periodo del mercado ya terminó y no puede publicarse."],
       ["MARKET_ID_ALREADY_EXISTS", "Ya existe un mercado publicado con este identificador."],
       ["SCHEDULE_AFTER_MARKET_CLOSE", "La fecha programada debe ser anterior al cierre del mercado."],
-      ["RADAR_EVENT_ALREADY_RESOLVED", "La fuente factual confirma que el resultado ya es conocido; el mercado no puede publicarse."],
-      ["RADAR_CANDIDATE_RESOLVED", "La fuente factual confirma que el resultado ya es conocido; el mercado no puede publicarse."],
-      ["RADAR_FACTUAL_REFRESH_REQUIRED", "No existe una comprobación factual vigente para publicar este borrador Radar."],
-      ["RADAR_REVALIDATION_REQUIRED", "La comprobación factual no concluyó y la publicación permanece bloqueada."],
+      ["RADAR_EVENT_ALREADY_RESOLVED", "Una fuente oficial confirma que el resultado ya es conocido; el mercado no puede publicarse."],
+      ["RADAR_CANDIDATE_RESOLVED", "Una fuente oficial confirma que el resultado ya es conocido; el mercado no puede publicarse."],
+      ["RADAR_ELIGIBILITY_REQUIRED", "No existe una decisión de elegibilidad vigente para publicar este borrador Radar."],
+      ["RADAR_ELIGIBILITY_EXPIRED", "La elegibilidad caducó y la publicación permanece bloqueada hasta actualizarla."],
+      ["ELIGIBILITY_EXPIRED", "La elegibilidad caducó y la publicación permanece bloqueada hasta actualizarla."],
+      ["ELIGIBILITY_SCAN_UNAVAILABLE", "No se pudo descartar con seguridad que el resultado ya sea público. El borrador continúa privado y puedes reintentar."],
       ["ADMIN_REQUIRED", "La sesión actual no conserva permiso administrativo."],
       ["AUTH_REQUIRED", "La sesión ha caducado. Inicia sesión de nuevo."]
     ];
@@ -482,12 +484,13 @@
     };
   }
 
-  async function revalidateRadarPublication(context) {
+  async function checkRadarPublicationEligibility(context) {
     if (!context.radarCandidateId) return null;
     const { data, error } = await client.functions.invoke("market-radar", {
       body: {
-        action: "revalidate",
+        action: "check-eligibility",
         candidate_id: context.radarCandidateId,
+        operation_id: crypto.randomUUID(),
         draft_id: context.draftId,
         draft_version: context.version,
         draft_fingerprint: context.draftFingerprint
@@ -495,12 +498,12 @@
     });
     if (error) throw error;
     const candidate = data?.candidate || {};
-    if (candidate.fact_check_purpose !== "revalidate"
-      || candidate.fact_status !== "unresolved"
+    if (data?.ok !== true
+      || candidate.eligibility_status !== "eligible"
+      || candidate.eligibility_policy_version !== "atinara-prediction-policy-v5"
       || candidate.verification_status !== "verified_open"
-      || !candidate.current_fact_check_id
-      || data?.legacy_fact_attestation?.ok !== true) {
-      throw new Error(data?.error || "RADAR_FACTUAL_REFRESH_REQUIRED");
+      || !candidate.current_eligibility_check_id) {
+      throw new Error(data?.error || "RADAR_ELIGIBILITY_REQUIRED");
     }
     return data;
   }
@@ -624,7 +627,7 @@
     }
 
     try {
-      await revalidateRadarPublication(context);
+      await checkRadarPublicationEligibility(context);
       const { data, error } = await client.rpc("publish_market_draft", publicationPayload(context));
       if (error) throw error;
 

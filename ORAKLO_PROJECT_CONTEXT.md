@@ -4,21 +4,102 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine usa `market-radar` v33,
-> `market-draft-fixer` v16, `validate-market-draft` v26 y `market-expert` v17,
-> todas activas con `verify_jwt=true`. La puerta factual v2 gobierna
-> descubrimiento, preparación y todas las transiciones hacia publicación; la
-> identidad familiar vigente es v4 y la revisión automática usa política v3.
+> **Estado vigente:** Atinara Engine usa `market-radar` v50,
+> `market-draft-fixer` v16, `validate-market-draft` v26 y `market-expert` v20,
+> todas activas con `verify_jwt=true`. La puerta determinista de elegibilidad
+> v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
+> revisión factual ya no es un bloqueo operativo. La identidad familiar vigente
+> es v4 y la revisión automática del borrador usa política v3.
 > Los schedulers opcionales del Observatorio y del monitor siguen apagados. El
 > corte preservó exactamente mercados publicados, predicciones, Karma,
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
 > hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
-> visual administrativo de Marvel y dos refrescos controlados del Radar ya se
-> completaron sin confirmar ni publicar. Marvel quedó `approved` en v9 y el
-> Radar final dejó todos los proveedores disponibles, separando seis descartes
-> normales. GitHub Pages todavía sirve el frontend anterior; Yol
+> autenticado de Editor y varios refrescos controlados del Radar se completaron
+> sin preparar, confirmar ni publicar. Marvel sigue `approved` en v9 y el Radar
+> final dejó todos los proveedores disponibles. GitHub Pages todavía sirve el
+> frontend anterior; Yol
 > debe subir el ZIP incremental y solo después se podrá validar el recurso
 > publicado. No hacer push directo a `main`.
+
+### Elegibilidad, fuentes y resiliencia del Radar · 11 de agosto de 2026
+
+- Fuente exacta: `origin/main =
+  1f562bbfc71eb92a0c8b173ad84bd3e99530e401`, worktree aislado
+  `ATINARA-radar-eligibility-20260811`, rama
+  `codex/radar-eligibility-sources-20260811`. No se descartó ni mezcló ningún
+  cambio ajeno y no se hizo push.
+- La revisión factual operativa se sustituyó por una decisión determinista y
+  append-only de elegibilidad: `eligible`, `terminal`, `inactive_option`,
+  `technical_hold`, `invalid` o `duplicate`. Un fallo técnico conserva el
+  último expediente válido; Gemini no decide y no es una dependencia necesaria.
+  Editor, confirmación y publicación exigen el check vigente, revisión y huella
+  ligadas, y la confirmación humana continúa siendo obligatoria.
+- La migración local no repetible
+  `20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql` consta en
+  producción como `20260811185229 · replace_radar_fact_gate_with_eligibility_v7`;
+  SHA-256 local
+  `def8fb91fcc69193a6915645688b0f83d51b7e3194b57238dae27e2f51a0e318`.
+  La matriz `radar_eligibility_v7_transaction.sql` volvió a pasar en producción
+  dentro de `BEGIN/ROLLBACK`; no dejó filas de fixture ni cambios económicos.
+- `market-radar` v50 está `ACTIVE`, `verify_jwt=true`, bundle
+  `a3f0e433580bb7aaa8cb7a24e922c0fe5fbaae3ea2da23d03dd50c533baf5385`;
+  `market-expert` v20 está `ACTIVE`, `verify_jwt=true`, bundle
+  `c535c42eb5034e84e8a24d993bfd40bb179e33c17a9f3332d1de153c04d551e2`.
+  Los dos archivos recuperados de cada función coinciden exactamente, salvo
+  normalización CRLF, con el árbol local probado.
+- El cierre del hijo ya no se confunde con el del evento padre. En el snapshot
+  real de Best Multiplayer de The Game Awards 2026, las 27 opciones placeholder
+  inactivas se presentan como `PROVIDER_OPTION_INACTIVE` porque el mismo evento
+  conserva 21 hermanas abiertas y futuras. El código preserva aparte el motivo
+  histórico original; no contiene excepción por título, premio o proveedor.
+- Las 17 opciones abiertas de Madden NFL 27 quedaron terminales con
+  `EVENT_ALREADY_RESOLVED` y cuatro hijas no negociables como
+  `PROVIDER_OPTION_INACTIVE`. La evidencia es contenido oficial recuperado de
+  EA, con URL, extracto y SHA-256, y cubre la designación y las ediciones
+  aplicables; ninguna opción de esa familia vuelve al catálogo visible.
+- Las fuentes resolutivas se eligen por sujeto, plataforma y registro de
+  autoridad: Steam para PC, Nintendo eShop para Nintendo y PlayStation/PS Store
+  para PlayStation cuando el contrato lo exige. Una URL HTTPS sin dominio
+  registrado y evidencia exacta no habilita preparación. Los enlaces de otra
+  opción del grupo no se heredan.
+- El último refresh real dejó Polymarket `available` con 74/74 aceptadas,
+  Kalshi `available` con 84/84, Tavily `available` con 0 y todos los circuitos
+  cerrados; descartes técnicos, cuarentenas y fallos fueron cero. Los logs
+  muestran `200` para Radar v49/v50 y Editor v20. Un cambio de pestaña no
+  repitió timestamps de proveedor y el cooldown bajó de 31 a 29 segundos en
+  2,2 s.
+- El smoke del Editor sobre una opción Marvel `> 85` produjo una propuesta
+  validada y aplicable, con fuente oficial de Steam y sin
+  `RADAR_FACTUAL_VERIFICATION_REQUIRED`; no se aplicó al formulario ni se creó
+  un borrador. Marvel `> 95` permanece privado como v9, revisión efectiva 21
+  `approved`, fingerprint
+  `ba349eaef4f17591e1f98ae06aec9a3720c7dd4d93f7f3dfa7f6f50098a06d0c`,
+  sin confirmación, programación, publicación ni `market_id`.
+- La validación final pasa 348/348 pruebas, sintaxis de 72 JavaScript,
+  TypeScript 6.0.3, Deno 2.5.6 para Radar y Editor, SQL transaccional y
+  `git diff --check`. La revisión de seguridad profunda consumió 510.832 tokens
+  y 2.543 s; cerró tres hallazgos P3: autoridad de fuente HTTPS, bootstrap
+  histórico caducado y binding de revisión/check contra TOCTOU. Los advisors no
+  muestran errores de rendimiento nuevos; los avisos RLS de tablas `private`
+  sin políticas son el cierre intencional y las RPC exigen administradora.
+- Las huellas finales coinciden con la línea base: mercados
+  `70d93479e2efe650e3623be40e9aee688216abdbe9866dd5f2a02f67da3ee137`,
+  predicciones
+  `170372fee7b857c67a51f2c3b33f9675f5b0b406c6040625520d2d6df2a3059c`,
+  perfiles
+  `8492fdfc993bc473e6a2d9f00924dc8b39b8650f196f86dcf049ed50a179f6bc`,
+  LMSR `b3d1a0a27e6a7a754576057aba35c317c1b651388fe67ffceb13784472a0c927`,
+  precios
+  `8eb3d854e5ff20eb7ccad96efcbabd4d7545e17ffa457e74630d6f2f2e0f7adf`
+  y borradores
+  `78e4fe5967094925270379a635bbb442aa85c3ccc5284a2a38a87c420bc91ee4`.
+  Siguen 15 mercados, 9 predicciones, 2 perfiles, 2.932 Karma, 40 Prestigio,
+  15 estados LMSR y 17 precios. No hubo predicción, liquidación ni publicación.
+- GitHub Pages aún usa el JavaScript/CSS anterior. La independencia de altura de
+  tarjetas, el despliegue de todas las opciones, la taxonomía visual y el nuevo
+  contador están probados localmente pero no deben declararse publicados hasta
+  que Yol suba el ZIP y se repita el smoke real en escritorio/móvil y
+  claro/oscuro.
 
 ### Cierre definitivo Radar → Editor → Corrector → publicación · 11 de agosto de 2026
 

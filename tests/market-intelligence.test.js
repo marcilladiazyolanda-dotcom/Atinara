@@ -37,10 +37,10 @@ test("el Observatorio, Radar y monitor conservan almacenamientos y responsabilid
   assert.match(migration, /private\.market_source_snapshots/);
   assert.doesNotMatch(migration, /alter table private\.external_market_candidates/);
   assert.match(radarCore, /RADAR_NORMALIZER_VERSION = "atinara-radar-v2"/);
-  assert.match(radarCore, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4"/);
+  assert.match(radarCore, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5"/);
   assert.match(radarCore, /RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2"/);
-  assert.match(expertEdge, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4"/);
-  assert.match(adminUi, /RADAR_POLICY_VERSION = "atinara-prediction-policy-v4"/);
+  assert.match(expertEdge, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5"/);
+  assert.match(adminUi, /RADAR_POLICY_VERSION = "atinara-prediction-policy-v5"/);
 });
 
 test("las tres Edge Functions exigen administración y aíslan los fallos de proveedor", () => {

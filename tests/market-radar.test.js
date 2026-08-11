@@ -144,7 +144,7 @@ function kalshiEvent(overrides = {}) {
 }
 
 function completeCandidate(question, overrides = {}) {
-  return {
+  const candidate = {
     source_question: question,
     atinara_question: question,
     atinara_category: "Lanzamientos",
@@ -152,14 +152,25 @@ function completeCandidate(question, overrides = {}) {
     atinara_resolution_source_url: "https://www.example.com/official-source",
     source_close_at: "2026-12-31T23:59:59Z",
     hard_reject_reasons: [],
-    eligibility_policy_version: "atinara-prediction-policy-v4",
+    eligibility_policy_version: "atinara-prediction-policy-v5",
     ...overrides,
   };
+  if (candidate.atinara_resolution_source_url
+    && !Object.prototype.hasOwnProperty.call(overrides, "resolution_source_evidence")) {
+    const evidence = [verifiedOfficialEvidence({
+      url: candidate.atinara_resolution_source_url,
+      title: question,
+      supports: `${question} Official resolution source.`,
+    })];
+    candidate.resolution_source_evidence = evidence;
+    candidate.eligibility_evidence = evidence;
+  }
+  return candidate;
 }
 
 test("el normalizador usa la versión v2", () => {
   assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v2");
-  assert.equal(radar.RADAR_ELIGIBILITY_POLICY_VERSION, "atinara-prediction-policy-v4");
+  assert.equal(radar.RADAR_ELIGIBILITY_POLICY_VERSION, "atinara-prediction-policy-v5");
   assert.equal(radar.RADAR_FAMILY_VERSION, "atinara-market-family-v4");
   assert.equal(radar.RADAR_FACT_POLICY_VERSION, "atinara-terminal-fact-gate-v2");
 });
@@ -429,7 +440,7 @@ test("el extractor factual conserva textos alternativos estructurados de edicion
   assert.deepEqual(new Set(resolution?.outcome_names), new Set(["Ada Player", "Bea Player"]));
 });
 
-test("la investigación sigue solo enlaces editoriales acotados del mismo host oficial", () => {
+test("la investigación sigue solo enlaces editoriales acotados de la misma autoridad oficial", () => {
   const urls = radar.extractOfficialRelatedUrls(`
     <a href="/games/example/cover-discovery-hub">Official cover reveal</a>
     <a href="/games/example/news/editions-and-release-dates">Editions and release dates</a>
@@ -438,11 +449,12 @@ test("la investigación sigue solo enlaces editoriales acotados del mismo host o
     <a href="https://ea.com@evil.example/cover">Host engañoso</a>
     <a href="/assets/cover.png">Imagen</a>
     <a href="#cover">Fragmento</a>
-  `, "https://www.ea.com/games/example", ["ea.com"], 3);
+  `, "https://www.ea.com/games/example", ["ea.com"], 4);
   assert.deepEqual(new Set(urls), new Set([
     "https://www.ea.com/games/example/cover-discovery-hub",
     "https://www.ea.com/games/example/news/editions-and-release-dates",
     "https://www.ea.com/games/example/buy",
+    "https://docs.ea.com/games/example/cover",
   ]));
 });
 
@@ -788,10 +800,10 @@ test("Gemini se vincula por índices enteros controlados sin aceptar duplicados 
 });
 
 test("una actualización explícita nunca reutiliza un estado abierto y solo conserva rechazos terminales idénticos", () => {
-  const candidate = { fingerprint: "fp-1", fact_context_fingerprint: "fact-fp-1", eligibility_policy_version: "atinara-prediction-policy-v4" };
+  const candidate = { fingerprint: "fp-1", fact_context_fingerprint: "fact-fp-1", eligibility_policy_version: "atinara-prediction-policy-v5" };
   const verified = {
     normalizer_version: "atinara-radar-v2",
-    eligibility_policy_version: "atinara-prediction-policy-v4",
+    eligibility_policy_version: "atinara-prediction-policy-v5",
     fingerprint: "fp-1",
     verification_status: "verified_open",
     verification_reason_code: null,
@@ -822,20 +834,27 @@ test("una actualización explícita nunca reutiliza un estado abierto y solo con
   assert.equal(radar.canReuseRadarVerification({ ...verified, eligibility_policy_version: "atinara-prediction-policy-v3" }, candidate, now), false);
 });
 
-test("la fuente de resolución se toma solo de datos existentes o evidencia oficial", () => {
+test("la fuente de resolución exige evidencia oficial exacta y dominio autoritativo", () => {
+  const authoritativeDomains = new Set(["ea.com", "thegameawards.com"]);
   const evidence = [
     { url: "https://example.com/inventada", source_type: "public" },
-    verifiedOfficialEvidence({ url: "https://www.ea.com/games/ea-sports-fc/fc-27/news/official" }),
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/ea-sports-fc/fc-27/news/official",
+      supports: "Official EA Sports FC 27 product announcement.",
+    }),
   ];
-  const accepted = radar.selectVerifiedResolutionUrl({}, evidence);
-  const untrusted = radar.selectVerifiedResolutionUrl({}, evidence.slice(0, 1));
+  const accepted = radar.selectVerifiedResolutionUrl({
+    source_question: "Will EA Sports FC 27 release this year?",
+  }, evidence, authoritativeDomains);
+  const untrusted = radar.selectVerifiedResolutionUrl({}, evidence.slice(0, 1), authoritativeDomains);
   const existing = radar.selectVerifiedResolutionUrl(
     { source_resolution_url: "https://thegameawards.com/nominees/game-of-the-year" },
     evidence,
+    authoritativeDomains,
   );
   assert.equal(accepted, evidence[1].url);
   assert.equal(untrusted, null);
-  assert.equal(existing, "https://thegameawards.com/nominees/game-of-the-year");
+  assert.equal(existing, null);
 });
 
 test("una resolución no se propaga por ratio sin selección completa", () => {
@@ -971,22 +990,21 @@ test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estr
   assert.doesNotMatch(researchSource, /for \(const candidate of candidates\)/);
 });
 
-test("los descartes deterministas no consumen Tavily ni Gemini y Kalshi reconcilia resultados", () => {
+test("los descartes deterministas no consumen el enriquecedor y Kalshi reconcilia resultados", () => {
   assert.match(edge, /evaluateProviderEligibility\(candidate, now\)/);
-  assert.match(edge, /const deterministicRejections/);
+  assert.match(edge, /const scanCandidates = candidates\.filter\(\(candidate\) => candidate\.eligibility_status === "eligible"\)/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
   assert.match(edge, /MAX_REJECTED_OUTCOME_RECONCILIATIONS = 16/);
   assert.match(edge, /historical\/markets/);
   assert.match(edge, /reconcileRejectedKalshiOutcomes/);
   assert.match(edge, /reconciled_provider_results/);
 });
 
-test("la caché conserva rechazos terminales, pero un mercado abierto vuelve a pasar por la puerta factual", () => {
-  assert.match(edge, /const cachedVerification = new Map/);
-  assert.match(edge, /candidateIdentity\(item\)/);
-  assert.match(edge, /canReuseRadarVerification\(cached, candidate, now\)/);
-  assert.match(edge, /const needsVerification: JsonRecord\[\] = \[\]/);
-  assert.match(edge, /if \(needsVerification\.length\)/);
-  assert.match(edge, /upsert_market_radar_batch_with_fact_checks_v1/);
+test("la caché solo conserva decisiones de elegibilidad vigentes", () => {
+  assert.match(edge, /function hasCurrentEligibility/);
+  assert.match(edge, /filter\(\(candidate\) => hasCurrentEligibility\(candidate, checkedAt\)\)/);
+  assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
+  assert.match(edge, /upsert_market_radar_batch_with_eligibility_v1/);
 });
 
 test("la vista solo expone candidatas evaluadas con la política predictiva vigente", () => {
@@ -1003,29 +1021,26 @@ test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
   assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
-test("la preparación revalida proveedor y aplica verificación y revisión en una transacción autoritativa", () => {
+test("la preparación revalida proveedor y aplica elegibilidad en una transacción autoritativa", () => {
   assert.match(edge, /NORMALIZER_OUTDATED/);
   assert.match(edge, /ELIGIBILITY_POLICY_OUTDATED/);
-  assert.match(edge, /VERIFICATION_EXPIRED/);
+  assert.match(edge, /ELIGIBILITY_EXPIRED/);
   assert.match(edge, /revalidatePolymarketCandidate/);
   assert.match(edge, /revalidateKalshiCandidate/);
   assert.match(edge, /revalidateCandidateForPreparation/);
-  assert.match(edge, /apply_market_radar_prepare_fact_verification_v1/);
+  assert.match(edge, /apply_market_radar_prepare_eligibility_v1/);
   assert.match(edge, /expected_preparation_revision_input/);
   assert.match(edge, /PREPARATION_REVISION_MISMATCH/);
   assert.match(edge, /candidatePreflight/);
-  assert.match(edge, /canReuseRadarVerification\(candidate, providerCandidate, checkedAt\)/);
   assert.match(edge, /refreshCandidateCacheLease/);
-  assert.match(edge, /revalidateCriticalEligibility/);
-  assert.match(edge, /researchGroupsWithTavily\(environment\.tavilyKey, \[candidate\], authoritativeDomains\)/);
-  assert.match(edge, /verifyAndAdaptWithGemini\(environment\.geminiKey, \[candidate\]/);
+  assert.match(edge, /applyDeterministicRadarEligibility/);
+  assert.match(edge, /researchGroupsWithTavily\([\s\S]*?environment\.tavilyKey,[\s\S]*?\[eligibility\]/);
+  assert.doesNotMatch(edge, /if \(action === "revalidate"\)/);
   assert.match(edge, /prepareRevalidationError/);
   assert.match(edge, /RESOLUTION_SOURCE_REQUIRED/);
   assert.match(edge, /const authoritativeCandidate = toRecord\(applied\.candidate\)/);
-  assert.match(edge, /const factCheck = await buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt/);
-  assert.match(edge, /purpose === "prepare"[\s\S]*apply_market_radar_prepare_fact_verification_v1[\s\S]*apply_market_radar_revalidation_fact_v1/);
-  assert.match(edge, /fact_check_input: factCheck/);
-  assert.match(edge, /const factualReadiness = candidateReady\(authoritativeCandidate\)/);
+  assert.match(edge, /eligibility_check_input: eligibilityCheck/);
+  assert.match(edge, /const readiness = candidateReady\(authoritativeCandidate\)/);
   assert.match(edge, /some\(isBlockingDuplicateMatch\)/);
   assert.match(edge, /RADAR_CANDIDATE_RESOLVED/);
   assert.match(edge, /RADAR_CANDIDATE_INELIGIBLE/);
@@ -1085,7 +1100,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /Abrir mercado original/);
   assert.match(adminUi, /Abrir fuente de resolución/);
   assert.match(adminUi, /candidate\.atinara_resolution_source_url \|\| candidate\.source_resolution_url/);
-  assert.match(adminUi, /Auditoría factual/);
+  assert.match(adminUi, /Auditoría de elegibilidad/);
   assert.match(adminUi, /verification_status === "verified_open"/);
   assert.match(adminUi, /data-child-count/);
   assert.match(adminUi, /data-radar-rejection-filter/);
@@ -1104,26 +1119,25 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260811-radar-hardening1/);
+  assert.match(adminHtml, /v=20260811-radar-eligibility2/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 
-test("una candidata needs_review admite revalidación factual y la acción conserva español UTF-8", () => {
+test("una candidata preparada admite una comprobación de elegibilidad tipada y conserva español UTF-8", () => {
   assert.match(edge, /\["available", "needs_review", "prepared"\]\.includes\(state\)/);
-  assert.match(edge, /phase: "factual_revalidation"/);
+  assert.match(edge, /phase: "eligibility_check"/);
   assert.match(edge, /state_preserved: true/);
   assert.match(edge, /class RadarRevalidationOutcomeError/);
   assert.match(edge, /authoritative_state_updated: true/);
   assert.match(adminUi, /wrapped\.authoritativeStateUpdated = payload\?\.authoritative_state_updated === true/);
   assert.match(adminUi, /removeVisibleRadarCandidate\(candidateId\)/);
   assert.match(adminUi, /function replaceVisibleRadarCandidate\(candidate\)/);
-  assert.match(adminUi, /if \(terminal\) removeVisibleRadarCandidate\(candidateId\)/);
-  assert.match(adminUi, /else replaceVisibleRadarCandidate\(error\.candidate\)/);
-  assert.match(adminUi, /La candidata sigue visible, bloqueada y sin borrador/);
-  assert.match(marketExpertEdge, /Actualizar comprobación factual y reanalizar/);
-  assert.doesNotMatch(marketExpertEdge, /Actualizar comprobaciÃ³n factual/);
+  assert.match(adminUi, /if \(terminal\)/);
+  assert.match(adminUi, /replaceVisibleRadarCandidate\(error\.candidate\)/);
+  assert.doesNotMatch(marketExpertEdge, /Actualizar comprobación factual y reanalizar/);
+  assert.match(edge, /if \(action === "check-eligibility"\)/);
 });
 
 test("la evidencia oficial enlazada completa portadas sin depender de un resultado exacto del buscador", () => {
@@ -1169,11 +1183,11 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /indexGeminiDecisions\(decisions, candidates\.length\)/);
   assert.doesNotMatch(edge, /parent_event_resolved: \{ type:/);
   assert.doesNotMatch(edge, /atinara_resolution_source_url: \{ type:/);
-  assert.match(edge, /selectVerifiedResolutionUrl\(candidate, evidence\)/);
+  assert.match(edge, /selectVerifiedResolutionUrl\(candidate, evidence, authoritativeDomains\)/);
   assert.match(edge, /propagateResolvedEventGroups\(verified, eventResolutions, now\)/);
   assert.match(edge, /officialEventResolutionSignals\(candidates, evidenceByGroup, now\)/);
-  assert.match(edge, /buildCoverResolutionSignals\(candidates, now\)/);
-  assert.match(edge, /atinara_resolution_source_url: cached\.atinara_resolution_source_url \?\? cached\.source_resolution_url/);
+  assert.match(edge, /cooldown_until:\s*new Date\(Date\.now\(\) \+ REFRESH_COOLDOWN_MS\)\.toISOString\(\)/);
+  assert.match(edge, /requires_eligibility_refresh: responseCandidates\.length === 0/);
   assert.doesNotMatch(edge, /Devuelve exactamente un elemento por external_id/);
   assert.doesNotMatch(edge, /maxLength:/);
   assert.doesNotMatch(edge, /temperature:/);

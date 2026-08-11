@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260811-radar-hardening1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260811-radar-hardening1">
-  <script src="observability-config.js?v=20260811-radar-hardening1"></script>
-  <script src="monitoring.js?v=20260811-radar-hardening1"></script>
+  <script src="theme.js?v=20260811-radar-eligibility2"></script>
+  <link rel="stylesheet" href="styles.css?v=20260811-radar-eligibility2">
+  <script src="observability-config.js?v=20260811-radar-eligibility2"></script>
+  <script src="monitoring.js?v=20260811-radar-eligibility2"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -264,14 +264,14 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260811-radar-hardening1"></script>
-  <script src="password-security.js?v=20260811-radar-hardening1"></script>
-  <script src="password-recovery.js?v=20260811-radar-hardening1"></script>
-  <script src="site-ui.js?v=20260811-radar-hardening1"></script>
-  <script src="auth.js?v=20260811-radar-hardening1"></script>
-  <script src="market-admin-validation.js?v=20260811-radar-hardening1"></script>
-  <script src="admin-markets.js?v=20260811-radar-hardening1"></script>
-  <script src="market-draft-fixer.js?v=20260811-radar-hardening1"></script>
+  <script src="supabaseClient.js?v=20260811-radar-eligibility2"></script>
+  <script src="password-security.js?v=20260811-radar-eligibility2"></script>
+  <script src="password-recovery.js?v=20260811-radar-eligibility2"></script>
+  <script src="site-ui.js?v=20260811-radar-eligibility2"></script>
+  <script src="auth.js?v=20260811-radar-eligibility2"></script>
+  <script src="market-admin-validation.js?v=20260811-radar-eligibility2"></script>
+  <script src="admin-markets.js?v=20260811-radar-eligibility2"></script>
+  <script src="market-draft-fixer.js?v=20260811-radar-eligibility2"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
@@ -342,13 +342,12 @@
         MARKET_EXPERT_ANALYSIS_STALE: "El análisis experto pertenece a una revisión anterior de la candidata.",
         MARKET_EXPERT_ANALYSIS_NOT_PERSISTED: "El análisis no quedó guardado como dictamen vigente.",
         MARKET_EXPERT_DOSSIER_UNAVAILABLE: "No se pudo recuperar el expediente experto.",
-        RADAR_FACTUAL_REFRESH_REQUIRED: "La candidata necesita nueva evidencia factual antes de poder avanzar.",
-        RADAR_REVALIDATION_REQUIRED: "La comprobación factual todavía no permite preparar un borrador.",
+        RADAR_ELIGIBILITY_REQUIRED: "La candidata necesita una decisión de elegibilidad vigente antes de avanzar.",
+        ELIGIBILITY_EXPIRED: "La elegibilidad ha caducado. Actualiza el Radar.",
         CANDIDATE_NOT_REVALIDATABLE: "La candidata no admite una acción de preparación en su estado actual.",
         PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente las consultas.",
         PROVIDER_TIMEOUT: "El proveedor no respondió dentro del tiempo seguro.",
         SERVICE_UNAVAILABLE: "El servicio experto no está disponible temporalmente.",
-        RADAR_FACTUAL_VERIFICATION_REQUIRED: "La comprobación factual debe actualizarse antes de continuar.",
         RADAR_CANDIDATE_NOT_PREPARABLE: "La candidata no cumple todavía las condiciones para preparar un borrador.",
         RADAR_NORMALIZER_OUTDATED: "La candidata debe actualizarse con la versión actual del normalizador.",
         RADAR_ELIGIBILITY_POLICY_OUTDATED: "La candidata debe revisarse con la política de elegibilidad actual.",
@@ -699,10 +698,6 @@
           </div>
           ${hardBlocks.length ? `<div><h4>Bloqueos</h4>${listMarkup(hardBlocks, "error")}</div>` : ""}
           ${warnings.length ? `<div><h4>Advertencias</h4>${listMarkup(warnings, "warning")}</div>` : ""}
-          ${recovery?.action === "refresh_factual_dossier" ? `<div class="market-expert-dossier-actions">
-            <button class="secondary-button" type="button" data-radar-expert-recover="${escapeHtml(candidateId)}">${escapeHtml(recovery.label || "Actualizar comprobación factual y reanalizar")}</button>
-            <small>Atinara repetirá la comprobación factual de forma auditada. No preparará, confirmará ni publicará un mercado terminalmente bloqueado.</small>
-          </div>` : ""}
           <div class="market-expert-dossier-actions">
             <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${canApply ? "" : " disabled"}>${isApplying ? "Preparando propuesta…" : "Aplicar propuesta al formulario"}</button>
             <small>${isApplying
@@ -1057,7 +1052,7 @@
             if (!currentRevision || !packageMatchesPreparation(currentPackage, currentRevision)) {
               throw localTypedError(
                 "MARKET_EXPERT_ANALYSIS_STALE",
-                "El expediente no corresponde a la revisión factual vigente. Analiza de nuevo antes de preparar."
+                "El expediente no corresponde a la revisión vigente. Analiza de nuevo antes de preparar."
               );
             }
             const bridge = window.atinaraMarketAdminBridge;
@@ -1114,11 +1109,6 @@
       }, true);
 
       document.addEventListener("atinara:radar-preparation-complete", (event) => {
-        const candidateId = event.detail?.candidateId;
-        if (candidateId) invalidatePackage(candidateId);
-      });
-
-      document.addEventListener("atinara:radar-revalidation-complete", (event) => {
         const candidateId = event.detail?.candidateId;
         if (candidateId) invalidatePackage(candidateId);
       });

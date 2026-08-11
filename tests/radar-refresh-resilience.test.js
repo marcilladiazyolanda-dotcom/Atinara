@@ -45,7 +45,8 @@ test("cada proveedor se persiste en lotes pequeños y finaliza con un total exac
   assert.match(edge, /candidates\.slice\(offset, offset \+ RADAR_PERSISTENCE_BATCH_SIZE\)/);
   assert.match(edge, /upsert_market_radar_batch_with_fact_checks_v1/);
   assert.match(edge, /finalize_market_radar_provider_refresh_v2/);
-  assert.match(edge, /"available", persistedCount/);
+  assert.match(edge, /const providerCandidateCount = Math\.max\(persistedCount, successfulProviderCandidateCount\)/);
+  assert.match(edge, /"available", providerCandidateCount/);
   assert.match(edge, /persistedCount > 0 \? "partial_error" : "unavailable"/);
   assert.match(cycleV2Migration, /result_count_input > 240/);
   assert.match(cycleV2Migration, /grant execute on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*to service_role/);

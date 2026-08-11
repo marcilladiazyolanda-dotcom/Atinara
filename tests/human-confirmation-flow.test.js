@@ -83,6 +83,6 @@ test("los errores de procedencia tienen explicación humana y el navegador recib
   assert.match(provenanceError, /procedencia verificable/);
   assert.match(expertError, /Agente Editor/);
   assert.equal(helpers.getFriendlyError({ message: "Mensaje seguro del servidor" }, ""), "");
-  assert.match(adminHtml, /market-admin-validation\.js\?v=20260811-radar-hardening1/);
-  assert.match(adminHtml, /admin-markets\.js\?v=20260811-radar-hardening1/);
+  assert.match(adminHtml, /market-admin-validation\.js\?v=20260811-radar-eligibility2/);
+  assert.match(adminHtml, /admin-markets\.js\?v=20260811-radar-eligibility2/);
 });

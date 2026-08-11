@@ -10,6 +10,7 @@ const radarEdge = readFileSync(join(root, "supabase/functions/market-radar/index
 const expertEdge = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const migration = readFileSync(join(root, "supabase/migrations/20260809190000_harden_expert_market_cycle_v1.sql"), "utf8");
 const cycleV2Migration = readFileSync(join(root, "supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql"), "utf8");
+const eligibilityMigration = readFileSync(join(root, "supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql"), "utf8");
 
 function between(source, start, end) {
   const from = source.indexOf(start);
@@ -18,14 +19,13 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
-test("Agente Editor · analizar empieza en lectura y la recuperación factual es una acción separada", () => {
-  const flow = between(adminJs, "  async function analyzeRadarCandidate", "  async function recoverRadarExpertCandidate");
+test("Agente Editor · analizar empieza en lectura y no ofrece recuperación factual", () => {
+  const flow = between(adminJs, "  async function analyzeRadarCandidate", "  async function runBindingAction");
   assert.match(flow, /refreshRadarExpertAnalysis\(candidateId, \{ force: true \}\)/);
   assert.doesNotMatch(flow, /revalidateRadarCandidate|prepareRadarCandidate|invokeRadar/);
   assert.match(flow, /sin preparar, guardar ni publicar/);
-  const recovery = between(adminJs, "  async function recoverRadarExpertCandidate", "  async function runBindingAction");
-  assert.match(recovery, /revalidateRadarCandidate/);
-  assert.match(recovery, /último estado autoritativo se conserva/);
+  assert.doesNotMatch(adminJs, /recoverRadarExpertCandidate|revalidateRadarDraftFact/);
+  assert.match(adminJs, /ensureRadarDraftEligibility/);
 });
 
 test("Agente Editor · un expediente bloqueado sigue siendo legible y solo ofrece Analizar", () => {
@@ -56,14 +56,14 @@ test("Radar · un fallo de datos se aísla hasta una fila y conserva las sanas",
   assert.match(radarEdge, /RADAR_CANDIDATES_QUARANTINED/);
 });
 
-test("Radar · un prepare fallido se audita sin sustituir el puntero vigente", () => {
-  assert.match(radarEdge, /record_market_radar_prepare_attempt_v1/);
-  assert.match(migration, /authoritative_pointer_unchanged', true/);
-  assert.match(migration, /'authoritative_fact_check_id', candidate\.current_fact_check_id/);
+test("Radar · un prepare técnico fallido se audita sin sustituir el puntero vigente", () => {
+  assert.match(radarEdge, /record_market_radar_eligibility_attempt_v1/);
+  assert.match(eligibilityMigration, /authoritative_pointer_unchanged', true/);
+  assert.match(eligibilityMigration, /state_preserved', true/);
   const attemptRpc = between(
-    migration,
-    "create or replace function public.record_market_radar_prepare_attempt_v1",
-    "create or replace function private.market_draft_deterministic_issues",
+    eligibilityMigration,
+    "create or replace function public.record_market_radar_eligibility_attempt_v1",
+    "create or replace function public.upsert_market_radar_batch_with_eligibility_v1",
   );
   assert.doesNotMatch(attemptRpc, /update private\.external_market_candidates/i);
 });

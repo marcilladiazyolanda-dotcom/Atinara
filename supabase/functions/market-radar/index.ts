@@ -10,6 +10,7 @@ import {
   adaptKalshiResponse,
   adaptPolymarketResponse,
   applyAdaptation,
+  applyDeterministicRadarEligibility,
   applyEligibilityDecision,
   buildCacheKey,
   buildCoverResolutionSignals,
@@ -17,11 +18,13 @@ import {
   buildGeminiCandidateBatches,
   canApplyPredictivePolicyOverride,
   canReuseRadarVerification,
+  candidateResolutionSubject,
   cleanText,
   compactGeminiCandidate,
   compactGeminiDefinition,
   diversifyGroups,
   detectOfficialCoverEventResolution,
+  detectOfficialCoverSelectionHold,
   deriveDeterministicUnresolvedProof,
   evidenceHasPotentialTerminalClaim,
   evidenceSupportsReasonCode,
@@ -91,7 +94,7 @@ const MAX_RELATED_OFFICIAL_SOURCE_URLS = 18;
 const MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP = 3;
 const OFFICIAL_RELATED_SOURCE_BUDGET_MS = 10_000;
 const MAX_SELECTION_FOLLOWUP_GROUPS = 4;
-const MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP = 4;
+const MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP = 6;
 const TAVILY_SELECTION_FOLLOWUP_CONCURRENCY = 4;
 const TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS = 5_000;
 const OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS = 12_000;
@@ -218,15 +221,6 @@ type ProviderPersistenceOutcome = {
   failure: ReturnType<typeof publicProviderError> | null;
 };
 
-type RadarPreparationBlockedDiagnostics = {
-  candidate: JsonRecord | null;
-  attempt_fact_check_id: number | null;
-  authoritative_fact_check_id: number | null;
-  preparation_revision: number | null;
-  persisted: boolean;
-  authoritative_pointer_unchanged: boolean;
-};
-
 type FetchJsonOptions = {
   onRateLimit?: (error: ProviderRequestError) => void;
 };
@@ -274,39 +268,6 @@ class RadarPersistenceError extends Error {
     this.name = "RadarPersistenceError";
     this.failure = failure;
     this.outcome = outcome;
-  }
-}
-
-class RadarPreparationBlockedError extends Error {
-  readonly code: string;
-  readonly retryable: boolean;
-  readonly diagnostics: RadarPreparationBlockedDiagnostics;
-
-  constructor(code: string, recordedAttempt: JsonRecord) {
-    const safeCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(code) ? code : "RADAR_REVALIDATION_REQUIRED";
-    super(safeCode);
-    this.name = "RadarPreparationBlockedError";
-    this.code = safeCode;
-    this.retryable = !new Set([
-      "RADAR_CANDIDATE_RESOLVED",
-      "RADAR_CANDIDATE_INELIGIBLE",
-      "RADAR_CONFIRMED_DUPLICATE",
-      "CANDIDATE_NOT_PREPARABLE",
-    ]).has(safeCode);
-    const attemptFactCheckId = Number(recordedAttempt.attempt_fact_check_id);
-    const authoritativeFactCheckId = Number(recordedAttempt.authoritative_fact_check_id);
-    const preparationRevision = Number(recordedAttempt.preparation_revision);
-    this.diagnostics = {
-      candidate: toRecord(recordedAttempt.candidate),
-      attempt_fact_check_id: Number.isSafeInteger(attemptFactCheckId) && attemptFactCheckId > 0 ? attemptFactCheckId : null,
-      authoritative_fact_check_id: Number.isSafeInteger(authoritativeFactCheckId) && authoritativeFactCheckId > 0
-        ? authoritativeFactCheckId
-        : null,
-      preparation_revision: Number.isSafeInteger(preparationRevision) && preparationRevision >= 0 ? preparationRevision : null,
-      persisted: recordedAttempt.persisted === true,
-      authoritative_pointer_unchanged: recordedAttempt.authoritative_pointer_unchanged === true
-        || recordedAttempt.idempotency_replay === true,
-    };
   }
 }
 
@@ -811,15 +772,17 @@ function metricGroupSubject(group: JsonRecord): string {
 async function relevantVerifiedEvidence(page: VerifiedOfficialPage, group: JsonRecord, retrievedAt: string): Promise<JsonRecord | null> {
   const selectionSubject = selectionGroupSubject(group);
   const metricSubject = metricGroupSubject(group);
+  const candidateSubjects = [...new Set(toRecordArray(group.candidates)
+    .map((candidate) => cleanText(candidateResolutionSubject(candidate), 240))
+    .filter(Boolean))];
+  const exactSubject = selectionSubject || metricSubject || (candidateSubjects.length === 1 ? candidateSubjects[0] : "");
   const candidateQuestions = toRecordArray(group.candidates)
     .map((candidate) => cleanText(candidate.source_question ?? candidate.atinara_question, 500)).join(" ");
-  const tokens = sourceTokens(`${group.title ?? ""} ${candidateQuestions}`).slice(0, 60);
+  const tokens = sourceTokens(exactSubject || `${group.title ?? ""} ${candidateQuestions}`).slice(0, 60);
   const anchors = new Set(tokens.filter((token) => !SOURCE_GENERIC_ANCHORS.has(token)));
   if (!tokens.length || !anchors.size) return null;
-  const rawSegments = selectionSubject
-    ? officialEvidenceSegmentsForSubject(page, selectionSubject, "selection")
-    : metricSubject
-      ? officialEvidenceSegmentsForSubject(page, metricSubject, "metric")
+  const rawSegments = exactSubject
+    ? officialEvidenceSegmentsForSubject(page, exactSubject, selectionSubject ? "selection" : metricSubject ? "metric" : "generic")
       : page.content.split(/(?<=[.!?])\s+|\s*[|•]\s*/).filter(Boolean);
   if (!rawSegments.length) return null;
   const segments = rawSegments.flatMap((segment) => {
@@ -1525,16 +1488,27 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       && item.supported_contract_kinds.includes("review")
     );
   });
-  const factualFollowupGroups: Array<{ group: JsonRecord; query: string }> = [];
+  const factualFollowupGroups: Array<{ group: JsonRecord; query: string; domains: string[] }> = [];
   for (let rank = 0; factualFollowupGroups.length < MAX_SELECTION_FOLLOWUP_GROUPS; rank += 1) {
     const selectionGroup = incompleteSelectionGroups[rank];
     const metricGroup = incompleteMetricGroups[rank];
     if (!selectionGroup && !metricGroup) break;
     if (selectionGroup) {
       const subject = selectionGroupSubject(selectionGroup);
+      const domains = [...new Set((evidence.get(cleanText(selectionGroup.event_group_key, 240)) ?? [])
+        .map((item) => {
+          const url = safePublicUrl(item.url);
+          if (!url) return null;
+          const hostname = new URL(url).hostname.toLowerCase();
+          return [...authoritativeDomains]
+            .sort((left, right) => right.length - left.length)
+            .find((domain) => hostname === domain || hostname.endsWith(`.${domain}`)) ?? null;
+        })
+        .filter((domain): domain is string => Boolean(domain)))];
       factualFollowupGroups.push({
         group: selectionGroup,
-        query: `official "${subject}" cover stars all editions Standard Edition Ultimate Edition Ultimate Plus Edition complete cover lineup`,
+        query: `${domains[0] ? `site:${domains[0]} ` : ""}official press release "${subject}" named announced cover athlete cover star complete selection all editions`,
+        domains,
       });
     }
     if (metricGroup && factualFollowupGroups.length < MAX_SELECTION_FOLLOWUP_GROUPS) {
@@ -1542,6 +1516,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       factualFollowupGroups.push({
         group: metricGroup,
         query: `official "${subject}" release date launch date`,
+        domains: [],
       });
     }
   }
@@ -1549,7 +1524,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
     const followupSearches = await mapWithConcurrency(
       factualFollowupGroups,
       TAVILY_SELECTION_FOLLOWUP_CONCURRENCY,
-      async ({ group, query }) => {
+      async ({ group, query, domains }) => {
         try {
           const payload = toRecord(await fetchJson(new URL("https://api.tavily.com/search"), {
             method: "POST",
@@ -1557,22 +1532,22 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
             body: JSON.stringify({
               api_key: apiKey,
               query: cleanText(query, 1_200),
-              search_depth: "basic",
+              search_depth: "advanced",
               max_results: MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP,
               include_answer: false,
               include_raw_content: false,
-              include_domains: [...authoritativeDomains],
+              include_domains: domains.length ? domains : [...authoritativeDomains],
             }),
           }, TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS)) ?? {};
           return {
-            eventGroupKey: group.event_group_key,
+            eventGroupKey: cleanText(group.event_group_key, 240),
             urls: [...new Set(toRecordArray(payload.results)
               .map((result) => safePublicUrl(result.url))
               .filter((item): item is string => Boolean(item && isOfficialEvidenceUrl(item, authoritativeDomains))))]
               .slice(0, MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP),
           };
         } catch {
-          return { eventGroupKey: group.event_group_key, urls: [] as string[] };
+          return { eventGroupKey: cleanText(group.event_group_key, 240), urls: [] as string[] };
         }
       },
     );
@@ -1697,6 +1672,7 @@ async function verifyGeminiBatch(
   candidates: JsonRecord[],
   existing: JsonRecord[],
   evidenceByGroup: Map<string, JsonRecord[]>,
+  authoritativeDomains: Set<string>,
   now: string,
   quotaCircuit: GeminiQuotaCircuit,
 ): Promise<GeminiBatchResult> {
@@ -1762,7 +1738,7 @@ async function verifyGeminiBatch(
       ttl_minutes: 5,
     };
     const evidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
-    const resolutionSourceUrl = selectVerifiedResolutionUrl(candidate, evidence);
+    const resolutionSourceUrl = selectVerifiedResolutionUrl(candidate, evidence, authoritativeDomains);
     const sanitizedDecision = { ...decision, atinara_resolution_source_url: resolutionSourceUrl };
     const adapted = applyAdaptation(candidate, sanitizedDecision);
     const facts = toRecord(decision.facts) ?? {};
@@ -1862,7 +1838,7 @@ async function verifyGeminiBatch(
   };
 }
 
-async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[], existing: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, now: string): Promise<GeminiVerificationOutcome> {
+async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[], existing: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, authoritativeDomains: Set<string>, now: string): Promise<GeminiVerificationOutcome> {
   if (!apiKey) throw new Error("PROVIDER_NOT_CONFIGURED");
   const plan = buildGeminiCandidateBatches(candidates, {
     maxGroups: MAX_GEMINI_GROUPS,
@@ -1889,7 +1865,7 @@ async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[]
       try {
         settled[index] = {
           status: "fulfilled",
-          value: await verifyGeminiBatch(apiKey, plan.batches[index], existing, evidenceByGroup, now, quotaCircuit),
+          value: await verifyGeminiBatch(apiKey, plan.batches[index], existing, evidenceByGroup, authoritativeDomains, now, quotaCircuit),
         };
       } catch (reason) {
         settled[index] = { status: "rejected", reason };
@@ -2002,7 +1978,7 @@ async function finalizeProviderRefresh(
 
 type AuthoritativePersistenceEntry = {
   candidate: JsonRecord;
-  factCheck: JsonRecord;
+  eligibilityCheck: JsonRecord;
 };
 
 type AuthoritativePersistenceBatchResult = {
@@ -2021,17 +1997,13 @@ async function writeAuthoritativePersistenceBatch(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), remainingMs);
   try {
-    const rawResult = await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v2", {
+    const rawResult = await rpc(environment, "upsert_market_radar_batch_with_eligibility_v1", {
       provider_input: provider,
       cache_key_input: cacheKey,
       normalizer_version_input: RADAR_NORMALIZER_VERSION,
-      candidates_input: entries.map(({ candidate, factCheck }) => ({
-        ...candidate,
-        fact_context_fingerprint: factCheck.context_sha256,
-        fact_policy_version: RADAR_FACT_POLICY_VERSION,
-      })),
-      fact_checks_input: entries.map(({ factCheck }) => factCheck),
-      fact_policy_version_input: RADAR_FACT_POLICY_VERSION,
+      candidates_input: entries.map(({ candidate }) => candidate),
+      eligibility_checks_input: entries.map(({ eligibilityCheck }) => eligibilityCheck),
+      eligibility_policy_version_input: RADAR_ELIGIBILITY_POLICY_VERSION,
       provider_status_input: {
         status: "partial_error",
         is_cached: false,
@@ -2052,7 +2024,7 @@ async function writeAuthoritativePersistenceBatch(
       database_code: /^[0-9A-Z]{5}$/.test(cleanText(item.database_code, 10))
         ? cleanText(item.database_code, 10)
         : null,
-      operation: "upsert_market_radar_batch_with_fact_checks_v2",
+      operation: "upsert_market_radar_batch_with_eligibility_v1",
     }));
     if (result?.ok !== true || acceptedCount + quarantined.length !== entries.length) {
       throw new Error("RADAR_PERSISTENCE_RESULT_INVALID");
@@ -2151,6 +2123,7 @@ async function persistProviderResult(
   provider: string,
   cacheKey: string,
   candidates: JsonRecord[],
+  successfulProviderCandidateCount = candidates.length,
 ): Promise<ProviderPersistenceOutcome> {
   const outcome: ProviderPersistenceOutcome = {
     persistedCount: 0,
@@ -2167,14 +2140,36 @@ async function persistProviderResult(
   try {
     for (let offset = 0; offset < candidates.length; offset += RADAR_PERSISTENCE_BATCH_SIZE) {
       const batch = candidates.slice(offset, offset + RADAR_PERSISTENCE_BATCH_SIZE);
-      const entries = await Promise.all(batch.map(async (candidate) => ({
-        candidate,
-        factCheck: await buildAuthoritativeFactCheck(
+      const entries = await Promise.all(batch.map(async (candidate) => {
+        const checkedAt = safeIsoDate(candidate.eligibility_checked_at ?? candidate.verified_at) ?? new Date().toISOString();
+        const expiresAt = safeIsoDate(candidate.eligibility_expires_at ?? candidate.verification_expires_at)
+          ?? new Date(Date.parse(checkedAt) + VERIFICATION_TTL_MINUTES * 60_000).toISOString();
+        const evidence = toRecordArray(candidate.eligibility_evidence ?? candidate.verification_evidence).slice(0, 12);
+        return {
           candidate,
-          "discovery",
-          safeIsoDate(candidate.fact_checked_at ?? candidate.verified_at) ?? new Date().toISOString(),
-        ),
-      })));
+          eligibilityCheck: {
+            attempt_id: crypto.randomUUID(),
+            provider: cleanText(candidate.provider, 40),
+            external_id: cleanText(candidate.external_id, 220),
+            event_group_key: cleanText(candidate.event_group_key, 240) || null,
+            policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
+            status: cleanText(candidate.eligibility_status, 40) || "technical_hold",
+            reason_code: cleanText(candidate.eligibility_reason_code, 100) || null,
+            reason: cleanText(candidate.eligibility_reason, 1_000) || null,
+            evidence,
+            checked_at: checkedAt,
+            expires_at: expiresAt,
+            decision_hash: await sha256Hex({
+              provider: candidate.provider,
+              external_id: candidate.external_id,
+              status: candidate.eligibility_status,
+              reason_code: candidate.eligibility_reason_code,
+              evidence,
+              checked_at: checkedAt,
+            }),
+          },
+        };
+      }));
       await persistBatchWithDataIsolation(environment, provider, cacheKey, entries, outcome, isolationBudget);
     }
     if (outcome.deferred.length) {
@@ -2194,7 +2189,8 @@ async function persistProviderResult(
       );
     } else {
       const persistedCount = outcome.persistedCount;
-      await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount, undefined, {
+      const providerCandidateCount = Math.max(persistedCount, successfulProviderCandidateCount);
+      await finalizeProviderRefresh(environment, provider, cacheKey, "available", providerCandidateCount, undefined, {
         accepted: persistedCount,
         discarded: outcome.quarantined.length,
         quarantined: outcome.quarantined.length,
@@ -2270,23 +2266,16 @@ async function persistProcessorPartialFailure(environment: Environment, cacheKey
   ).catch(() => null);
 }
 
-function hasCurrentDiscoveryFact(candidate: JsonRecord, checkedAt = Date.now()): boolean {
-  const factCheckedAt = Date.parse(cleanText(candidate.fact_checked_at, 100));
-  const factExpiresAt = Date.parse(cleanText(candidate.fact_check_expires_at, 100));
-  const verificationExpiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
-  const verificationStatus = cleanText(candidate.verification_status, 80);
-  return cleanText(candidate.fact_check_purpose, 40) === "discovery"
-    && cleanText(candidate.fact_policy_version, 100) === RADAR_FACT_POLICY_VERSION
-    && Boolean(candidate.current_fact_check_id)
-    && /^[a-f0-9]{64}$/i.test(cleanText(candidate.fact_context_fingerprint, 80))
-    && Number.isFinite(factCheckedAt)
-    && factCheckedAt <= checkedAt + 60_000
-    && Number.isFinite(factExpiresAt)
-    && factExpiresAt > checkedAt
-    && (verificationStatus !== "verified_open"
-      || (cleanText(candidate.fact_status, 40) === "unresolved"
-        && Number.isFinite(verificationExpiresAt)
-        && verificationExpiresAt > checkedAt));
+function hasCurrentEligibility(candidate: JsonRecord, checkedAt = Date.now()): boolean {
+  const eligibilityCheckedAt = Date.parse(cleanText(candidate.eligibility_checked_at, 100));
+  const eligibilityExpiresAt = Date.parse(cleanText(candidate.eligibility_expires_at, 100));
+  return cleanText(candidate.eligibility_status, 40) === "eligible"
+    && cleanText(candidate.eligibility_policy_version, 100) === RADAR_ELIGIBILITY_POLICY_VERSION
+    && Boolean(candidate.current_eligibility_check_id)
+    && Number.isFinite(eligibilityCheckedAt)
+    && eligibilityCheckedAt <= checkedAt + 60_000
+    && Number.isFinite(eligibilityExpiresAt)
+    && eligibilityExpiresAt > checkedAt;
 }
 
 function activeProviderCircuit(providerRuns: JsonRecord[], provider: string, nowMs = Date.now()): JsonRecord | null {
@@ -2339,9 +2328,9 @@ async function loadRadarView(
   const minimumCheckedAt = minimumDiscoveryCheckedAt ? Date.parse(minimumDiscoveryCheckedAt) : Number.NaN;
   const candidates = toRecordArray(candidatesPayload)
     .filter((candidate) => cleanText(candidate.eligibility_policy_version, 80) === RADAR_ELIGIBILITY_POLICY_VERSION)
-    .filter((candidate) => hasCurrentDiscoveryFact(candidate, checkedAt))
+    .filter((candidate) => hasCurrentEligibility(candidate, checkedAt))
     .filter((candidate) => !Number.isFinite(minimumCheckedAt)
-      || Date.parse(cleanText(candidate.fact_checked_at, 100)) >= minimumCheckedAt);
+      || Date.parse(cleanText(candidate.eligibility_checked_at, 100)) >= minimumCheckedAt);
   const rejected = toRecordArray(rejectedPayload);
   const groups = diversifyGroups(groupCandidates(candidates), MAX_VISIBLE_GROUPS);
   return {
@@ -2376,11 +2365,6 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         && fetchedAt + (FACT_CHECK_TTL_MINUTES * 60_000) > Date.now();
     });
     const cachedAuthoritative = current.candidates.length > 0 || providerCoverageCurrent;
-    // Si todavía no existe cobertura autoritativa, la UI debe conservar la
-    // recuperación pendiente incluso durante el cooldown. Así puede programar
-    // una única actualización para el instante en que venza, en vez de dejar
-    // un estado vacío que solo se recupera con otra acción manual.
-    const requiresFactualRefresh = !cachedAuthoritative;
     return jsonResponse({
       ok: true,
       ...current,
@@ -2389,8 +2373,9 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       cache_key: cacheKey,
       cached: true,
       cached_authoritative: cachedAuthoritative,
-      requires_factual_refresh: requiresFactualRefresh,
+      requires_eligibility_refresh: !cachedAuthoritative,
       cooldown_seconds: Math.ceil(cooldownRemaining / 1000),
+      cooldown_until: new Date(Date.now() + cooldownRemaining).toISOString(),
       limits: { max_pages: MAX_PROVIDER_PAGES, max_kalshi_series: MAX_KALSHI_SERIES, max_visible_groups: MAX_VISIBLE_GROUPS },
     });
   }
@@ -2429,132 +2414,170 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     await persistProviderFailure(environment, provider, cacheKey, failure);
   }
 
-  // La puerta factual se ejecuta sobre el evento canónico completo antes de que
-  // la puntuación o las relaciones de duplicidad puedan clasificar la candidata.
-  let candidates = [...discoveredByProvider.values()].flat();
-  const cachedVerification = new Map(
-    [...current.candidates, ...toRecordArray(current.rejected?.items)]
-      .map((item) => [candidateIdentity(item), item]),
-  );
-  const reusable: JsonRecord[] = [];
-  const needsVerification: JsonRecord[] = [];
-  const deterministicRejections: JsonRecord[] = [];
-  const deferredProviderDecisions = new Map<string, JsonRecord>();
-  for (const candidate of candidates) {
-    const providerDecision = evaluateProviderEligibility(candidate, now);
-    if (providerDecision
-      && cleanText(providerDecision.reason_code, 100) === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED
-      && Boolean(normalizeProviderResult(candidate.source_result))) {
-      deterministicRejections.push(applyEligibilityDecision(candidate, providerDecision, now) as JsonRecord);
-      continue;
-    }
-    if (providerDecision) deferredProviderDecisions.set(candidateIdentity(candidate), providerDecision as JsonRecord);
-    const cached = cachedVerification.get(candidateIdentity(candidate));
-    if (cached && canReuseRadarVerification(cached, candidate, now)) {
-      reusable.push({
-        ...candidate,
-        atinara_question: cached.atinara_question ?? candidate.atinara_question,
-        atinara_category: cached.atinara_category ?? candidate.atinara_category,
-        atinara_resolution_criteria: cached.atinara_resolution_criteria ?? candidate.atinara_resolution_criteria,
-        atinara_resolution_source_url: cached.atinara_resolution_source_url ?? cached.source_resolution_url ?? candidate.atinara_resolution_source_url ?? candidate.source_resolution_url,
-        verification_status: cached.verification_status,
-        verification_reason_code: cached.verification_reason_code,
-        verification_reason: cached.verification_reason,
-        verified_at: cached.verified_at,
-        verification_expires_at: cached.verification_expires_at,
-        verification_evidence: cached.verification_evidence,
-        verification_confidence: cached.verification_confidence,
-        fact_status: cached.fact_status,
-        fact_checked_at: cached.fact_checked_at,
-        fact_policy_version: cached.fact_policy_version,
-        fact_context_fingerprint: cached.fact_context_fingerprint,
-        quality_status: cached.quality_status,
-        state: cached.state ?? candidate.state,
-      });
-    } else {
-      needsVerification.push(providerDecision ? withoutDeferredProviderClosure(candidate) : candidate);
-    }
-  }
+  // La elegibilidad no depende de que un modelo demuestre la ausencia de un
+  // resultado. El proveedor abre la candidata; Atinara solo la cierra por una
+  // señal canónica o una prueba oficial terminal exacta para su sujeto.
+  let candidates = [...discoveredByProvider.values()].flat().map((candidate) => {
+    const providerDecision = evaluateProviderEligibility(candidate, now) as JsonRecord | null;
+    return applyDeterministicRadarEligibility(candidate, providerDecision, now) as JsonRecord;
+  });
   let evidenceByGroup = new Map<string, JsonRecord[]>();
-  let newlyVerified: JsonRecord[] = [];
   let deferredVerificationCount = 0;
   let processedVerificationCount = 0;
   let failedVerificationBatches = 0;
-  if (needsVerification.length) {
+  let officialResearchComplete = false;
+  const scanCandidates = candidates.filter((candidate) => candidate.eligibility_status === "eligible");
+  if (!authoritativeDomains.size) {
+    errors.push({
+      ...publicProviderError("tavily", "SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE", 503),
+      classification: "enrichment",
+      degrades_provider: false,
+      message: "El registro de fuentes oficiales no estuvo disponible. Las candidatas de proveedor se conservan, pero preparar seguirá cerrado hasta recuperarlo.",
+    });
+  }
+  if (scanCandidates.length && authoritativeDomains.size) {
     try {
-      evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, needsVerification, authoritativeDomains);
+      evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, scanCandidates, authoritativeDomains);
+      officialResearchComplete = true;
       await persistProviderResult(environment, "tavily", cacheKey, []);
     } catch (error) {
       const failure = error instanceof Error && error.message === "PROVIDER_NOT_CONFIGURED"
         ? publicProviderError("tavily", "PROVIDER_NOT_CONFIGURED", 503)
         : providerFailure(error, "tavily");
-      errors.push(failure);
+      // Tavily es un enriquecedor sustituible. Su caída no convierte a
+      // Polymarket o Kalshi en proveedores con incidencia.
+      errors.push({
+        ...failure,
+        classification: "enrichment",
+        degrades_provider: false,
+        message: "El enriquecimiento de fuentes oficiales no estuvo disponible. Las fuentes principales continúan operativas.",
+      });
       await persistProviderFailure(environment, "tavily", cacheKey, failure);
-    }
-    try {
-      const circuit = activeProviderCircuit(current.providers, "gemini");
-      if (circuit) {
-        throw new ProviderRequestError(
-          "PROVIDER_RATE_LIMITED",
-          429,
-          Math.max(1, Number(circuit.retry_after_seconds) || 60) * 1_000,
-        );
-      }
-      const outcome = await verifyAndAdaptWithGemini(environment.geminiKey, needsVerification, existing, evidenceByGroup, now);
-      newlyVerified = outcome.candidates;
-      deferredVerificationCount = outcome.deferredCandidates;
-      processedVerificationCount = outcome.processedDecisions;
-      failedVerificationBatches = outcome.failedBatches;
-      if (outcome.failedBatches > 0 || outcome.incompleteCandidates > 0) {
-        const failure = outcome.firstError
-          ? providerFailure(outcome.firstError, "gemini")
-          : { provider: "gemini", code: "PROCESSING_INCOMPLETE", status: 206, message: "Una parte de las candidatas queda en revisión para el siguiente lote automático." };
-        errors.push(failure);
-        await persistProcessorPartialFailure(environment, cacheKey, failure, outcome.processedDecisions);
-      } else {
-        await persistProcessorSuccess(environment, cacheKey, outcome.processedDecisions);
-      }
-    } catch (error) {
-      const failure = error instanceof Error && error.message === "PROVIDER_NOT_CONFIGURED"
-        ? publicProviderError("gemini", "PROVIDER_NOT_CONFIGURED", 503)
-        : providerFailure(error, "gemini");
-      errors.push(failure);
-      await persistProcessorPartialFailure(environment, cacheKey, failure, 0);
-      newlyVerified = failClosedCandidates(needsVerification, now, "La verificación automática no está disponible; el evento permanece bloqueado para preparación.", 60);
     }
   }
 
-  candidates = [...deterministicRejections, ...reusable, ...newlyVerified];
-  candidates = propagateResolvedEventGroups(
-    candidates,
-    [
-      ...officialEventResolutionSignals(candidates, evidenceByGroup, now),
-      ...buildCoverResolutionSignals(candidates, now),
-    ],
-    now,
-  );
+  const groupResolutions = new Map(officialEventResolutionSignals(candidates, evidenceByGroup, now)
+    .map((signal) => [cleanText(signal.event_group_key, 240), signal]));
+  const groupSelectionHolds = new Map<string, JsonRecord>();
+  for (const group of groupCandidates(candidates)) {
+    const groupKey = cleanText(group.event_group_key, 240);
+    const hold = detectOfficialCoverSelectionHold(
+      group.candidates,
+      evidenceByGroup.get(group.event_group_key) ?? [],
+    ) as JsonRecord | null;
+    if (groupKey && hold) groupSelectionHolds.set(groupKey, hold);
+  }
   candidates = candidates.map((candidate) => {
-    if (cleanText(candidate.fact_status, 40) === "fully_resolved"
-      || cleanText(candidate.verification_status, 80) === "rejected_resolved") return candidate;
-    const providerDecision = deferredProviderDecisions.get(candidateIdentity(candidate));
-    return providerDecision ? applyEligibilityDecision(candidate, {
-      ...providerDecision,
-      fact_status: providerDecisionFactStatus(candidate, providerDecision),
-    }, now) as JsonRecord : candidate;
+    if (candidate.eligibility_status !== "eligible") return candidate;
+    const groupEvidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
+    const subject = cleanText(candidateResolutionSubject(candidate), 240);
+    const subjectTokens = sourceTokens(subject).filter((token) => !SOURCE_GENERIC_ANCHORS.has(token));
+    const exactEvidence = groupEvidence.filter((item) => {
+      const materialTokens = new Set(sourceTokens(`${item.title ?? ""} ${item.supports ?? ""}`));
+      return subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token));
+    });
+    const groupResolution = groupResolutions.get(cleanText(candidate.event_group_key, 240));
+    const groupSelectionHold = groupSelectionHolds.get(cleanText(candidate.event_group_key, 240));
+    const terminalEvidence = exactEvidence.filter((item) => evidenceHasPotentialTerminalClaim(item, candidate, now));
+    if (groupResolution || terminalEvidence.length) {
+      return applyDeterministicRadarEligibility(candidate, {
+        eligible: false,
+        conclusive: true,
+        reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+        reason: cleanText(groupResolution?.reason, 1_000)
+          || "Una fuente oficial exacta para esta opción ya publicó el resultado.",
+        confidence: 100,
+        ttl_minutes: 1_440,
+        evidence: groupResolution?.evidence ?? terminalEvidence,
+      }, now) as JsonRecord;
+    }
+    if (groupSelectionHold) {
+      return applyDeterministicRadarEligibility(candidate, {
+        eligible: false,
+        conclusive: false,
+        reason_code: RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED,
+        reason: "Una fuente oficial apunta a una selección ya publicada, pero la comprobación automática debe completar su alcance. El evento permanece oculto y se reintentará.",
+        confidence: 0,
+        ttl_minutes: 5,
+        evidence: groupSelectionHold.evidence ?? [],
+      }, now) as JsonRecord;
+    }
+    const resolutionSourceUrl = selectVerifiedResolutionUrl(candidate, exactEvidence, authoritativeDomains);
+    if (!resolutionSourceUrl) {
+      return applyDeterministicRadarEligibility(candidate, {
+        eligible: false,
+        conclusive: false,
+        reason_code: RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+        reason: officialResearchComplete
+          ? "Atinara no encontró todavía una fuente resolutiva oficial y exacta para esta opción. La volverá a comprobar automáticamente."
+          : "La búsqueda de fuentes oficiales no terminó. Se conserva el último expediente válido y Atinara volverá a intentarlo automáticamente.",
+        confidence: 0,
+        ttl_minutes: 5,
+        evidence: [],
+      }, now) as JsonRecord;
+    }
+    const sourceEvidence = resolutionSourceUrl
+      ? exactEvidence.filter((item) => safePublicUrl(item.url) === resolutionSourceUrl).slice(0, 6)
+      : [];
+    return {
+      ...candidate,
+      atinara_resolution_source_url: resolutionSourceUrl,
+      resolution_source_evidence: sourceEvidence,
+      eligibility_evidence: sourceEvidence,
+      verification_evidence: sourceEvidence,
+    };
   });
 
   candidates = candidates.map((candidate) => normalizeRadarCandidatePresentation(candidate) as JsonRecord);
-  const scored = scoreCandidates(candidates, existing, now) as JsonRecord[];
+  const scored = (scoreCandidates(candidates, existing, now) as JsonRecord[]).map((candidate) => {
+    const duplicate = toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
+    return duplicate && candidate.eligibility_status === "eligible"
+      ? applyDeterministicRadarEligibility(candidate, {
+        eligible: false,
+        conclusive: true,
+        reason_code: RADAR_REASON_CODES.DUPLICATE_MARKET,
+        reason: "Ya existe un mercado o borrador equivalente en Atinara.",
+        confidence: 100,
+        ttl_minutes: 1_440,
+        evidence: [],
+      }, now) as JsonRecord
+      : candidate;
+  });
   const quarantinedCandidates: RadarCandidateQuarantine[] = [];
   const qualityNotices: JsonRecord[] = [];
   const deferredPersistenceBatches: RadarPersistenceDeferredBatch[] = [];
+  const currentCandidatesByIdentity = new Map(current.candidates.map((candidate) => [
+    `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`,
+    candidate,
+  ]));
+  const preservedCandidatesByIdentity = new Map<string, JsonRecord>();
   for (const provider of discoveredByProvider.keys()) {
+    const providerCandidates = scored
+      .filter((candidate) => candidate.provider === provider)
+      .slice(0, MAX_NORMALIZED_PER_PROVIDER);
+    const persistableCandidates = providerCandidates.filter((candidate) => {
+      if (cleanText(candidate.eligibility_status, 40) !== "technical_hold"
+        || cleanText(candidate.eligibility_reason_code, 100) !== RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING) {
+        return true;
+      }
+      const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
+      const lastKnownGood = currentCandidatesByIdentity.get(identity);
+      if (!lastKnownGood) return true;
+      preservedCandidatesByIdentity.set(identity, {
+        ...lastKnownGood,
+        eligibility_state_preserved: true,
+        provider_refresh_checked_at: now,
+        provider_refresh_state: "source_enrichment_degraded",
+      });
+      return false;
+    });
     try {
       const outcome = await persistProviderResult(
         environment,
         provider,
         cacheKey,
-        scored.filter((candidate) => candidate.provider === provider).slice(0, MAX_NORMALIZED_PER_PROVIDER),
+        persistableCandidates,
+        providerCandidates.length,
       );
       quarantinedCandidates.push(...outcome.quarantined);
       if (outcome.quarantined.length) {
@@ -2607,15 +2630,29 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   // Una respuesta marcada como fresca solo puede contener snapshots creados por
   // esta ejecución. Si un proveedor falló, su antigua caché no reaparece como
   // una propuesta recién verificada.
-  const view = await loadRadarView(environment, authorization, filters, now);
+  const freshView = await loadRadarView(environment, authorization, filters, now);
+  const freshIdentities = new Set(freshView.candidates.map((candidate) => (
+    `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`
+  )));
+  const preservedCandidates = [...preservedCandidatesByIdentity.entries()]
+    .filter(([identity]) => !freshIdentities.has(identity))
+    .map(([, candidate]) => candidate);
+  const responseCandidates = [...freshView.candidates, ...preservedCandidates];
+  const view = {
+    ...freshView,
+    candidates: responseCandidates,
+    groups: diversifyGroups(groupCandidates(responseCandidates), MAX_VISIBLE_GROUPS),
+  };
   return jsonResponse({
     ok: true,
     ...view,
     filters,
     cache_key: cacheKey,
     cached: false,
-    cached_authoritative: false,
-    requires_factual_refresh: false,
+    cached_authoritative: preservedCandidates.length > 0,
+    requires_eligibility_refresh: responseCandidates.length === 0
+      && scored.some((candidate) => cleanText(candidate.eligibility_reason_code, 100)
+        === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING),
     partial: errors.length > 0,
     errors,
     deferred_verification_count: deferredVerificationCount,
@@ -2631,6 +2668,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     deferred_persistence_batches: deferredPersistenceBatches,
     reconciled_provider_results: reconciledProviderResults,
     cooldown_seconds: Math.ceil(REFRESH_COOLDOWN_MS / 1000),
+    cooldown_until: new Date(Date.now() + REFRESH_COOLDOWN_MS).toISOString(),
     limits: {
       max_pages: MAX_PROVIDER_PAGES,
       max_kalshi_series: MAX_KALSHI_SERIES,
@@ -2661,7 +2699,7 @@ function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente." };
   const state = cleanText(candidate.state, 40);
-  if (!["available", "needs_review", "prepared"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación factual de publicación." };
+  if (!["available", "needs_review", "prepared"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_")) {
     const rejection = prepareRevalidationError(candidate);
@@ -2673,91 +2711,20 @@ function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | {
 function candidateReady(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
   const preflight = candidatePreflight(candidate);
   if (!preflight.ok) return preflight;
-  if (cleanText(candidate.verification_status, 80) !== "verified_open") return { ok: false, error: "VERIFICATION_REQUIRED", message: "La candidata no tiene una verificación factual vigente." };
-  if (cleanText(candidate.fact_status, 40) !== "unresolved"
-    || cleanText(candidate.fact_policy_version, 100) !== RADAR_FACT_POLICY_VERSION
-    || cleanText(candidate.fact_check_purpose, 40) !== "prepare"
-    || !candidate.current_fact_check_id
-    || !/^[a-f0-9]{64}$/i.test(cleanText(candidate.fact_context_fingerprint, 80))) {
-    return { ok: false, error: "FACT_CHECK_REQUIRED", message: "La candidata no conserva un snapshot factual autoritativo para esta preparación." };
+  if (cleanText(candidate.verification_status, 80) !== "verified_open"
+    || cleanText(candidate.eligibility_status, 40) !== "eligible"
+    || cleanText(candidate.eligibility_policy_version, 100) !== RADAR_ELIGIBILITY_POLICY_VERSION
+    || !candidate.current_eligibility_check_id) {
+    return { ok: false, error: "ELIGIBILITY_REQUIRED", message: "La candidata no conserva una decisión de elegibilidad vigente." };
   }
   if (!isAdaptedIdeaComplete(candidate)) return { ok: false, error: "RESOLUTION_SOURCE_REQUIRED", message: "La candidata no conserva una pregunta, criterios y fuente de resolución verificables." };
-  const expiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { ok: false, error: "VERIFICATION_EXPIRED", message: "La verificación factual ha caducado. Actualiza el Radar." };
-  const factCheckedAt = Date.parse(cleanText(candidate.fact_checked_at, 100));
-  const factExpiresAt = Date.parse(cleanText(candidate.fact_check_expires_at, 100));
-  if (!Number.isFinite(factCheckedAt) || !Number.isFinite(factExpiresAt)
-    || factCheckedAt > Date.now() + 60_000 || factExpiresAt <= Date.now()) {
-    return { ok: false, error: "FACT_CHECK_EXPIRED", message: "El snapshot factual ha caducado y debe repetirse." };
+  const checkedAt = Date.parse(cleanText(candidate.eligibility_checked_at, 100));
+  const expiresAt = Date.parse(cleanText(candidate.eligibility_expires_at, 100));
+  if (!Number.isFinite(checkedAt) || checkedAt > Date.now() + 60_000
+    || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return { ok: false, error: "ELIGIBILITY_EXPIRED", message: "La elegibilidad ha caducado. Actualiza el Radar." };
   }
   if (cleanText(candidate.state, 40) !== "available") return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
-  return { ok: true };
-}
-
-function evidenceDomainAllowed(item: JsonRecord, authoritativeDomains: ReadonlySet<string>): boolean {
-  const publicUrl = safePublicUrl(item.url);
-  if (!publicUrl) return false;
-  try {
-    const hostname = new URL(publicUrl).hostname.toLowerCase();
-    return [...authoritativeDomains].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-  } catch {
-    return false;
-  }
-}
-
-async function candidateReadyForPrepareAttempt(
-  candidate: JsonRecord,
-  factCheck: JsonRecord,
-  checkedAt: string,
-  authoritativeDomains: ReadonlySet<string>,
-): Promise<{ ok: true } | { ok: false; error: string; message: string }> {
-  if (cleanText(candidate.verification_status, 80) !== "verified_open") {
-    return { ok: false, error: "VERIFICATION_REQUIRED", message: "La comprobación factual no permite preparar esta candidata." };
-  }
-  if (cleanText(candidate.fact_status, 40) !== "unresolved"
-    || cleanText(factCheck.fact_status, 40) !== "unresolved"
-    || cleanText(factCheck.fact_policy_version, 100) !== RADAR_FACT_POLICY_VERSION
-    || cleanText(factCheck.purpose, 40) !== "prepare") {
-    return { ok: false, error: "FACT_CHECK_REQUIRED", message: "La preparación no conserva un snapshot factual no resuelto y autoritativo." };
-  }
-  if (!isAdaptedIdeaComplete(candidate)) {
-    return { ok: false, error: "RESOLUTION_SOURCE_REQUIRED", message: "Faltan la pregunta, los criterios o una fuente de resolución verificable." };
-  }
-  const verificationExpiresAt = Date.parse(cleanText(candidate.verification_expires_at, 100));
-  if (!Number.isFinite(verificationExpiresAt) || verificationExpiresAt <= Date.parse(checkedAt)) {
-    return { ok: false, error: "VERIFICATION_EXPIRED", message: "La verificación factual ha caducado." };
-  }
-  const factExpiresAt = Date.parse(cleanText(factCheck.expires_at, 100));
-  if (!Number.isFinite(factExpiresAt) || factExpiresAt <= Date.parse(checkedAt)) {
-    return { ok: false, error: "FACT_CHECK_EXPIRED", message: "El snapshot factual de preparación ha caducado." };
-  }
-  const evidence = toRecordArray(factCheck.source_snapshot);
-  const checkedAtMs = Date.parse(checkedAt);
-  let hasCurrentProof = false;
-  for (const item of evidence) {
-    if (!evidenceDomainAllowed(item, authoritativeDomains)
-      || evidenceHasPotentialTerminalClaim(item, candidate, checkedAt)) {
-      return { ok: false, error: "RADAR_FACT_EVIDENCE_REQUIRED", message: "La evidencia primaria ya no supera la validación autoritativa." };
-    }
-    if (!isDeterministicUnresolvedEvidence(item, candidate, checkedAt)) continue;
-    const retrievedAt = Date.parse(cleanText(item.retrieved_at, 100));
-    const unresolvedUntil = Date.parse(cleanText(item.unresolved_until, 100));
-    const excerpt = cleanText(item.unresolved_proof_excerpt, 700);
-    const excerptHash = cleanText(item.unresolved_proof_excerpt_sha256, 80);
-    if (Number.isFinite(checkedAtMs)
-      && Number.isFinite(retrievedAt)
-      && retrievedAt >= checkedAtMs - (10 * 60_000)
-      && retrievedAt <= checkedAtMs + 60_000
-      && Number.isFinite(unresolvedUntil)
-      && unresolvedUntil > checkedAtMs + 60_000
-      && unresolvedUntil <= checkedAtMs + (10 * 365.25 * 24 * 60 * 60_000)
-      && await sha256Hex(excerpt) === excerptHash) {
-      hasCurrentProof = true;
-    }
-  }
-  if (!hasCurrentProof) {
-    return { ok: false, error: "RADAR_FACT_EVIDENCE_REQUIRED", message: "No existe evidencia primaria vigente que demuestre que el contrato continúa sin resolver." };
-  }
   return { ok: true };
 }
 
@@ -2783,7 +2750,14 @@ async function revalidatePolymarketCandidate(candidate: JsonRecord): Promise<Jso
     "polymarket",
   );
   const current = adapted.find((item) => cleanText(item.external_market_id, 220) === marketId);
-  return current ? { ...candidate, ...current, id: candidate.id, preparation_revision: candidate.preparation_revision } : null;
+  return current ? {
+    ...candidate,
+    ...current,
+    id: candidate.id,
+    state: candidate.state,
+    prepared_draft_id: candidate.prepared_draft_id,
+    preparation_revision: candidate.preparation_revision,
+  } : null;
 }
 
 async function revalidateKalshiCandidate(candidate: JsonRecord): Promise<JsonRecord | null> {
@@ -2815,20 +2789,14 @@ async function revalidateKalshiCandidate(candidate: JsonRecord): Promise<JsonRec
     "kalshi",
   );
   const current = adapted.find((item) => cleanText(item.external_market_id, 220) === marketTicker);
-  return current ? { ...candidate, ...current, id: candidate.id, preparation_revision: candidate.preparation_revision } : null;
-}
-
-async function revalidateCriticalEligibility(environment: Environment, authorization: string, candidate: JsonRecord): Promise<JsonRecord> {
-  const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
-  const evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, [candidate], authoritativeDomains);
-  const existing = await loadExistingDefinitions(environment, authorization);
-  const checked = await verifyAndAdaptWithGemini(environment.geminiKey, [candidate], existing, evidenceByGroup, new Date().toISOString());
-  if (checked.failedBatches > 0 || checked.incompleteCandidates > 0 || checked.processedDecisions !== 1) {
-    throw new Error("PROVIDER_INVALID_RESPONSE");
-  }
-  return normalizeRadarCandidatePresentation(
-    checked.candidates[0] ?? failClosedCandidates([candidate], new Date().toISOString(), "La verificación factual no pudo concluir antes de preparar el borrador.")[0],
-  ) as JsonRecord;
+  return current ? {
+    ...candidate,
+    ...current,
+    id: candidate.id,
+    state: candidate.state,
+    prepared_draft_id: candidate.prepared_draft_id,
+    preparation_revision: candidate.preparation_revision,
+  } : null;
 }
 
 async function revalidateCandidateForPreparation(
@@ -2839,148 +2807,155 @@ async function revalidateCandidateForPreparation(
   attemptId: string = crypto.randomUUID(),
 ): Promise<{ candidate: JsonRecord; checkedAt: string; reservation: JsonRecord }> {
   let providerCandidate: JsonRecord | null = null;
-  let providerUnavailable = false;
   try {
     providerCandidate = candidate.provider === "polymarket"
       ? await revalidatePolymarketCandidate(candidate)
       : candidate.provider === "kalshi" ? await revalidateKalshiCandidate(candidate) : null;
   } catch {
-    // El intento fallido se convierte en una decisión negativa y se persiste con
-    // su snapshot mediante la RPC atómica antes de devolver el error al cliente.
-    providerCandidate = null;
-    providerUnavailable = true;
+    // Un fallo técnico nunca cambia la última decisión autoritativa.
+    throw new Error("PROVIDER_UNAVAILABLE");
   }
-
-  let checkedAt = new Date().toISOString();
-  const providerDecision = providerCandidate ? evaluateProviderEligibility(providerCandidate, checkedAt) as JsonRecord | null : null;
-  let factuallyRevalidated = !providerCandidate
-    ? refreshCandidateCacheLease(applyEligibilityDecision(candidate, {
-      eligible: false,
-      conclusive: !providerUnavailable,
-      reason_code: providerUnavailable ? RADAR_REASON_CODES.VERIFICATION_REQUIRED : RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND,
-      reason: providerUnavailable
-        ? "La revalidación del proveedor no estuvo disponible; no se infiere que el mercado esté cerrado."
-        : "El evento canónico ya no conserva la opción verificada.",
-      confidence: providerUnavailable ? 0 : 100,
-      ttl_minutes: 5,
-      fact_status: "unknown",
-      evidence: [],
-    }, checkedAt) as JsonRecord, checkedAt)
-    : refreshCandidateCacheLease(withoutDeferredProviderClosure(providerCandidate), checkedAt);
-  if (providerCandidate && !canReuseRadarVerification(candidate, providerCandidate, checkedAt)) {
-    try {
-      factuallyRevalidated = refreshCandidateCacheLease(
-        await revalidateCriticalEligibility(environment, authorization, providerCandidate),
-        checkedAt,
-      );
-    } catch {
-      factuallyRevalidated = refreshCandidateCacheLease(
-        failClosedCandidates(
-          [providerCandidate],
-          checkedAt,
-          "La fuente factual no devolvió una comprobación utilizable antes de preparar.",
-          5,
-        )[0],
-        checkedAt,
-      );
-    }
-  }
-  if (providerDecision
-    && cleanText(factuallyRevalidated.fact_status, 40) !== "fully_resolved"
-    && cleanText(factuallyRevalidated.verification_status, 80) !== "rejected_resolved") {
-    factuallyRevalidated = refreshCandidateCacheLease(applyEligibilityDecision(factuallyRevalidated, {
-      ...providerDecision,
-      fact_status: providerDecisionFactStatus(factuallyRevalidated, providerDecision),
-    }, checkedAt) as JsonRecord, checkedAt);
-  }
-
-  // Una fila conocida no vuelve a pasar por el UPSERT de descubrimiento. Prepare
-  // reserva una sola vez; revalidate agrega un snapshot post-preparación sin
-  // reservar ni revisar el borrador ligado.
-  checkedAt = new Date().toISOString();
-  factuallyRevalidated = refreshCandidateCacheLease(factuallyRevalidated, checkedAt);
-  const expectedRevision = Number(candidate.preparation_revision);
-  const factCheck = await buildAuthoritativeFactCheck(
-    factuallyRevalidated,
-    purpose,
+  const checkedAt = new Date().toISOString();
+  let eligibility = applyDeterministicRadarEligibility(
+    providerCandidate ?? candidate,
+    providerCandidate
+      ? evaluateProviderEligibility(providerCandidate, checkedAt)
+      : {
+        eligible: false,
+        conclusive: true,
+        reason_code: RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND,
+        reason: "La opción ya no pertenece al evento canónico del proveedor.",
+        confidence: 100,
+        ttl_minutes: 360,
+        evidence: [],
+      },
     checkedAt,
-    purpose === "prepare" ? attemptId : crypto.randomUUID(),
-  );
-  const authoritativeVerification = {
-    ...factuallyRevalidated,
-    fact_context_fingerprint: factCheck.context_sha256,
-    fact_policy_version: RADAR_FACT_POLICY_VERSION,
-  };
-  if (purpose === "prepare") {
-    const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
-    const readiness = await candidateReadyForPrepareAttempt(
-      authoritativeVerification,
-      factCheck,
-      checkedAt,
-      authoritativeDomains,
-    );
-    if (!readiness.ok) {
-      const blockedVerification = {
-        ...authoritativeVerification,
-        verification_status: "needs_review",
-        verification_reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-        verification_reason: readiness.message,
-        verification_confidence: 0,
-        verification_expires_at: null,
-        fact_status: "unknown",
-      };
-      const blockedFactCheck = await buildAuthoritativeFactCheck(
-        blockedVerification,
-        "prepare",
-        checkedAt,
-        attemptId,
+  ) as JsonRecord;
+
+  if (eligibility.eligibility_status === "eligible") {
+    let authoritativeDomains: Set<string>;
+    try {
+      authoritativeDomains = await loadAuthoritativeSourceDomains(environment);
+      if (!authoritativeDomains.size) throw new Error("SOURCE_AUTHORITY_REGISTRY_EMPTY");
+    } catch {
+      throw new Error("ELIGIBILITY_SCAN_UNAVAILABLE");
+    }
+    let evidence: JsonRecord[] = [];
+    try {
+      const evidenceByGroup = await researchGroupsWithTavily(
+        environment.tavilyKey,
+        [eligibility],
+        authoritativeDomains,
       );
-      const recordedAttempt = toRecord(await rpc(
-        environment,
-        "record_market_radar_prepare_attempt_v1",
-        {
-          candidate_id_input: cleanText(candidate.id, 80),
-          expected_preparation_revision_input: Number.isSafeInteger(expectedRevision) ? expectedRevision : null,
-          normalizer_version_input: RADAR_NORMALIZER_VERSION,
-          verification_checked_at_input: checkedAt,
-          verification_input: blockedVerification,
-          fact_check_input: blockedFactCheck,
-          attempt_id_input: attemptId,
-        },
-        undefined,
-        true,
-      ));
-      if (recordedAttempt?.persisted !== true) throw new Error("RADAR_PREPARE_ATTEMPT_NOT_RECORDED");
-      throw new RadarPreparationBlockedError(
-        cleanText(recordedAttempt.error, 100) || readiness.error,
-        recordedAttempt,
-      );
+      evidence = evidenceByGroup.get(cleanText(eligibility.event_group_key, 240)) ?? [];
+    } catch {
+      // La exploración puede conservar el último estado válido durante una
+      // degradación. Preparar, confirmar o publicar falla cerrado cuando no se
+      // pudo descartar de forma exacta un resultado oficial ya conocido.
+      throw new Error("ELIGIBILITY_SCAN_UNAVAILABLE");
+    }
+    const subjectTokens = sourceTokens(candidateResolutionSubject(eligibility))
+      .filter((token) => !SOURCE_GENERIC_ANCHORS.has(token));
+    const exactEvidence = evidence.filter((item) => {
+      const materialTokens = new Set(sourceTokens(`${item.title ?? ""} ${item.supports ?? ""}`));
+      return subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token));
+    });
+    const coverResolution = detectOfficialCoverEventResolution([eligibility], exactEvidence);
+    const coverSelectionHold = detectOfficialCoverSelectionHold([eligibility], exactEvidence);
+    const terminalEvidence = exactEvidence.filter((item) => evidenceHasPotentialTerminalClaim(item, eligibility, checkedAt));
+    if (coverResolution || terminalEvidence.length) {
+      eligibility = applyDeterministicRadarEligibility(eligibility, {
+        eligible: false,
+        conclusive: true,
+        reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+        reason: "Una fuente oficial exacta para esta opción ya publicó el resultado.",
+        confidence: 100,
+        ttl_minutes: 1_440,
+        evidence: coverResolution?.evidence ?? terminalEvidence,
+      }, checkedAt) as JsonRecord;
+    } else if (coverSelectionHold) {
+      eligibility = applyDeterministicRadarEligibility(eligibility, {
+        eligible: false,
+        conclusive: false,
+        reason_code: RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED,
+        reason: "Una fuente oficial apunta a una selección ya publicada, pero la comprobación automática debe completar su alcance. El evento permanece oculto y se reintentará.",
+        confidence: 0,
+        ttl_minutes: 5,
+        evidence: coverSelectionHold.evidence ?? [],
+      }, checkedAt) as JsonRecord;
+    } else {
+      const resolutionSourceUrl = selectVerifiedResolutionUrl(eligibility, exactEvidence, authoritativeDomains);
+      if (!resolutionSourceUrl) {
+        eligibility = applyDeterministicRadarEligibility(eligibility, {
+          eligible: false,
+          conclusive: false,
+          reason_code: RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+          reason: "Atinara no encontró todavía una fuente resolutiva oficial y exacta para esta opción. La volverá a comprobar automáticamente.",
+          confidence: 0,
+          ttl_minutes: 5,
+          evidence: [],
+        }, checkedAt) as JsonRecord;
+      } else {
+        const sourceEvidence = exactEvidence
+          .filter((item) => safePublicUrl(item.url) === resolutionSourceUrl)
+          .slice(0, 6);
+        eligibility = normalizeRadarCandidatePresentation({
+          ...eligibility,
+          atinara_resolution_source_url: resolutionSourceUrl,
+          resolution_source_evidence: sourceEvidence,
+          eligibility_evidence: sourceEvidence,
+          verification_evidence: sourceEvidence,
+        }) as JsonRecord;
+      }
     }
   }
-  const rpcName = purpose === "prepare"
-    ? "apply_market_radar_prepare_fact_verification_v1"
-    : "apply_market_radar_revalidation_fact_v1";
-  const applied = toRecord(await rpc(environment, rpcName, {
+
+  const expectedRevision = Number(candidate.preparation_revision);
+  const eligibilityEvidence = toRecordArray(eligibility.eligibility_evidence ?? eligibility.verification_evidence).slice(0, 12);
+  const eligibilityCheck = {
+    attempt_id: attemptId,
+    provider: cleanText(eligibility.provider, 40),
+    external_id: cleanText(eligibility.external_id, 220),
+    event_group_key: cleanText(eligibility.event_group_key, 240) || null,
+    policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
+    status: cleanText(eligibility.eligibility_status, 40),
+    reason_code: cleanText(eligibility.eligibility_reason_code, 100) || null,
+    reason: cleanText(eligibility.eligibility_reason, 1_000) || null,
+    evidence: eligibilityEvidence,
+    checked_at: checkedAt,
+    expires_at: cleanText(eligibility.eligibility_expires_at, 100),
+    decision_hash: await sha256Hex({
+      provider: eligibility.provider,
+      external_id: eligibility.external_id,
+      status: eligibility.eligibility_status,
+      reason_code: eligibility.eligibility_reason_code,
+      evidence: eligibilityEvidence,
+      checked_at: checkedAt,
+    }),
+  };
+  const applied = toRecord(await rpc(environment, "apply_market_radar_prepare_eligibility_v1", {
     candidate_id_input: cleanText(candidate.id, 80),
     expected_preparation_revision_input: Number.isSafeInteger(expectedRevision) ? expectedRevision : null,
     normalizer_version_input: RADAR_NORMALIZER_VERSION,
-    verification_checked_at_input: checkedAt,
-    verification_input: authoritativeVerification,
-    fact_check_input: factCheck,
+    eligibility_checked_at_input: checkedAt,
+    eligibility_input: eligibility,
+    eligibility_check_input: eligibilityCheck,
+    reserve_for_prepare_input: purpose === "prepare",
   }, undefined, true));
   if (!applied?.ok) {
-    throw new Error(cleanText(applied?.error, 100) || "PREPARE_REJECTED");
+    const blockedCandidate = toRecord(applied?.candidate);
+    const code = cleanText(applied?.error, 100) || "PREPARE_REJECTED";
+    if (blockedCandidate) throw new RadarRevalidationOutcomeError(code, blockedCandidate);
+    throw new Error(code);
   }
   const authoritativeCandidate = toRecord(applied.candidate);
   if (!authoritativeCandidate) throw new Error("CANDIDATE_NOT_FOUND");
   if (purpose === "prepare") {
-    const factualReadiness = candidateReady(authoritativeCandidate);
-    if (!factualReadiness.ok) throw new Error(factualReadiness.error);
-  } else if (cleanText(authoritativeCandidate.fact_check_purpose, 40) !== "revalidate"
-    || cleanText(authoritativeCandidate.fact_status, 40) !== "unresolved"
-    || cleanText(authoritativeCandidate.verification_status, 80) !== "verified_open") {
+    const readiness = candidateReady(authoritativeCandidate);
+    if (!readiness.ok) throw new Error(readiness.error);
+  } else if (cleanText(authoritativeCandidate.eligibility_status, 40) !== "eligible") {
     const outcome = prepareRevalidationError(authoritativeCandidate);
-    throw new RadarRevalidationOutcomeError(outcome?.error ?? "RADAR_REVALIDATION_REQUIRED", authoritativeCandidate);
+    throw new RadarRevalidationOutcomeError(outcome?.error ?? "RADAR_ELIGIBILITY_REQUIRED", authoritativeCandidate);
   }
   return {
     candidate: authoritativeCandidate,
@@ -2990,14 +2965,108 @@ async function revalidateCandidateForPreparation(
 }
 
 function prepareRevalidationError(candidate: JsonRecord): { error: string; message: string } | null {
+  if (cleanText(candidate.eligibility_reason_code, 100) === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING) {
+    return {
+      error: RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+      message: "Atinara todavía no encontró una fuente resolutiva oficial y exacta. La candidata sigue privada y puede volver a comprobarse.",
+    };
+  }
   const status = cleanText(candidate.verification_status, 80);
   if (status === "verified_open") return null;
   if (status === "rejected_resolved") return { error: "RADAR_CANDIDATE_RESOLVED", message: "El resultado ya es público y la candidata no puede prepararse." };
   if (status === "rejected_unannounced") return { error: "RADAR_CANDIDATE_UNANNOUNCED", message: "La candidata depende de un producto no anunciado para un resultado posterior, como un premio o una reseña." };
-  if (["rejected_ineligible", "rejected_incoherent"].includes(status)) return { error: "RADAR_CANDIDATE_INELIGIBLE", message: "La candidata no es temporal o factualmente compatible con el contrato." };
+  if (["rejected_ineligible", "rejected_incoherent"].includes(status)) return { error: "RADAR_CANDIDATE_INELIGIBLE", message: "La candidata no es compatible con el contrato o ya no está disponible en el proveedor." };
   if (status === "rejected_invalid_source") return { error: "RADAR_CANONICAL_URL_INVALID", message: "No se pudo validar la fuente o el enlace canónico de la candidata." };
   if (status === "rejected_duplicate") return { error: "RADAR_CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
-  return { error: "RADAR_REVALIDATION_REQUIRED", message: "La verificación factual no ha concluido. La candidata permanece bloqueada." };
+  return { error: "RADAR_ELIGIBILITY_REQUIRED", message: "La comprobación de elegibilidad no ha concluido. La candidata permanece bloqueada." };
+}
+
+async function recordTechnicalEligibilityAttempt(
+  environment: Environment,
+  candidate: JsonRecord,
+  purpose: "prepare" | "revalidate",
+  operationId: string,
+  error: unknown,
+): Promise<void> {
+  if (error instanceof RadarRevalidationOutcomeError) return;
+  const rawCode = error instanceof Error ? cleanText(error.message, 100) : "RADAR_ELIGIBILITY_TECHNICAL_FAILURE";
+  const errorCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(rawCode)
+    ? rawCode
+    : "RADAR_ELIGIBILITY_TECHNICAL_FAILURE";
+  const phase = errorCode === "PROVIDER_UNAVAILABLE"
+    ? "provider_revalidation"
+    : errorCode === "ELIGIBILITY_SCAN_UNAVAILABLE"
+      ? "official_terminal_scan"
+      : "eligibility_persistence";
+  const revision = Number(candidate.preparation_revision);
+  if (!Number.isSafeInteger(revision) || revision < 1) return;
+  try {
+    await rpc(environment, "record_market_radar_eligibility_attempt_v1", {
+      candidate_id_input: cleanText(candidate.id, 80),
+      expected_preparation_revision_input: revision,
+      purpose_input: purpose,
+      attempt_id_input: operationId,
+      phase_input: phase,
+      error_code_input: errorCode,
+      retryable_input: ["PROVIDER_UNAVAILABLE", "ELIGIBILITY_SCAN_UNAVAILABLE"].includes(errorCode),
+    }, undefined, true);
+  } catch (auditError) {
+    console.warn("Radar eligibility attempt audit unavailable", auditError instanceof Error ? auditError.message : "AUDIT_UNAVAILABLE");
+  }
+}
+
+function eligibilityFailureResponse(error: unknown, operationId: string): Response {
+  const code = error instanceof Error ? cleanText(error.message, 100) : "RADAR_ELIGIBILITY_REQUIRED";
+  const errors: Record<string, { status: number; message: string }> = {
+    PROVIDER_NOT_OPEN: { status: 409, message: "El mercado de origen ya no está abierto o no conserva la opción verificada." },
+    PROVIDER_UNAVAILABLE: { status: 503, message: "El proveedor no respondió. Se conserva el último estado y puedes reintentar sin duplicar cambios." },
+    ELIGIBILITY_SCAN_UNAVAILABLE: { status: 503, message: "No se pudo descartar de forma segura un resultado oficial ya conocido. El estado anterior se conserva y puedes reintentar." },
+    RESOLUTION_SOURCE_AUTHORITY_PENDING: { status: 409, message: "Atinara todavía no encontró una fuente resolutiva oficial y exacta. La candidata sigue privada y puede volver a comprobarse." },
+    ELIGIBILITY_REQUIRED: { status: 409, message: "La decisión de elegibilidad actual no permite continuar con esta candidata." },
+    RADAR_ELIGIBILITY_REQUIRED: { status: 409, message: "La decisión de elegibilidad actual no permite continuar con esta candidata." },
+    RADAR_ELIGIBILITY_EXPIRED: { status: 409, message: "La elegibilidad ha caducado y debe actualizarse antes de continuar." },
+    RADAR_CANDIDATE_RESOLVED: { status: 409, message: "El resultado ya es público y la candidata permanece bloqueada." },
+    RADAR_CANDIDATE_UNANNOUNCED: { status: 409, message: "La candidata depende de un producto no anunciado para un resultado posterior." },
+    RADAR_CANDIDATE_INELIGIBLE: { status: 409, message: "La candidata no es compatible con el contrato o ya no está disponible." },
+    RADAR_CANONICAL_URL_INVALID: { status: 409, message: "No se pudo validar la fuente o el enlace canónico de la candidata." },
+    RADAR_CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
+    ELIGIBILITY_EXPIRED: { status: 409, message: "La elegibilidad ha caducado. Actualiza el Radar y vuelve a intentarlo." },
+    RESOLUTION_SOURCE_REQUIRED: { status: 409, message: "Faltan la pregunta, los criterios o una fuente de resolución verificable." },
+    PREPARATION_REVISION_MISMATCH: { status: 409, message: "La candidata cambió durante la comprobación. Recarga su versión actual." },
+    CANDIDATE_NOT_REVALIDATABLE: { status: 409, message: "La candidata ya no admite una comprobación de elegibilidad." },
+    CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
+  };
+  if (error instanceof RadarRevalidationOutcomeError) {
+    const failure = errors[error.code] ?? {
+      status: 409,
+      message: "La decisión de elegibilidad quedó registrada y la candidata permanece bloqueada.",
+    };
+    return jsonResponse({
+      error: error.code,
+      message: failure.message,
+      attempt_id: operationId,
+      phase: "eligibility_check",
+      retryable: error.code === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+      candidate: error.candidate,
+      eligibility_check_id: error.candidate.current_eligibility_check_id ?? null,
+      preparation_revision: error.candidate.preparation_revision ?? null,
+      authoritative_state_updated: true,
+      state_preserved: true,
+    }, failure.status);
+  }
+  const failure = errors[code] ?? {
+    status: 503,
+    message: "No se pudo completar la comprobación de elegibilidad. El estado anterior se conserva.",
+  };
+  return jsonResponse({
+    error: code,
+    message: failure.message,
+    attempt_id: operationId,
+    phase: "eligibility_check",
+    retryable: code === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING
+      || failure.status === 429 || failure.status >= 500,
+    state_preserved: true,
+  }, failure.status);
 }
 
 async function handleAction(
@@ -3006,7 +3075,11 @@ async function handleAction(
   adminId: string,
   body: JsonRecord,
 ) {
-  const action = cleanText(body.action, 40);
+  const requestedAction = cleanText(body.action, 40);
+  // Compatibilidad de despliegue: Pages puede conservar brevemente el cliente
+  // anterior. El alias no restaura la puerta factual ni persiste sus campos;
+  // ejecuta exactamente la comprobación de elegibilidad v5.
+  const action = requestedAction === "revalidate" ? "check-eligibility" : requestedAction;
   if (action === "discover") return runDiscovery(environment, authorization, body);
   if (action === "provider-status") {
     const providers = await rpc(environment, "get_market_radar_provider_status", {}, authorization);
@@ -3018,34 +3091,80 @@ async function handleAction(
   }
   if (action === "details") {
     const candidate = toRecord(await rpc(environment, "get_market_radar_candidate", { candidate_id_input: candidateId }, authorization));
-    return jsonResponse({ ok: true, candidate: candidate ?? {} });
+    if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
+    let detailedCandidate = candidate;
+    try {
+      const authoritativeDomains = await loadAuthoritativeSourceDomains(environment);
+      const evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, [candidate], authoritativeDomains);
+      const evidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
+      const sourceUrl = selectVerifiedResolutionUrl(candidate, evidence, authoritativeDomains);
+      const sourceEvidence = sourceUrl
+        ? evidence.filter((item) => safePublicUrl(item.url) === sourceUrl).slice(0, 6)
+        : [];
+      detailedCandidate = {
+        ...candidate,
+        atinara_resolution_source_url: sourceUrl,
+        resolution_source_evidence: sourceEvidence,
+      };
+    } catch {
+      // El detalle sigue siendo una lectura válida con el último estado guardado.
+    }
+    return jsonResponse({ ok: true, candidate: detailedCandidate });
   }
-  if (["prepare", "revalidate"].includes(action)) {
-    // La lectura de preparación es service-only y degrada cualquier snapshot no
-    // vigente a needs_review. El endpoint administrativo directo nunca entrega
-    // esa fila como verified_open, pero la Edge aún puede revalidarla de cero.
+  if (action === "check-eligibility") {
     const candidate = toRecord(await rpc(environment, "get_market_radar_candidate_for_revalidation_v1", { candidate_id_input: candidateId }, undefined, true));
     if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
-    const preflight = action === "prepare"
-      ? candidatePreflight(candidate)
-      : candidateRevalidationPreflight(candidate);
+    const preflight = candidateRevalidationPreflight(candidate);
     if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
-    const legacyDraftId = action === "revalidate" ? cleanText(body.draft_id, 80) : "";
-    const legacyDraftVersion = Number(body.draft_version);
-    const legacyDraftFingerprint = action === "revalidate" ? cleanText(body.draft_fingerprint, 80) : "";
-    if (legacyDraftId && (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(legacyDraftId)
-      || !Number.isSafeInteger(legacyDraftVersion)
-      || legacyDraftVersion < 1
-      || !/^[0-9a-f]{64}$/.test(legacyDraftFingerprint)
-    )) {
+    const requestedOperationId = cleanText(body.operation_id, 80);
+    const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedOperationId)
+      ? requestedOperationId
+      : crypto.randomUUID();
+    try {
+      const result = await revalidateCandidateForPreparation(
+        environment,
+        authorization,
+        candidate,
+        "revalidate",
+        operationId,
+      );
+      const compatibilityCandidate = requestedAction === "revalidate"
+        ? {
+          ...result.candidate,
+          fact_check_purpose: "revalidate",
+          fact_status: "unresolved",
+          fact_checked_at: result.candidate.eligibility_checked_at,
+          fact_check_expires_at: result.candidate.eligibility_expires_at,
+          current_fact_check_id: result.candidate.current_eligibility_check_id,
+        }
+        : result.candidate;
       return jsonResponse({
-        error: "RADAR_LEGACY_ATTESTATION_INPUT_INVALID",
-        message: "El vínculo del borrador cambió o no contiene una huella autoritativa.",
-      }, 400);
+        ok: true,
+        candidate: compatibilityCandidate,
+        eligibility_check_id: result.candidate.current_eligibility_check_id,
+        eligibility_checked_at: result.candidate.eligibility_checked_at,
+        eligibility_expires_at: result.candidate.eligibility_expires_at,
+        revalidated: true,
+        prepared: false,
+        ...(requestedAction === "revalidate" ? {
+          legacy_fact_attestation: {
+            ok: true,
+            compatibility_only: true,
+            eligibility_check_id: result.candidate.current_eligibility_check_id,
+          },
+        } : {}),
+      });
+    } catch (error) {
+      await recordTechnicalEligibilityAttempt(environment, candidate, "revalidate", operationId, error);
+      return eligibilityFailureResponse(error, operationId);
     }
+  }
+  if (action === "prepare") {
+    const candidate = toRecord(await rpc(environment, "get_market_radar_candidate_for_revalidation_v1", { candidate_id_input: candidateId }, undefined, true));
+    if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
+    const preflight = candidatePreflight(candidate);
+    if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
     let result: { candidate: JsonRecord; checkedAt: string; reservation: JsonRecord };
-    let legacyAttestation: JsonRecord | null = null;
     const requestedOperationId = cleanText(body.operation_id, 80);
     const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedOperationId)
       ? requestedOperationId
@@ -3055,120 +3174,22 @@ async function handleAction(
         environment,
         authorization,
         candidate,
-        action === "prepare" ? "prepare" : "revalidate",
+        "prepare",
         operationId,
       );
-      if (legacyDraftId) {
-        const candidateRevision = Number(result.candidate.preparation_revision);
-        const revalidationFactId = Number(result.candidate.current_fact_check_id);
-        if (!Number.isSafeInteger(candidateRevision) || candidateRevision < 1
-          || !Number.isSafeInteger(revalidationFactId) || revalidationFactId < 1) {
-          throw new Error("RADAR_FACTUAL_REFRESH_REQUIRED");
-        }
-        legacyAttestation = toRecord(await rpc(
-          environment,
-          "attest_legacy_market_radar_draft_fact_v1",
-          {
-            draft_id_input: legacyDraftId,
-            candidate_id_input: candidateId,
-            expected_draft_version_input: legacyDraftVersion,
-            expected_draft_fingerprint_input: legacyDraftFingerprint,
-            expected_candidate_revision_input: candidateRevision,
-            expected_revalidation_fact_check_id_input: revalidationFactId,
-            actor_id_input: adminId,
-          },
-          undefined,
-          true,
-        ));
-        if (!legacyAttestation?.ok) {
-          throw new Error(cleanText(legacyAttestation?.error, 100) || "RADAR_LEGACY_ATTESTATION_FAILED");
-        }
-      }
     } catch (error) {
-      const code = error instanceof Error ? cleanText(error.message, 100) : "RADAR_REVALIDATION_REQUIRED";
-      const errors: Record<string, { status: number; message: string }> = {
-        PROVIDER_NOT_OPEN: { status: 409, message: "El mercado de origen ya no está abierto o no conserva la opción verificada." },
-        PROVIDER_INVALID_RESPONSE: { status: 503, message: "La fuente factual no devolvió una comprobación utilizable. La candidata permanece bloqueada." },
-        VERIFICATION_REQUIRED: { status: 409, message: "La comprobación factual actual no permite preparar esta candidata." },
-        RADAR_REVALIDATION_REQUIRED: { status: 409, message: "La comprobación factual actual no permite preparar esta candidata." },
-        RADAR_CANDIDATE_RESOLVED: { status: 409, message: "El resultado ya es público y la candidata no puede prepararse." },
-        RADAR_CANDIDATE_UNANNOUNCED: { status: 409, message: "La candidata depende de un producto no anunciado para un resultado posterior." },
-        RADAR_CANDIDATE_INELIGIBLE: { status: 409, message: "La candidata no es temporal o factualmente compatible con el contrato." },
-        RADAR_CANONICAL_URL_INVALID: { status: 409, message: "No se pudo validar la fuente o el enlace canónico de la candidata." },
-        RADAR_CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
-        VERIFICATION_EXPIRED: { status: 409, message: "La comprobación factual ha caducado y debe repetirse." },
-        FACT_CHECK_REQUIRED: { status: 409, message: "Falta el snapshot factual autoritativo de esta preparación." },
-        FACT_CHECK_EXPIRED: { status: 409, message: "El snapshot factual ha caducado y debe repetirse." },
-        RADAR_FACT_EVIDENCE_REQUIRED: { status: 409, message: "No existe evidencia primaria vigente de que el contrato continúe sin resolver." },
-        RESOLUTION_SOURCE_REQUIRED: { status: 409, message: "Faltan la pregunta, los criterios o una fuente de resolución verificable." },
-        PREPARATION_REVISION_MISMATCH: { status: 409, message: "La candidata cambió durante la comprobación. Vuelve a aplicar para usar su versión actual." },
-        CANDIDATE_NOT_REVALIDATABLE: { status: 409, message: "La candidata ya no admite una comprobación factual de publicación." },
-        CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
-        DRAFT_VERSION_MOVED: { status: 409, message: "El borrador cambió durante la comprobación factual. Vuelve a abrirlo." },
-        DRAFT_FINGERPRINT_MOVED: { status: 409, message: "La huella del borrador cambió durante la comprobación factual. Vuelve a abrirlo." },
-        RADAR_DRAFT_CANDIDATE_MISMATCH: { status: 409, message: "El borrador ya no está ligado a esta candidata Radar." },
-        RADAR_LEGACY_DRAFT_NOT_ELIGIBLE: { status: 409, message: "El borrador heredado no cumple las condiciones de recuperación factual segura." },
-        RADAR_LEGACY_ATTESTATION_REJECTED: { status: 409, message: "La atestación factual heredada no coincide con el borrador actual." },
-        RADAR_LEGACY_ATTESTATION_FAILED: { status: 409, message: "No se pudo atestar de forma atómica el origen factual heredado." },
-      };
-      if (error instanceof RadarPreparationBlockedError) {
-        const failure = errors[error.code] ?? {
-          status: 409,
-          message: "La comprobación factual quedó registrada, pero no permite preparar esta candidata.",
-        };
-        return jsonResponse({
-          error: error.code,
-          message: failure.message,
-          attempt_id: operationId,
-          phase: "factual_revalidation",
-          retryable: error.retryable,
-          candidate: error.diagnostics.candidate,
-          attempt_fact_check_id: error.diagnostics.attempt_fact_check_id,
-          authoritative_fact_check_id: error.diagnostics.authoritative_fact_check_id,
-          preparation_revision: error.diagnostics.preparation_revision,
-          persisted: error.diagnostics.persisted,
-          authoritative_pointer_unchanged: error.diagnostics.authoritative_pointer_unchanged,
-          state_preserved: error.diagnostics.authoritative_pointer_unchanged !== false,
-        }, 409);
-      }
-      if (error instanceof RadarRevalidationOutcomeError) {
-        const failure = errors[error.code] ?? {
-          status: 409,
-          message: "La comprobación factual quedó registrada y la candidata permanece bloqueada.",
-        };
-        return jsonResponse({
-          error: error.code,
-          message: failure.message,
-          attempt_id: operationId,
-          phase: "factual_revalidation",
-          retryable: false,
-          candidate: error.candidate,
-          fact_check_id: error.candidate.current_fact_check_id ?? null,
-          preparation_revision: error.candidate.preparation_revision ?? null,
-          authoritative_state_updated: true,
-          state_preserved: true,
-        }, 409);
-      }
-      const failure = errors[code] ?? { status: 503, message: "No se pudo repetir la comprobación factual. La candidata permanece bloqueada y no se ha preparado ningún borrador." };
-      return jsonResponse({
-        error: code,
-        message: failure.message,
-        attempt_id: operationId,
-        phase: "factual_revalidation",
-        retryable: failure.status === 429 || failure.status >= 500,
-        state_preserved: true,
-      }, failure.status);
+      await recordTechnicalEligibilityAttempt(environment, candidate, "prepare", operationId, error);
+      return eligibilityFailureResponse(error, operationId);
     }
     return jsonResponse({
       ok: true,
       candidate: result.candidate,
       preparation_revision: result.candidate.preparation_revision,
-      fact_check_id: result.candidate.current_fact_check_id,
+      eligibility_check_id: result.candidate.current_eligibility_check_id,
       reservation: result.reservation,
       prefill: buildDraftPrefill(result.candidate),
       revalidated: true,
-      prepared: action === "prepare",
-      legacy_fact_attestation: legacyAttestation,
+      prepared: true,
     });
   }
   if (action === "dismiss") {

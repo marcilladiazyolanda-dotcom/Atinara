@@ -1,5 +1,5 @@
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
-export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4";
+export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
 export const RADAR_FAMILY_VERSION = "atinara-market-family-v4";
 export const RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2";
 
@@ -47,8 +47,11 @@ export const RADAR_REASON_CODES = Object.freeze({
   INVALID_OR_UNVERIFIED_SOURCE: "INVALID_OR_UNVERIFIED_SOURCE",
   DUPLICATE_MARKET: "DUPLICATE_MARKET",
   PROVIDER_NOT_OPEN: "PROVIDER_NOT_OPEN",
+  PROVIDER_OPTION_INACTIVE: "PROVIDER_OPTION_INACTIVE",
   PROVIDER_EVENT_NOT_FOUND: "PROVIDER_EVENT_NOT_FOUND",
   PROVIDER_CHILD_NOT_FOUND: "PROVIDER_CHILD_NOT_FOUND",
+  RESOLUTION_SOURCE_AUTHORITY_PENDING: "RESOLUTION_SOURCE_AUTHORITY_PENDING",
+  OFFICIAL_SELECTION_RECHECK_REQUIRED: "OFFICIAL_SELECTION_RECHECK_REQUIRED",
   VERIFICATION_REQUIRED: "VERIFICATION_REQUIRED",
   VERIFICATION_EXPIRED: "VERIFICATION_EXPIRED",
 });
@@ -61,8 +64,8 @@ const PROVIDER_PUBLIC_HOSTS = Object.freeze({
 const GAMING_TERMS = [
   "game", "gaming", "video game", "videojuego", "playstation", "xbox", "nintendo", "steam",
   "metacritic", "game awards", "goty", "esports", "twitch", "streamer", "youtube", "youtuber",
-  "gta", "grand theft auto", "fable", "half-life", "ea sports", "fc 27", "fortnite", "valorant",
-  "league of legends", "resident evil", "silksong", "switch", "console", "consola", "lanzamiento",
+  "switch", "console", "consola", "pc", "developer", "publisher", "studio", "dlc", "expansion",
+  "gameplay", "multiplayer", "single-player", "release date", "review score", "trailer", "lanzamiento",
 ];
 
 const BLOCKED_TERMS = [
@@ -92,10 +95,13 @@ const REASON_COPY = Object.freeze({
   INVALID_OR_UNVERIFIED_SOURCE: "No se pudo validar una fuente pública suficiente para preparar el mercado.",
   DUPLICATE_MARKET: "Ya existe un mercado o borrador equivalente en Atinara.",
   PROVIDER_NOT_OPEN: "El mercado de origen ya no admite participación.",
+  PROVIDER_OPTION_INACTIVE: "La opción no está negociable, pero el evento padre puede seguir abierto.",
   PROVIDER_EVENT_NOT_FOUND: "El evento de origen ya no existe o no se pudo verificar.",
   PROVIDER_CHILD_NOT_FOUND: "La opción de mercado ya no pertenece al evento verificado.",
-  VERIFICATION_REQUIRED: "La candidata necesita revisión factual antes de preparar un borrador.",
-  VERIFICATION_EXPIRED: "La verificación factual ha caducado y debe repetirse.",
+  RESOLUTION_SOURCE_AUTHORITY_PENDING: "Atinara todavía no ha recuperado una fuente resolutiva oficial y exacta para esta opción.",
+  OFFICIAL_SELECTION_RECHECK_REQUIRED: "Una fuente oficial apunta a una selección ya publicada, pero Atinara debe completar su comprobación antes de volver a mostrar el evento.",
+  VERIFICATION_REQUIRED: "La candidata necesita completar una comprobación automática antes de preparar un borrador.",
+  VERIFICATION_EXPIRED: "La comprobación automática ha caducado y debe repetirse.",
 });
 
 export function isRecord(value) {
@@ -203,7 +209,12 @@ export function extractOfficialRelatedUrls(raw, baseUrl, allowedHosts = [], limi
     try { parsed = new URL(url); }
     catch { continue; }
     if (parsed.username || parsed.password || (parsed.port && parsed.port !== "443")) continue;
-    if (parsed.hostname.toLowerCase() !== baseParsed.hostname.toLowerCase()) continue;
+    const authorityDomain = (hostname) => [...allowedHosts]
+      .map((host) => cleanText(host, 240).toLowerCase())
+      .filter(Boolean)
+      .sort((left, right) => right.length - left.length)
+      .find((host) => hostname === host || hostname.endsWith(`.${host}`)) ?? null;
+    if (authorityDomain(parsed.hostname.toLowerCase()) !== authorityDomain(baseParsed.hostname.toLowerCase())) continue;
     if (/\/(?:checkout|cart|account|login|sign-?in|register)(?:\/|$)/i.test(parsed.pathname)) continue;
     if (/\.(?:avif|gif|jpe?g|png|svg|webp|pdf|zip)(?:$|\?)/i.test(parsed.pathname)) continue;
     const label = cleanText(decodeOfficialHtmlEntities(String(match[2] ?? "").replace(/<[^>]+>/g, " ")), 500);
@@ -531,6 +542,26 @@ export function adaptPolymarketResponse(payload, options = {}) {
         settled_at: safeIsoDate(item.resolvedAt ?? item.resolutionDate),
       };
     });
+    // En eventos con varias opciones, un `result` del contenedor no describe
+    // necesariamente a cada hija. Solo se propaga si el proveedor marca el
+    // evento completo como resuelto (o si realmente es un evento de una opción).
+    const eventResolved = event.resolved === true || (
+      canonicalMarkets.length === 1
+      && Boolean(normalizeProviderResult(event.result ?? event.resolutionResult ?? event.winningOutcome))
+    );
+    const eventUnavailable = event.closed === true
+      || event.archived === true
+      || event.active === false
+      || event.acceptingOrders === false;
+    const eventHasOpenChild = canonicalMarkets.some((item) => {
+      const childResult = normalizeProviderResult(item.result ?? item.resolutionResult ?? item.winningOutcome);
+      return !childResult
+        && item.resolved !== true
+        && item.closed !== true
+        && item.archived !== true
+        && item.active !== false
+        && item.acceptingOrders !== false;
+    });
     const factContextFingerprint = stableFingerprint(JSON.stringify(canonicalEventChildren));
     for (const marketValue of markets) {
       if (!isRecord(marketValue)) continue;
@@ -539,13 +570,15 @@ export function adaptPolymarketResponse(payload, options = {}) {
       if (!marketId) continue;
       const marketSlug = cleanText(market.slug, 400);
       const parsed = parsePolymarketOutcomes(market);
-      const providerClosed = market.closed === true
-        || event.closed === true
+      const childUnavailable = market.closed === true
         || market.archived === true
-        || event.archived === true
-        || market.acceptingOrders === false
-        || event.acceptingOrders === false;
-      const status = providerClosed ? "closed" : market.active === false || event.active === false ? "inactive" : "open";
+        || market.active === false
+        || market.acceptingOrders === false;
+      const status = eventResolved || eventUnavailable
+        ? "closed"
+        : childUnavailable
+          ? "inactive"
+          : "open";
       const candidate = baseCandidate("polymarket", `polymarket:${marketId}`, {
         title: event.title ?? market.question,
         question: market.question ?? event.title,
@@ -586,10 +619,13 @@ export function adaptPolymarketResponse(payload, options = {}) {
       }, now, cacheMinutes);
       const closeMs = Date.parse(candidate.source_close_at ?? "");
       const nowMs = Date.parse(now);
-      if (candidate.source_result || market.resolved === true || event.resolved === true) {
+      if (candidate.source_result || market.resolved === true || eventResolved) {
         candidate.hard_reject_reasons.push(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED);
       }
-      if (!providerIsOpen(status) || (Number.isFinite(closeMs) && Number.isFinite(nowMs) && closeMs <= nowMs)) {
+      if (childUnavailable && eventHasOpenChild && !eventResolved && !eventUnavailable
+          && (!Number.isFinite(closeMs) || !Number.isFinite(nowMs) || closeMs > nowMs)) {
+        candidate.hard_reject_reasons.push(RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE);
+      } else if (!providerIsOpen(status) || (Number.isFinite(closeMs) && Number.isFinite(nowMs) && closeMs <= nowMs)) {
         candidate.hard_reject_reasons.push(RADAR_REASON_CODES.PROVIDER_NOT_OPEN);
       }
       if (!eventValidated || !eventUrl) candidate.hard_reject_reasons.push(RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE);
@@ -2077,6 +2113,17 @@ export function evaluateProviderEligibility(candidate, now = new Date().toISOStr
       evidence: providerEvidence(candidate),
     };
   }
+  if (hardReasons.has(RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE)) {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
+      reason: "Esta opción no está negociable en el proveedor, aunque el evento padre conserva otras opciones abiertas.",
+      confidence: 100,
+      ttl_minutes: 360,
+      evidence: providerEvidence(candidate),
+    };
+  }
   if (hardReasons.has(RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE)) {
     return {
       eligible: false,
@@ -2356,7 +2403,7 @@ export function groupCandidates(candidates = []) {
       external_event_id: lead?.external_event_id ?? null,
       external_event_slug: lead?.external_event_slug ?? null,
       external_event_url: lead?.external_event_url ?? lead?.external_url ?? null,
-      title: lead?.source_title ?? lead?.source_question ?? "Evento externo",
+      title: lead?.atinara_group_title ?? lead?.source_title ?? lead?.source_question ?? "Evento externo",
       category: lead?.atinara_category ?? lead?.source_category ?? "Industria",
       verification_status: sorted.some((item) => item.verification_status === "verified_open") ? "verified_open" : lead?.verification_status ?? "needs_review",
       quality_score: Math.max(...sorted.map((item) => safeNumber(item.quality_score) ?? 0), 0),
@@ -2408,12 +2455,61 @@ export function diversifyGroups(groups = [], limit = 60) {
       providerCounts.set(group.provider, (providerCounts.get(group.provider) ?? 0) + 1);
       categoryCounts.set(group.category, (categoryCounts.get(group.category) ?? 0) + 1);
       return group;
-    });
+  });
+}
+
+function rejectionPresentation(candidate, nowMs = Date.now()) {
+  const recordedCode = cleanText(candidate?.verification_reason_code, 100);
+  if (recordedCode !== RADAR_REASON_CODES.PROVIDER_NOT_OPEN
+      || cleanText(candidate?.eligibility_status, 40) !== "inactive_option"
+      || normalizeProviderResult(candidate?.source_result)) {
+    return candidate;
+  }
+  const payload = isRecord(candidate?.provider_payload) ? candidate.provider_payload : {};
+  const children = Array.isArray(payload.canonical_event_children)
+    ? payload.canonical_event_children.filter(isRecord)
+    : [];
+  const total = safeNumber(payload.canonical_event_children_total);
+  const currentMarketId = cleanText(candidate?.external_market_id, 220);
+  const complete = payload.canonical_url_verified === true
+    && payload.canonical_event_children_complete === true
+    && Number.isInteger(total)
+    && total > 1
+    && children.length === total;
+  if (!complete || !currentMarketId) return candidate;
+
+  const futureOrUndated = (value) => {
+    const closeMs = Date.parse(cleanText(value, 100));
+    return !Number.isFinite(closeMs) || closeMs > nowMs;
+  };
+  const currentChild = children.find((child) => cleanText(child.market_id, 220) === currentMarketId);
+  const currentIsInactive = currentChild
+    && !normalizeProviderResult(currentChild.result)
+    && !providerIsOpen(currentChild.status)
+    && futureOrUndated(currentChild.close_at ?? candidate?.source_close_at);
+  const hasOpenSibling = children.some((child) => cleanText(child.market_id, 220) !== currentMarketId
+    && !normalizeProviderResult(child.result)
+    && providerIsOpen(child.status)
+    && futureOrUndated(child.close_at));
+  if (!currentIsInactive || !hasOpenSibling) return candidate;
+
+  const reason = reasonCopy(RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE);
+  return {
+    ...candidate,
+    recorded_verification_reason_code: recordedCode,
+    recorded_verification_reason: candidate.verification_reason ?? null,
+    display_reason_code: RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
+    display_reason: reason,
+    verification_reason_code: RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
+    verification_reason: reason,
+  };
 }
 
 export function summarizeRejections(candidates = []) {
   const counts = {};
-  const items = candidates.filter((item) => RADAR_REJECTED_STATUSES.includes(item.verification_status));
+  const items = candidates
+    .filter((item) => RADAR_REJECTED_STATUSES.includes(item.verification_status))
+    .map((item) => rejectionPresentation(item));
   for (const item of items) {
     const code = item.verification_reason_code ?? "UNKNOWN";
     counts[code] = (counts[code] ?? 0) + 1;
@@ -2495,12 +2591,106 @@ export function canReuseRadarVerification(cached, candidate, now = new Date().to
   return Number.isFinite(expiresAt) && Number.isFinite(nowMs) && expiresAt > nowMs;
 }
 
-export function selectVerifiedResolutionUrl(candidate, evidence = []) {
-  const existing = safePublicUrl(candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url);
-  if (existing) return existing;
-  const official = (Array.isArray(evidence) ? evidence : [])
-    .find((item) => isVerifiedOfficialEvidence(item, true));
-  return safePublicUrl(official?.url);
+function canonicalAuthorityDomains(authoritativeDomains) {
+  const values = authoritativeDomains instanceof Set
+    ? [...authoritativeDomains]
+    : Array.isArray(authoritativeDomains) ? authoritativeDomains : [];
+  return [...new Set(values
+    .map((value) => cleanText(value, 255).toLowerCase().replace(/^www\./, ""))
+    .filter((value) => /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value)))];
+}
+
+function registeredAuthorityDomain(urlValue, authoritativeDomains) {
+  const url = safePublicUrl(urlValue);
+  if (!url) return null;
+  const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  return canonicalAuthorityDomains(authoritativeDomains)
+    .find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? null;
+}
+
+function exactResolutionEvidence(candidate, item) {
+  if (!isVerifiedOfficialEvidence(item, true)) return false;
+  const subject = candidateResolutionSubject(candidate);
+  const comparableSubject = normalizeComparableText(subject);
+  const subjectTokens = comparableSubject.split(" ").filter((token) => token.length > 2);
+  const url = safePublicUrl(item?.url);
+  if (!url || comparableSubject.length < 3 || subjectTokens.length < 1) return false;
+  const parsed = new URL(url);
+  const material = normalizeComparableText(`${parsed.pathname} ${item.title ?? ""} ${item.supports ?? ""}`);
+  return material.includes(comparableSubject)
+    || subjectTokens.every((token) => material.includes(token));
+}
+
+export function selectVerifiedResolutionUrl(candidate, evidence = [], authoritativeDomains = new Set()) {
+  const subject = candidateResolutionSubject(candidate);
+  const comparableSubject = normalizeComparableText(subject);
+  const subjectTokens = comparableSubject.split(" ").filter((token) => token.length > 2);
+  const contract = normalizeComparableText([
+    candidate?.source_title,
+    candidate?.source_question,
+    candidate?.source_description,
+    candidate?.source_resolution_rules,
+    ...(Array.isArray(candidate?.source_tags) ? candidate.source_tags : []),
+  ].filter(Boolean).join(" "));
+  const preferredPlatform = /\b(?:playstation|ps[45])\b/.test(contract) ? "playstation"
+    : /\b(?:nintendo|switch|e-?shop)\b/.test(contract) ? "nintendo"
+      : /\bxbox\b/.test(contract) ? "xbox"
+        : /\b(?:steam|pc)\b/.test(contract) ? "steam"
+          : null;
+  const sources = [];
+  const verifiedEvidence = (Array.isArray(evidence) ? evidence : [])
+    .filter((item) => exactResolutionEvidence(candidate, item))
+    .filter((item) => Boolean(registeredAuthorityDomain(item.url, authoritativeDomains)));
+  const remember = (urlValue, item = {}) => {
+    const url = safePublicUrl(urlValue);
+    if (!url || !registeredAuthorityDomain(url, authoritativeDomains)) return;
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    const material = normalizeComparableText(`${parsed.pathname} ${item.title ?? ""} ${item.supports ?? ""}`);
+    const exactSubject = comparableSubject.length >= 3 && (
+      material.includes(comparableSubject)
+      || (subjectTokens.length >= 1 && subjectTokens.every((token) => material.split(" ").includes(token)))
+    );
+    if (!exactSubject) return;
+    let score = 100;
+    const platform = host.endsWith("playstation.com") ? "playstation"
+      : host.endsWith("nintendo.com") ? "nintendo"
+        : host.endsWith("xbox.com") ? "xbox"
+          : host === "store.steampowered.com" ? "steam"
+            : "publisher";
+    if (platform !== "publisher") score += 25;
+    if (/\b(?:store|games?|product|software|app)\b/.test(normalizeComparableText(parsed.pathname))) score += 15;
+    if (preferredPlatform && platform === preferredPlatform) score += 40;
+    if (preferredPlatform && platform !== preferredPlatform && platform !== "publisher") score -= 35;
+    sources.push({ url, score });
+  };
+  for (const item of verifiedEvidence) remember(item.url, item);
+  const existingUrl = safePublicUrl(candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url);
+  const existingProof = verifiedEvidence.find((item) => safePublicUrl(item.url) === existingUrl);
+  if (existingProof) remember(existingUrl, existingProof);
+  sources.sort((left, right) => right.score - left.score || left.url.localeCompare(right.url));
+  return sources[0]?.url ?? null;
+}
+
+export function candidateResolutionSubject(candidate) {
+  const selection = selectionPresentation(candidate?.source_question ?? candidate?.atinara_question);
+  if (selection?.subject) return selection.subject;
+  const metric = thresholdSubject(candidate);
+  if (metric) return metric;
+  const question = cleanText(candidate?.source_question ?? candidate?.atinara_question ?? candidate?.source_title, 700)
+    .replace(/^[¿\s]+|[?\s]+$/g, "");
+  const patterns = [
+    /^will\s+(.+?)\s+(?:be\s+)?(?:released?|launch|come out)\b/i,
+    /^will\s+(.+?)\s+(?:win|be nominated|appear|feature|have|reach|sell)\b/i,
+    /^(?:se\s+)?(?:lanzará|publicará|saldrá)\s+(.+?)\s+(?:este|antes|durante|en)\b/i,
+    /^(.+?)\s+(?:se\s+lanzará|ganará|será\s+nominad|tendrá|alcanzará)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = question.match(pattern);
+    const value = cleanText(match?.[1], 240);
+    if (value) return value;
+  }
+  return cleanText(candidate?.source_title, 240).replace(/\s*:\s*(?:release|launch|score|metacritic|cover).*$/i, "");
 }
 
 function selectionQuestion(value) {
@@ -2585,23 +2775,81 @@ function metricThresholdPresentation(candidate) {
   return `¿Tendrá ${subject} ${metric} ${operator} ${labelThreshold.value}${observation}?`;
 }
 
+function releaseDeadlinePresentation(candidate) {
+  const question = cleanText(candidate?.source_question ?? candidate?.atinara_question, 700)
+    .replace(/^[¿\s]+|[?\s]+$/g, "");
+  const english = question.match(/^will\s+(.+?)\s+(?:be\s+)?(?:release(?:d)?|launch(?:ed)?|come\s+out)\s+(.+)$/i);
+  if (!english) return null;
+  const subject = cleanText(english[1], 240);
+  const rawPeriod = cleanText(english[2], 240);
+  const period = normalizeComparableText(rawPeriod);
+  if (!subject || !period) return null;
+  let temporalCopy = null;
+  if (period === "this year") temporalCopy = "este año";
+  else if (period === "next year") temporalCopy = "el año que viene";
+  else if (/^in\s+20\d{2}$/.test(period)) temporalCopy = `en ${period.slice(3)}`;
+  else if (/^(?:by|before|on or before)\s+/.test(period)) {
+    temporalCopy = `antes de ${rawPeriod.replace(/^(?:by|before|on or before)\s+/i, "")}`;
+  } else if (/^during\s+/.test(period)) {
+    temporalCopy = `durante ${rawPeriod.replace(/^during\s+/i, "")}`;
+  }
+  return temporalCopy ? `¿Se lanzará ${subject} ${temporalCopy}?` : null;
+}
+
+function awardOutcomePresentation(candidate) {
+  const question = cleanText(candidate?.source_question ?? candidate?.atinara_question, 700)
+    .replace(/^[¿\s]+|[?\s]+$/g, "");
+  const match = question.match(/^will\s+(.+?)\s+win\s+(.+)$/i);
+  if (!match || !/\b(?:award|awards|best|prize|premio)\b/i.test(match[2])) return null;
+  const subject = cleanText(match[1], 240);
+  const award = cleanText(match[2]
+    .replace(/\s+at\s+the\s+(20\d{2})\s+game\s+awards$/i, " en The Game Awards $1")
+    .replace(/\s+at\s+the\s+game\s+awards$/i, " en The Game Awards"), 300);
+  return subject && award ? `¿Ganará ${subject} el premio ${award}?` : null;
+}
+
+function radarGroupTitlePresentation(value) {
+  const title = cleanText(value, 500);
+  if (!title) return null;
+  if (/^video\s+games?\s+released\s+this\s+year$/i.test(title)) {
+    return "Videojuegos que se lanzarán este año";
+  }
+  const metric = title.match(/^(.+?)\s*:\s*(metacritic|metascore|opencritic|critic\s+score)\s*(?:score)?$/i);
+  if (metric) return `${cleanText(metric[1], 300)} · Puntuación en ${/^opencritic$/i.test(metric[2]) ? "OpenCritic" : "Metacritic"}`;
+  const cover = title.match(/^(.+?)\s*:\s*(?:cover\s+athlete|cover\s+star)$/i);
+  if (cover) return `${cleanText(cover[1], 300)} · Atleta de portada`;
+  const award = title.match(/^(the\s+game\s+awards)\s*:\s*(.+)$/i);
+  if (award) return `The Game Awards · ${cleanText(award[2], 260)}`;
+  return null;
+}
+
 const RADAR_PRESENTATION_STRATEGIES = Object.freeze([
   (candidate) => {
     const selection = selectionPresentation(candidate?.source_question ?? candidate?.atinara_question);
     return selection ? `¿Aparecerá ${selection.name} en la portada de ${selection.subject}?` : null;
   },
   metricThresholdPresentation,
+  releaseDeadlinePresentation,
+  awardOutcomePresentation,
 ]);
 
 // Normaliza únicamente arquetipos cuyo significado está explícito en el
 // contrato del proveedor. Si falta una pieza, conserva la pregunta original.
 export function normalizeRadarCandidatePresentation(candidate) {
   if (!isRecord(candidate)) return candidate;
+  let question = null;
   for (const strategy of RADAR_PRESENTATION_STRATEGIES) {
-    const question = cleanText(strategy(candidate), 700);
-    if (question) return { ...candidate, atinara_question: question };
+    question = cleanText(strategy(candidate), 700);
+    if (question) break;
   }
-  return candidate;
+  const groupTitle = radarGroupTitlePresentation(candidate.source_title);
+  return question || groupTitle
+    ? {
+      ...candidate,
+      ...(question ? { atinara_question: question } : {}),
+      ...(groupTitle ? { atinara_group_title: groupTitle } : {}),
+    }
+    : candidate;
 }
 
 function selectionEntries(candidates) {
@@ -2624,13 +2872,13 @@ function selectionEntries(candidates) {
     });
 }
 
-export function detectOfficialCoverEventResolution(candidates = [], evidence = []) {
+function inspectOfficialCoverEventResolution(candidates = [], evidence = []) {
   const parsed = selectionEntries(candidates);
-  if (parsed.length < 2) return null;
+  if (parsed.length < 2) return { selection_detected: false, selection_complete: false, evidence: [] };
   const subjectCounts = new Map();
   for (const item of parsed) subjectCounts.set(item.subject, (subjectCounts.get(item.subject) ?? 0) + 1);
   const subject = [...subjectCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
-  if (!subject || (subjectCounts.get(subject) ?? 0) < 2) return null;
+  if (!subject || (subjectCounts.get(subject) ?? 0) < 2) return { selection_detected: false, selection_complete: false, evidence: [] };
   const subjectEntries = parsed.filter((item) => item.subject === subject);
   const contextComplete = (Array.isArray(candidates) ? candidates : []).some((candidate) => {
     const payload = familyProviderPayload(candidate);
@@ -2641,16 +2889,9 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
       && total > 0
       && children.length === total;
   });
-  if (!contextComplete) return null;
-  const multiEditionContract = (Array.isArray(candidates) ? candidates : []).some((candidate) => {
-    const contract = normalizeComparableText([
-      candidate?.source_resolution_rules,
-      candidate?.atinara_resolution_criteria,
-      candidate?.source_description,
-    ].filter(Boolean).join(" "));
-    return /\b(?:all|any) editions?\b|\b(?:todas?|cualquier) (?:las )?ediciones?\b/.test(contract)
-      || /\bstandard\b.{0,180}\b(?:ultimate|deluxe|bundle)\b/.test(contract);
-  });
+  if (!contextComplete) return { selection_detected: false, selection_complete: false, evidence: [] };
+  const platformScope = factualGroupPlatformScope({ candidates });
+  if (platformScope.ambiguous) return { selection_detected: false, selection_complete: false, evidence: [] };
   const matchedNames = new Map();
   const relevantEvidence = [];
   const editionCoverage = new Set();
@@ -2683,16 +2924,15 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
     for (const edition of Array.isArray(item.selection_editions) ? item.selection_editions : []) {
       if (["standard", "ultimate", "ultimate_plus", "deluxe"].includes(edition)) editionCoverage.add(edition);
     }
-    singularDesignation ||= !continuationCue && (
-      /\b(?:named|announced|revealed|presented)\b.{0,120}\b(?:official )?cover athlete\b/.test(text)
-      || /\b(?:official )?cover athlete\b.{0,120}\b(?:named|announced|revealed|presented)\b/.test(text)
-    );
     const exhaustive = !continuationCue && (
       /\b(?:complete|full|entire|all)\b.{0,90}\b(?:cover|portada|lineup|selection|seleccion)\b/.test(text)
       || /\b(?:cover|portada|lineup|selection|seleccion)\b.{0,90}\b(?:complete|full|entire|all)\b/.test(text)
       || completeEditionScope
     );
-    const windows = [text];
+    const sentenceWindows = cleanText(`${item.title ?? ""}. ${item.supports ?? ""}`, 4_000)
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .split(/(?<=[.!?])\s+/).map(normalizeComparableText).filter(Boolean);
+    const windows = [text, ...sentenceWindows];
     for (const term of ["cover", "portada", "key art", "welcome", "announc", "reveal"]) {
       let index = text.indexOf(term);
       while (index >= 0) {
@@ -2701,9 +2941,17 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
       }
     }
     for (const candidate of subjectEntries) {
-      if (windows.some((window) => (window.includes(subject) || window.replace(/\s+/g, "").includes(compactSubject)) && window.includes(candidate.name))) {
+      const matchedWindows = windows.filter((window) =>
+        (window.includes(subject) || window.replace(/\s+/g, "").includes(compactSubject))
+        && window.includes(candidate.name)
+        && factualTerminalMatchesPlatformScope(window, platformScope.platforms));
+      if (matchedWindows.length) {
         matchedNames.set(candidate.name, candidate.name);
         exhaustiveEvidence ||= exhaustive;
+        singularDesignation ||= !continuationCue && matchedWindows.some((window) =>
+          /\b(?:named|announced|revealed|presented|featuring|features|with|has|is)\b.{0,120}\b(?:official )?cover athlete\b/.test(window)
+          || /\b(?:official )?cover athlete\b.{0,120}\b(?:named|announced|revealed|presented|featured|is)\b/.test(window)
+          || /\b(?:featuring|features|with)\b.{0,80}\b(?:cover|portada)\b/.test(window));
         if (!relevantEvidence.some((evidenceItem) => evidenceItem.url === item.url)) {
           relevantEvidence.push({
             ...item,
@@ -2714,18 +2962,41 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
       }
     }
   }
-  exhaustiveEvidence ||= (!multiEditionContract && singularDesignation)
+  // Una designación oficial del rol ("named cover athlete") satisface por sí
+  // misma un contrato que admite anuncio o aparición. La mera imagen de una
+  // edición sigue necesitando cobertura completa de las ediciones aplicables.
+  exhaustiveEvidence ||= singularDesignation
     || (["standard", "ultimate", "ultimate_plus"].every((edition) => editionCoverage.has(edition)))
     || (["standard", "deluxe"].every((edition) => editionCoverage.has(edition)));
-  if (matchedNames.size < 1 || !relevantEvidence.length || !exhaustiveEvidence) return null;
+  const selectionDetected = matchedNames.size >= 1 && relevantEvidence.length > 0;
+  if (!selectionDetected || !exhaustiveEvidence) {
+    return {
+      selection_detected: selectionDetected,
+      selection_complete: false,
+      evidence: relevantEvidence.slice(0, 6),
+    };
+  }
   const outcomeNames = [...matchedNames.values()].map((name) => name.split(" ").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" "));
   return {
+    selection_detected: true,
     winner_name: outcomeNames[0],
     outcome_names: outcomeNames,
     selection_complete: true,
     fact_status: "fully_resolved",
     evidence: relevantEvidence.slice(0, 6).map((item) => ({ ...item, selection_complete: true })),
   };
+}
+
+export function detectOfficialCoverEventResolution(candidates = [], evidence = []) {
+  const inspection = inspectOfficialCoverEventResolution(candidates, evidence);
+  return inspection.selection_complete === true ? inspection : null;
+}
+
+export function detectOfficialCoverSelectionHold(candidates = [], evidence = []) {
+  const inspection = inspectOfficialCoverEventResolution(candidates, evidence);
+  return inspection.selection_detected === true && inspection.selection_complete !== true
+    ? inspection
+    : null;
 }
 
 export function buildCoverResolutionSignals(candidates = [], now = new Date().toISOString()) {
@@ -2775,6 +3046,70 @@ export function applyAdaptation(candidate, adaptation) {
     atinara_resolution_criteria: cleanText(adaptation.atinara_resolution_criteria, 5000) || candidate.atinara_resolution_criteria,
     atinara_resolution_source_url: resolutionSourceUrl,
     warnings: [...new Set([...(candidate.warnings ?? []), ...safeStringArray(adaptation.warnings, 20)])],
+  };
+}
+
+// Puerta operativa vigente: un mercado futuro y abierto no necesita demostrar
+// que su resultado sigue siendo desconocido. Solo una señal canónica o una
+// evidencia oficial terminal puede cerrarlo.
+/**
+ * @param {Record<string, any>} candidate
+ * @param {Record<string, any> | null} [decision]
+ * @param {string} [now]
+ */
+export function applyDeterministicRadarEligibility(candidate, decision = null, now = new Date().toISOString()) {
+  const code = cleanText(decision?.reason_code, 100) || null;
+  const eligible = !decision || decision.eligible !== false;
+  const retryableHold = code === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING
+    || code === RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED
+    || code === RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+  const status = eligible ? "verified_open"
+    : code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "rejected_resolved"
+      : code === RADAR_REASON_CODES.DUPLICATE_MARKET ? "rejected_duplicate"
+        : [RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE, RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND, RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND].includes(code) ? "rejected_invalid_source"
+          : retryableHold ? "needs_review"
+            : "rejected_ineligible";
+  const eligibilityStatus = eligible ? "eligible"
+    : code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "terminal"
+      : code === RADAR_REASON_CODES.DUPLICATE_MARKET ? "duplicate"
+        : code === RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE || code === RADAR_REASON_CODES.PROVIDER_NOT_OPEN ? "inactive_option"
+          : [RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE, RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND, RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND].includes(code) ? "invalid"
+            : retryableHold ? "technical_hold"
+              : "terminal";
+  const evidence = Array.isArray(decision?.evidence)
+    ? decision.evidence.filter(isRecord).slice(0, 12)
+    : [];
+  const reason = eligible
+    ? "Mercado futuro, abierto y sin bloqueo terminal determinista."
+    : cleanText(decision?.reason, 1_000) || (code ? reasonCopy(code) : "La candidata no es elegible.");
+  return {
+    ...candidate,
+    verification_status: status,
+    verification_reason_code: eligible ? null : code,
+    verification_reason: reason,
+    verified_at: now,
+    verification_expires_at: verificationExpiry(now, safeNumber(decision?.ttl_minutes) ?? 360),
+    verification_evidence: evidence,
+    verification_confidence: eligible ? 100 : Math.max(0, Math.min(100, safeNumber(decision?.confidence) ?? 100)),
+    quality_status: eligible ? "fit" : retryableHold ? "needs_review" : "rejected",
+    state: candidate?.state === "dismissed"
+      ? "dismissed"
+      : retryableHold ? "needs_review"
+        : eligible && candidate?.state === "prepared"
+          ? "prepared"
+          : eligible ? "available" : "rejected",
+    eligibility_status: eligibilityStatus,
+    eligibility_reason_code: eligible ? null : code,
+    eligibility_reason: reason,
+    eligibility_checked_at: now,
+    eligibility_expires_at: verificationExpiry(now, safeNumber(decision?.ttl_minutes) ?? 360),
+    eligibility_policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
+    eligibility_evidence: evidence,
+    fact_status: null,
+    fact_checked_at: null,
+    fact_check_expires_at: null,
+    fact_check_purpose: null,
+    current_fact_check_id: null,
   };
 }
 
@@ -2851,7 +3186,19 @@ export function buildRadarFactCheck(candidate) {
 }
 
 export function isAdaptedIdeaComplete(candidate) {
-  return Boolean(cleanText(candidate.atinara_question, 700) && RADAR_CATEGORIES.includes(candidate.atinara_category) && cleanText(candidate.atinara_resolution_criteria, 5000) && safePublicUrl(candidate.atinara_resolution_source_url ?? candidate.source_resolution_url));
+  const sourceUrl = safePublicUrl(candidate.atinara_resolution_source_url ?? candidate.source_resolution_url);
+  const evidence = [
+    ...(Array.isArray(candidate.resolution_source_evidence) ? candidate.resolution_source_evidence : []),
+    ...(Array.isArray(candidate.eligibility_evidence) ? candidate.eligibility_evidence : []),
+    ...(Array.isArray(candidate.verification_evidence) ? candidate.verification_evidence : []),
+  ];
+  const sourceProven = Boolean(sourceUrl && evidence.some((item) => (
+    safePublicUrl(item?.url) === sourceUrl && exactResolutionEvidence(candidate, item)
+  )));
+  return Boolean(cleanText(candidate.atinara_question, 700)
+    && RADAR_CATEGORIES.includes(candidate.atinara_category)
+    && cleanText(candidate.atinara_resolution_criteria, 5000)
+    && sourceProven);
 }
 
 export function buildDraftPrefill(candidate) {
@@ -2912,11 +3259,10 @@ export function buildDraftPrefill(candidate) {
       external_market_url: safePublicUrl(candidate.external_market_url),
       normalizer_version: candidate.normalizer_version,
       eligibility_policy_version: candidate.eligibility_policy_version,
-      fact_policy_version: candidate.fact_policy_version,
-      fact_status: candidate.fact_status,
-      fact_check_id: candidate.current_fact_check_id,
-      fact_context_fingerprint: candidate.fact_context_fingerprint,
-      fact_checked_at: candidate.fact_checked_at,
+      eligibility_status: candidate.eligibility_status,
+      eligibility_check_id: candidate.current_eligibility_check_id,
+      eligibility_checked_at: candidate.eligibility_checked_at,
+      eligibility_expires_at: candidate.eligibility_expires_at,
       verification_status: candidate.verification_status,
       verification_reason_code: candidate.verification_reason_code,
       verified_at: candidate.verified_at,

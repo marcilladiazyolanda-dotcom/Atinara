@@ -26,7 +26,8 @@ before(async () => {
 test("Radar · cinco descartes de contenido conservan proveedor disponible", () => {
   assert.match(radarEdge, /classification:\s*"quality"/);
   assert.match(radarEdge, /degrades_provider:\s*false/);
-  assert.match(radarEdge, /finalizeProviderRefresh\(environment, provider, cacheKey, "available", persistedCount/);
+  assert.match(radarEdge, /const providerCandidateCount = Math\.max\(persistedCount, successfulProviderCandidateCount\)/);
+  assert.match(radarEdge, /finalizeProviderRefresh\(environment, provider, cacheKey, "available", providerCandidateCount/);
   assert.match(radarEdge, /discarded:\s*outcome\.quarantined\.length/);
   assert.match(radarEdge, /quality_notices:\s*qualityNotices/);
   assert.match(adminJs, /Disponible con descartes/);
@@ -69,7 +70,7 @@ test("Radar · un registro venenoso se aísla dentro de una sola RPC sin perder 
   assert.match(adminJs, /RADAR_QUARANTINE_DESCRIPTIONS/);
 });
 
-test("Editor · muestra causas raíz, separa diagnósticos derivados y ofrece recuperación", () => {
+test("Editor · muestra la causa raíz sin cascada ni recuperación factual", () => {
   assert.match(editorEdge, /DERIVED_REASON_CODES/);
   assert.match(editorEdge, /TERMINAL_REASON_CODES/);
   assert.match(editorEdge, /causal_roots:\s*hardBlocks/);
@@ -77,7 +78,8 @@ test("Editor · muestra causas raíz, separa diagnósticos derivados y ofrece re
   assert.match(editorEdge, /automatic_recovery/);
   assert.match(adminHtml, /Atinara ha detenido esta transición de forma segura/);
   assert.match(adminHtml, /Referencia \$\{escapeHtml\(code\)\}/);
-  assert.match(adminJs, /recoverRadarExpertCandidate/);
+  assert.doesNotMatch(adminJs, /recoverRadarExpertCandidate/);
+  assert.match(adminJs, /ensureRadarDraftEligibility/);
 });
 
 test("Editor · candidata abierta pero incompleta puede materializar un borrador privado reparable", () => {

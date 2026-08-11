@@ -11,6 +11,7 @@ const edge = fs.readFileSync(path.join(root, "supabase/functions/market-radar/in
 const admin = fs.readFileSync(path.join(root, "admin-markets.js"), "utf8");
 const draftFixerUi = fs.readFileSync(path.join(root, "market-draft-fixer.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260809140000_authoritative_radar_fact_gate_v1.sql"), "utf8");
+const eligibilityMigration = fs.readFileSync(path.join(root, "supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql"), "utf8");
 const reconciliationMigration = fs.readFileSync(path.join(root, "supabase/migrations/20260809145000_reconcile_authoritative_radar_fact_gate_v2.sql"), "utf8");
 const legacyAttestationMatrix = fs.readFileSync(path.join(root, "supabase/tests/market_radar_legacy_fact_attestation_transaction.sql"), "utf8");
 const publicationFlow = fs.readFileSync(path.join(root, "supabase/migrations/20260808144221_fix_atomic_resolution_plan_publication_flow.sql"), "utf8");
@@ -464,37 +465,33 @@ test("el parser puro conserva abierto Marvel solo por ancla oficial +7 días", (
   ), null);
 });
 
-test("descubrimiento, preparación y persistencia usan la única puerta atómica", () => {
-  assert.match(edge, /upsert_market_radar_batch_with_fact_checks_v1/);
-  assert.match(edge, /apply_market_radar_prepare_fact_verification_v1/);
+test("descubrimiento, preparación y persistencia usan la puerta atómica de elegibilidad", () => {
+  assert.match(edge, /upsert_market_radar_batch_with_eligibility_v1/);
+  assert.match(edge, /apply_market_radar_prepare_eligibility_v1/);
   assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_v2"/);
   assert.doesNotMatch(edge, /rpc\(environment, "record_market_radar_fact_checks"/);
   assert.doesNotMatch(edge, /rpc\(environment, "apply_market_radar_prepare_verification"/);
-  assert.match(edge, /buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt,[\s\S]*?purpose === "prepare" \? attemptId : crypto\.randomUUID\(\)[\s\S]*?\)/);
-  assert.ok(edge.indexOf("apply_market_radar_prepare_fact_verification_v1") < edge.indexOf("if (!applied?.ok)"));
-  assert.match(edge, /requires_factual_refresh: requiresFactualRefresh/);
-  assert.match(edge, /providerUnavailable \? RADAR_REASON_CODES\.VERIFICATION_REQUIRED/);
-  assert.doesNotMatch(edge, /providerUnavailable \? RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
-  assert.match(edge, /const providerNotOpen = cleanText\(candidate\.verification_reason_code,[\s\S]{0,120}RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
-  assert.match(edge, /providerFactUrl[\s\S]{0,120}\(providerResult \|\| providerNotOpen\)/);
-  assert.match(edge, /supportedReasonCodes[\s\S]{0,300}RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
-  assert.match(edge, /const canonicalProviderUrl = safePublicUrl\(candidate\.external_market_url\)[\s\S]{0,100}safePublicUrl\(candidate\.external_event_url\)/);
-  assert.match(edge, /return completeCanonicalEvent && canonicalProviderUrl \? "unresolved" : "unknown"/);
-  assert.doesNotMatch(edge, /canonicalProviderEvidence/);
-  assert.doesNotMatch(edge, /normalizeProviderResult\(candidate\.source_result\)[\s\S]{0,160}verification_status[\s\S]{0,80}rejected_resolved/);
+  assert.match(edge, /eligibility_check_input: eligibilityCheck/);
+  assert.ok(edge.indexOf("apply_market_radar_prepare_eligibility_v1") < edge.indexOf("if (!applied?.ok)"));
+  assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
+  assert.match(edge, /ELIGIBILITY_SCAN_UNAVAILABLE/);
+  assert.match(eligibilityMigration, /create table if not exists private\.market_radar_eligibility_checks/);
+  assert.match(eligibilityMigration, /RADAR_ELIGIBILITY_APPEND_ONLY/);
+  assert.match(eligibilityMigration, /candidate\.eligibility_status = 'terminal'[\s\S]*?item ->> 'eligibility_status' is distinct from 'terminal'/);
   assert.match(edge, /\/rest\/v1\/rpc\/\$\{name\}/);
   assert.doesNotMatch(edge, /\/rest\/v1\/(?:external_market_candidates|market_radar_fact_checks)/);
   assert.doesNotMatch(edge, /\.from\(["'`](?:external_market_candidates|market_radar_fact_checks)["'`]\)/);
 });
 
-test("los hechos se evalúan antes del score y el cierre genérico queda diferido", () => {
+test("la elegibilidad y los cierres oficiales se evalúan antes del score", () => {
   const runStart = edge.indexOf("async function runDiscovery");
   const runEnd = edge.indexOf("function candidatePreflight", runStart);
   const run = edge.slice(runStart, runEnd);
-  assert.ok(run.indexOf("verifyAndAdaptWithGemini") < run.lastIndexOf("scoreCandidates"));
-  assert.match(run, /deferredProviderDecisions/);
-  assert.doesNotMatch(run, /INVALID_OR_UNVERIFIED_SOURCE,[\s\S]{0,240}deterministicRejections/);
-  assert.match(run, /fact_status, 40\) === "fully_resolved"/);
+  assert.ok(run.indexOf("applyDeterministicRadarEligibility") < run.lastIndexOf("scoreCandidates"));
+  assert.ok(run.indexOf("officialEventResolutionSignals") < run.lastIndexOf("scoreCandidates"));
+  assert.match(run, /candidate\.eligibility_status !== "eligible"/);
+  assert.doesNotMatch(run, /verifyAndAdaptWithGemini\(/);
   assert.equal((run.match(/scoreCandidates\(/g) || []).length, 1);
 });
 
@@ -601,29 +598,22 @@ test("la matriz legacy cubre manipulación, idempotencia, reparación y resoluci
   assert.match(legacyAttestationMatrix, /TEST_LEGACY_RESOLVED_PUBLICATION_GATE_ACCEPTED/);
 });
 
-test("la interfaz nunca deja Preparar desde caché ni sin snapshot vigente", () => {
-  assert.match(admin, /!state\.radar\.cached/);
-  assert.match(admin, /!state\.radar\.requiresFactualRefresh/);
-  assert.match(admin, /candidate\?\.fact_status === "unresolved"/);
-  assert.match(admin, /candidate\?\.fact_policy_version === RADAR_FACT_POLICY_VERSION/);
-  assert.match(admin, /Boolean\(candidate\?\.current_fact_check_id\)/);
-  assert.match(admin, /factExpiresAt > Date\.now\(\)/);
-  assert.match(admin, /payload\._radar_fact_check_id = state\.radarPrefill\.factCheckId/);
+test("la interfaz solo deja Preparar con elegibilidad vigente", () => {
+  assert.match(admin, /candidate\?\.eligibility_status === "eligible"/);
+  assert.match(admin, /candidate\?\.eligibility_policy_version === RADAR_POLICY_VERSION/);
+  assert.match(admin, /Boolean\(candidate\?\.current_eligibility_check_id\)/);
+  assert.match(admin, /expiresAt > Date\.now\(\)/);
+  assert.match(admin, /candidate\.verification_status === "verified_open"/);
+  assert.doesNotMatch(admin, /_radar_fact_check_id/);
 });
 
-test("la caché conserva solo expedientes discovery vigentes y nunca habilita Preparar", () => {
-  assert.match(migration, /create or replace function private\.market_radar_discovery_fact_current_v2/);
-  assert.match(migration, /fact\.candidate_id = candidate\.id/);
-  assert.match(migration, /fact\.preparation_revision = candidate\.preparation_revision/);
-  assert.match(migration, /fact\.purpose = 'discovery'/);
-  assert.match(migration, /fact\.expires_at > checked_at_input/);
-  assert.match(migration, /fact\.source_snapshot = candidate\.verification_evidence/);
-  assert.match(migration, /private\.market_radar_discovery_fact_current_v2\(candidate, checked_at_value\)/);
-  assert.match(migration, /raise exception 'RADAR_FACTUAL_REFRESH_REQUIRED'/);
-  assert.match(migration, /revoke all on function public\.list_market_radar_candidates\(/);
-  assert.match(migration, /get_market_radar_candidate_for_revalidation_v1[\s\S]*to service_role/);
-  assert.match(migration, /get_market_intelligence_origin[\s\S]*origin_type_input = 'radar_candidate'[\s\S]*market_radar_discovery_fact_current_v2/);
-  assert.match(migration, /verification_status', 'needs_review'[\s\S]*'fact_snapshot_current', false/);
+test("la caché conserva solo decisiones de elegibilidad vigentes", () => {
+  assert.match(eligibilityMigration, /join private\.market_radar_eligibility_checks eligibility/);
+  assert.match(eligibilityMigration, /eligibility\.candidate_id = candidate\.id/);
+  assert.match(eligibilityMigration, /eligibility\.policy_version = candidate\.eligibility_policy_version/);
+  assert.match(eligibilityMigration, /eligibility\.expires_at > checked_at_value/);
+  assert.match(eligibilityMigration, /get_market_radar_candidate_for_revalidation_v1[\s\S]*to service_role/);
+  assert.match(eligibilityMigration, /origin_type_input = 'radar_candidate'[\s\S]*market_radar_eligibility_payload/);
 
   const cachedBranch = edge.slice(
     edge.indexOf("if (!requestedRefresh || cooldownRemaining > 0)"),
@@ -633,45 +623,37 @@ test("la caché conserva solo expedientes discovery vigentes y nunca habilita Pr
   assert.doesNotMatch(cachedBranch, /groups: \[\]/);
   assert.match(cachedBranch, /cached: true/);
   assert.match(cachedBranch, /cached_authoritative: cachedAuthoritative/);
-  assert.match(cachedBranch, /requires_factual_refresh: requiresFactualRefresh/);
-  assert.match(cachedBranch, /const requiresFactualRefresh = !cachedAuthoritative/);
+  assert.match(cachedBranch, /requires_eligibility_refresh: !cachedAuthoritative/);
   assert.match(cachedBranch, /current\.candidates\.length > 0 \|\| providerCoverageCurrent/);
   assert.match(edge, /loadRadarView\(environment, authorization, filters, now\)/);
-  assert.match(edge, /Date\.parse\(cleanText\(candidate\.fact_checked_at, 100\)\) >= minimumCheckedAt/);
+  assert.match(edge, /Date\.parse\(cleanText\(candidate\.eligibility_checked_at, 100\)\) >= minimumCheckedAt/);
   assert.match(edge, /get_market_radar_candidate_for_revalidation_v1[\s\S]{0,180}undefined, true/);
 });
 
-test("la UI distingue caché vigente y serializa las cargas del Radar", () => {
-  assert.match(admin, /candidate\?\.fact_snapshot_current === true/);
+test("la UI distingue caché vigente, serializa cargas y no se autoactualiza al cambiar de pestaña", () => {
+  assert.match(admin, /candidate\?\.eligibility_status === "eligible"/);
   assert.match(admin, /cachedAuthoritative: false/);
-  assert.match(admin, /Última comprobación vigente/);
-  assert.match(admin, /Pendiente de comprobación factual/);
+  assert.match(admin, /Última consulta vigente/);
+  assert.match(admin, /Elegibilidad pendiente/);
   assert.match(admin, /if \(state\.radarLoading\) return/);
   assert.match(admin, /state\.radarLoading = true/);
   assert.match(admin, /state\.radarLoading = false/);
-  assert.match(admin, /function scheduleRadarFactualRefresh\(cooldownMs\)/);
-  assert.match(admin, /loadRadar\(true, \{ automatic: true \}\)/);
-  assert.match(admin, /scheduleRadarFactualRefresh\(state\.radar\.requiresFactualRefresh \? cooldownMs : 0\)/);
+  assert.match(admin, /if \(!state\.radar\.loaded\) await loadRadar\(false\);/);
+  assert.match(admin, /Date\.parse\(data\.cooldown_until \|\| ""\)/);
+  assert.doesNotMatch(admin, /scheduleRadarFactualRefresh|radarFactualRefreshTimer/);
   assert.doesNotMatch(admin, /state\.radar\.cached[^\n]{0,120}\? "Verificado"/);
 });
 
-test("un borrador Radar se revalida al confirmar, programar y materializar", () => {
-  assert.match(migration, /create or replace function private\.assert_market_radar_draft_fact_current_v1/);
-  assert.match(migration, /radar_candidate_id[\s\S]*radar_preparation_revision[\s\S]*radar_fact_check_id/);
-  assert.match(migration, /origin_fact\.purpose is distinct from 'prepare'/);
-  assert.match(migration, /candidate\.state is distinct from 'prepared'/);
-  assert.match(migration, /candidate\.fact_check_purpose is distinct from 'revalidate'/);
-  assert.match(migration, /candidate\.fact_status is distinct from 'unresolved'/);
-  assert.match(migration, /current_fact\.source_snapshot is distinct from candidate\.verification_evidence/);
-  assert.match(migration, /raise exception 'RADAR_EVENT_ALREADY_RESOLVED'/);
-  assert.match(migration, /create or replace function public\.apply_market_radar_revalidation_fact_v1/);
-  assert.match(migration, /insert_market_radar_fact_check_v2\([\s\S]*'revalidate', fact_check_input/);
-  assert.match(migration, /apply_market_radar_revalidation_fact_v1\([\s\S]*to service_role/);
-  assert.match(migration, /create or replace function private\.assert_market_source_publication_ready[\s\S]*assert_market_radar_draft_fact_current_v1/);
-  assert.match(migration, /before update of workflow_status, radar_candidate_id, source_provenance/);
-  assert.match(migration, /old_radar_linked[\s\S]*new\.radar_candidate_id is distinct from old\.radar_candidate_id/);
-  assert.match(migration, /new_fact_link is distinct from old_fact_link/);
-  assert.match(migration, /RADAR_DRAFT_FACT_LINK_IMMUTABLE/);
+test("un borrador Radar renueva elegibilidad antes de confirmar y publicar", () => {
+  assert.match(eligibilityMigration, /create or replace function private\.assert_market_radar_draft_eligibility_v1/);
+  assert.match(eligibilityMigration, /radar_candidate_id[\s\S]*radar_eligibility_check_id[\s\S]*radar_eligibility_decision_hash/);
+  assert.match(eligibilityMigration, /perform private\.assert_market_radar_candidate_eligible_v1/);
+  assert.match(eligibilityMigration, /raise exception 'RADAR_EVENT_ALREADY_RESOLVED'/);
+  assert.match(eligibilityMigration, /create or replace function private\.assert_market_source_publication_ready[\s\S]*assert_market_radar_draft_eligibility_v1/);
+  assert.match(eligibilityMigration, /before update of workflow_status, radar_candidate_id, source_provenance/);
+  assert.match(eligibilityMigration, /old_radar_linked[\s\S]*new\.radar_candidate_id is distinct from old\.radar_candidate_id/);
+  assert.match(eligibilityMigration, /new_link is distinct from old_link/);
+  assert.match(eligibilityMigration, /RADAR_DRAFT_ELIGIBILITY_LINK_IMMUTABLE/);
 
   const confirmStart = publicationFlow.indexOf("create or replace function public.confirm_market_draft_review");
   const materializeStart = publicationFlow.indexOf("create or replace function private.materialize_market_draft");
@@ -687,36 +669,29 @@ test("un borrador Radar se revalida al confirmar, programar y materializar", () 
   const schedulerBody = administrationGate.slice(schedulerStart, administrationGate.indexOf("create or replace function public.close_market_participation_early", schedulerStart));
   assert.match(schedulerBody, /private\.materialize_market_draft/);
 
-  assert.match(edge, /buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt,[\s\S]*?purpose === "prepare" \? attemptId : crypto\.randomUUID\(\)[\s\S]*?\)/);
-  assert.match(edge, /purpose === "prepare"[\s\S]*apply_market_radar_prepare_fact_verification_v1[\s\S]*apply_market_radar_revalidation_fact_v1/);
-  assert.match(edge, /action === "prepare" \? "prepare" : "revalidate"/);
   const confirmStartUi = admin.indexOf("async function confirmReview");
   const publishStartUi = admin.indexOf("async function publishDraft");
   const confirmUi = admin.slice(confirmStartUi, publishStartUi);
   const publishUi = admin.slice(publishStartUi, admin.indexOf("async function requestReview", publishStartUi) > 0
     ? admin.indexOf("async function requestReview", publishStartUi)
     : admin.indexOf("async function loadRadar", publishStartUi));
-  assert.ok(confirmUi.indexOf("revalidateRadarDraftFact(draft)") < confirmUi.indexOf('rpc("confirm_market_draft_review"'));
-  assert.ok(publishUi.indexOf("revalidateRadarDraftFact(draft)") < publishUi.indexOf('rpc("publish_market_draft"'));
+  assert.ok(confirmUi.indexOf("ensureRadarDraftEligibility(draft)") < confirmUi.indexOf('rpc("confirm_market_draft_review"'));
+  assert.ok(publishUi.indexOf("ensureRadarDraftEligibility(draft)") < publishUi.indexOf('rpc("publish_market_draft"'));
   assert.match(admin, /confirmationRequested &&/);
   assert.match(admin, /publicationRequested &&/);
-  assert.match(admin, /invokeRadar\("revalidate", \{[\s\S]*candidate_id: candidateId,[\s\S]*draft_id: draft\.id,[\s\S]*draft_fingerprint: draft\.content_fingerprint/);
+  assert.match(admin, /invokeRadar\("check-eligibility", \{[\s\S]*candidate_id: candidateId,[\s\S]*draft_id: draft\.id,[\s\S]*draft_fingerprint: draft\.content_fingerprint/);
   assert.match(admin, /data-radar-candidate-id="\$\{escapeHtml\(draft\.radar_candidate_id \|\| ""\)\}"/);
   assert.match(admin, /data-content-fingerprint="\$\{escapeHtml\(draft\.content_fingerprint \|\| ""\)\}"/);
-  assert.match(admin, /data\?\.legacy_fact_attestation\?\.ok !== true/);
   assert.match(draftFixerUi, /const radarCandidateId = safeText\(form\.dataset\.radarCandidateId/);
   assert.match(draftFixerUi, /const draftFingerprint = safeText\(form\.dataset\.contentFingerprint/);
   const interceptedPublish = draftFixerUi.slice(
     draftFixerUi.indexOf("async function runPublication"),
     draftFixerUi.indexOf("function enhanceBindingMessage"),
   );
-  assert.ok(interceptedPublish.indexOf("revalidateRadarPublication(context)")
+  assert.ok(interceptedPublish.indexOf("checkRadarPublicationEligibility(context)")
     < interceptedPublish.indexOf('client.rpc("publish_market_draft"'));
-  assert.match(draftFixerUi, /action: "revalidate"[\s\S]*candidate_id: context\.radarCandidateId[\s\S]*draft_id: context\.draftId[\s\S]*draft_fingerprint: context\.draftFingerprint/);
-  assert.match(draftFixerUi, /data\?\.legacy_fact_attestation\?\.ok !== true/);
-  assert.match(edge, /attest_legacy_market_radar_draft_fact_v1/);
-  assert.match(edge, /expected_revalidation_fact_check_id_input: revalidationFactId/);
-  assert.match(edge, /actor_id_input: adminId/);
+  assert.match(draftFixerUi, /action: "check-eligibility"[\s\S]*candidate_id: context\.radarCandidateId[\s\S]*draft_id: context\.draftId[\s\S]*draft_fingerprint: context\.draftFingerprint/);
+  assert.doesNotMatch(draftFixerUi, /legacy_fact_attestation/);
 });
 
 test("el Editor prioriza la explicación del 409 y nunca presenta SQL interno", () => {

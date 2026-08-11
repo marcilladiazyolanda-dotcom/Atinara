@@ -19,7 +19,7 @@ const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
 const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v5";
 const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
-const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4";
+const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const MAX_CONTEXT_BYTES = 24_000;
 const MAX_REQUEST_BYTES = 12_288;
@@ -109,7 +109,7 @@ const HARD_REASON_CODES = new Set([
   "CONFIRMED_DUPLICATE",
   "SOURCE_ALREADY_RESOLVED",
   "SOURCE_NOT_RESOLVABLE",
-  "RADAR_FACTUAL_VERIFICATION_REQUIRED",
+  "RADAR_ELIGIBILITY_REQUIRED",
   "RADAR_CANDIDATE_NOT_PREPARABLE",
   "RADAR_NORMALIZER_OUTDATED",
   "RADAR_ELIGIBILITY_POLICY_OUTDATED",
@@ -363,7 +363,7 @@ function handleEdgeError(error: unknown, fallbackMessage: string): Response {
     ? 400
     : code.includes("AUTH") ? 401
       : code.includes("ADMIN") ? 403
-        : ["PREPARATION_REVISION_MISMATCH", "MARKET_EXPERT_ANALYSIS_STALE", "RADAR_FACTUAL_REFRESH_REQUIRED"].includes(code) ? 409
+        : ["PREPARATION_REVISION_MISMATCH", "MARKET_EXPERT_ANALYSIS_STALE", "RADAR_ELIGIBILITY_REQUIRED"].includes(code) ? 409
           : code === "INTELLIGENCE_ORIGIN_NOT_FOUND" ? 404 : 503;
   const message = code === "PREPARATION_REVISION_MISMATCH"
     ? "La candidata cambió durante el análisis. Vuelve a aplicar para usar su revisión vigente."
@@ -402,6 +402,22 @@ function safeHttpsUrl(value: unknown): string {
 function safeHostname(value: unknown): string | null {
   const url = safeHttpsUrl(value);
   return url ? new URL(url).hostname.toLowerCase() : null;
+}
+
+function hasOfficialResolutionSourceProof(origin: JsonRecord): boolean {
+  const sourceUrl = safeHttpsUrl(origin.atinara_resolution_source_url || origin.source_resolution_url);
+  if (!sourceUrl) return false;
+  const evidence = [
+    ...records(origin.resolution_source_evidence),
+    ...records(origin.eligibility_evidence),
+    ...records(origin.verification_evidence),
+  ];
+  return evidence.some((item) => safeHttpsUrl(item.url) === sourceUrl
+    && item.source_type === "official"
+    && item.retrieval_status === "verified_content"
+    && item.evidence_basis === "retrieved_content"
+    && item.claim_status === "direct"
+    && item.direct_claim === true);
 }
 
 function slugify(value: unknown): string {
@@ -459,9 +475,11 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     "source_liquidity", "quality_score", "quality_status", "event_group_key", "duplicate_matches",
     "external_event_id", "external_event_url", "external_market_id", "external_market_url",
     "atinara_category", "atinara_question", "atinara_closes_at", "atinara_resolution_criteria",
-    "atinara_resolution_source_url", "provider_payload", "verification_status", "verification_reason",
+    "atinara_resolution_source_url", "resolution_source_evidence", "provider_payload", "verification_status", "verification_reason",
     "verification_reason_code", "verification_evidence", "verification_confidence", "verification_expires_at",
-    "normalizer_version", "eligibility_policy_version", "fingerprint", "preparation_revision",
+    "normalizer_version", "eligibility_policy_version", "eligibility_status", "eligibility_reason_code",
+    "eligibility_reason", "eligibility_evidence", "eligibility_checked_at", "eligibility_expires_at",
+    "current_eligibility_check_id", "fingerprint", "preparation_revision",
     "verified_at", "cache_expires_at", "quality_updated_at", "family_key", "family_title",
     "family_type", "family_child_key", "family_child_label", "family_relationship", "family_matches",
     "family_version", "family_semantics", "family_source_event_key", "family_sort_at",
@@ -498,7 +516,10 @@ function analysisOriginSnapshot(origin: JsonRecord, originType: string): JsonRec
   // Son datos de lease/caché, no hechos del mercado ni del contrato. Excluirlos
   // mantiene la huella alineada con preparation_revision y evita invalidar un
   // dictamen únicamente porque el Radar renovó su caché.
-  for (const key of ["fetched_at", "expires_at", "cache_expires_at", "is_stale", "cache_key", "updated_at"]) {
+  for (const key of [
+    "fetched_at", "expires_at", "cache_expires_at", "is_stale", "cache_key", "updated_at",
+    "eligibility_checked_at", "eligibility_expires_at", "current_eligibility_check_id",
+  ]) {
     delete snapshot[key];
   }
   return snapshot;
@@ -939,17 +960,18 @@ function deterministicAssessment(origin: JsonRecord, originType: string) {
   if (origin.marketability_status === "duplicate" || hasBlockingDuplicate(origin.duplicate_matches)) {
     structuralIssues.push("DUPLICATE_MARKET");
   }
-  const resultKnown = origin.marketability_status === "already_resolved" ||
-    origin.verification_reason_code === "EVENT_ALREADY_RESOLVED";
+  const resultKnown = origin.marketability_status === "already_resolved"
+    || origin.eligibility_status === "terminal"
+    || origin.verification_reason_code === "EVENT_ALREADY_RESOLVED";
   const now = new Date();
-  const verificationExpiry = safeDate(origin.verification_expires_at);
-  const verificationExpired = !verificationExpiry || verificationExpiry <= now;
+  const eligibilityExpiry = safeDate(origin.eligibility_expires_at);
+  const eligibilityExpired = !eligibilityExpiry || eligibilityExpiry <= now;
   const stale = origin.marketability_status === "rejected" ||
-    (origin.verification_status && origin.verification_status !== "verified_open" && verificationExpired);
+    (origin.eligibility_status && origin.eligibility_status !== "eligible" && !resultKnown);
 
   if (originType === "radar_candidate") {
     const candidateExpiry = safeDate(origin.expires_at);
-    if (text(origin.state, 40) !== "available" || !candidateExpiry || candidateExpiry <= now) {
+    if (!resultKnown && (text(origin.state, 40) !== "available" || !candidateExpiry || candidateExpiry <= now)) {
       structuralIssues.push("RADAR_CANDIDATE_NOT_PREPARABLE");
     }
     if (text(origin.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) {
@@ -958,17 +980,20 @@ function deterministicAssessment(origin: JsonRecord, originType: string) {
     if (text(origin.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) {
       structuralIssues.push("RADAR_ELIGIBILITY_POLICY_OUTDATED");
     }
-    if (text(origin.verification_status, 80) !== "verified_open" || verificationExpired) {
-      structuralIssues.push("RADAR_FACTUAL_VERIFICATION_REQUIRED");
+    if (!resultKnown && (text(origin.eligibility_status, 80) !== "eligible"
+      || !origin.current_eligibility_check_id
+      || eligibilityExpired)) {
+      structuralIssues.push("RADAR_ELIGIBILITY_REQUIRED");
     }
     if (!text(origin.atinara_question, 700)
       || !text(origin.atinara_resolution_criteria, 5_000)
-      || !safeHttpsUrl(origin.atinara_resolution_source_url || origin.source_resolution_url)) {
+      || !hasOfficialResolutionSourceProof(origin)) {
       structuralIssues.push("RADAR_RESOLUTION_SOURCE_REQUIRED");
     }
   }
 
   if (resultKnown) {
+    structuralIssues.push("EVENT_ALREADY_RESOLVED");
     return { integrity_status: "fail", forecastability_status: "already_determined", structuralIssues };
   }
   const nonRepairableStructuralIssues = structuralIssues.filter(
@@ -1274,7 +1299,7 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
   ]);
   const terminalRoots = rawHardBlocks.filter((code) => TERMINAL_REASON_CODES.has(code));
   let hardBlocks = terminalRoots.length ? terminalRoots : rawHardBlocks.filter((code) => !DERIVED_REASON_CODES.has(code));
-  if (hardBlocks.includes("RADAR_FACTUAL_VERIFICATION_REQUIRED")) {
+  if (hardBlocks.includes("RADAR_ELIGIBILITY_REQUIRED")) {
     hardBlocks = hardBlocks.filter((code) => code !== "RADAR_CANDIDATE_NOT_PREPARABLE");
   }
   if (!hardBlocks.length) {
@@ -1309,15 +1334,7 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
     causal_roots: hardBlocks,
     derived_diagnostics: derivedDiagnostics,
     warnings,
-    automatic_recovery: !terminalRoots.length && hardBlocks.some((code) => [
-      "RADAR_FACTUAL_VERIFICATION_REQUIRED",
-      "RADAR_NORMALIZER_OUTDATED",
-      "RADAR_ELIGIBILITY_POLICY_OUTDATED",
-    ].includes(code)) ? {
-      action: "refresh_factual_dossier",
-      retryable: true,
-      label: "Actualizar comprobación factual y reanalizar",
-    } : null,
+    automatic_recovery: null,
     human_confirmation_required: true,
   };
 }
