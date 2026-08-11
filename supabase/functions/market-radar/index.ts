@@ -28,6 +28,8 @@ import {
   evaluateDeterministicEligibility,
   evaluatePredictiveEligibility,
   evaluateProviderEligibility,
+  extractOfficialHtmlText,
+  extractOfficialRelatedUrls,
   groupCandidates,
   hasSpeculativeEvidenceLanguage,
   indexGeminiDecisions,
@@ -38,6 +40,9 @@ import {
   isVerifiedOfficialEvidence,
   isVerifiedTerminalEvidence,
   normalizeProviderResult,
+  normalizeRadarCandidatePresentation,
+  officialEvidenceSegmentsForSubject,
+  officialSelectionEditionCoverage,
   parseGeminiAdaptations,
   providerResultLabel,
   propagateResolvedEventGroups,
@@ -82,6 +87,14 @@ const MAX_OFFICIAL_SOURCE_BYTES = 750_000;
 const OFFICIAL_SOURCE_FETCH_TIMEOUT_MS = 5_000;
 const OFFICIAL_SOURCE_BUDGET_MS = 10_000;
 const OFFICIAL_SOURCE_CONCURRENCY = 4;
+const MAX_RELATED_OFFICIAL_SOURCE_URLS = 18;
+const MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP = 3;
+const OFFICIAL_RELATED_SOURCE_BUDGET_MS = 10_000;
+const MAX_SELECTION_FOLLOWUP_GROUPS = 4;
+const MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP = 4;
+const TAVILY_SELECTION_FOLLOWUP_CONCURRENCY = 4;
+const TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS = 5_000;
+const OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS = 12_000;
 const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
 const PROVIDER_RETRY_JITTER_MS = 250;
 
@@ -294,6 +307,19 @@ class RadarPreparationBlockedError extends Error {
       authoritative_pointer_unchanged: recordedAttempt.authoritative_pointer_unchanged === true
         || recordedAttempt.idempotency_replay === true,
     };
+  }
+}
+
+class RadarRevalidationOutcomeError extends Error {
+  readonly code: string;
+  readonly candidate: JsonRecord;
+
+  constructor(code: string, candidate: JsonRecord) {
+    const safeCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(code) ? code : "RADAR_REVALIDATION_REQUIRED";
+    super(safeCode);
+    this.name = "RadarRevalidationOutcomeError";
+    this.code = safeCode;
+    this.candidate = candidate;
   }
 }
 
@@ -612,6 +638,7 @@ type VerifiedOfficialPage = {
   contentType: string;
   content: string;
   contentSha256: string;
+  relatedUrls: string[];
 };
 
 const SOURCE_TOKEN_STOPWORDS = new Set([
@@ -656,12 +683,7 @@ function officialPageMetadata(raw: string, contentType: string): { title: string
     publishedAt = safeIsoDate(htmlAttribute(tag, "content"));
     if (publishedAt) break;
   }
-  const content = decodeHtmlEntities(raw
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(?:script|style|noscript|svg|iframe|object|template)\b[\s\S]*?<\/(?:script|style|noscript|svg|iframe|object|template)>/gi, " ")
-    .replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/section|\/article)\b[^>]*>/gi, ". ")
-    .replace(/<[^>]+>/g, " "))
-    .replace(/\s+/g, " ").trim().slice(0, 300_000);
+  const content = extractOfficialHtmlText(raw);
   return { title: cleanText(title, 300), publishedAt, content };
 }
 
@@ -726,13 +748,17 @@ async function fetchVerifiedOfficialPage(
       const raw = await boundedResponseText(response);
       const metadata = officialPageMetadata(raw, contentType);
       if (metadata.content.length < 80) return null;
+      const finalUrl = safePublicUrl(response.url || current) ?? current;
       return {
-        url: safePublicUrl(response.url || current) ?? current,
+        url: finalUrl,
         title: metadata.title,
         publishedAt: metadata.publishedAt,
         contentType,
         content: metadata.content,
         contentSha256: await sha256Hex(metadata.content),
+        relatedUrls: contentType === "text/html" || contentType === "application/xhtml+xml"
+          ? extractOfficialRelatedUrls(raw, finalUrl, [...authoritativeDomains], 24)
+          : [],
       };
     } catch {
       return null;
@@ -749,13 +775,53 @@ function sourceTokens(value: unknown): string[] {
     .filter((token) => !SOURCE_TOKEN_STOPWORDS.has(token));
 }
 
+function compactSourceIdentity(value: unknown): string {
+  return cleanText(value, 8_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function selectionGroupSubject(group: JsonRecord): string {
+  const counts = new Map<string, { value: string; count: number }>();
+  for (const candidate of toRecordArray(group.candidates)) {
+    const question = cleanText(candidate.source_question ?? candidate.atinara_question, 700).replace(/[?¿]+$/g, "");
+    const match = question.match(/(?:the\s+cover\s+of|la\s+portada\s+de|portada\s+de)\s+(.+)$/i);
+    const subject = cleanText(match?.[1], 240);
+    const key = compactSourceIdentity(subject);
+    if (!subject || key.length < 5) continue;
+    const current = counts.get(key);
+    counts.set(key, { value: subject, count: (current?.count ?? 0) + 1 });
+  }
+  return [...counts.values()].sort((left, right) => right.count - left.count)[0]?.value ?? "";
+}
+
+function metricGroupSubject(group: JsonRecord): string {
+  const counts = new Map<string, { value: string; count: number }>();
+  for (const candidate of toRecordArray(group.candidates)) {
+    const title = cleanText(candidate.source_title, 500).replace(/[?¿]+$/g, "");
+    if (!/\b(?:metacritic|metascore|opencritic|user\s+score|critic\s+score)\b/i.test(title)) continue;
+    const subject = cleanText(title.replace(/\s*:\s*(?:metacritic|metascore|opencritic|user\s+score|critic\s+score|score).*$/i, ""), 240);
+    const key = compactSourceIdentity(subject);
+    if (!subject || key.length < 5 || subject === title) continue;
+    const current = counts.get(key);
+    counts.set(key, { value: subject, count: (current?.count ?? 0) + 1 });
+  }
+  return [...counts.values()].sort((left, right) => right.count - left.count)[0]?.value ?? "";
+}
+
 async function relevantVerifiedEvidence(page: VerifiedOfficialPage, group: JsonRecord, retrievedAt: string): Promise<JsonRecord | null> {
+  const selectionSubject = selectionGroupSubject(group);
+  const metricSubject = metricGroupSubject(group);
   const candidateQuestions = toRecordArray(group.candidates)
     .map((candidate) => cleanText(candidate.source_question ?? candidate.atinara_question, 500)).join(" ");
   const tokens = sourceTokens(`${group.title ?? ""} ${candidateQuestions}`).slice(0, 60);
   const anchors = new Set(tokens.filter((token) => !SOURCE_GENERIC_ANCHORS.has(token)));
   if (!tokens.length || !anchors.size) return null;
-  const rawSegments = page.content.split(/(?<=[.!?])\s+|\s*[|•]\s*/).filter(Boolean);
+  const rawSegments = selectionSubject
+    ? officialEvidenceSegmentsForSubject(page, selectionSubject, "selection")
+    : metricSubject
+      ? officialEvidenceSegmentsForSubject(page, metricSubject, "metric")
+      : page.content.split(/(?<=[.!?])\s+|\s*[|•]\s*/).filter(Boolean);
+  if (!rawSegments.length) return null;
   const segments = rawSegments.flatMap((segment) => {
     const clean = cleanText(segment, 2_100);
     if (clean.length <= 700) return [clean];
@@ -778,6 +844,7 @@ async function relevantVerifiedEvidence(page: VerifiedOfficialPage, group: JsonR
   if (!supports) return null;
   const speculative = hasSpeculativeEvidenceLanguage(`${page.title} ${supports}`);
   if (speculative) futureClaim = null;
+  const selectionEditions = selectionSubject ? officialSelectionEditionCoverage(page, rawSegments, selectionSubject) : [];
   return {
     title: page.title || new URL(page.url).hostname,
     url: page.url,
@@ -798,6 +865,7 @@ async function relevantVerifiedEvidence(page: VerifiedOfficialPage, group: JsonR
     supported_fact_statuses: futureClaim ? ["unresolved"] : [],
     supported_contract_kinds: futureClaim?.contractKinds ?? [],
     unresolved_proof: Boolean(futureClaim),
+    selection_editions: selectionEditions,
     unresolved_proof_basis: futureClaim ? "official_future_date_v1" : null,
     unresolved_until: futureClaim?.until ?? null,
     unresolved_proof_excerpt: futureClaim?.excerpt ?? null,
@@ -931,6 +999,11 @@ async function buildAuthoritativeFactCheck(
     claim_verifiable: item.claim_verifiable === true,
     relevance_score: safeNumber(item.relevance_score),
     selection_complete: item.selection_complete === true,
+    selection_editions: Array.isArray(item.selection_editions)
+      ? item.selection_editions.map((edition) => cleanText(edition, 40))
+        .filter((edition) => ["standard", "ultimate", "ultimate_plus", "deluxe"].includes(edition))
+        .slice(0, 4)
+      : [],
     supported_reason_codes: Array.isArray(item.supported_reason_codes)
       ? item.supported_reason_codes.map((code) => cleanText(code, 100)).filter(Boolean).slice(0, 12)
       : [],
@@ -946,13 +1019,20 @@ async function buildAuthoritativeFactCheck(
     unresolved_proof_excerpt: cleanText(item.unresolved_proof_excerpt, 700) || null,
     unresolved_proof_excerpt_sha256: cleanText(item.unresolved_proof_excerpt_sha256, 80) || null,
   })).filter((item) => item.url);
-  const providerFactUrl = safePublicUrl(candidate.external_market_url ?? candidate.external_event_url);
+  const providerFactUrl = safePublicUrl(candidate.external_market_url)
+    ?? safePublicUrl(candidate.external_event_url);
+  const providerResult = normalizeProviderResult(candidate.source_result);
+  const providerNotOpen = cleanText(candidate.verification_reason_code, 100) === RADAR_REASON_CODES.PROVIDER_NOT_OPEN;
   if (providerFactUrl
-    && (normalizeProviderResult(candidate.source_result)
-      || cleanText(candidate.verification_status, 80) === "rejected_resolved")
-    && !sourceSnapshot.some((item) => item.url === providerFactUrl)) {
+    && (providerResult || providerNotOpen)
+    && !sourceSnapshot.some((item) => item.url === providerFactUrl && item.source_type === "provider")) {
+    const providerStatus = cleanText(candidate.source_status, 80) || "no abierto";
+    const supportedReasonCodes = [
+      ...(providerResult ? [RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED] : []),
+      ...(providerNotOpen ? [RADAR_REASON_CODES.PROVIDER_NOT_OPEN] : []),
+    ];
     sourceSnapshot.push({
-      title: "Resultado canónico del proveedor",
+      title: providerResult ? "Resultado canónico del proveedor" : "Estado canónico del proveedor",
       url: providerFactUrl,
       published_at: safeIsoDate(candidate.source_settled_at),
       source_type: "provider",
@@ -967,15 +1047,18 @@ async function buildAuthoritativeFactCheck(
       claim_verifiable: true,
       relevance_score: 100,
       selection_complete: false,
-      supported_reason_codes: [RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED],
-      supported_fact_statuses: ["fully_resolved"],
+      selection_editions: [],
+      supported_reason_codes: supportedReasonCodes,
+      supported_fact_statuses: providerResult ? ["fully_resolved"] : ["unresolved"],
       supported_contract_kinds: [],
       unresolved_proof: false,
       unresolved_proof_basis: null,
       unresolved_until: null,
       unresolved_proof_excerpt: null,
       unresolved_proof_excerpt_sha256: null,
-      supports: cleanText(candidate.source_result, 80) ? `Resultado: ${cleanText(candidate.source_result, 80)}` : "Resultado publicado por el proveedor.",
+      supports: providerResult
+        ? `Resultado: ${providerResult}. Estado del mercado de origen: ${providerStatus}.`
+        : `Estado del mercado de origen: ${providerStatus}. El proveedor ya no admite esta opción.`,
     });
   }
   const contextSha256 = await sha256Hex(contextSnapshot);
@@ -1281,6 +1364,8 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       .filter(Boolean)
       .join(" | ");
     const groupText = cleanText(`${group.title} ${childQuestions}`, 1_500).toLowerCase();
+    const selectionSubject = selectionGroupSubject(group);
+    const metricSubject = metricGroupSubject(group);
     const factTerms = /\b(cover|portada|athlete|atleta|winner|ganador|nominee|nominado|participant|participante)\b/.test(groupText)
       ? "official announced revealed selected winner result complete lineup"
       : /\b(score|puntuaci|metacritic|opencritic|threshold|umbral)\b/.test(groupText)
@@ -1291,7 +1376,11 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         api_key: apiKey,
-        query: cleanText(`${factTerms} ${group.title} ${childQuestions}`, 1_200),
+        query: cleanText(selectionSubject
+          ? `official ${selectionSubject} cover reveal cover stars standard ultimate deluxe complete lineup`
+          : metricSubject
+            ? `official "${metricSubject}" ${/opencritic/.test(groupText) ? "OpenCritic" : "Metacritic"} score release date review`
+            : `${factTerms} ${group.title} ${childQuestions}`, 1_200),
         search_depth: "basic",
         max_results: 6,
         include_answer: false,
@@ -1333,6 +1422,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
   for (const group of groups) evidence.set(group.event_group_key, []);
   const deadlineAt = Date.now() + OFFICIAL_SOURCE_BUDGET_MS;
   const pagePromises = new Map<string, Promise<VerifiedOfficialPage | null>>();
+  const verifiedPagesByGroup = new Map<string, VerifiedOfficialPage[]>();
   const verified = await mapWithConcurrency(targets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
     if (!pagePromises.has(target.url)) {
       pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, deadlineAt));
@@ -1340,13 +1430,187 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
     const page = await pagePromises.get(target.url)!;
     const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
     const retrievedAt = new Date().toISOString();
-    return page && group ? { eventGroupKey: target.eventGroupKey, item: await relevantVerifiedEvidence(page, group, retrievedAt) } : null;
+    return page && group ? { eventGroupKey: target.eventGroupKey, page, item: await relevantVerifiedEvidence(page, group, retrievedAt) } : null;
   });
   for (const result of verified) {
-    if (result.status !== "fulfilled" || !result.value?.item) continue;
-    const items = evidence.get(result.value.eventGroupKey) ?? [];
-    if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
-    evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+    if (result.status !== "fulfilled" || !result.value) continue;
+    const pages = verifiedPagesByGroup.get(result.value.eventGroupKey) ?? [];
+    if (!pages.some((page) => page.url === result.value?.page.url)) pages.push(result.value.page);
+    verifiedPagesByGroup.set(result.value.eventGroupKey, pages);
+    if (result.value.item) {
+      const items = evidence.get(result.value.eventGroupKey) ?? [];
+      if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
+      evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+    }
+  }
+
+  // Para contratos de selección (portadas, ganadores o alineaciones), una
+  // búsqueda puede devolver la portada general aunque el anuncio exhaustivo
+  // esté enlazado como «cover», «editions» o «release». Seguimos como máximo
+  // tres documentos del mismo host oficial y volvemos a verificar su contenido.
+  const relatedTargets: Array<{ eventGroupKey: string; url: string }> = [];
+  const relatedKeys = new Set<string>();
+  for (const group of groups) {
+    const subject = selectionGroupSubject(group);
+    if (!subject) continue;
+    const coveredEditions = new Set((evidence.get(group.event_group_key) ?? [])
+      .flatMap((item) => Array.isArray(item.selection_editions) ? item.selection_editions : []));
+    if (["standard", "ultimate", "ultimate_plus"].every((edition) => coveredEditions.has(edition))) continue;
+    const subjectTokens = sourceTokens(subject);
+    const ranked = (verifiedPagesByGroup.get(group.event_group_key) ?? [])
+      .flatMap((page) => page.relatedUrls)
+      .filter((url) => !targets.some((target) => target.eventGroupKey === group.event_group_key && target.url === url))
+      .map((url) => {
+        const comparable = cleanText(url, 2_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        const identityScore = subjectTokens.filter((token) => comparable.includes(token)).length * 20;
+        const editorialScore = /cover|portada/.test(comparable) ? 100
+          : /edition|edicion/.test(comparable) ? 70
+          : /reveal|announcement|lineup|selection/.test(comparable) ? 55
+          : /release|lanzamiento/.test(comparable) ? 35
+          : /buy|comprar/.test(comparable) ? 45
+          : /feature|news/.test(comparable) ? 20 : 5;
+        return { url, score: identityScore + editorialScore };
+      })
+      .sort((left, right) => right.score - left.score || left.url.localeCompare(right.url));
+    for (const item of ranked.slice(0, MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP)) {
+      const key = `${group.event_group_key}:${item.url}`;
+      if (relatedKeys.has(key)) continue;
+      relatedKeys.add(key);
+      relatedTargets.push({ eventGroupKey: group.event_group_key, url: item.url });
+      if (relatedTargets.length >= MAX_RELATED_OFFICIAL_SOURCE_URLS) break;
+    }
+    if (relatedTargets.length >= MAX_RELATED_OFFICIAL_SOURCE_URLS) break;
+  }
+  if (relatedTargets.length) {
+    const relatedDeadlineAt = Date.now() + OFFICIAL_RELATED_SOURCE_BUDGET_MS;
+    const related = await mapWithConcurrency(relatedTargets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
+      if (!pagePromises.has(target.url)) {
+        pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, relatedDeadlineAt));
+      }
+      const page = await pagePromises.get(target.url)!;
+      const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
+      return page && group
+        ? { eventGroupKey: target.eventGroupKey, page, item: await relevantVerifiedEvidence(page, group, new Date().toISOString()) }
+        : null;
+    });
+    for (const result of related) {
+      if (result.status !== "fulfilled" || !result.value) continue;
+      const pages = verifiedPagesByGroup.get(result.value.eventGroupKey) ?? [];
+      if (!pages.some((page) => page.url === result.value?.page.url)) pages.push(result.value.page);
+      verifiedPagesByGroup.set(result.value.eventGroupKey, pages);
+      if (result.value.item) {
+        const items = evidence.get(result.value.eventGroupKey) ?? [];
+        if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
+        evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+      }
+    }
+  }
+
+  // Si una selección multiedición no está completa o una métrica relativa al
+  // lanzamiento carece del ancla temporal oficial, hacemos una única búsqueda
+  // más específica. Tavily solo descubre URLs: nunca confiamos en sus snippets
+  // ni hacemos fallar el proveedor principal si esta mejora opcional se agota.
+  const incompleteSelectionGroups = groups.filter((group) => {
+    if (!selectionGroupSubject(group)) return false;
+    return !detectOfficialCoverEventResolution(
+      toRecordArray(group.candidates),
+      evidence.get(group.event_group_key) ?? [],
+    );
+  });
+  const incompleteMetricGroups = groups.filter((group) => {
+    if (!metricGroupSubject(group)) return false;
+    return !(evidence.get(group.event_group_key) ?? []).some((item) =>
+      item.unresolved_proof === true
+      && Array.isArray(item.supported_contract_kinds)
+      && item.supported_contract_kinds.includes("review")
+    );
+  });
+  const factualFollowupGroups: Array<{ group: JsonRecord; query: string }> = [];
+  for (let rank = 0; factualFollowupGroups.length < MAX_SELECTION_FOLLOWUP_GROUPS; rank += 1) {
+    const selectionGroup = incompleteSelectionGroups[rank];
+    const metricGroup = incompleteMetricGroups[rank];
+    if (!selectionGroup && !metricGroup) break;
+    if (selectionGroup) {
+      const subject = selectionGroupSubject(selectionGroup);
+      factualFollowupGroups.push({
+        group: selectionGroup,
+        query: `official "${subject}" cover stars all editions Standard Edition Ultimate Edition Ultimate Plus Edition complete cover lineup`,
+      });
+    }
+    if (metricGroup && factualFollowupGroups.length < MAX_SELECTION_FOLLOWUP_GROUPS) {
+      const subject = metricGroupSubject(metricGroup);
+      factualFollowupGroups.push({
+        group: metricGroup,
+        query: `official "${subject}" release date launch date`,
+      });
+    }
+  }
+  if (factualFollowupGroups.length) {
+    const followupSearches = await mapWithConcurrency(
+      factualFollowupGroups,
+      TAVILY_SELECTION_FOLLOWUP_CONCURRENCY,
+      async ({ group, query }) => {
+        try {
+          const payload = toRecord(await fetchJson(new URL("https://api.tavily.com/search"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              api_key: apiKey,
+              query: cleanText(query, 1_200),
+              search_depth: "basic",
+              max_results: MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP,
+              include_answer: false,
+              include_raw_content: false,
+              include_domains: [...authoritativeDomains],
+            }),
+          }, TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS)) ?? {};
+          return {
+            eventGroupKey: group.event_group_key,
+            urls: [...new Set(toRecordArray(payload.results)
+              .map((result) => safePublicUrl(result.url))
+              .filter((item): item is string => Boolean(item && isOfficialEvidenceUrl(item, authoritativeDomains))))]
+              .slice(0, MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP),
+          };
+        } catch {
+          return { eventGroupKey: group.event_group_key, urls: [] as string[] };
+        }
+      },
+    );
+    const followupTargets: Array<{ eventGroupKey: string; url: string }> = [];
+    const followupKeys = new Set<string>();
+    for (const result of followupSearches) {
+      if (result.status !== "fulfilled") continue;
+      for (const url of result.value.urls) {
+        const key = `${result.value.eventGroupKey}:${url}`;
+        if (followupKeys.has(key)) continue;
+        followupKeys.add(key);
+        followupTargets.push({ eventGroupKey: result.value.eventGroupKey, url });
+      }
+    }
+    if (followupTargets.length) {
+      const followupDeadlineAt = Date.now() + OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS;
+      const followed = await mapWithConcurrency(followupTargets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
+        if (!pagePromises.has(target.url)) {
+          pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, followupDeadlineAt));
+        }
+        const page = await pagePromises.get(target.url)!;
+        const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
+        return page && group
+          ? { eventGroupKey: target.eventGroupKey, page, item: await relevantVerifiedEvidence(page, group, new Date().toISOString()) }
+          : null;
+      });
+      for (const result of followed) {
+        if (result.status !== "fulfilled" || !result.value) continue;
+        const pages = verifiedPagesByGroup.get(result.value.eventGroupKey) ?? [];
+        if (!pages.some((page) => page.url === result.value?.page.url)) pages.push(result.value.page);
+        verifiedPagesByGroup.set(result.value.eventGroupKey, pages);
+        if (result.value.item) {
+          const items = evidence.get(result.value.eventGroupKey) ?? [];
+          if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
+          evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+        }
+      }
+    }
   }
   return evidence;
 }
@@ -1395,13 +1659,12 @@ function providerDecisionFactStatus(candidate: JsonRecord, decision: JsonRecord)
     && Number.isInteger(total)
     && total > 0
     && children.length === total;
-  const canonicalProviderEvidence = toRecordArray(decision.evidence).some((item) =>
-    cleanText(item.source_type, 40) === "provider" && Boolean(safePublicUrl(item.url))
-  );
+  const canonicalProviderUrl = safePublicUrl(candidate.external_market_url)
+    ?? safePublicUrl(candidate.external_event_url);
   // Cerrado no significa resuelto: conserva fact_status=unresolved, pero solo
   // cuando el evento completo y el estado del proveedor fueron recuperados.
   // Una ausencia, timeout o contexto parcial sigue siendo unknown/needs_review.
-  return completeCanonicalEvent && canonicalProviderEvidence ? "unresolved" : "unknown";
+  return completeCanonicalEvent && canonicalProviderUrl ? "unresolved" : "unknown";
 }
 
 function officialEventResolutionSignals(candidates: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, now: string): JsonRecord[] {
@@ -1508,16 +1771,29 @@ async function verifyGeminiBatch(
       && evidence.some((item) => evidenceSupportsReasonCode(item, inferredDeterministic.reason_code))
       ? inferredDeterministic
       : null;
-    const predictive = !deterministic && canApplyPredictivePolicyOverride(adapted, decision, now)
+    const deterministicOpen = !deterministic
+      && isAdaptedIdeaComplete(adapted)
+      && evaluateProviderEligibility(adapted, now) === null
+      && evidence.some((item) => isDeterministicUnresolvedEvidence(item, adapted, now))
+      && !evidence.some((item) => evidenceHasPotentialTerminalClaim(item, adapted, now));
+    const deterministicOpenDecision = deterministicOpen ? {
+      eligible: true,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+      reason: "La fuente primaria recuperada demuestra que el instante contractual sigue abierto y permite una resolución objetiva.",
+      confidence: 100,
+      ttl_minutes: 360,
+    } : null;
+    const predictive = !deterministic && !deterministicOpen && canApplyPredictivePolicyOverride(adapted, decision, now)
       ? evaluatePredictiveEligibility(adapted, facts, now)
       : null;
-    let eligibilityDecision = deterministic ?? predictive ?? decision;
+    let eligibilityDecision = deterministic ?? deterministicOpenDecision ?? predictive ?? decision;
     const unsupportedModelFact = Boolean(inferredDeterministic) && !deterministic;
-    const rawModelTerminal = !deterministic && !predictive
+    const rawModelTerminal = !deterministic && !deterministicOpen && !predictive
       && decision.eligible === false
       && decision.conclusive === true
       && cleanText(decision.reason_code, 100) !== RADAR_REASON_CODES.VERIFICATION_REQUIRED;
-    if (rawModelTerminal || unsupportedModelFact) {
+    if ((rawModelTerminal || unsupportedModelFact) && !deterministicOpen) {
       eligibilityDecision = {
         eligible: false,
         conclusive: false,
@@ -1532,7 +1808,7 @@ async function verifyGeminiBatch(
       && Object.values(facts).some((value) => value !== null && value !== "");
     const verifiedDirectEvidence = evidence.some((item) => isVerifiedOfficialEvidence(item, true));
     if (eligibilityDecision.eligible === true && eligibilityDecision.conclusive === true
-      && (!isAdaptedIdeaComplete(adapted) || !verifiedDirectEvidence || !aiConclusionPresent)) {
+      && (!isAdaptedIdeaComplete(adapted) || !verifiedDirectEvidence || (!deterministicOpen && !aiConclusionPresent))) {
       eligibilityDecision = {
         eligible: false,
         conclusive: false,
@@ -2084,19 +2360,36 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const latest = current.providers.map((provider) => Date.parse(cleanText(provider.fetched_at, 100))).filter(Number.isFinite).sort((a, b) => b - a)[0] || 0;
   const cooldownRemaining = Math.max(0, REFRESH_COOLDOWN_MS - (Date.now() - latest));
   if (!requestedRefresh || cooldownRemaining > 0) {
-    // La caché sirve para auditoría/rechazos y para calcular el cooldown, pero
-    // nunca se serializa como una propuesta. La siguiente consulta factual se
-    // inicia automáticamente desde la UI cuando el cooldown lo permite.
+    // loadRadarView ya excluye snapshots caducados, hechos no discovery y
+    // duplicados ocupados. Conservar ese último expediente vigente permite
+    // explorar y filtrar durante el cooldown o una degradación técnica sin
+    // presentarlo como una verificación fresca ni habilitar Preparar en la UI.
+    const requestedProviderNames = filters.provider === "all"
+      ? new Set(["polymarket", "kalshi"])
+      : new Set([filters.provider]);
+    const providerCoverageCurrent = current.providers.some((provider) => {
+      if (!requestedProviderNames.has(cleanText(provider.provider, 40))) return false;
+      const expiresAt = Date.parse(cleanText(provider.expires_at, 100));
+      if (Number.isFinite(expiresAt)) return expiresAt > Date.now();
+      const fetchedAt = Date.parse(cleanText(provider.fetched_at, 100));
+      return Number.isFinite(fetchedAt)
+        && fetchedAt + (FACT_CHECK_TTL_MINUTES * 60_000) > Date.now();
+    });
+    const cachedAuthoritative = current.candidates.length > 0 || providerCoverageCurrent;
+    // Si todavía no existe cobertura autoritativa, la UI debe conservar la
+    // recuperación pendiente incluso durante el cooldown. Así puede programar
+    // una única actualización para el instante en que venza, en vez de dejar
+    // un estado vacío que solo se recupera con otra acción manual.
+    const requiresFactualRefresh = !cachedAuthoritative;
     return jsonResponse({
       ok: true,
       ...current,
-      candidates: [],
-      groups: [],
       cached_candidate_count: current.candidates.length,
       filters,
       cache_key: cacheKey,
       cached: true,
-      requires_factual_refresh: true,
+      cached_authoritative: cachedAuthoritative,
+      requires_factual_refresh: requiresFactualRefresh,
       cooldown_seconds: Math.ceil(cooldownRemaining / 1000),
       limits: { max_pages: MAX_PROVIDER_PAGES, max_kalshi_series: MAX_KALSHI_SERIES, max_visible_groups: MAX_VISIBLE_GROUPS },
     });
@@ -2250,6 +2543,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     }, now) as JsonRecord : candidate;
   });
 
+  candidates = candidates.map((candidate) => normalizeRadarCandidatePresentation(candidate) as JsonRecord);
   const scored = scoreCandidates(candidates, existing, now) as JsonRecord[];
   const quarantinedCandidates: RadarCandidateQuarantine[] = [];
   const qualityNotices: JsonRecord[] = [];
@@ -2320,6 +2614,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     filters,
     cache_key: cacheKey,
     cached: false,
+    cached_authoritative: false,
     requires_factual_refresh: false,
     partial: errors.length > 0,
     errors,
@@ -2366,7 +2661,7 @@ function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente." };
   const state = cleanText(candidate.state, 40);
-  if (!["available", "prepared"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación factual de publicación." };
+  if (!["available", "needs_review", "prepared"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación factual de publicación." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_")) {
     const rejection = prepareRevalidationError(candidate);
@@ -2531,7 +2826,9 @@ async function revalidateCriticalEligibility(environment: Environment, authoriza
   if (checked.failedBatches > 0 || checked.incompleteCandidates > 0 || checked.processedDecisions !== 1) {
     throw new Error("PROVIDER_INVALID_RESPONSE");
   }
-  return checked.candidates[0] ?? failClosedCandidates([candidate], new Date().toISOString(), "La verificación factual no pudo concluir antes de preparar el borrador.")[0];
+  return normalizeRadarCandidatePresentation(
+    checked.candidates[0] ?? failClosedCandidates([candidate], new Date().toISOString(), "La verificación factual no pudo concluir antes de preparar el borrador.")[0],
+  ) as JsonRecord;
 }
 
 async function revalidateCandidateForPreparation(
@@ -2682,7 +2979,8 @@ async function revalidateCandidateForPreparation(
   } else if (cleanText(authoritativeCandidate.fact_check_purpose, 40) !== "revalidate"
     || cleanText(authoritativeCandidate.fact_status, 40) !== "unresolved"
     || cleanText(authoritativeCandidate.verification_status, 80) !== "verified_open") {
-    throw new Error("RADAR_REVALIDATION_REQUIRED");
+    const outcome = prepareRevalidationError(authoritativeCandidate);
+    throw new RadarRevalidationOutcomeError(outcome?.error ?? "RADAR_REVALIDATION_REQUIRED", authoritativeCandidate);
   }
   return {
     candidate: authoritativeCandidate,
@@ -2821,6 +3119,8 @@ async function handleAction(
         return jsonResponse({
           error: error.code,
           message: failure.message,
+          attempt_id: operationId,
+          phase: "factual_revalidation",
           retryable: error.retryable,
           candidate: error.diagnostics.candidate,
           attempt_fact_check_id: error.diagnostics.attempt_fact_check_id,
@@ -2828,10 +3128,36 @@ async function handleAction(
           preparation_revision: error.diagnostics.preparation_revision,
           persisted: error.diagnostics.persisted,
           authoritative_pointer_unchanged: error.diagnostics.authoritative_pointer_unchanged,
+          state_preserved: error.diagnostics.authoritative_pointer_unchanged !== false,
+        }, 409);
+      }
+      if (error instanceof RadarRevalidationOutcomeError) {
+        const failure = errors[error.code] ?? {
+          status: 409,
+          message: "La comprobación factual quedó registrada y la candidata permanece bloqueada.",
+        };
+        return jsonResponse({
+          error: error.code,
+          message: failure.message,
+          attempt_id: operationId,
+          phase: "factual_revalidation",
+          retryable: false,
+          candidate: error.candidate,
+          fact_check_id: error.candidate.current_fact_check_id ?? null,
+          preparation_revision: error.candidate.preparation_revision ?? null,
+          authoritative_state_updated: true,
+          state_preserved: true,
         }, 409);
       }
       const failure = errors[code] ?? { status: 503, message: "No se pudo repetir la comprobación factual. La candidata permanece bloqueada y no se ha preparado ningún borrador." };
-      return jsonResponse({ error: code, message: failure.message }, failure.status);
+      return jsonResponse({
+        error: code,
+        message: failure.message,
+        attempt_id: operationId,
+        phase: "factual_revalidation",
+        retryable: failure.status === 429 || failure.status >= 500,
+        state_preserved: true,
+      }, failure.status);
     }
     return jsonResponse({
       ok: true,

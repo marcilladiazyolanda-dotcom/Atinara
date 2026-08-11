@@ -107,6 +107,185 @@ export function cleanText(value, maxLength = 4000) {
   return String(value).replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function decodeOfficialHtmlEntities(value) {
+  const named = {
+    amp: "&", apos: "'", gt: ">", lt: "<", nbsp: " ", quot: '"', ndash: "-", mdash: "-",
+  };
+  return String(value ?? "").replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (match, entity) => {
+    if (entity[0] !== "#") return named[entity.toLowerCase()] ?? match;
+    const radix = entity[1]?.toLowerCase() === "x" ? 16 : 10;
+    const digits = radix === 16 ? entity.slice(2) : entity.slice(1);
+    const codePoint = Number.parseInt(digits, radix);
+    try { return Number.isInteger(codePoint) && codePoint > 0 ? String.fromCodePoint(codePoint) : " "; }
+    catch { return " "; }
+  });
+}
+
+function officialHtmlAttribute(tag, attribute) {
+  const match = String(tag ?? "").match(new RegExp(`\\b${attribute}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return decodeOfficialHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
+}
+
+function decodeOfficialJsonString(value) {
+  try {
+    return cleanText(decodeOfficialHtmlEntities(JSON.parse(`"${String(value ?? "")}"`)), 1_000);
+  } catch {
+    return "";
+  }
+}
+
+// El texto alternativo y las descripciones Open Graph forman parte del
+// contenido editorial visible de muchas páginas oficiales. Conservarlos evita
+// que un anuncio publicado únicamente como arte de portada parezca ausente.
+export function extractOfficialHtmlText(raw) {
+  const source = String(raw ?? "");
+  const imageText = (source.match(/<[a-z][^>]*(?:\balt|\bimage-tooltip|\bimage-alt|\blogo-alt)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)[^>]*>/gi) ?? [])
+    .flatMap((tag) => ["alt", "image-tooltip", "image-alt", "logo-alt"]
+      .map((attribute) => officialHtmlAttribute(tag, attribute)))
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .join(". ");
+  // Algunos portales oficiales hidratan el selector de ediciones en JSON y no
+  // renderizan sus textos alternativos como atributos HTML. Extraemos solo
+  // campos de accesibilidad de imagen con nombre permitido; nunca incorporamos
+  // scripts completos, snippets del buscador ni valores de claves arbitrarias.
+  const structuredImageText = [...source.matchAll(/"(?:alternateText|altText|imageAlt|imageDescription)"\s*:\s*"((?:\\.|[^"\\])*)"/gi)]
+    .map((match) => {
+      const imageDescription = decodeOfficialJsonString(match[1]);
+      if (!imageDescription || !Number.isSafeInteger(match.index)) return imageDescription;
+      const preceding = source.slice(Math.max(0, match.index - 800), match.index);
+      const editionMatches = [...preceding.matchAll(/"editionName"\s*:\s*"((?:\\.|[^"\\])*)"/gi)];
+      const editionName = decodeOfficialJsonString(editionMatches.at(-1)?.[1]);
+      return editionName && !normalizeComparableText(imageDescription).includes(normalizeComparableText(editionName))
+        ? `${editionName}: ${imageDescription}`
+        : imageDescription;
+    })
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .slice(0, 64)
+    .join(". ");
+  const metadataText = (source.match(/<meta\b[^>]*>/gi) ?? [])
+    .filter((tag) => {
+      const key = (officialHtmlAttribute(tag, "property") || officialHtmlAttribute(tag, "name")).toLowerCase();
+      return ["description", "og:description", "twitter:description", "og:title", "twitter:title"].includes(key);
+    })
+    .map((tag) => officialHtmlAttribute(tag, "content"))
+    .filter(Boolean)
+    .join(". ");
+  const bodyText = source
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(?:script|style|noscript|svg|iframe|object|template)\b[\s\S]*?<\/(?:script|style|noscript|svg|iframe|object|template)>/gi, " ")
+    .replace(/<(?:br|\/p|\/div|\/li|\/h[1-6]|\/section|\/article)\b[^>]*>/gi, ". ")
+    .replace(/<[^>]+>/g, " ");
+  return cleanText(decodeOfficialHtmlEntities(`${metadataText}. ${imageText}. ${structuredImageText}. ${bodyText}`), 300_000);
+}
+
+// Descubre únicamente documentos editoriales enlazados desde la propia fuente
+// oficial. La lista queda limitada, sin fragmentos, credenciales, puertos ni
+// saltos a dominios ajenos; después la Edge vuelve a descargar y verificar cada
+// URL con sus límites de tamaño, tiempo y redirecciones.
+export function extractOfficialRelatedUrls(raw, baseUrl, allowedHosts = [], limit = 24) {
+  const base = safePublicUrl(baseUrl, Array.isArray(allowedHosts) ? allowedHosts : []);
+  if (!base || !Number.isSafeInteger(limit) || limit < 1) return [];
+  let baseParsed;
+  try { baseParsed = new URL(base); }
+  catch { return []; }
+  const ranked = new Map();
+  for (const match of String(raw ?? "").matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)) {
+    const tag = `<a${match[1] ?? ""}>`;
+    const href = officialHtmlAttribute(tag, "href");
+    if (!href || /^(?:#|javascript:|mailto:|tel:)/i.test(href)) continue;
+    let absolute;
+    try { absolute = new URL(href, baseParsed); }
+    catch { continue; }
+    absolute.hash = "";
+    const url = safePublicUrl(absolute.toString(), allowedHosts);
+    if (!url) continue;
+    let parsed;
+    try { parsed = new URL(url); }
+    catch { continue; }
+    if (parsed.username || parsed.password || (parsed.port && parsed.port !== "443")) continue;
+    if (parsed.hostname.toLowerCase() !== baseParsed.hostname.toLowerCase()) continue;
+    if (/\/(?:checkout|cart|account|login|sign-?in|register)(?:\/|$)/i.test(parsed.pathname)) continue;
+    if (/\.(?:avif|gif|jpe?g|png|svg|webp|pdf|zip)(?:$|\?)/i.test(parsed.pathname)) continue;
+    const label = cleanText(decodeOfficialHtmlEntities(String(match[2] ?? "").replace(/<[^>]+>/g, " ")), 500);
+    const comparable = normalizeComparableText(`${parsed.pathname} ${label}`);
+    const editorial = /\b(?:cover|portada|edition|edicion|reveal|announcement|anuncio|lineup|selection|features?|news|release|lanzamiento|buy|comprar)\b/.test(comparable);
+    if (!editorial) continue;
+    const score = (/\b(?:cover|portada)\b/.test(comparable) ? 100 : 0)
+      + (/\b(?:edition|edicion)\b/.test(comparable) ? 70 : 0)
+      + (/\b(?:reveal|announcement|anuncio|lineup|selection)\b/.test(comparable) ? 55 : 0)
+      + (/\b(?:release|lanzamiento)\b/.test(comparable) ? 35 : 0)
+      + (/\b(?:features?|news)\b/.test(comparable) ? 20 : 0)
+      + (/\b(?:buy|comprar)\b/.test(comparable) ? 45 : 0);
+    const canonical = parsed.toString();
+    ranked.set(canonical, Math.max(ranked.get(canonical) ?? 0, score));
+  }
+  return [...ranked.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([url]) => url);
+}
+
+function compactOfficialIdentity(value) {
+  return cleanText(value, 300_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// Devuelve únicamente segmentos que pertenecen de forma verificable al sujeto
+// contractual. Para métricas se exige que título o ruta canónica identifiquen
+// el producto; una mención cruzada dentro de otra ficha no es evidencia.
+export function officialEvidenceSegmentsForSubject(page, subject, mode = "generic") {
+  const identity = compactOfficialIdentity(subject);
+  if (identity.length < 5 || !isRecord(page)) return [];
+  let path = "";
+  try { path = new URL(cleanText(page.url, 2_000)).pathname; }
+  catch { path = ""; }
+  const canonicalPage = compactOfficialIdentity(`${page.title ?? ""} ${path}`).includes(identity);
+  if (mode === "metric" && !canonicalPage) return [];
+  const segments = cleanText(page.content, 300_000)
+    .split(/(?<=[.!?])\s+|\s*[|•]\s*/)
+    .map((segment) => cleanText(segment, 2_100))
+    .filter(Boolean);
+  if (canonicalPage || mode === "generic") return segments;
+  return segments.filter((segment) => {
+    const normalized = normalizeComparableText(segment);
+    return compactOfficialIdentity(segment).includes(identity)
+      && (mode !== "selection" || /\b(?:cover|portada|key art|cover athlete|cover star)\b/.test(normalized));
+  });
+}
+
+export function officialSelectionEditionCoverage(page, segments, subject) {
+  const identity = compactOfficialIdentity(subject);
+  const editions = new Set();
+  if (!identity || !isRecord(page)) return [];
+  for (const segment of Array.isArray(segments) ? segments : []) {
+    const normalized = normalizeComparableText(segment);
+    if (!compactOfficialIdentity(segment).includes(identity) || !/\b(?:cover|portada|key art)\b/.test(normalized)) continue;
+    const explicit = [];
+    if (/\b(?:standard edition|edicion estandar)\b/.test(normalized)) explicit.push("standard");
+    if (/\b(?:ultimate plus edition|edicion ultimate plus)\b/.test(normalized)) explicit.push("ultimate_plus");
+    if (/\b(?:ultimate edition|edicion ultimate)\b/.test(normalized.replace(/\bultimate plus edition\b/g, " "))) explicit.push("ultimate");
+    if (/\b(?:deluxe edition|edicion deluxe)\b/.test(normalized)) explicit.push("deluxe");
+    if (explicit.length) {
+      explicit.forEach((edition) => editions.add(edition));
+      continue;
+    }
+    const content = String(page.content ?? "");
+    const index = content.indexOf(segment);
+    if (index < 0) continue;
+    const following = normalizeComparableText(content.slice(index + segment.length, index + segment.length + 900));
+    const nearby = [
+      { edition: "standard", pattern: /\b(?:standard edition|edicion estandar)\b/ },
+      { edition: "ultimate_plus", pattern: /\b(?:ultimate plus edition|edicion ultimate plus)\b/ },
+      { edition: "ultimate", pattern: /\b(?:ultimate edition|edicion ultimate)\b/ },
+      { edition: "deluxe", pattern: /\b(?:deluxe edition|edicion deluxe)\b/ },
+    ].map((item) => ({ ...item, index: following.search(item.pattern) }))
+      .filter((item) => item.index >= 0)
+      .sort((left, right) => left.index - right.index)[0];
+    if (nearby) editions.add(nearby.edition);
+  }
+  return [...editions];
+}
+
 export function safeNumber(value) {
   const number = typeof value === "number" ? value : Number(String(value ?? "").replace(",", "."));
   return Number.isFinite(number) ? number : null;
@@ -483,6 +662,10 @@ export function adaptKalshiResponse(payload, options = {}) {
         market_ticker: ticker,
         series_ticker: cleanText(event.series_ticker ?? market.series_ticker, 220) || null,
         market_type: cleanText(market.market_type, 80) || null,
+        strike_type: cleanText(market.strike_type, 80) || null,
+        floor_strike: safeNumber(market.floor_strike),
+        cap_strike: safeNumber(market.cap_strike),
+        functional_strike: cleanText(market.functional_strike, 500) || null,
         yes_sub_title: cleanText(market.yes_sub_title, 500) || null,
         no_sub_title: cleanText(market.no_sub_title, 500) || null,
         settlement_sources: resolutionSources,
@@ -1829,7 +2012,8 @@ function isNamedAwardCandidate(question) {
 }
 
 function providerEvidence(candidate) {
-  const url = safePublicUrl(candidate?.external_market_url ?? candidate?.external_event_url);
+  const url = safePublicUrl(candidate?.external_market_url)
+    ?? safePublicUrl(candidate?.external_event_url);
   if (!url) return [];
   const result = cleanText(candidate?.source_result, 40);
   const hardReasons = new Set(candidate?.hard_reject_reasons ?? []);
@@ -1856,12 +2040,14 @@ function providerEvidence(candidate) {
     claim_status: "direct",
     claim_verifiable: true,
     supported_reason_codes: supportedReasonCodes,
-    supported_fact_statuses: result ? ["fully_resolved"] : [],
+    supported_fact_statuses: result
+      ? ["fully_resolved"]
+      : supportedReasonCodes.includes(RADAR_REASON_CODES.PROVIDER_NOT_OPEN) ? ["unresolved"] : [],
     supported_contract_kinds: [],
     unresolved_proof: false,
     supports: result
       ? `Resultado: ${providerResultLabel(candidate.source_result)}`
-      : "Estado oficial del mercado de origen.",
+      : `Estado oficial del mercado de origen: ${cleanText(candidate?.source_status, 80) || "no abierto"}.`,
   }];
 }
 
@@ -2041,6 +2227,11 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     claim_verifiable: item.claim_verifiable === true,
     relevance_score: safeNumber(item.relevance_score),
     selection_complete: item.selection_complete === true,
+    selection_editions: Array.isArray(item.selection_editions)
+      ? item.selection_editions.map((edition) => cleanText(edition, 40))
+        .filter((edition) => ["standard", "ultimate", "ultimate_plus", "deluxe"].includes(edition))
+        .slice(0, 4)
+      : [],
     supported_reason_codes: Array.isArray(item.supported_reason_codes)
       ? item.supported_reason_codes.map((code) => cleanText(code, 100)).filter(Boolean).slice(0, 12)
       : [],
@@ -2079,7 +2270,8 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
     RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
   ]);
-  const providerFactUrl = safePublicUrl(candidate?.external_market_url ?? candidate?.external_event_url);
+  const providerFactUrl = safePublicUrl(candidate?.external_market_url)
+    ?? safePublicUrl(candidate?.external_event_url);
   const providerResultBound = Boolean(normalizeProviderResult(candidate?.source_result))
     && Boolean(providerFactUrl)
     && evidence.some((item) => isVerifiedProviderFactEvidence(item) && safePublicUrl(item.url) === providerFactUrl);
@@ -2127,6 +2319,7 @@ export function applyEligibilityDecision(candidate, decision = {}, now = new Dat
     : ["partially_resolved", "conflicting"].includes(requestedFactStatus) ? requestedFactStatus
     : requestedFactStatus === "fully_resolved" ? "unknown"
     : requestedFactStatus === "unknown" ? "unknown"
+    : primaryCode === RADAR_REASON_CODES.PROVIDER_NOT_OPEN && requestedFactStatus === "unresolved" ? "unresolved"
     : mappedStatus === "verified_open" ? "unresolved"
       : mappedStatus === "needs_review" ? "unknown"
         : cleanText(candidate.fact_status, 40) || "unknown";
@@ -2325,6 +2518,92 @@ function selectionQuestion(value) {
   return null;
 }
 
+function selectionPresentation(value) {
+  const question = cleanText(value, 700).replace(/[?¿]+$/g, "").replace(/^¿/, "").trim();
+  const patterns = [
+    /^will\s+(.+?)\s+be\s+(?:on\s+)?the\s+cover\s+of\s+(.+)$/i,
+    /^will\s+(.+?)\s+(?:appear|feature)\s+(?:on|in)\s+the\s+cover\s+of\s+(.+)$/i,
+    /^(?:estará|estara|aparecerá|aparecera)\s+(.+?)\s+en\s+la\s+portada\s+de\s+(.+)$/i,
+    /^será\s+(.+?)\s+(?:el|la)\s+(?:atleta|protagonista)\s+de\s+portada\s+de\s+(.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = question.match(pattern);
+    if (match?.[1] && match?.[2]) {
+      return { name: cleanText(match[1], 180), subject: cleanText(match[2], 240) };
+    }
+  }
+  return null;
+}
+
+function thresholdOperatorCopy(operator) {
+  return ({
+    gt: "superior a",
+    gte: "igual o superior a",
+    lt: "inferior a",
+    lte: "igual o inferior a",
+    eq: "exactamente",
+  })[operator] ?? null;
+}
+
+function thresholdMetricCopy(candidate) {
+  const contract = normalizeComparableText([
+    candidate?.source_title,
+    candidate?.source_question,
+    candidate?.source_resolution_rules,
+  ].filter(Boolean).join(" "));
+  if (/\buser score\b|\bpuntuacion de usuarios\b/.test(contract)) return "una puntuación de usuarios en Metacritic";
+  if (/\bmetascore\b|\bmetacritic\b/.test(contract)) return "una puntuación en Metacritic";
+  if (/\bopencritic\b/.test(contract)) return "una puntuación en OpenCritic";
+  if (/\bcritic score\b|\bpuntuacion de la critica\b/.test(contract)) return "una puntuación de la crítica";
+  if (/\bscore\b|\bpuntuacion\b/.test(contract)) return "una puntuación";
+  return null;
+}
+
+function thresholdSubject(candidate) {
+  const title = cleanText(candidate?.source_title, 500).replace(/[?¿]+$/g, "");
+  const byMetricSuffix = title.replace(/\s*:\s*(?:metacritic|metascore|opencritic|user\s+score|critic\s+score|score|puntuaci[oó]n).*$/i, "").trim();
+  if (byMetricSuffix && byMetricSuffix !== title) return byMetricSuffix;
+  const rules = cleanText(candidate?.source_resolution_rules, 5000);
+  const byRule = rules.match(/(?:metascore|metacritic\s+score|opencritic\s+score|user\s+score|critic\s+score|score)\s+(?:for|of)\s+(.+?)\s+is\s+(?:above|over|greater\s+than|below|under|less\s+than|at\s+least|at\s+most|equal\s+to)\b/i);
+  return cleanText(byRule?.[1], 240);
+}
+
+function metricThresholdPresentation(candidate) {
+  const payload = familyProviderPayload(candidate);
+  const labelThreshold = familyThreshold(payload.yes_sub_title);
+  if (!labelThreshold || labelThreshold.ambiguous) return null;
+  const structuredFloor = safeNumber(payload.floor_strike);
+  if (structuredFloor !== null && Number(labelThreshold.value) !== structuredFloor) return null;
+  const operator = thresholdOperatorCopy(labelThreshold.operator);
+  const metric = thresholdMetricCopy(candidate);
+  const subject = thresholdSubject(candidate);
+  if (!operator || !metric || !subject) return null;
+  const days = factualObservationDays(candidate);
+  const observation = days
+    ? ` ${days === 1 ? "un día" : `${days} días`} después de su lanzamiento`
+    : "";
+  return `¿Tendrá ${subject} ${metric} ${operator} ${labelThreshold.value}${observation}?`;
+}
+
+const RADAR_PRESENTATION_STRATEGIES = Object.freeze([
+  (candidate) => {
+    const selection = selectionPresentation(candidate?.source_question ?? candidate?.atinara_question);
+    return selection ? `¿Aparecerá ${selection.name} en la portada de ${selection.subject}?` : null;
+  },
+  metricThresholdPresentation,
+]);
+
+// Normaliza únicamente arquetipos cuyo significado está explícito en el
+// contrato del proveedor. Si falta una pieza, conserva la pregunta original.
+export function normalizeRadarCandidatePresentation(candidate) {
+  if (!isRecord(candidate)) return candidate;
+  for (const strategy of RADAR_PRESENTATION_STRATEGIES) {
+    const question = cleanText(strategy(candidate), 700);
+    if (question) return { ...candidate, atinara_question: question };
+  }
+  return candidate;
+}
+
 function selectionEntries(candidates) {
   const values = [];
   for (const candidate of Array.isArray(candidates) ? candidates : []) {
@@ -2363,9 +2642,20 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
       && children.length === total;
   });
   if (!contextComplete) return null;
+  const multiEditionContract = (Array.isArray(candidates) ? candidates : []).some((candidate) => {
+    const contract = normalizeComparableText([
+      candidate?.source_resolution_rules,
+      candidate?.atinara_resolution_criteria,
+      candidate?.source_description,
+    ].filter(Boolean).join(" "));
+    return /\b(?:all|any) editions?\b|\b(?:todas?|cualquier) (?:las )?ediciones?\b/.test(contract)
+      || /\bstandard\b.{0,180}\b(?:ultimate|deluxe|bundle)\b/.test(contract);
+  });
   const matchedNames = new Map();
   const relevantEvidence = [];
+  const editionCoverage = new Set();
   let exhaustiveEvidence = false;
+  let singularDesignation = false;
   for (const item of Array.isArray(evidence) ? evidence : []) {
     if (!isVerifiedOfficialEvidence(item, true)) continue;
     const text = normalizeComparableText(`${item.title ?? ""} ${item.supports ?? ""}`);
@@ -2373,22 +2663,37 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
     const compactSubject = subject.replace(/\s+/g, "");
     if (!text.includes(subject) && !compactText.includes(compactSubject)) continue;
     const definitive = /\b(cover star|cover stars|cover athlete|cover athletes|cover lineup|official cover|cover art|on the cover|portada oficial|atleta de portada|protagonista de portada)\b/.test(text)
+      || /\b(?:standard|ultimate(?: plus)?|deluxe) edition key art\b/.test(text)
       || /\b(announce\w*|reveal\w*|present\w*|welcome\w*|anunci\w*|revel\w*|present\w*)\b.{0,180}\b(cover|portada)\b/.test(text)
       || /\b(cover|portada)\b.{0,180}\b(show\w*|feature\w*|star\w*|present\w*|muestra|incluye)\b/.test(text);
     if (!definitive) continue;
     const continuationCue = /\b(?:more|additional|other|remaining|regional|select markets?|later|coming soon|to be (?:announced|revealed)|mas adelante|más adelante|otras? portadas?|regional)\b/.test(text);
-    const completeEditionScope = /\bstandard(?: edition)?\b/.test(text)
-      && /\bultimate edition\b/.test(text)
-      && /\bultimate plus(?: edition)?\b/.test(text)
-      && /\b(?:cover|portada)s?\b/.test(text);
+    const standardCoverScope = /\bstandard(?: edition)?\b.{0,100}\b(?:cover|portada)s?\b/.test(text)
+      || /\b(?:cover|portada)s?\b.{0,100}\bstandard(?: edition)?\b/.test(text);
+    const ultimatePlusCoverScope = /\bultimate plus(?: edition)?\b.{0,100}\b(?:cover|portada)s?\b/.test(text)
+      || /\b(?:cover|portada)s?\b.{0,100}\bultimate plus(?: edition)?\b/.test(text);
+    const ultimateCoverScope = /\bultimate edition\b.{0,100}\b(?:cover|portada)s?\b/.test(text)
+      || /\b(?:cover|portada)s?\b.{0,100}\bultimate edition\b/.test(text);
+    const completeEditionScope = standardCoverScope && ultimateCoverScope && ultimatePlusCoverScope;
+    if (/\bstandard edition\b/.test(text) || standardCoverScope) editionCoverage.add("standard");
+    if (/\bultimate plus edition\b/.test(text) || ultimatePlusCoverScope) editionCoverage.add("ultimate_plus");
+    if (/\bultimate edition\b/.test(text.replace(/\bultimate plus edition\b/g, " "))) editionCoverage.add("ultimate");
+    if (ultimateCoverScope) editionCoverage.add("ultimate");
+    if (/\bdeluxe edition\b/.test(text)) editionCoverage.add("deluxe");
+    for (const edition of Array.isArray(item.selection_editions) ? item.selection_editions : []) {
+      if (["standard", "ultimate", "ultimate_plus", "deluxe"].includes(edition)) editionCoverage.add(edition);
+    }
+    singularDesignation ||= !continuationCue && (
+      /\b(?:named|announced|revealed|presented)\b.{0,120}\b(?:official )?cover athlete\b/.test(text)
+      || /\b(?:official )?cover athlete\b.{0,120}\b(?:named|announced|revealed|presented)\b/.test(text)
+    );
     const exhaustive = !continuationCue && (
       /\b(?:complete|full|entire|all)\b.{0,90}\b(?:cover|portada|lineup|selection|seleccion)\b/.test(text)
       || /\b(?:cover|portada|lineup|selection|seleccion)\b.{0,90}\b(?:complete|full|entire|all)\b/.test(text)
       || completeEditionScope
     );
-    if (!exhaustive) continue;
-    const windows = [];
-    for (const term of ["cover", "portada", "welcome", "announc", "reveal"]) {
+    const windows = [text];
+    for (const term of ["cover", "portada", "key art", "welcome", "announc", "reveal"]) {
       let index = text.indexOf(term);
       while (index >= 0) {
         windows.push(text.slice(Math.max(0, index - 240), index + 280));
@@ -2398,11 +2703,10 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
     for (const candidate of subjectEntries) {
       if (windows.some((window) => (window.includes(subject) || window.replace(/\s+/g, "").includes(compactSubject)) && window.includes(candidate.name))) {
         matchedNames.set(candidate.name, candidate.name);
-        exhaustiveEvidence = true;
+        exhaustiveEvidence ||= exhaustive;
         if (!relevantEvidence.some((evidenceItem) => evidenceItem.url === item.url)) {
           relevantEvidence.push({
             ...item,
-            selection_complete: true,
             supported_reason_codes: [RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED],
             supported_fact_statuses: ["fully_resolved"],
           });
@@ -2410,6 +2714,9 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
       }
     }
   }
+  exhaustiveEvidence ||= (!multiEditionContract && singularDesignation)
+    || (["standard", "ultimate", "ultimate_plus"].every((edition) => editionCoverage.has(edition)))
+    || (["standard", "deluxe"].every((edition) => editionCoverage.has(edition)));
   if (matchedNames.size < 1 || !relevantEvidence.length || !exhaustiveEvidence) return null;
   const outcomeNames = [...matchedNames.values()].map((name) => name.split(" ").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" "));
   return {
@@ -2417,7 +2724,7 @@ export function detectOfficialCoverEventResolution(candidates = [], evidence = [
     outcome_names: outcomeNames,
     selection_complete: true,
     fact_status: "fully_resolved",
-    evidence: relevantEvidence.slice(0, 6),
+    evidence: relevantEvidence.slice(0, 6).map((item) => ({ ...item, selection_complete: true })),
   };
 }
 

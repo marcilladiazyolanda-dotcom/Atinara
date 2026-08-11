@@ -472,9 +472,16 @@ test("descubrimiento, preparación y persistencia usan la única puerta atómica
   assert.doesNotMatch(edge, /rpc\(environment, "apply_market_radar_prepare_verification"/);
   assert.match(edge, /buildAuthoritativeFactCheck\([\s\S]*?factuallyRevalidated,[\s\S]*?purpose,[\s\S]*?checkedAt,[\s\S]*?purpose === "prepare" \? attemptId : crypto\.randomUUID\(\)[\s\S]*?\)/);
   assert.ok(edge.indexOf("apply_market_radar_prepare_fact_verification_v1") < edge.indexOf("if (!applied?.ok)"));
-  assert.match(edge, /requires_factual_refresh: true/);
+  assert.match(edge, /requires_factual_refresh: requiresFactualRefresh/);
   assert.match(edge, /providerUnavailable \? RADAR_REASON_CODES\.VERIFICATION_REQUIRED/);
   assert.doesNotMatch(edge, /providerUnavailable \? RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
+  assert.match(edge, /const providerNotOpen = cleanText\(candidate\.verification_reason_code,[\s\S]{0,120}RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
+  assert.match(edge, /providerFactUrl[\s\S]{0,120}\(providerResult \|\| providerNotOpen\)/);
+  assert.match(edge, /supportedReasonCodes[\s\S]{0,300}RADAR_REASON_CODES\.PROVIDER_NOT_OPEN/);
+  assert.match(edge, /const canonicalProviderUrl = safePublicUrl\(candidate\.external_market_url\)[\s\S]{0,100}safePublicUrl\(candidate\.external_event_url\)/);
+  assert.match(edge, /return completeCanonicalEvent && canonicalProviderUrl \? "unresolved" : "unknown"/);
+  assert.doesNotMatch(edge, /canonicalProviderEvidence/);
+  assert.doesNotMatch(edge, /normalizeProviderResult\(candidate\.source_result\)[\s\S]{0,160}verification_status[\s\S]{0,80}rejected_resolved/);
   assert.match(edge, /\/rest\/v1\/rpc\/\$\{name\}/);
   assert.doesNotMatch(edge, /\/rest\/v1\/(?:external_market_candidates|market_radar_fact_checks)/);
   assert.doesNotMatch(edge, /\.from\(["'`](?:external_market_candidates|market_radar_fact_checks)["'`]\)/);
@@ -604,7 +611,7 @@ test("la interfaz nunca deja Preparar desde caché ni sin snapshot vigente", () 
   assert.match(admin, /payload\._radar_fact_check_id = state\.radarPrefill\.factCheckId/);
 });
 
-test("caché y lecturas directas no exponen propuestas sin discovery fact vigente", () => {
+test("la caché conserva solo expedientes discovery vigentes y nunca habilita Preparar", () => {
   assert.match(migration, /create or replace function private\.market_radar_discovery_fact_current_v2/);
   assert.match(migration, /fact\.candidate_id = candidate\.id/);
   assert.match(migration, /fact\.preparation_revision = candidate\.preparation_revision/);
@@ -622,20 +629,26 @@ test("caché y lecturas directas no exponen propuestas sin discovery fact vigent
     edge.indexOf("if (!requestedRefresh || cooldownRemaining > 0)"),
     edge.indexOf("const now = new Date().toISOString()"),
   );
-  assert.match(cachedBranch, /candidates: \[\]/);
-  assert.match(cachedBranch, /groups: \[\]/);
+  assert.doesNotMatch(cachedBranch, /candidates: \[\]/);
+  assert.doesNotMatch(cachedBranch, /groups: \[\]/);
   assert.match(cachedBranch, /cached: true/);
-  assert.match(cachedBranch, /requires_factual_refresh: true/);
-  assert.ok(cachedBranch.indexOf("...current") < cachedBranch.indexOf("candidates: []"));
+  assert.match(cachedBranch, /cached_authoritative: cachedAuthoritative/);
+  assert.match(cachedBranch, /requires_factual_refresh: requiresFactualRefresh/);
+  assert.match(cachedBranch, /const requiresFactualRefresh = !cachedAuthoritative/);
+  assert.match(cachedBranch, /current\.candidates\.length > 0 \|\| providerCoverageCurrent/);
   assert.match(edge, /loadRadarView\(environment, authorization, filters, now\)/);
   assert.match(edge, /Date\.parse\(cleanText\(candidate\.fact_checked_at, 100\)\) >= minimumCheckedAt/);
   assert.match(edge, /get_market_radar_candidate_for_revalidation_v1[\s\S]{0,180}undefined, true/);
 });
 
-test("la UI relabela caché como pendiente e inicia la revalidación sin clic", () => {
+test("la UI distingue caché vigente y serializa las cargas del Radar", () => {
   assert.match(admin, /candidate\?\.fact_snapshot_current === true/);
-  assert.match(admin, /state\.radar\.cached \|\| state\.radar\.requiresFactualRefresh/);
+  assert.match(admin, /cachedAuthoritative: false/);
+  assert.match(admin, /Última comprobación vigente/);
   assert.match(admin, /Pendiente de comprobación factual/);
+  assert.match(admin, /if \(state\.radarLoading\) return/);
+  assert.match(admin, /state\.radarLoading = true/);
+  assert.match(admin, /state\.radarLoading = false/);
   assert.match(admin, /function scheduleRadarFactualRefresh\(cooldownMs\)/);
   assert.match(admin, /loadRadar\(true, \{ automatic: true \}\)/);
   assert.match(admin, /scheduleRadarFactualRefresh\(state\.radar\.requiresFactualRefresh \? cooldownMs : 0\)/);

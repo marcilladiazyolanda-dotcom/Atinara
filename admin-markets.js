@@ -35,7 +35,9 @@
       errors: [],
       qualityNotices: [],
       selected: null,
+      expandedGroups: new Set(),
       cached: false,
+      cachedAuthoritative: false,
       requiresFactualRefresh: true,
       cooldownUntil: 0,
       provider: "all",
@@ -47,6 +49,7 @@
       rejectionReason: "current"
     },
     radarPrefill: null,
+    radarLoading: false,
     radarCooldownTimer: null,
     radarFactualRefreshTimer: null,
     observatory: {
@@ -317,6 +320,13 @@
     );
     wrapped.status = Number(error?.context?.status) || null;
     wrapped.retryable = payload?.retryable === true || wrapped.status === 429 || wrapped.status >= 500;
+    wrapped.attemptId = /^[0-9a-f-]{8,64}$/i.test(String(payload?.attempt_id || "")) ? String(payload.attempt_id) : "";
+    wrapped.phase = String(payload?.phase || "").slice(0, 80);
+    wrapped.statePreserved = payload?.state_preserved === true || payload?.authoritative_pointer_unchanged === true;
+    wrapped.authoritativeStateUpdated = payload?.authoritative_state_updated === true;
+    wrapped.candidate = payload?.candidate && typeof payload.candidate === "object" && !Array.isArray(payload.candidate)
+      ? payload.candidate
+      : null;
     wrapped.gate = payload?.gate && typeof payload.gate === "object" ? payload.gate : null;
     return wrapped;
   }
@@ -370,7 +380,13 @@
   }
 
   function expertErrorMessage(error, fallback) {
-    return helpers.getFriendlyError(error, "") || String(error?.message || "").trim() || fallback;
+    const base = helpers.getFriendlyError(error, "") || String(error?.message || "").trim() || fallback;
+    const details = [];
+    if (error?.phase === "factual_revalidation") details.push("Fase: comprobación factual autoritativa.");
+    if (error?.attemptId) details.push(`Intento: ${String(error.attemptId).slice(0, 36)}.`);
+    if (error?.statePreserved === true) details.push("El último estado autoritativo se conserva.");
+    if (error?.retryable === true) details.push("Puedes reintentarlo cuando finalice la degradación temporal.");
+    return [base, ...details].filter(Boolean).join(" ");
   }
 
   function feedbackComparableDraft(fields = {}) {
@@ -779,7 +795,7 @@
         <option value="recent"${state.radar.order === "recent" ? " selected" : ""}>Más recientes</option>
       </select></label>
       <div class="radar-filter-actions">
-        <button class="secondary-button" type="submit">Aplicar filtros</button>
+        <button class="secondary-button" type="submit"${state.busy || state.radarLoading ? " disabled" : ""}>Aplicar filtros</button>
         <button class="primary-button" type="button" data-radar-refresh${state.busy || cooldown ? " disabled" : ""}>${state.busy ? "Actualizando…" : cooldown ? `Disponible en ${cooldown} s` : "Actualizar fuentes"}</button>
       </div>
     </form>`;
@@ -810,7 +826,7 @@
     return `<li class="radar-event-option">
       <div class="radar-event-option-copy">
         <strong>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</strong>
-        <span>${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · ${escapeHtml(displayDate(candidate.source_close_at))}</span>
+        <span>Probabilidad del proveedor: ${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · Cierre: ${escapeHtml(displayDate(candidate.source_close_at))}</span>
       </div>
       <div class="radar-event-option-actions">
         <span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(status)}</span>
@@ -820,15 +836,22 @@
     </li>`;
   }
 
-  function radarGroupMarkup(group) {
-    const candidates = Array.isArray(group.top_candidates) && group.top_candidates.length
+  function radarGroupMarkup(group, groupIndex) {
+    const allCandidates = Array.isArray(group.candidates) ? group.candidates : [];
+    const highlightedCandidates = Array.isArray(group.top_candidates) && group.top_candidates.length
       ? group.top_candidates
-      : Array.isArray(group.candidates) ? group.candidates.slice(0, 3) : [];
-    const hiddenCount = Math.max(0, Number(group.child_count || group.candidates?.length || 0) - candidates.length);
-    const childCount = Number(group.child_count || group.candidates?.length || candidates.length);
+      : allCandidates.slice(0, 3);
+    const groupKey = String(group.event_group_key || `${group.provider || "external"}:${groupIndex}`);
+    const expanded = state.radar.expandedGroups.has(groupKey);
+    const candidates = expanded ? allCandidates : highlightedCandidates;
+    const hiddenCount = Math.max(0, Number(group.child_count || allCandidates.length || 0) - candidates.length);
+    const childCount = Number(group.child_count || allCandidates.length || candidates.length);
     const summary = childCount === 1
       ? "1 opción encontrada para este evento."
-      : `${childCount} opciones del mismo evento. Se muestran las tres más relevantes.`;
+      : expanded
+        ? `${childCount} opciones del mismo evento. Se muestran todas con su probabilidad individual.`
+        : `${childCount} opciones del mismo evento. Se muestran las tres más relevantes.`;
+    const optionsId = `radar-group-options-${groupIndex}`;
     return `<article class="radar-candidate-card radar-event-card" data-verification="${escapeHtml(group.verification_status)}" data-child-count="${escapeHtml(childCount)}">
       <header>
         <div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[group.provider] || group.provider)}</span><span>${escapeHtml(group.category || "Sin clasificar")}</span></div>
@@ -836,9 +859,9 @@
       </header>
       <h3>${escapeHtml(group.title || "Evento externo")}</h3>
       <p class="radar-event-summary">${escapeHtml(summary)}</p>
-      <ul class="radar-event-options">${candidates.map(radarChildMarkup).join("")}</ul>
-      ${hiddenCount ? `<p class="radar-event-more">${escapeHtml(hiddenCount)} opciones adicionales disponibles en el detalle de sus candidatas.</p>` : ""}
-      <footer>${externalLink(group.external_event_url, "Abrir evento original", "primary")}</footer>
+      <ul class="radar-event-options" id="${optionsId}">${candidates.map(radarChildMarkup).join("")}</ul>
+      ${hiddenCount ? `<p class="radar-event-more">Quedan ${escapeHtml(hiddenCount)} opciones por mostrar.</p>` : ""}
+      <footer>${childCount > highlightedCandidates.length ? `<button class="secondary-button" type="button" data-radar-toggle-group="${valueAttribute(groupKey)}" aria-expanded="${String(expanded)}" aria-controls="${optionsId}">${expanded ? "Mostrar solo las 3 destacadas" : `Ver las ${childCount} opciones`}</button>` : ""}${externalLink(group.external_event_url, "Abrir evento original", "primary")}</footer>
     </article>`;
   }
 
@@ -960,7 +983,7 @@
       ? `<details class="radar-quality-summary"><summary>Candidatas descartadas o en cuarentena · ${escapeHtml(state.radar.qualityNotices.reduce((total, notice) => total + (Number(notice.quarantined_count) || 0), 0))}</summary><ul>${state.radar.qualityNotices.map((notice) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[notice.provider] || notice.provider)}: ${escapeHtml(notice.message || "La fila no superó la validación de contenido.")}</li>`).join("")}</ul>${quarantinedRows.length ? `<h4>Causas consultables</h4><ul class="radar-quality-causes">${quarantinedRows.map((item) => `<li><strong>${escapeHtml(RADAR_PROVIDER_LABELS[item.provider] || item.provider)} · ${escapeHtml(item.external_id || "Identificador no disponible")}</strong><span>${escapeHtml(RADAR_QUARANTINE_DESCRIPTIONS[item.code] || RADAR_QUARANTINE_DESCRIPTIONS.RADAR_CANDIDATE_DATA_INVALID)}</span></li>`).join("")}</ul>` : ""}<p>Estos descartes no degradan la disponibilidad operativa del proveedor.</p></details>`
       : "";
     return `<section class="market-radar" aria-labelledby="market-radar-title">
-      <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.cached ? "Comprobación factual pendiente" : "Última consulta verificada"}</span></header>
+      <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.requiresFactualRefresh ? "Comprobación factual pendiente" : state.radar.cachedAuthoritative ? "Última comprobación vigente" : "Última consulta verificada"}</span></header>
       ${radarFiltersMarkup()}
       ${radarProviderMarkup()}
       ${errors}
@@ -1612,7 +1635,30 @@
     }, delayMs);
   }
 
+  function updateRadarCooldownButton() {
+    const button = root.querySelector("[data-radar-refresh]");
+    const seconds = Math.max(0, Math.ceil((state.radar.cooldownUntil - Date.now()) / 1000));
+    if (button) {
+      button.disabled = state.busy || seconds > 0;
+      button.textContent = state.busy ? "Actualizando…" : seconds > 0 ? `Disponible en ${seconds} s` : "Actualizar fuentes";
+    }
+    if (seconds === 0 && state.radarCooldownTimer !== null) {
+      window.clearInterval(state.radarCooldownTimer);
+      state.radarCooldownTimer = null;
+    }
+  }
+
+  function startRadarCooldownTicker() {
+    window.clearInterval(state.radarCooldownTimer);
+    state.radarCooldownTimer = null;
+    updateRadarCooldownButton();
+    if (state.radar.cooldownUntil <= Date.now()) return;
+    state.radarCooldownTimer = window.setInterval(updateRadarCooldownButton, 500);
+  }
+
   async function loadRadar(refresh = false, { automatic = false } = {}) {
+    if (state.radarLoading) return;
+    state.radarLoading = true;
     state.busy = true;
     if (refresh) setNotice(automatic
       ? "Atinara está repitiendo automáticamente la comprobación factual pendiente."
@@ -1624,6 +1670,10 @@
       state.radar.groups = Array.isArray(data.groups) && data.groups.length
         ? data.groups
         : fallbackRadarGroups(state.radar.candidates);
+      const currentGroupKeys = new Set(state.radar.groups.map((group) => String(group.event_group_key || "")));
+      state.radar.expandedGroups = new Set(
+        [...state.radar.expandedGroups].filter((groupKey) => currentGroupKeys.has(groupKey)),
+      );
       state.radar.rejected = data.rejected && typeof data.rejected === "object"
         ? data.rejected
         : { total: 0, counts: {}, items: [] };
@@ -1635,13 +1685,11 @@
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
       state.radar.qualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
       state.radar.cached = data.cached === true;
+      state.radar.cachedAuthoritative = data.cached_authoritative === true;
       state.radar.requiresFactualRefresh = data.requires_factual_refresh === true;
       const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
       state.radar.cooldownUntil = Date.now() + cooldownMs;
-      window.clearTimeout(state.radarCooldownTimer);
-      state.radarCooldownTimer = cooldownMs
-        ? window.setTimeout(() => renderWorkspace(), cooldownMs + 100)
-        : null;
+      startRadarCooldownTicker();
       scheduleRadarFactualRefresh(state.radar.requiresFactualRefresh ? cooldownMs : 0);
       state.radar.selected = null;
       const reconciledResults = Math.max(0, Number(data.reconciled_provider_results) || 0);
@@ -1653,12 +1701,15 @@
         : state.radar.qualityNotices.length
           ? "Radar actualizado. Algunas candidatas quedaron descartadas o en cuarentena sin degradar a sus proveedores."
         : data.cached
-          ? "La caché privada queda bloqueada como propuesta hasta que termine la actualización factual automática."
+          ? state.radar.cachedAuthoritative
+            ? "Radar cargado desde el último expediente factual vigente. Actualiza las fuentes antes de preparar una candidata."
+            : "No existe todavía un expediente factual vigente. Atinara intentará recuperarlo cuando el cooldown lo permita."
           : "Radar actualizado sin crear ni modificar ningún mercado.") + reconciliationCopy;
       setNotice(radarNotice, data.partial ? "warning" : "success");
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo cargar el Radar. La creación manual sigue disponible."), "error");
     } finally {
+      state.radarLoading = false;
       state.busy = false;
       renderWorkspace();
     }
@@ -1751,12 +1802,7 @@
     renderWorkspace();
     try {
       await invokeRadar("dismiss", { candidate_id: candidateId });
-      state.radar.candidates = state.radar.candidates.filter((candidate) => candidate.id !== candidateId);
-      state.radar.groups = state.radar.groups.map((group) => {
-        const candidates = Array.isArray(group.candidates) ? group.candidates.filter((candidate) => candidate.id !== candidateId) : [];
-        const topCandidates = Array.isArray(group.top_candidates) ? group.top_candidates.filter((candidate) => candidate.id !== candidateId) : [];
-        return { ...group, candidates, top_candidates: topCandidates, child_count: candidates.length };
-      }).filter((group) => group.candidates.length);
+      removeVisibleRadarCandidate(candidateId);
       if (state.radar.selected?.id === candidateId) state.radar.selected = null;
       setNotice("Candidata descartada y registrada en la trazabilidad privada.", "success");
     } catch (error) {
@@ -1765,6 +1811,26 @@
       state.busy = false;
       renderWorkspace();
     }
+  }
+
+  function removeVisibleRadarCandidate(candidateId) {
+    state.radar.candidates = state.radar.candidates.filter((candidate) => candidate.id !== candidateId);
+    state.radar.groups = state.radar.groups.map((group) => {
+      const candidates = Array.isArray(group.candidates) ? group.candidates.filter((candidate) => candidate.id !== candidateId) : [];
+      const topCandidates = Array.isArray(group.top_candidates) ? group.top_candidates.filter((candidate) => candidate.id !== candidateId) : [];
+      return { ...group, candidates, top_candidates: topCandidates, child_count: candidates.length };
+    }).filter((group) => group.candidates.length);
+  }
+
+  function replaceVisibleRadarCandidate(candidate) {
+    if (!candidate?.id) return;
+    const replace = (item) => item?.id === candidate.id ? { ...item, ...candidate } : item;
+    state.radar.candidates = state.radar.candidates.map(replace);
+    state.radar.groups = state.radar.groups.map((group) => ({
+      ...group,
+      candidates: Array.isArray(group.candidates) ? group.candidates.map(replace) : [],
+      top_candidates: Array.isArray(group.top_candidates) ? group.top_candidates.map(replace) : [],
+    }));
   }
 
   async function loadObservatory({ refresh = false } = {}) {
@@ -2088,7 +2154,26 @@
       });
       setNotice("Comprobación factual y dictamen actualizados. La puerta mantiene cualquier bloqueo terminal y permite continuar solo si existe una transición válida.", "success");
     } catch (error) {
-      setNotice(expertErrorMessage(error, "No se pudo actualizar el expediente factual. El último estado autoritativo se conserva."), "error");
+      if (error?.authoritativeStateUpdated === true && error?.candidate?.id === candidateId) {
+        const terminal = String(error.candidate.verification_status || "").startsWith("rejected_")
+          || error.candidate.state === "rejected"
+          || error.candidate.fact_status === "fully_resolved";
+        if (terminal) removeVisibleRadarCandidate(candidateId);
+        else replaceVisibleRadarCandidate(error.candidate);
+        state.radar.selected = {
+          ...(state.radar.selected || {}),
+          ...error.candidate,
+          expert_analysis: null,
+        };
+        setNotice(expertErrorMessage(
+          error,
+          terminal
+            ? "La comprobación factual terminó con un bloqueo autoritativo. La candidata ya no aparece entre las propuestas utilizables."
+            : "La comprobación factual terminó sin evidencia primaria suficiente. La candidata sigue visible, bloqueada y sin borrador."
+        ), "warning");
+      } else {
+        setNotice(expertErrorMessage(error, "No se pudo actualizar el expediente factual. El último estado autoritativo se conserva."), "error");
+      }
     } finally {
       state.busy = false;
       renderWorkspace();
@@ -2228,6 +2313,15 @@
     if (target.dataset.confirmReview !== undefined) confirmReview();
     if (target.dataset.publishDraft !== undefined) publishDraft();
     if (target.dataset.radarRefresh !== undefined) loadRadar(true);
+    if (target.dataset.radarToggleGroup) {
+      const groupKey = target.dataset.radarToggleGroup;
+      if (state.radar.expandedGroups.has(groupKey)) state.radar.expandedGroups.delete(groupKey);
+      else state.radar.expandedGroups.add(groupKey);
+      renderWorkspace();
+      const toggle = [...root.querySelectorAll("[data-radar-toggle-group]")]
+        .find((button) => button.dataset.radarToggleGroup === groupKey);
+      toggle?.focus({ preventScroll: true });
+    }
     if (target.dataset.radarRejectionFilter) {
       state.radar.rejectionReason = target.dataset.radarRejectionFilter;
       renderWorkspace();

@@ -8,8 +8,11 @@ const { test, before } = require("node:test");
 const root = join(__dirname, "..");
 const corePath = join(root, "supabase/functions/_shared/market-radar.mjs");
 const edge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
+const marketExpertEdge = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const baseMigration = readFileSync(join(root, "supabase/migrations/20260804194933_add_market_radar.sql"), "utf8");
 const v2Migration = readFileSync(join(root, "supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql"), "utf8");
+const visibilityMigration = readFileSync(join(root, "supabase/migrations/20260811123656_harden_radar_visibility_and_presentation_v5.sql"), "utf8");
+const revalidationMigration = readFileSync(join(root, "supabase/migrations/20260811155800_allow_needs_review_radar_revalidation_v6.sql"), "utf8");
 const adminUi = readFileSync(join(root, "admin-markets.js"), "utf8");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
 const styles = readFileSync(join(root, "styles.css"), "utf8");
@@ -269,12 +272,212 @@ test("Kalshi bloquea un mercado cuyo cierre ya ha vencido aunque siga active", (
   assert.ok(candidate.hard_reject_reasons.includes("PROVIDER_NOT_OPEN"));
 });
 
-test("una tarjeta agrupa un evento padre y muestra solo las tres opciones prioritarias", () => {
+test("un cierre del proveedor se persiste como no abierto, nunca como hecho desconocido", () => {
+  const closedEvent = polyEvent({
+    markets: [polyMarket(
+      "m-closed",
+      "will-example-player-be-on-the-cover-of-ea-sports-fc-27",
+      "Will Example Player be on the cover of EA Sports FC 27?",
+      { active: false, closed: true, result: null },
+    )],
+  });
+  const candidate = radar.adaptPolymarketResponse({ events: [closedEvent] }, {
+    now,
+    canonicalUrlVerified: true,
+  })[0];
+  assert.ok(candidate);
+  const decision = radar.evaluateProviderEligibility(candidate, now);
+  assert.equal(decision.reason_code, "PROVIDER_NOT_OPEN");
+  const rejected = radar.applyEligibilityDecision(candidate, {
+    ...decision,
+    fact_status: "unresolved",
+  }, now);
+  assert.equal(rejected.verification_status, "rejected_ineligible");
+  assert.equal(rejected.verification_reason_code, "PROVIDER_NOT_OPEN");
+  assert.equal(rejected.fact_status, "unresolved");
+  assert.equal(rejected.verification_evidence[0].source_type, "provider");
+  assert.deepEqual(rejected.verification_evidence[0].supported_fact_statuses, ["unresolved"]);
+});
+
+test("una tarjeta conserva tres destacadas y todas las opciones del evento padre", () => {
   const candidates = radar.scoreCandidates(radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true }), [], now);
   const groups = radar.groupCandidates(candidates);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].child_count, 4);
   assert.equal(groups[0].top_candidates.length, 3);
+  assert.equal(groups[0].candidates.length, 4);
+});
+
+test("Kalshi mantiene pregunta y probabilidad ligadas en cada umbral aunque el título se repita", () => {
+  const event = {
+    event_ticker: "KXMC-EXAMPLE",
+    series_ticker: "KXMC",
+    title: "Example Game: Metacritic score",
+    category: "Entertainment",
+    external_event_url: "https://kalshi.com/markets/kxmc/example-game/kxmc-example",
+    canonical_url_verified: true,
+    markets: [
+      {
+        ticker: "KXMC-EXAMPLE-90",
+        title: "Example Game Metacritic score?",
+        yes_sub_title: "Above 90",
+        no_sub_title: "Above 90",
+        floor_strike: 90,
+        strike_type: "greater",
+        market_type: "binary",
+        status: "active",
+        yes_bid_dollars: "0.9500",
+        yes_ask_dollars: "1.0000",
+        close_time: "2026-09-01T12:00:00Z",
+        rules_primary: "If the Metascore for Example Game is Above 90 seven days after release at 10:00AM ET, then the market resolves to Yes.",
+        external_market_url: "https://kalshi.com/markets/kxmc/example-game/kxmc-example",
+        canonical_url_verified: true,
+      },
+      {
+        ticker: "KXMC-EXAMPLE-95",
+        title: "Example Game Metacritic score?",
+        yes_sub_title: "Above 95",
+        no_sub_title: "Above 95",
+        floor_strike: 95,
+        strike_type: "greater",
+        market_type: "binary",
+        status: "active",
+        yes_bid_dollars: "0.0000",
+        yes_ask_dollars: "0.0700",
+        close_time: "2026-09-01T12:00:00Z",
+        rules_primary: "If the Metascore for Example Game is Above 95 seven days after release at 10:00AM ET, then the market resolves to Yes.",
+        external_market_url: "https://kalshi.com/markets/kxmc/example-game/kxmc-example",
+        canonical_url_verified: true,
+      },
+    ],
+  };
+  const candidates = radar.adaptKalshiResponse({ events: [event] }, { now })
+    .map((candidate) => radar.normalizeRadarCandidatePresentation(candidate));
+  assert.deepEqual(candidates.map((candidate) => candidate.atinara_question), [
+    "¿Tendrá Example Game una puntuación en Metacritic superior a 90 7 días después de su lanzamiento?",
+    "¿Tendrá Example Game una puntuación en Metacritic superior a 95 7 días después de su lanzamiento?",
+  ]);
+  assert.deepEqual(candidates.map((candidate) => Number(candidate.source_probability_yes.toFixed(1))), [97.5, 3.5]);
+  assert.deepEqual(candidates.map((candidate) => candidate.provider_payload.floor_strike), [90, 95]);
+});
+
+test("la presentación de portada usa una estructura española común sin alterar la opción", () => {
+  const candidates = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true })
+    .map((candidate) => radar.normalizeRadarCandidatePresentation(candidate));
+  assert.equal(candidates[0].atinara_question, "¿Aparecerá Khvicha Kvaratskhelia en la portada de EA Sports FC 27?");
+  assert.equal(candidates[1].atinara_question, "¿Aparecerá Manuel Neuer en la portada de EA Sports FC 27?");
+  assert.equal(candidates[0].source_probability_yes, 37.9);
+});
+
+test("el extractor factual conserva alt y metadatos oficiales pero elimina scripts", () => {
+  const text = radar.extractOfficialHtmlText(`
+    <meta property="og:description" content="Official cover selection">
+    <ea-hero image-tooltip="EA SPORTS Example 27 Standard Edition cover art featuring Ada Player"></ea-hero>
+    <img alt="EA SPORTS Example 27 Ultimate Edition cover art featuring Ada Player">
+    <script>ignore secret-token and fake outcome</script>
+    <p>Published by the official studio.</p>
+  `);
+  assert.match(text, /Official cover selection/);
+  assert.match(text, /Standard Edition cover art featuring Ada Player/);
+  assert.match(text, /Ultimate Edition cover art featuring Ada Player/);
+  assert.match(text, /Published by the official studio/);
+  assert.doesNotMatch(text, /secret-token|fake outcome/);
+});
+
+test("el extractor factual conserva textos alternativos estructurados de ediciones", () => {
+  const text = radar.extractOfficialHtmlText(`
+    <script type="application/json">{
+      "gameEditions":[
+        {"editionName":"Ultimate Plus Edition","packArt":{"alternateText":"Example Game 27 Ultimate Plus Edition key art featuring Ada Player and Bea Player"}},
+        {"editionName":"Ultimate Edition","packArt":{"alternateText":"Example Game 27 Ultimate Edition key art featuring Ada Player"}},
+        {"editionName":"Standard Edition","packArt":{"alternateText":"Example Game 27 cover art featuring Ada Player"}}
+      ],
+      "accessToken":"never-copy-this-value"
+    }</script>
+  `);
+  assert.match(text, /Ultimate Plus Edition key art featuring Ada Player and Bea Player/);
+  assert.match(text, /Ultimate Edition key art featuring Ada Player/);
+  assert.match(text, /Standard Edition: Example Game 27 cover art featuring Ada Player/);
+  assert.doesNotMatch(text, /never-copy-this-value|accessToken/);
+  const page = { url: "https://official.example/games/example-game-27/buy", title: "Example Game 27", content: text };
+  const segments = radar.officialEvidenceSegmentsForSubject(page, "Example Game 27", "selection");
+  const selectionEditions = radar.officialSelectionEditionCoverage(page, segments, "Example Game 27");
+  assert.deepEqual(new Set(selectionEditions), new Set([
+    "standard", "ultimate", "ultimate_plus",
+  ]));
+  const names = ["Ada Player", "Bea Player", "Cora Player"];
+  const candidates = names.map((name, index) => ({
+    provider: "polymarket",
+    external_id: `option-${index}`,
+    source_question: `Will ${name} be on the cover of Example Game 27?`,
+    source_resolution_rules: "Resolves Yes for any Standard, Ultimate, or Ultimate Plus edition cover.",
+    provider_payload: {
+      canonical_event_children_complete: true,
+      canonical_event_children_total: names.length,
+      canonical_event_children: names.map((child, childIndex) => ({
+        market_id: `child-${childIndex}`,
+        question: `Will ${child} be on the cover of Example Game 27?`,
+      })),
+    },
+  }));
+  const resolution = radar.detectOfficialCoverEventResolution(candidates, [verifiedOfficialEvidence({
+    url: "https://official.example/games/example-game-27/buy",
+    supports: segments.join(" ").slice(0, 500),
+    selection_editions: selectionEditions,
+  })]);
+  assert.equal(resolution?.selection_complete, true);
+  assert.deepEqual(new Set(resolution?.outcome_names), new Set(["Ada Player", "Bea Player"]));
+});
+
+test("la investigación sigue solo enlaces editoriales acotados del mismo host oficial", () => {
+  const urls = radar.extractOfficialRelatedUrls(`
+    <a href="/games/example/cover-discovery-hub">Official cover reveal</a>
+    <a href="/games/example/news/editions-and-release-dates">Editions and release dates</a>
+    <a href="/games/example/buy">Buy editions</a>
+    <a href="https://docs.ea.com/games/example/cover">Otro subdominio</a>
+    <a href="https://ea.com@evil.example/cover">Host engañoso</a>
+    <a href="/assets/cover.png">Imagen</a>
+    <a href="#cover">Fragmento</a>
+  `, "https://www.ea.com/games/example", ["ea.com"], 3);
+  assert.deepEqual(new Set(urls), new Set([
+    "https://www.ea.com/games/example/cover-discovery-hub",
+    "https://www.ea.com/games/example/news/editions-and-release-dates",
+    "https://www.ea.com/games/example/buy",
+  ]));
+});
+
+test("la evidencia métrica exige la ficha canónica del mismo producto", () => {
+  const wrong = radar.officialEvidenceSegmentsForSubject({
+    url: "https://www.metacritic.com/movie/the-score/credits/",
+    title: "The Score credits - Metacritic",
+    content: "The Score credits - Metacritic. Big Walk. Metacritic score.",
+  }, "Big Walk", "metric");
+  const right = radar.officialEvidenceSegmentsForSubject({
+    url: "https://www.metacritic.com/game/big-walk/",
+    title: "Big Walk Reviews - Metacritic",
+    content: "Big Walk has not been released yet.",
+  }, "Big Walk", "metric");
+  assert.deepEqual(wrong, []);
+  assert.ok(right.some((segment) => /Big Walk/.test(segment)));
+});
+
+test("una navegación de otra edición no liga su contenido de portada a FC27", () => {
+  const segments = radar.officialEvidenceSegmentsForSubject({
+    url: "https://news.ea.com/fc-26-cover-stars",
+    title: "EA SPORTS FC 26 cover stars",
+    content: "Jude Bellingham and Jamal Musiala are the FC 26 cover stars. EA SPORTS FC 27 features.",
+  }, "EA SPORTS FC 27", "selection");
+  assert.deepEqual(segments, []);
+});
+
+test("el contexto oficial próximo asocia la portada con su edición sin hardcode de título", () => {
+  const page = {
+    url: "https://www.ea.com/games/example/membership",
+    title: "Official membership page",
+    content: "Example Game 27 cover art showing Ada Player. Game Trial. Members get a trial of the Standard Edition.",
+  };
+  const segments = radar.officialEvidenceSegmentsForSubject(page, "Example Game 27", "selection");
+  assert.deepEqual(radar.officialSelectionEditionCoverage(page, segments, "Example Game 27"), ["standard"]);
 });
 
 test("la puntuación no puede convertir un rechazo factual en candidato apto", () => {
@@ -301,6 +504,17 @@ test("una verificación inconclusa permanece en needs_review y nunca se conviert
   assert.equal(reviewed.verification_reason_code, "VERIFICATION_REQUIRED");
   assert.ok(!reviewed.hard_reject_reasons.includes("VERIFICATION_REQUIRED"));
   assert.equal(reviewed.verification_expires_at, "2026-08-06T12:05:00.000Z");
+});
+
+test("la decisión conserva la cobertura estructurada de ediciones en su evidencia", () => {
+  const candidate = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true })[0];
+  const reviewed = radar.applyEligibilityDecision(candidate, {
+    eligible: false,
+    conclusive: false,
+    reason_code: "VERIFICATION_REQUIRED",
+    evidence: [verifiedOfficialEvidence({ selection_editions: ["standard", "ultimate", "ultimate_plus", "unknown"] })],
+  }, now);
+  assert.deepEqual(reviewed.verification_evidence[0].selection_editions, ["standard", "ultimate", "ultimate_plus"]);
 });
 
 test("una afirmación terminal del modelo no prevalece sobre el cierre probado del proveedor", () => {
@@ -380,6 +594,77 @@ test("FC27 conserva ganadores cerrados, reconoce varias portadas oficiales y blo
   assert.ok(rejected.every((candidate) => candidate.verification_status === "rejected_resolved"));
   assert.ok(rejected.every((candidate) => candidate.fact_status === "fully_resolved"));
   assert.ok(rejected.every((candidate) => candidate.state === "rejected"));
+});
+
+test("una selección de portada puede cerrarse con cobertura oficial acumulada de todas sus ediciones", () => {
+  const allCandidates = radar.adaptPolymarketResponse({ events: [resolvedFc27CoverEvent()] }, { now, canonicalUrlVerified: true });
+  const openCandidates = allCandidates.filter((candidate) => candidate.source_status === "open");
+  const evidence = [
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/standard",
+      title: "Example 27 Standard Edition",
+      supports: "EA SPORTS FC 27 Standard Edition cover art featuring Kylian Mbappe.",
+    }),
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/ultimate",
+      title: "Example 27 Ultimate Edition",
+      supports: "EA SPORTS FC 27 Ultimate Edition cover art featuring Kylian Mbappe.",
+    }),
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/ultimate-plus",
+      title: "Example 27 Ultimate Plus Edition",
+      supports: "EA SPORTS FC 27 Ultimate Plus Edition key art featuring Kylian Mbappe and Jude Bellingham.",
+    }),
+  ];
+  const resolution = radar.detectOfficialCoverEventResolution(openCandidates, evidence);
+  assert.equal(resolution?.selection_complete, true);
+  assert.deepEqual(new Set(resolution?.outcome_names), new Set(["Kylian Mbappe", "Jude Bellingham"]));
+  assert.ok(resolution.evidence.every((item) => item.selection_complete === true));
+});
+
+test("un único atleta anunciado no cierra un contrato que admite varias ediciones", () => {
+  const candidates = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true });
+  const evidence = [verifiedOfficialEvidence({
+    url: "https://www.ea.com/games/example/cover",
+    title: "EA SPORTS Example 27 official cover athlete",
+    supports: "EA SPORTS FC 27 official cover athlete named Kylian Mbappe.",
+  })];
+  assert.equal(radar.detectOfficialCoverEventResolution(candidates, evidence), null);
+});
+
+test("la cobertura estructurada liga una portada sin etiqueta a su edición cercana", () => {
+  const allCandidates = radar.adaptPolymarketResponse({ events: [resolvedFc27CoverEvent()] }, { now, canonicalUrlVerified: true });
+  const openCandidates = allCandidates.filter((candidate) => candidate.source_status === "open");
+  const evidence = [
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/membership",
+      supports: "EA SPORTS FC 27 cover art showing Kylian Mbappe.",
+      selection_editions: ["standard"],
+    }),
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/coming-soon",
+      supports: "EA SPORTS FC 27 Ultimate Edition cover art featuring Kylian Mbappe.",
+      selection_editions: ["ultimate"],
+    }),
+    verifiedOfficialEvidence({
+      url: "https://www.ea.com/games/example/features",
+      supports: "EA SPORTS FC 27 Ultimate Plus Edition key art featuring Kylian Mbappe and Jude Bellingham.",
+      selection_editions: ["ultimate_plus"],
+    }),
+  ];
+  const resolution = radar.detectOfficialCoverEventResolution(openCandidates, evidence);
+  assert.equal(resolution?.selection_complete, true);
+  assert.deepEqual(new Set(resolution?.outcome_names), new Set(["Kylian Mbappe", "Jude Bellingham"]));
+});
+
+test("una fuente oficial de otra edición nunca resuelve la identidad actual", () => {
+  const candidates = radar.adaptPolymarketResponse({ events: [polyEvent()] }, { now, canonicalUrlVerified: true });
+  const evidence = [verifiedOfficialEvidence({
+    url: "https://news.ea.com/press-releases/example-fc-26",
+    title: "EA SPORTS FC 26 cover stars",
+    supports: "EA announced the complete EA SPORTS FC 26 Standard and Ultimate Edition cover lineup.",
+  })];
+  assert.equal(radar.detectOfficialCoverEventResolution(candidates, evidence), null);
 });
 
 test("fixture Fable GOTY 2026 se rechaza si el lanzamiento es posterior al periodo", () => {
@@ -681,7 +966,8 @@ test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estr
   assert.match(edge, /childQuestions/);
   assert.match(edge, /const factTerms =/);
   assert.match(edge, /official announced revealed selected winner result complete lineup/);
-  assert.match(edge, /cleanText\(`\$\{factTerms\} \$\{group\.title\} \$\{childQuestions\}`, 1_200\)/);
+  assert.match(edge, /selectionSubject[\s\S]*official \$\{selectionSubject\} cover reveal cover stars standard ultimate deluxe complete lineup/);
+  assert.match(edge, /:\s*`\$\{factTerms\} \$\{group\.title\} \$\{childQuestions\}`/);
   assert.doesNotMatch(researchSource, /for \(const candidate of candidates\)/);
 });
 
@@ -756,12 +1042,30 @@ test("la migración v2 añade verificación, agrupación y URLs separadas", () =
   assert.match(v2Migration, /else 'rejected'/);
 });
 
+test("la revalidación factual admite needs_review sin abrir una puerta de publicación", () => {
+  assert.match(revalidationMigration, /candidate\.state not in \('available', 'needs_review', 'prepared'\)/);
+  assert.match(revalidationMigration, /private\.insert_market_radar_fact_check_v2/);
+  assert.match(revalidationMigration, /expected_preparation_revision_input/);
+  assert.match(revalidationMigration, /candidate\.preparation_revision <> expected_preparation_revision_input/);
+  assert.match(revalidationMigration, /when final_verification_status = 'verified_open' then 'available'/);
+  assert.match(revalidationMigration, /else 'rejected'/);
+  assert.doesNotMatch(revalidationMigration, /publish_market|insert into public\.markets|predictions|karma|prestige|market_maker_state/i);
+});
+
 test("las RPC privadas conservan permisos mínimos y autorización administrativa", () => {
   assert.match(baseMigration, /revoke all on table private\.external_market_candidates from public, anon, authenticated/);
   assert.match(v2Migration, /private\.require_current_admin\(\)/);
   assert.match(v2Migration, /grant execute on function public\.upsert_market_radar_batch_v2[\s\S]+to service_role/);
   assert.match(v2Migration, /grant execute on function public\.list_market_radar_candidates_v2[\s\S]+to authenticated/);
   assert.doesNotMatch(v2Migration, /grant all on table private\.external_market_candidates to service_role/);
+});
+
+test("la lectura Radar excluye por identidad exacta mercados y borradores activos", () => {
+  assert.match(visibilityMigration, /candidate\.family_version = 'atinara-market-family-v4'/);
+  assert.match(visibilityMigration, /not exists \([\s\S]*from public\.markets market_alias[\s\S]*market_alias\.family_child_key = candidate\.family_child_key/);
+  assert.match(visibilityMigration, /not exists \([\s\S]*from private\.market_drafts draft_alias[\s\S]*draft_alias\.radar_candidate_id = candidate\.id/);
+  assert.match(visibilityMigration, /draft_alias\.workflow_status not in \('cancelled', 'annulled'\)/);
+  assert.doesNotMatch(visibilityMigration, /predictions|market_maker_state|market_price_history|profiles/i);
 });
 
 test("ninguna RPC del Radar publica, resuelve o crea participaciones", () => {
@@ -773,6 +1077,10 @@ test("ninguna RPC del Radar publica, resuelve o crea participaciones", () => {
 test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => {
   assert.match(adminUi, /radarGroupMarkup/);
   assert.match(adminUi, /top_candidates/);
+  assert.match(adminUi, /data-radar-toggle-group/);
+  assert.match(adminUi, /expandedGroups: new Set\(\)/);
+  assert.match(adminUi, /setInterval\(updateRadarCooldownButton, 500\)/);
+  assert.match(adminUi, /Probabilidad del proveedor:/);
   assert.match(adminUi, /Abrir evento original/);
   assert.match(adminUi, /Abrir mercado original/);
   assert.match(adminUi, /Abrir fuente de resolución/);
@@ -796,9 +1104,45 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260811-expert-cycle3/);
+  assert.match(adminHtml, /v=20260811-radar-hardening1/);
+  assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
+});
+
+test("una candidata needs_review admite revalidación factual y la acción conserva español UTF-8", () => {
+  assert.match(edge, /\["available", "needs_review", "prepared"\]\.includes\(state\)/);
+  assert.match(edge, /phase: "factual_revalidation"/);
+  assert.match(edge, /state_preserved: true/);
+  assert.match(edge, /class RadarRevalidationOutcomeError/);
+  assert.match(edge, /authoritative_state_updated: true/);
+  assert.match(adminUi, /wrapped\.authoritativeStateUpdated = payload\?\.authoritative_state_updated === true/);
+  assert.match(adminUi, /removeVisibleRadarCandidate\(candidateId\)/);
+  assert.match(adminUi, /function replaceVisibleRadarCandidate\(candidate\)/);
+  assert.match(adminUi, /if \(terminal\) removeVisibleRadarCandidate\(candidateId\)/);
+  assert.match(adminUi, /else replaceVisibleRadarCandidate\(error\.candidate\)/);
+  assert.match(adminUi, /La candidata sigue visible, bloqueada y sin borrador/);
+  assert.match(marketExpertEdge, /Actualizar comprobación factual y reanalizar/);
+  assert.doesNotMatch(marketExpertEdge, /Actualizar comprobaciÃ³n factual/);
+});
+
+test("la evidencia oficial enlazada completa portadas sin depender de un resultado exacto del buscador", () => {
+  assert.match(edge, /extractOfficialRelatedUrls/);
+  assert.match(edge, /MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP = 3/);
+  assert.match(edge, /const relatedTargets:/);
+  assert.match(edge, /page\.relatedUrls/);
+  assert.match(edge, /fetchVerifiedOfficialPage\(target\.url, authoritativeDomains, relatedDeadlineAt\)/);
+  assert.match(edge, /MAX_SELECTION_FOLLOWUP_GROUPS = 4/);
+  assert.match(edge, /const incompleteSelectionGroups = groups\.filter/);
+  assert.match(edge, /const incompleteMetricGroups = groups\.filter/);
+  assert.match(edge, /official "\$\{subject\}" release date launch date/);
+  assert.match(edge, /item\.supported_contract_kinds\.includes\("review"\)/);
+  assert.match(edge, /const deterministicOpen = !deterministic/);
+  assert.match(edge, /isDeterministicUnresolvedEvidence\(item, adapted, now\)/);
+  assert.match(edge, /!deterministicOpen && !aiConclusionPresent/);
+  assert.match(edge, /include_raw_content: false/);
+  assert.match(edge, /fetchVerifiedOfficialPage\(target\.url, authoritativeDomains, followupDeadlineAt\)/);
+  assert.doesNotMatch(edge, /EA Sports FC 27|Big Walk|Marvel Tokon/i);
 });
 
 test("el frontend nunca consulta directamente proveedores ni introduce secretos", () => {

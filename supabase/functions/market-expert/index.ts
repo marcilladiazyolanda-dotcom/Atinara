@@ -1316,7 +1316,7 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
     ].includes(code)) ? {
       action: "refresh_factual_dossier",
       retryable: true,
-      label: "Actualizar comprobaciÃ³n factual y reanalizar",
+      label: "Actualizar comprobación factual y reanalizar",
     } : null,
     human_confirmation_required: true,
   };

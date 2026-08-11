@@ -55,6 +55,8 @@
     ["PROVIDER_NOT_OPEN", "El mercado de origen ya no está abierto o no conserva la opción verificada."],
     ["PROVIDER_REVALIDATION_FAILED", "No se pudo confirmar ahora el estado del mercado de origen. No se ha preparado ningún borrador."],
     ["RADAR_REVALIDATION_REQUIRED", "La comprobación factual no pudo concluir. La candidata permanece bloqueada y no se ha preparado ningún borrador."],
+    ["CANDIDATE_NOT_REVALIDATABLE", "Esta candidata ya no admite una comprobación factual porque fue descartada, caducó o alcanzó un estado terminal."],
+    ["RADAR_FACT_EVIDENCE_REQUIRED", "No existe todavía evidencia primaria vigente suficiente para demostrar que el contrato sigue abierto."],
     ["RADAR_CANDIDATE_RESOLVED", "El resultado ya es público y la candidata no puede prepararse."],
     ["RADAR_CANDIDATE_UNANNOUNCED", "La candidata depende de un producto todavía no anunciado para ese resultado."],
     ["RADAR_CANDIDATE_INELIGIBLE", "La candidata no es temporal o factualmente compatible con el contrato."],
@@ -99,7 +101,10 @@
       .map((value) => formatStructuredText(value))
       .filter(Boolean).join(" ");
     const match = FRIENDLY_ERRORS.find(([code]) => source.includes(code));
-    return match ? match[1] : formatStructuredText(fallback, "No se pudo completar la operación.");
+    if (match) return match[1];
+    const formattedFallback = formatStructuredText(fallback);
+    if (formattedFallback) return formattedFallback;
+    return fallback === "" ? "" : "No se pudo completar la operación.";
   }
 
   function normalizeUrl(value) {

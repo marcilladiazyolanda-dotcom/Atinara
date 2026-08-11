@@ -1005,13 +1005,93 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
   falsearse como ejecutado desde una sesión inexistente. La publicación real
   continúa exigiendo revisión v3 efectiva y confirmación humana.
 
-Siguiente paso operativo: sincronizar este árbol mediante la subida manual
-revisada de Yol; el backend v28 ya está activo y no se deben repetir la migración
-ni el despliegue. En la sesión administrativa autenticada, recargar con
-`Ctrl+F5`, ejecutar un ciclo explícito del Radar, analizar una candidata
-bloqueada, preparar una apta y aplicar el Corrector al borrador privado de
-Marvel. Confirmar o publicar seguirá siendo una decisión humana separada. El
-mercado antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía
+### Endurecimiento productivo del Radar y recuperación factual (11 de agosto de 2026)
+
+- La intervención parte de `origin/main = 7dcf97e1ab1a74c2d6732d74e4df5eec7e361928`
+  en el worktree aislado `ATINARA-radar-hardening-20260811`; el repositorio de
+  Yol y sus cambios previos no se mezclaron ni descartaron.
+- El estado falso `Con incidencia` tenía tres causas distintas: los descartes
+  editoriales se sumaban al estado operativo del proveedor; el snapshot en
+  cooldown podía sustituir la última cobertura autoritativa por una lista vacía;
+  y los cierres normales de Polymarket/Kalshi se enviaban a cuarentena porque el
+  clasificador pedía `PROVIDER_NOT_OPEN` con `fact_status=unresolved`, pero la
+  aplicación final lo convertía de nuevo en `unknown`. Radar v44 conserva el
+  último resultado válido, separa descartes, cuarentenas y fallos técnicos y
+  persiste el cierre canónico como rechazo no abierto con evidencia del
+  proveedor, sin degradar toda la fuente.
+- La interfaz actualizada mantiene un único refresh en vuelo, desactiva acciones
+  incompatibles y recalcula el cooldown cada 500 ms hasta rehabilitar el botón.
+  Las tarjetas distinguen `Disponible`, `Disponible con descartes`, degradación
+  temporal y error técnico. Todas las opciones de un evento pueden desplegarse
+  o contraerse; las preguntas se normalizan a una estructura española común y
+  cada fila muestra la probabilidad exacta de su contrato de origen. La
+  extracción de strikes de Kalshi conserva cada umbral y URL propios, por lo que
+  ya no puede repetir dos veces la misma opción de Big Walk ni enlazarlas al
+  mismo contrato.
+- La defensa contra duplicados se ejecuta también en la RPC de lectura, dentro
+  del mismo snapshot: una identidad exacta ocupada por `public.markets` o por un
+  borrador no cancelado desaparece del Radar aunque exista una carrera posterior
+  a la clasificación. El smoke productivo terminó con cero solapamientos exactos
+  con mercados y cero con borradores activos.
+- El cierre factual ya no depende del estado abierto del proveedor ni de Gemini.
+  La investigación oficial acotada recorre fuentes primarias, extrae contenido
+  estructurado/hidratado y admite una prueba oficial de fecha futura como
+  apertura verificable, pero una evidencia terminal siempre prevalece. Para el
+  evento Polymarket `499343`, 23 hijos vigentes de FC27 quedaron
+  `rejected_resolved`, `fully_resolved` y `EVENT_ALREADY_RESOLVED`; ninguno es
+  visible. Las pruebas oficiales conservadas proceden de EA News y de las páginas
+  oficiales de ediciones/fechas de EA SPORTS FC 27. No existe ningún hardcode por
+  FC27, Marvel, título, proveedor o fecha.
+- La recuperación factual del Editor acepta ahora candidatas `needs_review`,
+  conserva el expediente anterior en fallos técnicos y devuelve errores de
+  dominio tipados. La candidata Marvel Metascore `> 85` se revalidó con la fuente
+  oficial de PlayStation, quedó `unresolved + verified_open` en el fact check
+  `3285` y produjo una propuesta aplicable sin confirmarla. El borrador privado
+  Marvel `> 95` permanece en versión 9, `review_approved`, con revisión efectiva
+  compatible y sin confirmación, programación, `market_id` ni publicación.
+- Producción registra las migraciones nuevas como
+  `20260811130002 · harden_radar_visibility_and_presentation_v5` y
+  `20260811133945 · allow_needs_review_radar_revalidation_v6`; corresponden a
+  los archivos locales `20260811123656_...v5.sql` y
+  `20260811155800_...v6.sql` y no deben repetirse. `market-radar` v44 está
+  `ACTIVE`, `verify_jwt=true`, SHA-256 de bundle
+  `8dccc9d0aae497fd219782739ea961e12c03d01b4dec8ed6adc1bc8f2ef48583`;
+  `market-expert` v18 está `ACTIVE`, `verify_jwt=true`, SHA-256
+  `06d551105b5d0c33127f96fd7c875d0c934a4d3005de614fe8d743fa8a5f4f50`.
+- El refresh final real dejó Polymarket `available` con 48 procesadas, Kalshi
+  `available` con 71, Gemini `available` con 112 e Ideas gaming/Tavily
+  `available` con 0; los cuatro registraron cero descartes técnicos, cero
+  cuarentenas y cero fallos. Dos muestras cerradas de Polymarket y Kalshi se
+  persistieron como `PROVIDER_NOT_OPEN`, `fact_status=unresolved` y evidencia
+  canónica del proveedor. Desde el comienzo de v44 no existe ninguna cuarentena.
+- La validación local final pasa 337 pruebas, sintaxis JavaScript, TypeScript y
+  `git diff --check`. Tras el último refresh siguen exactamente: 15 mercados
+  (`Abierto=4`, `Resuelto=11`), 9 predicciones (`Anulada=7`, `Acertada=2`), 2
+  perfiles, 2.932 Karma, 40 Prestigio, 15 estados LMSR y 17 puntos de histórico.
+  SHA-256: mercados
+  `70d93479e2efe650e3623be40e9aee688216abdbe9866dd5f2a02f67da3ee137`,
+  predicciones
+  `170372fee7b857c67a51f2c3b33f9675f5b0b406c6040625520d2d6df2a3059c`,
+  perfiles
+  `8492fdfc993bc473e6a2d9f00924dc8b39b8650f196f86dcf049ed50a179f6bc`,
+  LMSR `b3d1a0a27e6a7a754576057aba35c317c1b651388fe67ffceb13784472a0c927`
+  e histórico
+  `8eb3d854e5ff20eb7ccad96efcbabd4d7545e17ffa457e74630d6f2f2e0f7adf`.
+- GitHub Pages todavía sirve el frontend anterior
+  `v=20260811-expert-cycle3`: el smoke autenticado confirmó el backend nuevo,
+  pero el contador vivo, el despliegue completo de opciones y la redacción nueva
+  solo serán públicos cuando Yol suba el ZIP incremental de esta intervención.
+  No declarar esa UX publicada hasta repetir el smoke sobre el recurso servido.
+  Ninguna acción de esta intervención confirmó, programó, publicó, predijo,
+  resolvió o liquidó un mercado.
+
+Siguiente paso operativo: subir manualmente el ZIP incremental de esta
+intervención; el backend v44/v18 y las migraciones v5/v6 ya están activos y no
+deben repetirse. Después, recargar GitHub Pages con `Ctrl+F5` y repetir el smoke
+visual del contador de cooldown, el despliegue de todas las opciones, la
+redacción/probabilidad de cada contrato y la recuperación factual del Editor.
+Confirmar o publicar seguirá siendo una decisión humana separada. El mercado
+antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía
 el catálogo, chat, GIF, feed algorítmico,
 temporadas, monetización, dinero real ni compraventa secundaria.
 
