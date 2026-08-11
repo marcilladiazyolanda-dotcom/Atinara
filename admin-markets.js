@@ -33,6 +33,7 @@
       rejected: { total: 0, counts: {}, items: [] },
       providers: [],
       errors: [],
+      qualityNotices: [],
       selected: null,
       cached: false,
       requiresFactualRefresh: true,
@@ -95,6 +96,18 @@
     PROVIDER_CHILD_NOT_FOUND: "La opción ya no pertenece al evento de origen.",
     VERIFICATION_REQUIRED: "La comprobación automática no dispone todavía de información suficiente.",
     VERIFICATION_EXPIRED: "La comprobación ha caducado y debe repetirse antes de preparar el borrador."
+  };
+  const RADAR_QUARANTINE_DESCRIPTIONS = {
+    INVALID_RADAR_CANDIDATE: "La fila no cumple el contrato normalizado obligatorio del Radar.",
+    INCOMPLETE_RADAR_VERIFICATION: "Faltan datos autoritativos para tratar la candidata como verificación abierta.",
+    RADAR_BATCH_TOO_LARGE: "La fila excede el tamaño seguro admitido para persistencia.",
+    INVALID_RADAR_FACT_CHECK_V2: "La comprobación factual no coincide con el contrato esperado.",
+    INVALID_RADAR_FACT_SNAPSHOT_V2: "La evidencia factual no contiene un snapshot válido.",
+    INVALID_RADAR_FACT_CHECK_DATE: "La fecha de la comprobación factual no es válida.",
+    RADAR_FACT_EVIDENCE_REQUIRED: "La candidata necesita evidencia factual que no estaba presente.",
+    RADAR_FACT_STATUS_CONFLICT: "El estado factual y la decisión de la candidata se contradicen.",
+    RADAR_PROVIDER_FACT_REQUIRED: "Falta la atestación autoritativa del proveedor.",
+    RADAR_CANDIDATE_DATA_INVALID: "Un campo de la fila no cumple el esquema autoritativo de persistencia."
   };
   const RADAR_SCORE_LABELS = {
     popularity: "Popularidad",
@@ -714,10 +727,23 @@
     return `<section class="radar-provider-strip" aria-label="Estado de proveedores">
       ${providers.map((provider) => {
         const status = latestProviderStatus(provider);
-        const label = status?.error_code === "PROVIDER_NOT_CONFIGURED" ? "No configurado" : status?.status === "available" ? "Disponible" : status?.status === "cached" ? "En caché" : status?.status === "rate_limited" ? "Límite temporal" : status?.status ? "Con incidencia" : "Sin consultar";
-        return `<article class="radar-provider-card" data-provider-status="${escapeHtml(status?.status || "idle")}">
+        const discardCount = Math.max(0, Number(status?.discarded_count) || 0);
+        const quarantineCount = Math.max(0, Number(status?.quarantined_count) || 0);
+        const qualityCount = Math.max(discardCount, quarantineCount);
+        const label = status?.error_code === "PROVIDER_NOT_CONFIGURED" ? "No configurado"
+          : status?.status === "available" && qualityCount ? "Disponible con descartes"
+          : status?.status === "available" ? "Disponible"
+          : status?.status === "cached" ? "Disponible desde caché"
+          : status?.status === "rate_limited" || status?.status === "partial_error" ? "Degradado temporalmente"
+          : status?.status === "unavailable" ? "Error técnico"
+          : status?.status ? "Revisión pendiente" : "Sin consultar";
+        const visualStatus = status?.status === "available" && qualityCount ? "available_with_discards" : status?.status || "idle";
+        const lastKnownGood = status?.status !== "available" && Number(status?.last_success_count) > 0
+          ? ` · último resultado válido: ${escapeHtml(status.last_success_count)}` : "";
+        const quality = qualityCount ? ` · ${escapeHtml(qualityCount)} descartadas o en cuarentena` : "";
+        return `<article class="radar-provider-card" data-provider-status="${escapeHtml(visualStatus)}">
           <div><strong>${escapeHtml(RADAR_PROVIDER_LABELS[provider])}</strong><span>${escapeHtml(label)}</span></div>
-          <small>${status ? `${escapeHtml(displayDate(status.fetched_at))} · ${escapeHtml(status.result_count || 0)} candidatas${status.is_cached ? " · caché" : " · nuevos"}` : "Pulsa Actualizar fuentes para consultar."}</small>
+          <small>${status ? `${escapeHtml(displayDate(status.fetched_at))} · ${escapeHtml(status.result_count || 0)} procesadas${quality}${lastKnownGood}` : "Pulsa Actualizar fuentes para consultar."}</small>
         </article>`;
       }).join("")}
     </section>`;
@@ -922,13 +948,23 @@
       ? `<div class="radar-candidate-grid">${groups.map(radarGroupMarkup).join("")}</div>`
       : `<div class="admin-empty-state radar-empty"><strong>No hay eventos con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
     const errors = state.radar.errors.length
-      ? `<aside class="radar-partial-error" role="status"><strong>Actualización parcial.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>La creación manual y las demás fuentes siguen disponibles.</span></aside>`
+      ? `<aside class="radar-partial-error" role="status"><strong>Cobertura degradada temporalmente.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>Se conserva el último resultado válido cuando existe; la creación manual y las demás fuentes siguen disponibles.</span></aside>`
+      : "";
+    const quarantinedRows = state.radar.qualityNotices.flatMap((notice) =>
+      (Array.isArray(notice.quarantined) ? notice.quarantined : []).map((item) => ({
+        ...item,
+        provider: item.provider || notice.provider
+      }))
+    );
+    const qualityNotices = state.radar.qualityNotices.length
+      ? `<details class="radar-quality-summary"><summary>Candidatas descartadas o en cuarentena · ${escapeHtml(state.radar.qualityNotices.reduce((total, notice) => total + (Number(notice.quarantined_count) || 0), 0))}</summary><ul>${state.radar.qualityNotices.map((notice) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[notice.provider] || notice.provider)}: ${escapeHtml(notice.message || "La fila no superó la validación de contenido.")}</li>`).join("")}</ul>${quarantinedRows.length ? `<h4>Causas consultables</h4><ul class="radar-quality-causes">${quarantinedRows.map((item) => `<li><strong>${escapeHtml(RADAR_PROVIDER_LABELS[item.provider] || item.provider)} · ${escapeHtml(item.external_id || "Identificador no disponible")}</strong><span>${escapeHtml(RADAR_QUARANTINE_DESCRIPTIONS[item.code] || RADAR_QUARANTINE_DESCRIPTIONS.RADAR_CANDIDATE_DATA_INVALID)}</span></li>`).join("")}</ul>` : ""}<p>Estos descartes no degradan la disponibilidad operativa del proveedor.</p></details>`
       : "";
     return `<section class="market-radar" aria-labelledby="market-radar-title">
       <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.cached ? "Comprobación factual pendiente" : "Última consulta verificada"}</span></header>
       ${radarFiltersMarkup()}
       ${radarProviderMarkup()}
       ${errors}
+      ${qualityNotices}
       <div class="radar-results-heading"><h3>${escapeHtml(groups.length)} eventos · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
       ${cards}
       ${radarRejectionsMarkup()}
@@ -1597,6 +1633,7 @@
       }
       state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
+      state.radar.qualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
       state.radar.cached = data.cached === true;
       state.radar.requiresFactualRefresh = data.requires_factual_refresh === true;
       const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
@@ -1612,7 +1649,9 @@
         ? ` Se corrigieron ${reconciledResults} resultado${reconciledResults === 1 ? "" : "s"} directamente con el proveedor.`
         : "";
       const radarNotice = (data.partial
-        ? "Radar actualizado con incidencias parciales. Las fuentes disponibles siguen utilizables."
+        ? "Radar actualizado con cobertura degradada temporalmente. Las fuentes disponibles siguen utilizables y el último resultado válido se conserva."
+        : state.radar.qualityNotices.length
+          ? "Radar actualizado. Algunas candidatas quedaron descartadas o en cuarentena sin degradar a sus proveedores."
         : data.cached
           ? "La caché privada queda bloqueada como propuesta hasta que termine la actualización factual automática."
           : "Radar actualizado sin crear ni modificar ningún mercado.") + reconciliationCopy;
@@ -2037,6 +2076,25 @@
     }
   }
 
+  async function recoverRadarExpertCandidate(candidateId) {
+    state.busy = true;
+    setNotice("Atinara está actualizando la comprobación factual antes de repetir el dictamen experto…", "info");
+    renderWorkspace();
+    try {
+      const refreshed = await revalidateRadarCandidate(candidateId);
+      await refreshRadarExpertAnalysis(candidateId, {
+        force: true,
+        preparationRevision: refreshed.preparationRevision,
+      });
+      setNotice("Comprobación factual y dictamen actualizados. La puerta mantiene cualquier bloqueo terminal y permite continuar solo si existe una transición válida.", "success");
+    } catch (error) {
+      setNotice(expertErrorMessage(error, "No se pudo actualizar el expediente factual. El último estado autoritativo se conserva."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+    }
+  }
+
   async function runBindingAction(action, bindingId) {
     state.busy = true;
     const labels = { "verify-binding": "Validando el contrato y la disponibilidad del proveedor…", "arm-binding": "Armando el monitor…", "pause-binding": "Pausando el monitor…" };
@@ -2179,6 +2237,7 @@
     if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
     if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);
     if (target.dataset.radarExpert) analyzeRadarCandidate(target.dataset.radarExpert);
+    if (target.dataset.radarExpertRecover) recoverRadarExpertCandidate(target.dataset.radarExpertRecover);
     if (target.dataset.radarCloseDetail !== undefined) {
       const closedCandidateId = state.radar.selected?.id || "";
       state.radar.selected = null;

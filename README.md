@@ -4,7 +4,7 @@ MVP de red social competitiva de predicciones gaming basada en Karma, Prestigio 
 
 Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
-## Estado vigente · Atinara Engine B2B y Paso 13.5.2
+## Estado vigente · cierre definitivo del ciclo experto
 
 Atinara conserva su producto social de predicciones con Karma ficticio y, sobre
 el mismo núcleo contractual, construye **Atinara Engine** como producto B2B. El
@@ -13,10 +13,10 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El frontend coordinado ya está publicado en GitHub Pages. El backend corrector
-del Radar está activo en producción; este árbol conserva la fuente que Yol debe
-sincronizar mediante su subida manual revisada, sin repetir migraciones ni
-despliegues.
+El backend coordinado está activo en producción. El frontend de este árbol aún
+no está en GitHub Pages: Yol debe sincronizarlo mediante el ZIP incremental y
+después debe repetirse el smoke del recurso publicado. No se debe afirmar que
+Pages está corregido antes de esa comprobación.
 
 - `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
   el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
@@ -48,18 +48,44 @@ despliegues.
   Las restantes también están aplicadas y registradas en producción. La
   corrección operativa `20260809180000_fix_radar_refresh_timeout.sql` también
   está aplicada y no debe repetirse.
-- `market-radar` v27, `market-draft-fixer` v7,
-  `validate-market-draft` v8 y `market-expert` v11 están activas con
-  `verify_jwt=true`. La identidad familiar vigente es v4. El Radar escribe en
-  lotes de 24 y aísla cualquier fallo de persistencia por proveedor, por lo que
-  una fuente no puede volver a derribar la respuesta completa.
+- `market-radar` v33, `market-draft-fixer` v16,
+  `validate-market-draft` v26 y `market-expert` v17 están activas con
+  `verify_jwt=true`. Radar separa disponibilidad técnica, descartes de contenido
+  y cuarentena por fila; Gemini conserva el último estado válido y no bloquea a
+  los demás proveedores. Editor, Validador y Corrector comparten una taxonomía
+  registrada y estrategias de reparación auditables e idempotentes.
+- Producción registra tres migraciones nuevas, ya aplicadas y no repetibles:
+  `20260809213543 · close_expert_market_cycle_v2`,
+  `20260811100833 · harden_repair_evidence_and_idempotency_v3` y
+  `20260811104727 · isolate_radar_poison_records_v4`. Sus archivos locales
+  conservan los timestamps `20260809204739`, `20260811100833` y
+  `20260811104727`, respectivamente.
+- El borrador privado de regresión Marvel está reparado como versión 9 mediante
+  reglas generales: `resolution_deadline` se deriva del periodo evaluado y la
+  política temporal, las representaciones UTC/Europe-Madrid equivalentes no se
+  contradicen, la atestación primaria vigente prevalece sobre una inferencia
+  factual no respaldada y las fuentes de contexto se conservan por historial
+  append-only. Su revisión efectiva es `approved`; continúa privado, sin
+  confirmación, programación, publicación ni `market_id`.
+- El smoke real final del Radar conservó disponibles todos los proveedores:
+  Gemini 153/153, Kalshi 84 aceptadas y 1 en cuarentena, Polymarket 69 aceptadas
+  y 5 en cuarentena, y Tavily/ideas gaming sin candidatas. Los seis descartes
+  fueron `RADAR_PROVIDER_FACT_REQUIRED`; no degradaron la salud del proveedor.
+  El aislamiento se hace en una sola RPC por lote con subtransacciones SQL por
+  candidata, por lo que una fila venenosa no agota el presupuesto ni pierde el
+  resto del lote.
+- La suite final pasa sintaxis de 71 archivos JavaScript, 319/319 pruebas y
+  TypeScript. Las pruebas SQL de ciclo y aislamiento pasaron dentro de
+  transacciones con `ROLLBACK`; la prueba positiva de la puerta de publicación
+  también materializó y deshizo su resultado, manteniendo obligatoria la
+  confirmación humana.
 - Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
   configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
   Los dos schedulers preparados permanecen desactivados y son independientes.
 
-La arquitectura, contratos, activación y pruebas se documentan en
-`STEP_13_5_2_DATA_OBSERVATORY_AND_AGENTS.md`; el estado productivo autoritativo
-se conserva en `ORAKLO_PROJECT_CONTEXT.md`.
+La arquitectura, los contratos, la activación y las pruebas se documentan en
+`EXPERT_MARKET_CYCLE_CLOSURE_20260810.md`; el estado productivo autoritativo se
+conserva en `ORAKLO_PROJECT_CONTEXT.md`.
 
 ## Continuidad entre chats
 

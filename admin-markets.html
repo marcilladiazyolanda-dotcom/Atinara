@@ -13,10 +13,10 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
-  <script src="theme.js?v=20260809-expert-cycle1"></script>
-  <link rel="stylesheet" href="styles.css?v=20260809-expert-cycle1">
-  <script src="observability-config.js?v=20260809-expert-cycle1"></script>
-  <script src="monitoring.js?v=20260809-expert-cycle1"></script>
+  <script src="theme.js?v=20260811-expert-cycle3"></script>
+  <link rel="stylesheet" href="styles.css?v=20260811-expert-cycle3">
+  <script src="observability-config.js?v=20260811-expert-cycle3"></script>
+  <script src="monitoring.js?v=20260811-expert-cycle3"></script>
   <style>
     .market-expert-dossier {
       grid-column: 1 / -1;
@@ -59,7 +59,8 @@
       background: rgba(94, 224, 160, 0.1);
     }
 
-    .market-expert-dossier[data-gate="warning"] .market-expert-dossier-status {
+    .market-expert-dossier[data-gate="warning"] .market-expert-dossier-status,
+    .market-expert-dossier[data-gate="repairable"] .market-expert-dossier-status {
       color: var(--gold);
       border-color: rgba(240, 196, 107, 0.55);
       background: rgba(240, 196, 107, 0.1);
@@ -263,14 +264,14 @@
     integrity="sha384-fPWur1rx/DE6YtXP/x0MD6dd90RgnVsz5yX/DIg7CcVAnTBZsENWuIcpvVTM39ti"
     crossorigin="anonymous"
   ></script>
-  <script src="supabaseClient.js?v=20260809-expert-cycle1"></script>
-  <script src="password-security.js?v=20260809-expert-cycle1"></script>
-  <script src="password-recovery.js?v=20260809-expert-cycle1"></script>
-  <script src="site-ui.js?v=20260809-expert-cycle1"></script>
-  <script src="auth.js?v=20260809-expert-cycle1"></script>
-  <script src="market-admin-validation.js?v=20260809-expert-cycle1"></script>
-  <script src="admin-markets.js?v=20260809-expert-cycle1"></script>
-  <script src="market-draft-fixer.js?v=20260809-expert-cycle1"></script>
+  <script src="supabaseClient.js?v=20260811-expert-cycle3"></script>
+  <script src="password-security.js?v=20260811-expert-cycle3"></script>
+  <script src="password-recovery.js?v=20260811-expert-cycle3"></script>
+  <script src="site-ui.js?v=20260811-expert-cycle3"></script>
+  <script src="auth.js?v=20260811-expert-cycle3"></script>
+  <script src="market-admin-validation.js?v=20260811-expert-cycle3"></script>
+  <script src="admin-markets.js?v=20260811-expert-cycle3"></script>
+  <script src="market-draft-fixer.js?v=20260811-expert-cycle3"></script>
   <script>
     (function initRadarExpertBridge() {
       "use strict";
@@ -317,7 +318,12 @@
           needs_monitoring: "Necesita monitorización",
           not_resolvable: "No resoluble"
         },
-        gate: { validated: "Propuesta validada", warning: "Apta con advertencias", blocked: "Propuesta bloqueada" }
+        gate: {
+          validated: "Propuesta validada",
+          warning: "Apta con advertencias",
+          repairable: "Reparación automática disponible",
+          blocked: "Propuesta bloqueada"
+        }
       };
 
       const reasonLabels = {
@@ -573,17 +579,20 @@
         const items = Array.isArray(values) ? values.filter(Boolean) : [];
         if (!items.length) return "";
         return `<ul class="market-expert-issue-list" data-tone="${escapeHtml(tone)}">${items.map((code) => `
-          <li><code>${escapeHtml(code)}</code><span>${escapeHtml(reasonLabels[code] || code)}</span></li>`).join("")}</ul>`;
+          <li><span>${escapeHtml(reasonLabels[code] || "Atinara ha detenido esta transición de forma segura.")}</span><small>Referencia ${escapeHtml(code)}</small></li>`).join("")}</ul>`;
       }
 
       function packageCanApply(pkg, candidateId = "") {
+        const canCreatePrivateDraft = pkg?.gate?.can_save_private_draft === true
+          || pkg?.gate?.can_materialize_private_repair_draft === true;
         return pkg?.available === true
           && pkg?.origin?.type === "radar_candidate"
           && Boolean(pkg?.origin?.id)
           && (!candidateId || pkg.origin.id === candidateId)
           && Boolean(pkg?.run?.id)
-          && pkg?.gate?.can_prefill === true
-          && pkg?.gate?.can_save_private_draft === true;
+          && (pkg?.gate?.can_prefill === true
+            || pkg?.gate?.can_materialize_private_repair_draft === true)
+          && canCreatePrivateDraft;
       }
 
       function packageFailure(pkg) {
@@ -630,8 +639,14 @@
         const sources = Array.isArray(pkg.sources) ? pkg.sources : [];
         const hardBlocks = Array.isArray(gate.hard_blocks) ? gate.hard_blocks : [];
         const warnings = Array.isArray(gate.warnings) ? gate.warnings : [];
+        const recovery = isRecord(gate.automatic_recovery) ? gate.automatic_recovery : null;
         const isApplying = applyingCandidates.has(candidateId);
-        const gateAllowsApply = gate.can_prefill === true && gate.can_save_private_draft === true;
+        const gateAllowsApply = (
+          gate.can_prefill === true
+          && gate.can_save_private_draft === true
+        ) || gate.can_materialize_private_repair_draft === true;
+        const repairMaterialization = gate.can_save_private_draft !== true
+          && gate.can_materialize_private_repair_draft === true;
         const canApply = packageCanApply(pkg, candidateId) && !isApplying;
         const sourceMarkup = sources.length
           ? `<ul class="market-expert-source-list">${sources.map((source) => `<li>
@@ -684,12 +699,18 @@
           </div>
           ${hardBlocks.length ? `<div><h4>Bloqueos</h4>${listMarkup(hardBlocks, "error")}</div>` : ""}
           ${warnings.length ? `<div><h4>Advertencias</h4>${listMarkup(warnings, "warning")}</div>` : ""}
+          ${recovery?.action === "refresh_factual_dossier" ? `<div class="market-expert-dossier-actions">
+            <button class="secondary-button" type="button" data-radar-expert-recover="${escapeHtml(candidateId)}">${escapeHtml(recovery.label || "Actualizar comprobación factual y reanalizar")}</button>
+            <small>Atinara repetirá la comprobación factual de forma auditada. No preparará, confirmará ni publicará un mercado terminalmente bloqueado.</small>
+          </div>` : ""}
           <div class="market-expert-dossier-actions">
             <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${canApply ? "" : " disabled"}>${isApplying ? "Preparando propuesta…" : "Aplicar propuesta al formulario"}</button>
             <small>${isApplying
               ? "Revalidando Radar y actualizando el dictamen antes de cargar el formulario."
               : gateAllowsApply
-              ? "Solo pre-rellena. El borrador se guardará cuando tú pulses Guardar y conservará Radar, dictamen, contrato y fuentes en una única transacción."
+              ? repairMaterialization
+                ? "Solo pre-rellena. Al guardar se creará un borrador privado en reparación; el Corrector completará lo deducible y volverá a validarlo."
+                : "Solo pre-rellena. El borrador se guardará cuando tú pulses Guardar y conservará Radar, dictamen, contrato y fuentes en una única transacción."
               : "La propuesta no puede pasar al borrador mientras conserve bloqueos o no tenga fecha y fuente primaria."}</small>
           </div>`;
       }
@@ -951,7 +972,17 @@
           }
           const sources = sourcesForDraft(pkg, payload);
           const contract = contractForDraft(pkg, payload, sources);
-          const { data, error } = await client.rpc("save_market_draft_from_radar_intelligence", {
+          const repairMaterialization = pkg?.gate?.can_save_private_draft !== true
+            && pkg?.gate?.can_materialize_private_repair_draft === true;
+          const rpcName = repairMaterialization
+            ? "materialize_market_draft_for_repair_v1"
+            : "save_market_draft_from_radar_intelligence";
+          const rpcPayload = repairMaterialization ? {
+            candidate_id_input: pkg.origin.id,
+            expected_preparation_revision_input: Number(form.dataset.preparationRevision),
+            expert_run_id_input: pkg.run.id,
+            draft_input: payload
+          } : {
             candidate_id_input: pkg.origin.id,
             draft_id_input: null,
             expected_version_input: null,
@@ -959,7 +990,8 @@
             expert_run_id_input: pkg.run.id,
             contract_input: contract,
             sources_input: sources
-          });
+          };
+          const { data, error } = await client.rpc(rpcName, rpcPayload);
           if (error) throw error;
           const edits = changedFields(pkg.fields, payload);
           await invokeExpert("record-feedback", {
@@ -974,7 +1006,9 @@
           try {
             sessionStorage.setItem(SAVED_NOTICE_KEY, JSON.stringify({
               draft_id: data?.draft?.id || null,
-              message: "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
+              message: repairMaterialization
+                ? "Borrador privado creado en estado de reparación. Ya puede intervenir el Corrector Experto."
+                : "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
             }));
           } catch { /* El guardado ya es definitivo; el aviso entre recargas es opcional. */ }
           status.dataset.tone = "success";
@@ -1123,8 +1157,10 @@
           && packageMatchesPreparation(pkg, preparationRevision)
           && pkg?.run?.id
           && String(pkg.run.id) === String(form.dataset.expertRunId || "")
-          && pkg?.gate?.can_prefill === true
-          && pkg?.gate?.can_save_private_draft === true
+          && (pkg?.gate?.can_prefill === true
+            || pkg?.gate?.can_materialize_private_repair_draft === true)
+          && (pkg?.gate?.can_save_private_draft === true
+            || pkg?.gate?.can_materialize_private_repair_draft === true)
         );
         if (!validBinding) {
           clearPreparedPackage(candidateId);

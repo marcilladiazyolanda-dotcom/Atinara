@@ -1,5 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
+import {
+  RESOLUTION_DEADLINE_POLICY,
+  deriveResolutionDeadline,
+  inferMetricContract,
+} from "../_shared/market-draft-repair.mjs";
+
 type JsonRecord = Record<string, unknown>;
 
 type SupabaseEnvironment = {
@@ -11,7 +17,7 @@ type SupabaseEnvironment = {
 const MARKET_INTELLIGENCE_POLICY_VERSION = "atinara-market-constitution-v1";
 const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
-const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v4";
+const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v5";
 const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
 const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v4";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -109,6 +115,25 @@ const HARD_REASON_CODES = new Set([
   "RADAR_ELIGIBILITY_POLICY_OUTDATED",
   "RADAR_RESOLUTION_SOURCE_REQUIRED",
   "MARKET_EXPERT_ANALYSIS_STALE",
+]);
+const DERIVED_REASON_CODES = new Set([
+  "RADAR_CANDIDATE_NOT_PREPARABLE",
+  "DETERMINISTIC_GATE_BLOCKED",
+  "INTEGRITY_FAILED",
+  "FORECASTABILITY_CLOSED",
+  "EXPERT_DECISION_BLOCKED",
+]);
+const TERMINAL_REASON_CODES = new Set([
+  "EVENT_ALREADY_RESOLVED",
+  "TEMPORAL_WINDOW_ALREADY_ENDED",
+  "DUPLICATE_MARKET",
+  "CONFIRMED_DUPLICATE",
+  "SOURCE_ALREADY_RESOLVED",
+  "SOURCE_NOT_RESOLVABLE",
+]);
+const REPAIR_MATERIALIZATION_REASON_CODES = new Set([
+  "RADAR_RESOLUTION_SOURCE_REQUIRED",
+  "TEMPORAL_INCOHERENCE",
 ]);
 
 function text(value: unknown, max = 4_000): string {
@@ -331,7 +356,10 @@ function publicErrorCode(error: unknown, fallback = "SERVICE_UNAVAILABLE"): stri
 
 function handleEdgeError(error: unknown, fallbackMessage: string): Response {
   const code = publicErrorCode(error);
-  const status = ["REQUEST_TOO_LARGE", "INVALID_REQUEST", "INTELLIGENCE_ORIGIN_INVALID"].includes(code)
+  const upstreamStatus = error instanceof MarketExpertRpcError ? error.status : 0;
+  const status = [400, 401, 403, 404, 409, 422, 429, 503, 504].includes(upstreamStatus)
+    ? upstreamStatus
+    : ["REQUEST_TOO_LARGE", "INVALID_REQUEST", "INTELLIGENCE_ORIGIN_INVALID"].includes(code)
     ? 400
     : code.includes("AUTH") ? 401
       : code.includes("ADMIN") ? 403
@@ -340,7 +368,15 @@ function handleEdgeError(error: unknown, fallbackMessage: string): Response {
   const message = code === "PREPARATION_REVISION_MISMATCH"
     ? "La candidata cambió durante el análisis. Vuelve a aplicar para usar su revisión vigente."
     : fallbackMessage;
-  return jsonResponse({ error: code, message }, status);
+  return jsonResponse({
+    error: code,
+    message,
+    classification: status === 429 || status >= 500 ? "technical" : "domain",
+    retryable: status === 429 || status >= 500,
+    state_preserved: true,
+    publishes: false,
+    confirms: false,
+  }, status);
 }
 
 async function sha256(value: unknown): Promise<string> {
@@ -674,6 +710,26 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
   const provider = originType === "radar_candidate"
     ? "official_web"
     : text(supplied.provider || path.provider || origin.provider, 40);
+  const familySemantics = record(origin.family_semantics) || {};
+  const familyThreshold = record(familySemantics.threshold) || {};
+  const inferredMetric = inferMetricContract({
+    draft: {
+      question,
+      yes_criteria: origin.atinara_resolution_criteria || origin.source_resolution_rules,
+      primary_source: { url: primaryUrl },
+    },
+    radar_candidate: origin,
+  });
+  const operatorAliases: Record<string, string> = {
+    gt: ">", gte: ">=", ge: ">=", lt: "<", lte: "<=", le: "<=",
+  };
+  const familyOperator = operatorAliases[text(familyThreshold.operator, 20).toLowerCase()]
+    || text(familyThreshold.operator, 20);
+  const resolutionDeadline = deriveResolutionDeadline(
+    evaluationAt,
+    [supplied.resolution_deadline, origin.source_resolution_deadline, origin.resolution_deadline],
+    RESOLUTION_DEADLINE_POLICY,
+  );
 
   const contract: JsonRecord = {
     plan_version: 1,
@@ -700,21 +756,19 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
     entity_type: text(origin.entity_type, 80),
     entity_id: text(origin.entity_id || origin.external_id, 300),
     canonical_url: primaryUrl || safeHttpsUrl(origin.canonical_url),
-    metric: text(supplied.metric || path.metric || origin.metric_name, 200) || null,
-    operator: text(supplied.operator || (path.threshold !== undefined ? ">=" : "exact_state"), 20),
-    threshold: supplied.threshold ?? path.threshold ?? origin.milestone_value ?? null,
-    unit: text(supplied.unit || origin.metric_unit, 100) || null,
-    precision: text(supplied.precision || origin.metric_precision, 200) || null,
+    metric: text(supplied.metric || path.metric || inferredMetric?.metric || origin.metric_name, 200) || null,
+    operator: text(supplied.operator || familyOperator || inferredMetric?.operator || (path.threshold !== undefined ? ">=" : "exact_state"), 20),
+    threshold: supplied.threshold ?? familyThreshold.value ?? inferredMetric?.threshold ?? path.threshold ?? origin.milestone_value ?? null,
+    unit: text(supplied.unit || familyThreshold.unit || inferredMetric?.unit || origin.metric_unit, 100) || null,
+    precision: supplied.precision ?? inferredMetric?.precision ?? (text(origin.metric_precision, 200) || null),
     rounding_behavior: origin.metric_is_rounded
       ? "provider_rounded_down_three_significant_figures"
       : "provider_value",
     window_start: supplied.window_start || origin.time_window_start || new Date().toISOString(),
     window_end: evaluationAt,
     evaluation_at: evaluationAt,
-    resolution_deadline: text(
-      supplied.resolution_deadline || origin.source_resolution_deadline || origin.resolution_deadline,
-      120,
-    ) || null,
+    resolution_deadline: resolutionDeadline,
+    resolution_deadline_policy_version: RESOLUTION_DEADLINE_POLICY.version,
     timezone: text(supplied.timezone || "Europe/Madrid", 100),
     finality_delay_seconds: Number(supplied.finality_delay_seconds) || 300,
     capture_strategy: captureStrategy,
@@ -722,7 +776,7 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
       (captureStrategy === "poll_during_window" ? 300 : 0),
     required_samples: Number(supplied.required_samples) || 1,
     aggregation: text(
-      supplied.aggregation ||
+      supplied.aggregation || inferredMetric?.aggregation ||
         (captureStrategy === "poll_during_window"
           ? "maximum"
           : captureStrategy === "manual_official_source" ? "exact_state" : "final"),
@@ -917,16 +971,19 @@ function deterministicAssessment(origin: JsonRecord, originType: string) {
   if (resultKnown) {
     return { integrity_status: "fail", forecastability_status: "already_determined", structuralIssues };
   }
-  if (stale || (originType === "radar_candidate" && structuralIssues.length)) {
+  const nonRepairableStructuralIssues = structuralIssues.filter(
+    (code) => !REPAIR_MATERIALIZATION_REASON_CODES.has(code),
+  );
+  if (stale || (originType === "radar_candidate" && nonRepairableStructuralIssues.length)) {
     return { integrity_status: "fail", forecastability_status: "stale", structuralIssues };
-  }
-  if (structuralIssues.length) {
-    return { integrity_status: "needs_edit", forecastability_status: "unknown", structuralIssues };
   }
   const probability = normalizeProbability(origin.source_probability_yes ?? origin.source_probability);
   const forecastability = probability !== null && probability <= 0.05
     ? "valid_very_unlikely"
     : probability !== null && probability <= 0.2 ? "valid_low_probability" : "forecastable";
+  if (structuralIssues.length) {
+    return { integrity_status: "needs_edit", forecastability_status: forecastability, structuralIssues };
+  }
   return { integrity_status: "pass", forecastability_status: forecastability, structuralIssues };
 }
 
@@ -1204,8 +1261,8 @@ function mergeExpertVerdict(deterministic: JsonRecord, expert: JsonRecord, origi
 
 function buildDraftGate(verdict: JsonRecord): JsonRecord {
   const reasonCodes = Array.isArray(verdict.reason_codes) ? verdict.reason_codes.map((code) => text(code, 100)) : [];
-  const hardBlocks = uniqueStrings([
-    ...reasonCodes.filter((code) => HARD_REASON_CODES.has(code)),
+  const rawHardBlocks = uniqueStrings([
+    ...reasonCodes.filter((code) => HARD_REASON_CODES.has(code) && !DERIVED_REASON_CODES.has(code)),
     ...(verdict.integrity_status === "fail" ? ["INTEGRITY_FAILED"] : []),
     ...(["already_determined", "stale"].includes(text(verdict.forecastability_status, 60))
       ? ["FORECASTABILITY_CLOSED"]
@@ -1215,6 +1272,16 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
       : []),
     ...(verdict.source_readiness === "not_resolvable" ? ["SOURCE_NOT_RESOLVABLE"] : []),
   ]);
+  const terminalRoots = rawHardBlocks.filter((code) => TERMINAL_REASON_CODES.has(code));
+  let hardBlocks = terminalRoots.length ? terminalRoots : rawHardBlocks.filter((code) => !DERIVED_REASON_CODES.has(code));
+  if (hardBlocks.includes("RADAR_FACTUAL_VERIFICATION_REQUIRED")) {
+    hardBlocks = hardBlocks.filter((code) => code !== "RADAR_CANDIDATE_NOT_PREPARABLE");
+  }
+  if (!hardBlocks.length) {
+    hardBlocks = rawHardBlocks.filter((code) => DERIVED_REASON_CODES.has(code)).slice(0, 1);
+  }
+  hardBlocks = uniqueStrings(hardBlocks);
+  const derivedDiagnostics = uniqueStrings(rawHardBlocks.filter((code) => DERIVED_REASON_CODES.has(code)));
   const contract = verdict.resolution_contract as JsonRecord || {};
   const proposal = verdict.proposal as JsonRecord || {};
   const sources = records(contract.sources);
@@ -1222,18 +1289,35 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
   const temporalReady = Boolean(safeDate(contract.evaluation_at || contract.window_end));
   const questionReady = Boolean(text(proposal.question || contract.canonical_statement, 500));
   const canPrefill = hardBlocks.length === 0 && ["create", "create_with_edits"].includes(text(verdict.decision, 40));
+  const nonRepairableBlocks = hardBlocks.filter((code) => !REPAIR_MATERIALIZATION_REASON_CODES.has(code));
+  const canMaterializePrivateRepairDraft = terminalRoots.length === 0
+    && nonRepairableBlocks.length === 0
+    && ["create", "create_with_edits"].includes(text(verdict.decision, 40))
+    && questionReady;
   const canSavePrivateDraft = canPrefill && primaryReady && temporalReady && questionReady;
   const warnings = uniqueStrings(reasonCodes.filter((code) => !HARD_REASON_CODES.has(code)));
   return {
     status: hardBlocks.length
-      ? "blocked"
+      ? canMaterializePrivateRepairDraft ? "repairable" : "blocked"
       : warnings.length || verdict.source_readiness === "ready_with_warnings" ? "warning" : "validated",
     can_prefill: canPrefill,
     can_save_private_draft: canSavePrivateDraft,
+    can_materialize_private_repair_draft: canMaterializePrivateRepairDraft,
     can_bind: canSavePrivateDraft,
     can_publish: false,
     hard_blocks: hardBlocks,
+    causal_roots: hardBlocks,
+    derived_diagnostics: derivedDiagnostics,
     warnings,
+    automatic_recovery: !terminalRoots.length && hardBlocks.some((code) => [
+      "RADAR_FACTUAL_VERIFICATION_REQUIRED",
+      "RADAR_NORMALIZER_OUTDATED",
+      "RADAR_ELIGIBILITY_POLICY_OUTDATED",
+    ].includes(code)) ? {
+      action: "refresh_factual_dossier",
+      retryable: true,
+      label: "Actualizar comprobaciÃ³n factual y reanalizar",
+    } : null,
     human_confirmation_required: true,
   };
 }
@@ -1243,7 +1327,7 @@ function decorateVerdict(verdict: JsonRecord): JsonRecord {
   return {
     ...verdict,
     draft_gate: gate,
-    prefill: gate.can_prefill ? verdict.proposal : {},
+    prefill: gate.can_prefill || gate.can_materialize_private_repair_draft ? verdict.proposal : {},
   };
 }
 

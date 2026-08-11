@@ -56,7 +56,7 @@ type Environment = NonNullable<ReturnType<typeof getEnvironment>>;
 const MAX_REQUEST_BYTES = 8_192;
 const PROVIDER_TIMEOUT_MS = 14_000;
 const GEMINI_TIMEOUT_MS = 20_000;
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const MAX_PROVIDER_PAGES = 3;
 const MAX_NORMALIZED_PER_PROVIDER = 240;
 const RADAR_PERSISTENCE_BATCH_SIZE = 24;
@@ -84,6 +84,12 @@ const OFFICIAL_SOURCE_BUDGET_MS = 10_000;
 const OFFICIAL_SOURCE_CONCURRENCY = 4;
 const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
 const PROVIDER_RETRY_JITTER_MS = 250;
+
+// Algunos modelos aceptan JSON mode pero rechazan el subconjunto de JSON
+// Schema del proveedor con INVALID_ARGUMENT. Una vez observado en la misma
+// instancia, las demás tandas evitan repetir ese 400 y mantienen la validación
+// estricta en la capa de aplicación.
+let geminiProviderSchemaSupported = true;
 
 const KALSHI_API_ROOT = "https://api.elections.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA_ROOT = "https://gamma-api.polymarket.com";
@@ -480,7 +486,14 @@ function providerFailure(error: unknown, provider: string) {
     : raw.includes("RATE_LIMITED") || raw.includes("429") ? "PROVIDER_RATE_LIMITED"
       : raw.includes("INVALID") || raw.includes("TOO_LARGE") || raw.includes("HTTP_400") ? "PROVIDER_INVALID_RESPONSE"
         : "PROVIDER_UNAVAILABLE";
-  return publicProviderError(provider, code, code === "PROVIDER_RATE_LIMITED" ? 429 : 502);
+  const publicError = publicProviderError(provider, code, code === "PROVIDER_RATE_LIMITED" ? 429 : 502);
+  const retryAfterMs = error instanceof ProviderRequestError ? error.retryAfterMs : null;
+  return {
+    ...publicError,
+    retry_after_seconds: retryAfterMs === null ? null : Math.max(0, Math.ceil(retryAfterMs / 1_000)),
+    retry_after_at: retryAfterMs === null ? null : new Date(Date.now() + retryAfterMs).toISOString(),
+    retryable: ["PROVIDER_RATE_LIMITED", "PROVIDER_TIMEOUT", "PROVIDER_UNAVAILABLE", "PROVIDER_HTTP_5XX"].includes(code),
+  };
 }
 
 function persistenceFailure(error: unknown, provider: string) {
@@ -508,7 +521,10 @@ const QUARANTINABLE_PERSISTENCE_RULES = new Set([
 
 function isQuarantinablePersistenceError(error: unknown): error is RadarRpcError {
   if (!(error instanceof RadarRpcError)
-    || error.operation !== "upsert_market_radar_batch_with_fact_checks_v1"
+    || ![
+      "upsert_market_radar_batch_with_fact_checks_v1",
+      "upsert_market_radar_batch_with_fact_checks_v2",
+    ].includes(error.operation)
     || error.databaseCode === "57014"
     || error.status === 504) return false;
   if (error.status === 413) return true;
@@ -1436,24 +1452,39 @@ async function verifyGeminiBatch(
   const safeExisting = existing.slice(0, 50).map((item) => compactGeminiDefinition(item)).filter(isRecord);
   const prompt = `Actúa como editor experto de mercados predictivos para el Radar privado de Atinara. Evalúas si la pregunta constituye una predicción futura, binaria, objetiva y resoluble; no evalúas si crees que el resultado Sí ocurrirá. Solo puedes usar los datos del proveedor y las evidencias incluidas. No inventes hechos, URLs, fechas, nombres, estados ni condiciones. Las evidencias proceden exclusivamente de contenido recuperado por el servidor: si claim_status no es direct, direct_claim no es true o el texto contiene rumor, predicción, posibilidad, votación o preferencia de fans, no permite ninguna conclusión terminal. Tú no puedes crear ni conceder selection_complete, direct_claim, evidence_basis o content_sha256. Escribe reason y atinara_resolution_criteria en español claro, sin códigos técnicos en el texto. Devuelve exactamente un elemento por candidate_index, conserva cada índice entero sin cambiarlo y cumple el esquema JSON. Si un valor factual no está demostrado, usa null. event_resolved_at y official_reveal_at solo pueden indicar que toda la familia del evento padre ya tiene resultado; nunca representan el vencimiento aislado de una opción hija. Una fecha oficial prevista es información para estimar probabilidad, no invalida una opción futura anterior o posterior: una fecha umbral solo es incoherente si el plazo ya venció o existe imposibilidad objetiva demostrada. Que todavía no exista anuncio, nominación, ganador o resultado es incertidumbre válida. Una pregunta directa sobre anuncio, lanzamiento, retraso o tráiler puede ser válida aunque el producto no esté anunciado. En cambio, un premio o una reseña de un producto no anunciado depende de un requisito previo y no es apto. Un juego anunciado puede ser candidato a un premio futuro aunque aún no haya nominaciones. Sin una fuente pública suficiente para resolver el contrato, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Marca EVENT_ALREADY_RESOLVED solo cuando el resultado de la pregunta ya sea público, nunca porque el pronóstico actual parezca muy probable o improbable. Si la evidencia falta para una afirmación factual bloqueante, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Las comprobaciones deterministas recibidas tienen prioridad. Códigos permitidos: ${GEMINI_REASON_CODES.join(", ")}. Categorías permitidas: ${RADAR_CATEGORIES.join(", ")}. Grupos:\n${JSON.stringify(safeGroups)}\nDefiniciones existentes sin datos personales:\n${JSON.stringify(safeExisting)}`;
   const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`);
-  const payload = toRecord(await fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify({
+  const requestBody = (providerSchema: boolean) => ({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: "application/json",
-        responseJsonSchema: geminiResponseJsonSchema(candidates.length),
+        ...(providerSchema ? { responseJsonSchema: geminiResponseJsonSchema(candidates.length) } : {}),
         maxOutputTokens: 8_192,
-        thinkingConfig: { thinkingLevel: "minimal" },
+        ...(providerSchema ? { thinkingConfig: { thinkingLevel: "minimal" } } : {}),
       },
-    }),
-  }, GEMINI_TIMEOUT_MS, {
+    });
+  const requestOptions: FetchJsonOptions = {
     onRateLimit: (error) => {
       quotaCircuit.stopped = true;
       quotaCircuit.firstRateLimit ??= error;
     },
-  })) ?? {};
+  };
+  const send = (providerSchema: boolean) => fetchJson(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(requestBody(providerSchema)),
+  }, GEMINI_TIMEOUT_MS, requestOptions);
+  let providerPayload: unknown;
+  if (geminiProviderSchemaSupported) {
+    try {
+      providerPayload = await send(true);
+    } catch (error) {
+      if (!(error instanceof ProviderRequestError) || error.status !== 400) throw error;
+      geminiProviderSchemaSupported = false;
+      providerPayload = await send(false);
+    }
+  } else {
+    providerPayload = await send(false);
+  }
+  const payload = toRecord(providerPayload) ?? {};
   const decisions = parseGeminiAdaptations(payload) as JsonRecord[];
   if (!decisions.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   const byIndex = indexGeminiDecisions(decisions, candidates.length) as Map<number, JsonRecord>;
@@ -1666,17 +1697,30 @@ async function finalizeProviderRefresh(
   environment: Environment,
   provider: string,
   cacheKey: string,
-  status: "available" | "partial_error" | "unavailable",
+  status: "available" | "partial_error" | "unavailable" | "rate_limited",
   resultCount: number,
-  failure?: ReturnType<typeof publicProviderError>,
+  failure?: JsonRecord,
+  metrics: {
+    accepted?: number;
+    discarded?: number;
+    quarantined?: number;
+    failed?: number;
+  } = {},
 ) {
-  await rpc(environment, "finalize_market_radar_provider_refresh_v1", {
+  await rpc(environment, "finalize_market_radar_provider_refresh_v2", {
     provider_input: provider,
     cache_key_input: cacheKey,
     status_input: status,
     result_count_input: resultCount,
+    accepted_count_input: Math.max(0, Number(metrics.accepted) || 0),
+    discarded_count_input: Math.max(0, Number(metrics.discarded) || 0),
+    quarantined_count_input: Math.max(0, Number(metrics.quarantined) || 0),
+    failed_count_input: Math.max(0, Number(metrics.failed) || 0),
     error_code_input: failure?.code ?? null,
     error_message_input: failure?.message ?? null,
+    retry_after_seconds_input: Number.isFinite(Number(failure?.retry_after_seconds))
+      ? Math.max(0, Math.floor(Number(failure?.retry_after_seconds)))
+      : null,
   }, undefined, true);
 }
 
@@ -1685,18 +1729,23 @@ type AuthoritativePersistenceEntry = {
   factCheck: JsonRecord;
 };
 
+type AuthoritativePersistenceBatchResult = {
+  acceptedCount: number;
+  quarantined: RadarCandidateQuarantine[];
+};
+
 async function writeAuthoritativePersistenceBatch(
   environment: Environment,
   provider: string,
   cacheKey: string,
   entries: AuthoritativePersistenceEntry[],
   deadlineAt: number,
-) {
+): Promise<AuthoritativePersistenceBatchResult> {
   const remainingMs = Math.max(1, deadlineAt - Date.now());
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), remainingMs);
   try {
-    await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v1", {
+    const rawResult = await rpc(environment, "upsert_market_radar_batch_with_fact_checks_v2", {
       provider_input: provider,
       cache_key_input: cacheKey,
       normalizer_version_input: RADAR_NORMALIZER_VERSION,
@@ -1714,6 +1763,25 @@ async function writeAuthoritativePersistenceBatch(
         error_message: "La actualización del proveedor todavía no ha finalizado.",
       },
     }, undefined, true, { signal: controller.signal });
+    const result = toRecord(rawResult);
+    const acceptedCount = Math.max(0, Number(result?.accepted_count) || 0);
+    const quarantined = toRecordArray(result?.quarantined).map((item) => ({
+      provider: cleanText(item.provider, 40) || cleanText(provider, 40),
+      external_id: cleanText(item.external_id, 220),
+      fingerprint: /^[a-f0-9]{64}$/i.test(cleanText(item.fingerprint, 80))
+        ? cleanText(item.fingerprint, 80).toLowerCase()
+        : null,
+      stage: "authoritative_persistence" as const,
+      code: cleanText(item.code, 100) || "RADAR_CANDIDATE_DATA_INVALID",
+      database_code: /^[0-9A-Z]{5}$/.test(cleanText(item.database_code, 10))
+        ? cleanText(item.database_code, 10)
+        : null,
+      operation: "upsert_market_radar_batch_with_fact_checks_v2",
+    }));
+    if (result?.ok !== true || acceptedCount + quarantined.length !== entries.length) {
+      throw new Error("RADAR_PERSISTENCE_RESULT_INVALID");
+    }
+    return { acceptedCount, quarantined };
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("RADAR_PERSISTENCE_TIMEOUT");
@@ -1762,8 +1830,11 @@ async function persistBatchWithDataIsolation(
   budget.usedRpcCalls += 1;
   outcome.persistenceRpcCalls = budget.usedRpcCalls;
   try {
-    await writeAuthoritativePersistenceBatch(environment, provider, cacheKey, entries, budget.deadlineAt);
-    outcome.persistedCount += entries.length;
+    const batchResult = await writeAuthoritativePersistenceBatch(
+      environment, provider, cacheKey, entries, budget.deadlineAt,
+    );
+    outcome.persistedCount += batchResult.acceptedCount;
+    outcome.quarantined.push(...batchResult.quarantined);
   } catch (error) {
     if (!isQuarantinablePersistenceError(error)) throw error;
     if (entries.length > 1) {
@@ -1778,9 +1849,11 @@ async function persistBatchWithDataIsolation(
   }
 }
 
-function quarantinedProviderFailure(provider: string, count: number) {
+function quarantinedProviderNotice(provider: string, count: number) {
   return {
     ...publicProviderError(provider, "RADAR_CANDIDATES_QUARANTINED", 206),
+    classification: "quality",
+    degrades_provider: false,
     message: `${count} candidata${count === 1 ? "" : "s"} no superaron la validación autoritativa. Las filas sanas sí se conservaron.`,
   };
 }
@@ -1791,7 +1864,6 @@ function deferredPersistenceCandidateCount(outcome: ProviderPersistenceOutcome):
 
 function partialPersistenceFailure(provider: string, outcome: ProviderPersistenceOutcome) {
   const deferredCount = deferredPersistenceCandidateCount(outcome);
-  if (!deferredCount) return quarantinedProviderFailure(provider, outcome.quarantined.length);
   return {
     ...publicProviderError(provider, "RADAR_PERSISTENCE_ISOLATION_DEFERRED", 206),
     message: `${deferredCount} candidata${deferredCount === 1 ? " quedó" : "s quedaron"} diferida${deferredCount === 1 ? "" : "s"} al agotarse el presupuesto de aislamiento. Las ${outcome.persistedCount} filas confirmadas se conservaron.`,
@@ -1829,7 +1901,7 @@ async function persistProviderResult(
       })));
       await persistBatchWithDataIsolation(environment, provider, cacheKey, entries, outcome, isolationBudget);
     }
-    if (outcome.quarantined.length || outcome.deferred.length) {
+    if (outcome.deferred.length) {
       outcome.failure = partialPersistenceFailure(provider, outcome);
       await finalizeProviderRefresh(
         environment,
@@ -1838,10 +1910,19 @@ async function persistProviderResult(
         outcome.persistedCount > 0 ? "partial_error" : "unavailable",
         outcome.persistedCount,
         outcome.failure,
+        {
+          accepted: outcome.persistedCount,
+          quarantined: outcome.quarantined.length,
+          failed: deferredPersistenceCandidateCount(outcome),
+        },
       );
     } else {
       const persistedCount = outcome.persistedCount;
-      await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount);
+      await finalizeProviderRefresh(environment, provider, cacheKey, "available", persistedCount, undefined, {
+        accepted: persistedCount,
+        discarded: outcome.quarantined.length,
+        quarantined: outcome.quarantined.length,
+      });
     }
     return outcome;
   } catch (error) {
@@ -1854,19 +1935,25 @@ async function persistProviderResult(
       outcome.persistedCount > 0 ? "partial_error" : "unavailable",
       outcome.persistedCount,
       failure,
+      {
+        accepted: outcome.persistedCount,
+        quarantined: outcome.quarantined.length,
+        failed: Math.max(1, deferredPersistenceCandidateCount(outcome)),
+      },
     ).catch(() => null);
     throw new RadarPersistenceError(failure, outcome);
   }
 }
 
-async function persistProviderFailure(environment: Environment, provider: string, cacheKey: string, failure: ReturnType<typeof providerFailure>) {
+async function persistProviderFailure(environment: Environment, provider: string, cacheKey: string, failure: JsonRecord) {
   await finalizeProviderRefresh(
     environment,
     provider,
     cacheKey,
-    "unavailable",
+    failure.code === "PROVIDER_RATE_LIMITED" ? "rate_limited" : "unavailable",
     0,
     failure,
+    { failed: 1 },
   ).catch(() => null);
 }
 
@@ -1877,12 +1964,16 @@ async function persistProcessorSuccess(environment: Environment, cacheKey: strin
     cacheKey,
     "available",
     Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES),
+    undefined,
+    { accepted: Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES) },
   ).catch(() => null);
 }
 
 async function persistProcessorPartialFailure(environment: Environment, cacheKey: string, failure: JsonRecord, processedDecisions: number) {
   const message = `${cleanText(failure.message, 220) || "La verificación automática quedó incompleta."} Decisiones válidas: ${Math.max(processedDecisions, 0)}.`;
-  const status = processedDecisions === 0 ? "unavailable" : "partial_error";
+  const status = cleanText(failure.code, 80) === "PROVIDER_RATE_LIMITED"
+    ? "rate_limited"
+    : processedDecisions === 0 ? "unavailable" : "partial_error";
   await finalizeProviderRefresh(
     environment,
     "gemini",
@@ -1894,6 +1985,11 @@ async function persistProcessorPartialFailure(environment: Environment, cacheKey
       code: cleanText(failure.code, 80) || "PROCESSING_INCOMPLETE",
       status: Number(failure.status) || 206,
       message,
+      retry_after_seconds: Number(failure.retry_after_seconds) || null,
+    },
+    {
+      accepted: Math.min(Math.max(processedDecisions, 0), MAX_GEMINI_CANDIDATES),
+      failed: 1,
     },
   ).catch(() => null);
 }
@@ -1915,6 +2011,27 @@ function hasCurrentDiscoveryFact(candidate: JsonRecord, checkedAt = Date.now()):
       || (cleanText(candidate.fact_status, 40) === "unresolved"
         && Number.isFinite(verificationExpiresAt)
         && verificationExpiresAt > checkedAt));
+}
+
+function activeProviderCircuit(providerRuns: JsonRecord[], provider: string, nowMs = Date.now()): JsonRecord | null {
+  const latest = providerRuns
+    .filter((item) => cleanText(item.provider, 40) === provider)
+    .sort((left, right) => Date.parse(cleanText(right.fetched_at, 100)) - Date.parse(cleanText(left.fetched_at, 100)))[0];
+  if (!latest || cleanText(latest.circuit_state, 40) !== "open") return null;
+  const retryAfterAt = Date.parse(cleanText(latest.retry_after_at, 100));
+  if (!Number.isFinite(retryAfterAt) || retryAfterAt <= nowMs) return null;
+  return {
+    provider,
+    code: "PROVIDER_RATE_LIMITED",
+    status: 429,
+    message: "El proveedor mantiene un límite temporal. Atinara conserva el último resultado válido y reintentará cuando termine el plazo indicado.",
+    retry_after_seconds: Math.max(1, Math.ceil((retryAfterAt - nowMs) / 1_000)),
+    retry_after_at: new Date(retryAfterAt).toISOString(),
+    retryable: true,
+    last_known_good_count: Number(latest.last_success_count) || 0,
+    last_known_good_at: latest.last_success_at || null,
+    state_preserved: true,
+  };
 }
 
 async function loadRadarView(
@@ -1994,8 +2111,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     now,
   ).catch(() => 0);
   const existing = await loadExistingDefinitions(environment, authorization);
-  const providers = filters.provider === "all" ? ["polymarket", "kalshi"] : filters.provider === "tavily" ? [] : [filters.provider];
+  const requestedProviders = filters.provider === "all" ? ["polymarket", "kalshi"] : filters.provider === "tavily" ? [] : [filters.provider];
   const errors: JsonRecord[] = [];
+  const providers = requestedProviders.filter((provider) => {
+    const circuit = activeProviderCircuit(current.providers, provider);
+    if (!circuit) return true;
+    errors.push(circuit);
+    return false;
+  });
   const discoveredByProvider = new Map<string, JsonRecord[]>();
   const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => ({
     provider,
@@ -2076,6 +2199,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       await persistProviderFailure(environment, "tavily", cacheKey, failure);
     }
     try {
+      const circuit = activeProviderCircuit(current.providers, "gemini");
+      if (circuit) {
+        throw new ProviderRequestError(
+          "PROVIDER_RATE_LIMITED",
+          429,
+          Math.max(1, Number(circuit.retry_after_seconds) || 60) * 1_000,
+        );
+      }
       const outcome = await verifyAndAdaptWithGemini(environment.geminiKey, needsVerification, existing, evidenceByGroup, now);
       newlyVerified = outcome.candidates;
       deferredVerificationCount = outcome.deferredCandidates;
@@ -2121,6 +2252,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
 
   const scored = scoreCandidates(candidates, existing, now) as JsonRecord[];
   const quarantinedCandidates: RadarCandidateQuarantine[] = [];
+  const qualityNotices: JsonRecord[] = [];
   const deferredPersistenceBatches: RadarPersistenceDeferredBatch[] = [];
   for (const provider of discoveredByProvider.keys()) {
     try {
@@ -2131,6 +2263,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         scored.filter((candidate) => candidate.provider === provider).slice(0, MAX_NORMALIZED_PER_PROVIDER),
       );
       quarantinedCandidates.push(...outcome.quarantined);
+      if (outcome.quarantined.length) {
+        qualityNotices.push({
+          ...quarantinedProviderNotice(provider, outcome.quarantined.length),
+          quarantined_count: outcome.quarantined.length,
+          quarantined: outcome.quarantined,
+          persisted_count: outcome.persistedCount,
+        });
+      }
       deferredPersistenceBatches.push(...outcome.deferred);
       if (outcome.failure) {
         errors.push({
@@ -2149,18 +2289,23 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         : persistenceFailure(error, provider);
       if (error instanceof RadarPersistenceError) {
         quarantinedCandidates.push(...error.outcome.quarantined);
-        deferredPersistenceBatches.push(...error.outcome.deferred);
-        if (error.outcome.quarantined.length || error.outcome.deferred.length) {
-          errors.push({
-            ...partialPersistenceFailure(provider, error.outcome),
+        if (error.outcome.quarantined.length) {
+          qualityNotices.push({
+            ...quarantinedProviderNotice(provider, error.outcome.quarantined.length),
             quarantined_count: error.outcome.quarantined.length,
             quarantined: error.outcome.quarantined,
-            deferred_count: deferredPersistenceCandidateCount(error.outcome),
-            deferred_batches: error.outcome.deferred,
             persisted_count: error.outcome.persistedCount,
-            persistence_rpc_count: error.outcome.persistenceRpcCalls,
           });
         }
+        deferredPersistenceBatches.push(...error.outcome.deferred);
+        Object.assign(failure, {
+          quarantined_count: error.outcome.quarantined.length,
+          quarantined: error.outcome.quarantined,
+          deferred_count: deferredPersistenceCandidateCount(error.outcome),
+          deferred_batches: error.outcome.deferred,
+          persisted_count: error.outcome.persistedCount,
+          persistence_rpc_count: error.outcome.persistenceRpcCalls,
+        });
       }
       errors.push(failure);
     }
@@ -2181,6 +2326,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     deferred_verification_count: deferredVerificationCount,
     processed_verification_count: processedVerificationCount,
     failed_verification_batches: failedVerificationBatches,
+    quality_notices: qualityNotices,
     quarantined_candidate_count: quarantinedCandidates.length,
     quarantined_candidates: quarantinedCandidates,
     deferred_persistence_candidate_count: deferredPersistenceBatches.reduce(

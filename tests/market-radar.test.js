@@ -673,6 +673,8 @@ test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estr
   assert.match(edge, /include_domains/);
   assert.match(edge, /event_resolved_at: \{ type:/);
   assert.match(edge, /responseJsonSchema: geminiResponseJsonSchema/);
+  assert.match(edge, /geminiProviderSchemaSupported/);
+  assert.match(edge, /providerPayload = await send\(false\)/);
   assert.match(edge, /failClosedCandidates/);
   assert.match(edge, /mapWithConcurrency\(groups, TAVILY_CONCURRENCY/);
   assert.match(edge, /get_market_radar_authoritative_source_domains_v1/);
@@ -794,7 +796,8 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260809-expert-cycle1/);
+  assert.match(adminHtml, /v=20260811-expert-cycle3/);
+  assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 
@@ -813,7 +816,7 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /GEMINI_BATCH_SIZE = 9/);
   assert.match(edge, /GEMINI_CONCURRENCY = 2/);
   assert.match(edge, /GEMINI_TIMEOUT_MS = 20_000/);
-  assert.match(edge, /GEMINI_MODEL = "gemini-3\.5-flash-lite"/);
+  assert.match(edge, /GEMINI_MODEL = "gemini-3\.1-flash-lite"/);
   assert.match(edge, /REFRESH_COOLDOWN_MS = 60_000/);
   assert.match(edge, /thinkingLevel: "minimal"/);
   assert.match(edge, /responseMimeType: "application\/json"/);

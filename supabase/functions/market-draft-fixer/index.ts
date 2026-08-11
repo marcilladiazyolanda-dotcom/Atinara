@@ -91,6 +91,16 @@ function restHeaders(key: string, authorization?: string): Record<string, string
   return headers;
 }
 
+class DraftFixerRpcError extends Error {
+  readonly status: number;
+
+  constructor(code: string, status: number) {
+    super(code);
+    this.name = "DraftFixerRpcError";
+    this.status = status;
+  }
+}
+
 async function rpc(
   env: Environment,
   name: string,
@@ -105,7 +115,10 @@ async function rpc(
   const payload = await response.json().catch(() => ({})) as JsonRecord;
   if (!response.ok) {
     console.error("draft fixer rpc", JSON.stringify({ name, status: response.status }));
-    throw new Error(cleanText(payload.message ?? payload.code, 120) || `RPC_${response.status}`);
+    throw new DraftFixerRpcError(
+      cleanText(payload.message ?? payload.code, 120) || `RPC_${response.status}`,
+      response.status,
+    );
   }
   return payload;
 }
@@ -119,7 +132,10 @@ async function serviceRpc(env: Environment, name: string, args: JsonRecord): Pro
   const payload = await response.json().catch(() => ({})) as JsonRecord;
   if (!response.ok) {
     console.error("draft fixer service rpc", JSON.stringify({ name, status: response.status }));
-    throw new Error(cleanText(payload.message ?? payload.code, 120) || `RPC_${response.status}`);
+    throw new DraftFixerRpcError(
+      cleanText(payload.message ?? payload.code, 120) || `RPC_${response.status}`,
+      response.status,
+    );
   }
   return payload;
 }
@@ -692,6 +708,23 @@ function repairRoundSignature(deterministic: JsonRecord, repaired: JsonRecord): 
   });
 }
 
+async function sha256Hex(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function deterministicRequestUuid(requestKey: string, label: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${requestKey}:${label}`),
+  )).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function repairAuditIssuePlan(value: unknown): JsonRecord {
   const plan = isRecord(value) ? value : {};
   const rawDispositions = isRecord(plan.dispositions) ? plan.dispositions : {};
@@ -825,9 +858,10 @@ async function recordPrimarySourceCheck(
   return checkId;
 }
 
-function resolutionSources(context: JsonRecord, draft: JsonRecord): JsonRecord[] {
+function resolutionSources(context: JsonRecord, draft: JsonRecord, temporalContract: JsonRecord | null = null): JsonRecord[] {
   const primary = safePublicUrl(isRecord(draft.primary_source) ? draft.primary_source.url : null);
   if (!primary) return [];
+  const temporalAnchorSource = safePublicUrl(temporalContract?.source_url);
   const existing = new Map<string, JsonRecord>();
   for (const source of Array.isArray(context.binding_sources) ? context.binding_sources.filter(isRecord) : []) {
     const url = safePublicUrl(source.url);
@@ -838,12 +872,22 @@ function resolutionSources(context: JsonRecord, draft: JsonRecord): JsonRecord[]
   for (const source of mergeAlternativeSources(draft.alternative_sources)) {
     if (source.url === primary) continue;
     const previous = existing.get(source.url);
+    const isTemporalAnchor = Boolean(temporalAnchorSource && source.url === temporalAnchorSource);
+    const previousRole = cleanText(previous?.role, 80).toUpperCase();
+    const role = isTemporalAnchor ? "CONTEXT_SOURCE"
+      : previousRole === "FALLBACK_RESOLUTION" ? "FALLBACK_RESOLUTION"
+        : previousRole === "CONTEXT_SOURCE" ? "CONTEXT_SOURCE"
+          : "CORROBORATION";
     result.push({
       url: source.url,
-      role: cleanText(previous?.role, 80) === "FALLBACK_RESOLUTION" ? "FALLBACK_RESOLUTION" : "CORROBORATION",
+      role,
       precedence,
-      required: false,
-      fallback_condition: cleanText(previous?.fallback_condition, 800) || "Usar para corroborar o cuando la fuente primaria no esté disponible.",
+      required: isTemporalAnchor,
+      fallback_condition: role === "FALLBACK_RESOLUTION"
+        ? cleanText(previous?.fallback_condition, 800) || "Usar solo cuando la fuente primaria no esté disponible."
+        : isTemporalAnchor
+          ? "Fuente oficial requerida exclusivamente para fijar la fecha-ancla del periodo relativo; no sustituye la métrica de resolución."
+          : cleanText(previous?.fallback_condition, 800) || "Usar para corroborar; no sustituye la fuente primaria de resolución.",
     });
     precedence += 1;
   }
@@ -883,7 +927,7 @@ function exactEscalation(review: JsonRecord, evidenceChecked: JsonRecord[]): Jso
   };
 }
 
-async function repairAndRevalidate(
+async function executeRepairAndRevalidate(
   env: Environment,
   authorization: string,
   body: JsonRecord,
@@ -901,9 +945,16 @@ async function repairAndRevalidate(
   let previousVersion = expectedVersion;
   let lastReview: JsonRecord = {};
   let archetype = "generic_binary_event";
-  const repairRequestIds = Array.from({ length: AUTONOMOUS_REPAIR_MAX_ROUNDS }, () => crypto.randomUUID());
-  const reviewAttemptIds = Array.from({ length: AUTONOMOUS_REPAIR_MAX_ROUNDS }, () => crypto.randomUUID());
-  const compatibilityReviewAttemptId = crypto.randomUUID();
+  const workflowRequestKey = cleanText(body.attempt_id, 80) || crypto.randomUUID();
+  const repairRequestIds = await Promise.all(Array.from(
+    { length: AUTONOMOUS_REPAIR_MAX_ROUNDS },
+    (_, index) => deterministicRequestUuid(workflowRequestKey, `repair:${index + 1}`),
+  ));
+  const reviewAttemptIds = await Promise.all(Array.from(
+    { length: AUTONOMOUS_REPAIR_MAX_ROUNDS },
+    (_, index) => deterministicRequestUuid(workflowRequestKey, `review:${index + 1}`),
+  ));
+  const compatibilityReviewAttemptId = await deterministicRequestUuid(workflowRequestKey, "compatibility-review");
   const seenRoundSignatures = new Set<string>();
   const sourceValidationDeadlineAt = Date.now() + SOURCE_VALIDATION_BUDGET_MS;
   const sourceValidationSignal = AbortSignal.timeout(SOURCE_VALIDATION_BUDGET_MS);
@@ -998,7 +1049,15 @@ async function repairAndRevalidate(
     if (Number(draft.content_version) !== expectedVersion) throw new Error("DRAFT_VERSION_MOVED");
     if (context.repair_applicable !== true && round === 1) throw new Error("DRAFT_REPAIR_NOT_APPLICABLE");
 
-    const inferenceContext = repairInferenceContext(context);
+    const boundContextAttestation = await serviceRpc(
+      env,
+      "get_market_draft_bound_context_attestation_v1",
+      { draft_id_input: draftId, expected_version_input: expectedVersion },
+    );
+    const inferenceContext = repairInferenceContext({
+      ...context,
+      bound_context_attestation: boundContextAttestation,
+    });
     const proposedCategory = inferRepairCategory(inferenceContext);
     if (!proposedCategory) {
       const escalation = {
@@ -1109,19 +1168,22 @@ async function repairAndRevalidate(
     seenRoundSignatures.add(roundSignature);
 
     const changed = changedRepairFields(draft, repaired);
+    if (sourceValidationSignal.aborted
+      || Date.now() + MIN_POST_WRITE_BUDGET_MS >= sourceValidationDeadlineAt) return budgetResponse();
+    if (!primaryDiscovery.checkSnapshot) throw new Error("PRIMARY_SOURCE_CHECK_REQUIRED");
+    // La comprobacion autoritativa tambien se registra en rondas no-op: el
+    // Validador necesita una atestacion fresca de la version exacta que revisa.
+    const primarySourceCheckId = await recordPrimarySourceCheck(
+      env,
+      draftId,
+      expectedVersion,
+      primaryDiscovery.checkSnapshot,
+    );
+    evidenceChecked = evidenceChecked.map((item) => item === primaryDiscovery.checkSnapshot
+      ? { ...item, snapshot_id: primarySourceCheckId } : item);
     if (changed.length) {
-      if (sourceValidationSignal.aborted
-        || Date.now() + MIN_POST_WRITE_BUDGET_MS >= sourceValidationDeadlineAt) return budgetResponse();
-      if (!primaryDiscovery.checkSnapshot) throw new Error("PRIMARY_SOURCE_CHECK_REQUIRED");
-      const primarySourceCheckId = await recordPrimarySourceCheck(
-        env,
-        draftId,
-        expectedVersion,
-        primaryDiscovery.checkSnapshot,
-      );
-      evidenceChecked = evidenceChecked.map((item) => item === primaryDiscovery.checkSnapshot
-        ? { ...item, snapshot_id: primarySourceCheckId } : item);
-      const sources = resolutionSources(context, repaired);
+      const sources = resolutionSources(context, repaired, isRecord(deterministic.temporal_contract)
+        ? deterministic.temporal_contract : null);
       const contract = buildResolutionPlan({
         ...repairContext,
         repair_temporal_contract: deterministic.temporal_contract,
@@ -1150,6 +1212,15 @@ async function repairAndRevalidate(
       }, authorization);
       expectedVersion = Number((isRecord(applied.draft) ? applied.draft.content_version : null) ?? applied.new_version);
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("REPAIR_VERSION_INVALID");
+      // apply_market_draft_expert_repair_v2 consume la atestacion de la version
+      // anterior. Se enlaza la misma lectura fresca a la nueva version para que
+      // la revalidacion posterior pueda comprobarla sin confiar en flags viejos.
+      await recordPrimarySourceCheck(
+        env,
+        draftId,
+        expectedVersion,
+        primaryDiscovery.checkSnapshot,
+      );
       changed.forEach((field) => allChanged.add(field));
       deterministic.explanations.forEach((item: JsonRecord) => allExplanations.push(item));
     }
@@ -1226,6 +1297,145 @@ async function repairAndRevalidate(
   }, 409);
 }
 
+function repairFailurePhase(code: string): string {
+  if (/SOURCE|PROVIDER|RESEARCH/.test(code)) return "research";
+  if (/REVIEW|REVALIDAT|COMPATIBLE/.test(code)) return "revalidation";
+  if (/PATCH|VALIDATION|INFERABLE|ARCHETYPE|CATEGORY|METRIC|TEMPORAL/.test(code)) return "patch_validation";
+  if (/VERSION|PERSIST|PRIMARY_SOURCE_CHECK|REPAIR_VERSION/.test(code)) return "persistence";
+  return "preflight";
+}
+
+function repairFailureMessage(code: string, retryable: boolean): string {
+  const messages: Record<string, string> = {
+    DRAFT_VERSION_MOVED: "El borrador cambiÃ³ mientras se preparaba la correcciÃ³n. RecÃ¡rgalo antes de reintentar.",
+    DRAFT_REPAIR_NOT_APPLICABLE: "Atinara clasificÃ³ una incidencia como reparable, pero no encontrÃ³ una estrategia compatible. El defecto interno quedÃ³ registrado.",
+    SAFE_REPAIR_VALIDATION_FAILED: "El parche propuesto no superÃ³ la validaciÃ³n previa y no se guardÃ³.",
+    COMPATIBLE_REVIEW_REQUIRED: "La revisiÃ³n compatible no pudo completarse; se conservÃ³ el Ãºltimo estado autoritativo.",
+    SOURCE_VALIDATION_BUDGET_EXHAUSTED: "Se agotÃ³ el tiempo seguro de comprobaciÃ³n de fuentes. El estado ya guardado se conserva.",
+    PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente la operaciÃ³n. Atinara respetarÃ¡ el plazo de reintento.",
+  };
+  return messages[code] || (retryable
+    ? "La fase tÃ©cnica no pudo completarse. El borrador continÃºa privado y puede reintentarse con seguridad."
+    : "La correcciÃ³n se detuvo con una causa tipada. El borrador continÃºa privado y sin confirmaciÃ³n.");
+}
+
+async function repairAndRevalidate(
+  env: Environment,
+  authorization: string,
+  body: JsonRecord,
+): Promise<Response> {
+  const draftId = cleanText(body.draft_id, 100);
+  const expectedVersion = Number(body.expected_version);
+  const requestKey = cleanText(body.attempt_id, 80) || crypto.randomUUID();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey)) {
+    return jsonResponse({
+      error: "INVALID_REPAIR_REQUEST",
+      message: "El identificador de intento no es vÃ¡lido.",
+      failure_phase: "preflight",
+      retryable: false,
+      state_preserved: true,
+      draft_private: true,
+      publishes: false,
+      confirms: false,
+      resolves: false,
+    }, 400);
+  }
+
+  const beginning = await rpc(env, "begin_market_draft_repair_attempt_v1", {
+    draft_id_input: draftId,
+    expected_version_input: expectedVersion,
+    request_key_input: requestKey,
+  }, authorization);
+  const attemptId = cleanText(beginning.attempt_id, 80);
+  if (beginning.idempotency_replay === true) {
+    const replayStatus = Number(beginning.http_status) || (beginning.status === "already_in_progress" ? 202 : 200);
+    return jsonResponse({ ...beginning, attempt_id: attemptId, state_preserved: beginning.state_preserved !== false }, replayStatus);
+  }
+
+  const complete = async (payloadValue: JsonRecord, httpStatus: number): Promise<Response> => {
+    const errorCode = cleanText(payloadValue.error, 120);
+    const retryable = payloadValue.retryable === true
+      || payloadValue.classification === "technical"
+      || isRecord(payloadValue.technical_incident)
+      || httpStatus === 429
+      || httpStatus >= 500;
+    const internalDefect = ["DRAFT_REPAIR_NOT_APPLICABLE", "SAFE_REPAIR_VALIDATION_FAILED", "REPAIR_VERSION_INVALID"].includes(errorCode);
+    const succeeded = httpStatus >= 200 && httpStatus < 300
+      && payloadValue.ok === true && payloadValue.review_approved === true;
+    const status = succeeded
+      ? payloadValue.repair_applied === true ? "succeeded" : "no_op"
+      : internalDefect ? "internal_defect"
+        : retryable ? "technical_failed" : "blocked";
+    const classification = internalDefect ? "internal" : retryable ? "technical" : "content";
+    const phase = succeeded ? "complete" : repairFailurePhase(errorCode);
+    let resultingFingerprint = "";
+    if (Number(payloadValue.new_version) >= expectedVersion) {
+      const context = await rpc(env, "get_market_draft_expert_repair_context", {
+        draft_id_input: draftId,
+      }, authorization).catch(() => ({}));
+      resultingFingerprint = cleanText(isRecord(context.draft) ? context.draft.content_fingerprint : null, 80);
+    }
+    const patchFingerprint = payloadValue.repair_applied === true
+      ? await sha256Hex({
+        draft_id: draftId,
+        previous_version: payloadValue.previous_version ?? expectedVersion,
+        new_version: payloadValue.new_version ?? expectedVersion,
+        changed_fields: payloadValue.changed_fields ?? [],
+        policy: AUTONOMOUS_REPAIR_VERSION,
+      })
+      : "";
+    const responsePayload = {
+      ...payloadValue,
+      attempt_id: attemptId,
+      failure_phase: phase,
+      retryable,
+      state_preserved: true,
+      http_status: httpStatus,
+      message: cleanText(payloadValue.message, 1_000) || repairFailureMessage(errorCode, retryable),
+      draft_private: true,
+      publishes: false,
+      confirms: false,
+      resolves: false,
+    };
+    const recorded = await serviceRpc(env, "complete_market_draft_repair_attempt_v1", {
+      attempt_id_input: attemptId,
+      status_input: status,
+      phase_input: phase,
+      classification_input: classification,
+      retryable_input: retryable,
+      error_code_input: errorCode || null,
+      patch_fingerprint_input: patchFingerprint || null,
+      resulting_version_input: Number(payloadValue.new_version) || expectedVersion,
+      resulting_fingerprint_input: resultingFingerprint || null,
+      response_payload_input: responsePayload,
+    });
+    return jsonResponse(recorded, httpStatus);
+  };
+
+  try {
+    const response = await executeRepairAndRevalidate(env, authorization, { ...body, attempt_id: requestKey });
+    const payload = await response.clone().json().catch(() => ({})) as JsonRecord;
+    return await complete(payload, response.status);
+  } catch (error) {
+    const code = safeErrorCode(error);
+    const retryable = /TIMEOUT|RATE_LIMIT|HTTP_5|NETWORK|BUDGET/.test(code);
+    const conflict = /VERSION|CONFLICT|AMBIGUOUS/.test(code);
+    const internalDefect = ["DRAFT_REPAIR_NOT_APPLICABLE", "SAFE_REPAIR_VALIDATION_FAILED", "REPAIR_VERSION_INVALID"].includes(code);
+    const status = internalDefect ? 500 : conflict ? 409 : retryable ? 503 : 422;
+    console.error("draft fixer attempt", JSON.stringify({ attempt_id: attemptId, code, phase: repairFailurePhase(code) }));
+    return await complete({
+      ok: false,
+      error: code,
+      classification: internalDefect ? "internal" : retryable ? "technical" : "content",
+      retryable,
+      message: repairFailureMessage(code, retryable),
+      previous_version: expectedVersion,
+      new_version: expectedVersion,
+      repair_applied: false,
+    }, status);
+  }
+}
+
 function safeErrorCode(error: unknown): string {
   const code = cleanText(error instanceof Error ? error.message : error, 120);
   return /^[A-Z][A-Z0-9_]{2,119}$/.test(code) ? code : "DRAFT_FIXER_FAILED";
@@ -1251,7 +1461,10 @@ Deno.serve(async (request: Request) => {
     return await repairAndRevalidate(env, authorization, body);
   } catch (error) {
     const code = safeErrorCode(error);
-    const status = /INVALID|REQUEST|NOT_APPLICABLE/.test(code) ? 400
+    const upstreamStatus = error instanceof DraftFixerRpcError ? error.status : 0;
+    const status = [400, 401, 403, 404, 409, 422, 429, 503, 504].includes(upstreamStatus)
+      ? upstreamStatus
+      : /INVALID|REQUEST|NOT_APPLICABLE/.test(code) ? 400
       : /VERSION|CONFLICT|AMBIGUOUS/.test(code) ? 409
       : /AUTH/.test(code) ? 401
       : /ADMIN/.test(code) ? 403
@@ -1259,7 +1472,10 @@ Deno.serve(async (request: Request) => {
     console.error("draft fixer", JSON.stringify({ code }));
     return jsonResponse({
       error: code,
-      message: "La operación no se completó. El borrador continúa privado, sin confirmación ni publicación automática.",
+      message: repairFailureMessage(code, status === 429 || status >= 500),
+      failure_phase: "preflight",
+      retryable: status === 429 || status >= 500,
+      state_preserved: true,
       draft_private: true,
       publishes: false,
       confirms: false,

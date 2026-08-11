@@ -532,7 +532,7 @@ test("SQL vincula snapshots append-only y bloquea todas las firmas antiguas", ()
 
 test("la 140 desplegada permanece congelada y 145 reconcilia su historial solo tras manifiesto exacto", () => {
   assert.equal(
-    createHash("sha256").update(migration).digest("hex"),
+    createHash("sha256").update(migration.replace(/\r\n/g, "\n")).digest("hex"),
     "3e5a1b4567a202d359380fc1f31d3988b2a2b934f1a77eefd58f46901b5949db",
   );
   assert.match(reconciliationMigration, /function_count <> 27/);
@@ -710,7 +710,7 @@ test("el Editor prioriza la explicación del 409 y nunca presenta SQL interno", 
   assert.match(draftFixerUi, /function safeRepairErrorText\(value, max = 800\)/);
   assert.match(draftFixerUi, /SQLSTATE[\s\S]*PL\\\/pgSQL[\s\S]*SQL statement[\s\S]*private\|public\|auth\|extensions/);
   assert.match(draftFixerUi, /\^\[A-Z\]\[A-Z0-9_\]\{2,\}\$/);
-  const errorStart = draftFixerUi.indexOf("async function errorMessage");
+  const errorStart = draftFixerUi.indexOf("async function repairFailure");
   const errorEnd = draftFixerUi.indexOf("async function runRepair", errorStart);
   const errorBody = draftFixerUi.slice(errorStart, errorEnd);
   assert.ok(errorBody.indexOf("body?.escalation?.reason") < errorBody.indexOf("body?.message"));

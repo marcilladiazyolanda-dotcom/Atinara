@@ -10,6 +10,10 @@ const migration = readFileSync(
   join(root, "supabase/migrations/20260809180000_fix_radar_refresh_timeout.sql"),
   "utf8",
 );
+const cycleV2Migration = readFileSync(
+  join(root, "supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql"),
+  "utf8",
+);
 const sqlTest = readFileSync(
   join(root, "supabase/tests/radar_refresh_timeout_transaction.sql"),
   "utf8",
@@ -40,12 +44,12 @@ test("cada proveedor se persiste en lotes pequeños y finaliza con un total exac
   assert.match(edge, /for \(let offset = 0; offset < candidates\.length; offset \+= RADAR_PERSISTENCE_BATCH_SIZE\)/);
   assert.match(edge, /candidates\.slice\(offset, offset \+ RADAR_PERSISTENCE_BATCH_SIZE\)/);
   assert.match(edge, /upsert_market_radar_batch_with_fact_checks_v1/);
-  assert.match(edge, /finalize_market_radar_provider_refresh_v1/);
+  assert.match(edge, /finalize_market_radar_provider_refresh_v2/);
   assert.match(edge, /"available", persistedCount/);
   assert.match(edge, /persistedCount > 0 \? "partial_error" : "unavailable"/);
-  assert.match(migration, /result_count_input > 240/);
-  assert.match(migration, /grant execute on function public\.finalize_market_radar_provider_refresh_v1[\s\S]*to service_role/);
-  assert.match(migration, /revoke all on function public\.finalize_market_radar_provider_refresh_v1[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(cycleV2Migration, /result_count_input > 240/);
+  assert.match(cycleV2Migration, /grant execute on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*to service_role/);
+  assert.match(cycleV2Migration, /revoke all on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*from public, anon, authenticated, service_role/);
 });
 
 test("un fallo de escritura queda aislado al proveedor y no derriba todo el Radar", () => {

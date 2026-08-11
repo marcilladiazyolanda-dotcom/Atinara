@@ -1,11 +1,11 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 9 de agosto de 2026.
+Última actualización del contexto: 11 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine usa `market-radar` v27,
-> `market-draft-fixer` v7, `validate-market-draft` v8 y `market-expert` v11,
+> **Estado vigente:** Atinara Engine usa `market-radar` v33,
+> `market-draft-fixer` v16, `validate-market-draft` v26 y `market-expert` v17,
 > todas activas con `verify_jwt=true`. La puerta factual v2 gobierna
 > descubrimiento, preparación y todas las transiciones hacia publicación; la
 > identidad familiar vigente es v4 y la revisión automática usa política v3.
@@ -13,11 +13,82 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > corte preservó exactamente mercados publicados, predicciones, Karma,
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
 > hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
-> visual administrativo de Marvel y FC27 continúa pendiente y debe hacerse sin
-> confirmar ni publicar. GitHub Pages ya sirve el frontend administrativo
-> coordinado; tras la corrección v27 hay que repetir una sola actualización
-> explícita del Radar. La fuente local se entregará para la subida manual de Yol;
-> no hacer un push directo no revisado a `main`.
+> visual administrativo de Marvel y dos refrescos controlados del Radar ya se
+> completaron sin confirmar ni publicar. Marvel quedó `approved` en v9 y el
+> Radar final dejó todos los proveedores disponibles, separando seis descartes
+> normales. GitHub Pages todavía sirve el frontend anterior; Yol
+> debe subir el ZIP incremental y solo después se podrá validar el recurso
+> publicado. No hacer push directo a `main`.
+
+### Cierre definitivo Radar → Editor → Corrector → publicación · 11 de agosto de 2026
+
+- Fuente local exacta: `origin/main =
+  1b10d0adbfdc62b787d70f10b16e86a08b876874`, rama aislada
+  `codex/market-cycle-definitive`. No se mezclaron ni descartaron cambios de
+  otros worktrees.
+- Las capturas mezclaban descartes normales con salud del proveedor. La causa
+  estaba en el agregado: Polymarket y Kalshi convertían filas rechazadas por la
+  puerta de calidad en `partial_error`. El contrato v2 conserva por separado
+  `accepted_count`, `discarded_count`, `quarantined_count` y `failed_count`; un
+  proveedor que respondió y persistió sus filas sanas queda `available`, aunque
+  muestre un resumen consultable de descartes.
+- Gemini es un enriquecedor sustituible. `429`, `Retry-After`, timeout, red,
+  respuesta inválida o `5xx` son incidencias técnicas reintentables; activan
+  backoff, jitter, cooldown/circuito y `last-known-good`, sin borrar evidencia
+  vigente, elevar versión, fabricar `{}` ni detener otros proveedores.
+- Los seis códigos del Agente Editor eran una cascada de envoltorios. La UI y el
+  backend conservan todos para auditoría, pero presentan la causa causal mínima,
+  distinguen bloqueo terminal, reparación automática, incidencia técnica y
+  decisión humana, y solo habilitan una transición realmente disponible.
+- Marvel no fallaba por una regla especial del título. El validador llegó a
+  inferir ausencia de Metacritic/producto aunque la misma ejecución conservaba
+  una atestación HTTP 206 vigente y ligada a la versión. Además, sucesivas
+  reparaciones perdían una fuente `CONTEXT_SOURCE` autoritativa. El corte v3
+  permite que solo una atestación primaria fresca refute falsos bloqueos de
+  existencia/acceso y recupera contexto únicamente desde bindings append-only.
+  La regla temporal general derivó `2026-08-14T14:05:00Z` desde el final
+  evaluado, disponibilidad de fuente, Europe/Madrid y margen de política, sin
+  cambiar `Metascore > 95`. Marvel está privado como v9, fingerprint
+  `ba349eaef4f17591e1f98ae06aec9a3720c7dd4d93f7f3dfa7f6f50098a06d0c`,
+  revisión efectiva `approved`, sin confirmación, programación, publicación ni
+  `market_id`.
+- Producción registra tres migraciones nuevas y no repetibles:
+  `20260809213543 · close_expert_market_cycle_v2`,
+  `20260811100833 · harden_repair_evidence_and_idempotency_v3` y
+  `20260811104727 · isolate_radar_poison_records_v4`. V4 añade cuarentena
+  append-only y una única RPC por lote con subtransacción por candidata; una
+  fila de datos inválida ya no consume múltiples viajes de red ni pierde filas
+  sanas. Ninguna migración toca tablas económicas.
+- Edge Functions productivas, todas activas y con JWT obligatorio:
+  `market-radar` v33
+  `d7737e578bd7ae8510a8e6395163b065a87e40eb0353e4e9f75b7c062121a94c`;
+  `market-expert` v17
+  `c6042aad369e4897e61e0dd8642f8da25de93f3a2d0db6a6ce221f8eb1182d48`;
+  `market-draft-fixer` v16
+  `1a01c7e2636d3b2420ba0467560e20d594ba0c12e4cf94cf35f7c5f1913f7d68`;
+  `validate-market-draft` v26
+  `7e0b7d551b0ad69177cc3430d3949209582455006a87f1d50fc3fdc38841a0b3`.
+- Los archivos remotos recuperados de las cuatro funciones coinciden con el
+  código local probado. Los SHA-256 locales de las migraciones v2/v3/v4 son
+  `501cfcc9a0b29d7c673e7b9e552dbbfbb880908cbac442fbd367f1d1d0b88c28`,
+  `791f67df1b92eb16a9e2e39d13234471f1d30b82e5228d21531f19e956ac1f48` y
+  `82c02abcc66388e06f9a9b7aa566e41fa859f2a6032bb1a883df05cbcb0fb4db`.
+- Las matrices SQL de ciclo e aislamiento pasaron dentro de `BEGIN/ROLLBACK`.
+  La puerta positiva de publicación materializó un resultado y lo revirtió;
+  confirmó que la confirmación humana sigue siendo obligatoria. La suite local
+  pasa sintaxis de 71 JavaScript, 319/319 pruebas y TypeScript.
+- Dos ejecuciones reales v33 dejaron el último estado así: Gemini 153 aceptadas,
+  Kalshi 84 aceptadas y 1 cuarentena, Polymarket 69 aceptadas y 5 cuarentenas,
+  Tavily/ideas gaming 0; todos `available`, circuitos cerrados y cero fallos.
+  Los seis descartes fueron `RADAR_PROVIDER_FACT_REQUIRED` y no crearon
+  borradores ni mercados.
+- Las cinco huellas económicas finales coinciden exactamente con la línea base:
+  15 mercados, 15 estados LMSR, 17 puntos históricos, 9 predicciones y 2
+  perfiles; Karma total 2.932 y Prestigio total 40. No se confirmó, programó,
+  publicó, predijo, resolvió ni liquidó ningún mercado.
+- El informe completo está en `EXPERT_MARKET_CYCLE_CLOSURE_20260810.md`. Solo
+  queda pendiente la subida manual del ZIP por Yol y, después, la comprobación
+  real de GitHub Pages en escritorio/móvil y claro/oscuro.
 
 ### Corrección general de confirmación humana · 8 de agosto de 2026
 

@@ -1,7 +1,23 @@
-export const AUTONOMOUS_REPAIR_VERSION = "atinara-draft-repair-v8";
+export const AUTONOMOUS_REPAIR_VERSION = "atinara-draft-repair-v12";
 export const AUTONOMOUS_REPAIR_MAX_ROUNDS = 3;
 export const PRIMARY_SOURCE_REGISTRY_ROLE = "primary_resolution";
 export const PRIMARY_SOURCE_VALIDATION_VERSION = "atinara-primary-source-validation-v1";
+export const RESOLUTION_DEADLINE_POLICY = Object.freeze({
+  version: "atinara-resolution-deadline-policy-v1",
+  source_availability_delay_seconds: 300,
+  human_review_margin_seconds: 86_400,
+  maximum_margin_seconds: 604_800,
+});
+export const METRIC_OBSERVATION_POLICY = Object.freeze({
+  version: "atinara-metric-observation-policy-v1",
+  capture_window_seconds: 300,
+});
+const REUSABLE_BOUND_REPAIR_VERSIONS = new Set([
+  "atinara-draft-repair-v9",
+  "atinara-draft-repair-v10",
+  "atinara-draft-repair-v11",
+  "atinara-draft-repair-v12",
+]);
 
 const MONTHS = Object.freeze({
   enero: 1, ene: 1, january: 1, jan: 1, janeiro: 1,
@@ -96,11 +112,15 @@ export const REPAIR_ARCHETYPE_CAPABILITIES = Object.freeze(Object.fromEntries(
 
 export const REPAIR_ISSUE_CAPABILITIES = Object.freeze(Object.fromEntries(
   REPAIRABLE_ISSUE_CODES.map((code) => [code, Object.freeze({
+    severity: "blocking",
+    repairability: "auto_repair",
     disposition: ["AMBIGUOUS_SUBJECT", "CONTRADICTORY_CRITERIA", "UNRESOLVABLE_CONTRACT"].includes(code)
       ? "repair_or_specific_escalation"
       : ["MISSING_RESOLUTION_SOURCE", "PRIMARY_SOURCE_INVALID", "ALTERNATIVE_SOURCE_REQUIRED", "ALTERNATIVE_SOURCE_INVALID", "INSUFFICIENT_EVIDENCE"].includes(code)
         ? "research_then_repair_or_specific_escalation"
         : "deterministic_repair_or_specific_escalation",
+    invariants: ["preserve_contract_meaning", "preserve_private_state", "never_confirm_or_publish"],
+    expected_result: "new_version_then_compatible_review",
   })]),
 ));
 
@@ -976,6 +996,121 @@ function zonedDateTimeIso(year, month, day, hour, minute, timezone) {
   }
 }
 
+function versionedBoundRelativeDeadline(context, relative) {
+  const draft = isRecord(context?.draft) ? context.draft : {};
+  const binding = isRecord(context?.binding) ? context.binding : {};
+  const contract = isRecord(binding.resolution_contract) ? binding.resolution_contract : {};
+  const anchor = isRecord(contract.relative_anchor) ? contract.relative_anchor : {};
+  const issueCodes = repairIssueCodeSet(context);
+  const objectedFields = new Set((Array.isArray(context?.repairable_content_issues)
+    ? context.repairable_content_issues.filter(isRecord) : [])
+    .map((issue) => normalizedIssueField(issue.field)).filter(Boolean));
+  if ([
+    "CONTRADICTORY_CRITERIA", "INVALID_TIMEZONE", "PERIOD_REQUIRED",
+    "TEMPORAL_CONTRADICTION", "TEMPORAL_INCOHERENCE", "TIMEZONE_INVALID",
+  ].some((code) => issueCodes.has(code)) || [
+    "closes_at", "evaluation_ends_at", "evaluation_period", "evaluation_period_label",
+    "relative_time_anchor", "timezone",
+  ].some((field) => objectedFields.has(field))) return null;
+  if (binding.status !== "draft" || binding.market_id != null || binding.locked_at != null
+    || cleanText(binding.draft_id, 80) !== cleanText(draft.id, 80)
+    || Number(binding.plan_version) !== Number(draft.content_version)
+    || !REUSABLE_BOUND_REPAIR_VERSIONS.has(cleanText(binding.adapter_version, 100))
+    || cleanText(contract.temporal_basis, 80) !== "verified_relative_anchor") return null;
+  const anchorDate = cleanText(anchor.anchor_date, 10);
+  const anchorMatch = anchorDate.match(/^(20\d{2})-(\d{2})-(\d{2})$/);
+  const offsetDays = Number(anchor.offset_days);
+  const observation = cleanText(anchor.observation_time, 5).match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  const timezone = cleanText(anchor.timezone, 100);
+  const sourceUrl = safePublicUrl(anchor.source_url);
+  if (!anchorMatch || !observation || !sourceUrl || !validIanaTimezone(timezone)
+    || !Number.isSafeInteger(offsetDays) || offsetDays < 1 || offsetDays > 365
+    || offsetDays !== relative.offset_days) return null;
+  const year = Number(anchorMatch[1]);
+  const month = Number(anchorMatch[2]);
+  const day = Number(anchorMatch[3]);
+  if (!validDateParts(year, month, day)) return null;
+  const contractSource = (Array.isArray(contract.sources) ? contract.sources.filter(isRecord) : [])
+    .find((source) => safePublicUrl(source.url) === sourceUrl
+      && cleanText(source.role, 80) === "CONTEXT_SOURCE" && source.required === true);
+  const currentAttestedSource = (Array.isArray(draft.alternative_sources)
+    ? draft.alternative_sources.filter(isRecord) : [])
+    .find((source) => safePublicUrl(source.url) === sourceUrl
+      && cleanText(source.role, 80) === "CONTEXT_SOURCE" && source.required === true
+      && source.authority_verified === true && source.relevance_verified === true
+      && source.validated_reachable === true);
+  const history = isRecord(context?.bound_context_attestation)
+    ? context.bound_context_attestation : {};
+  const historySource = isRecord(history.source) ? history.source : null;
+  const historyAnchor = isRecord(history.relative_anchor) ? history.relative_anchor : {};
+  const draftVersion = Number(draft.content_version);
+  const historicalAttestationMatches = history.verified === true
+    && Number(history.current_version) === draftVersion
+    && Number(history.previous_version) === draftVersion - 1
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(cleanText(draft.id, 80))
+    && /^[0-9a-f]{64}$/.test(cleanText(draft.content_fingerprint, 64))
+    && cleanText(history.draft_id, 80) === cleanText(draft.id, 80)
+    && cleanText(history.current_fingerprint, 64) === cleanText(draft.content_fingerprint, 64)
+    && safePublicUrl(history.source_url) === sourceUrl
+    && cleanText(historyAnchor.anchor_type, 80) === cleanText(anchor.anchor_type, 80)
+    && cleanText(historyAnchor.anchor_date, 10) === anchorDate
+    && Number(historyAnchor.offset_days) === offsetDays
+    && cleanText(historyAnchor.observation_time, 5) === observation[0]
+    && cleanText(historyAnchor.timezone, 100) === timezone
+    && historySource !== null
+    && safePublicUrl(historySource.url) === sourceUrl
+    && cleanText(historySource.role, 80) === "CONTEXT_SOURCE"
+    && historySource.required === true
+    && historySource.authority_verified === true
+    && historySource.relevance_verified === true
+    && historySource.validated_reachable === true;
+  const attestedSource = contractSource && currentAttestedSource
+    ? currentAttestedSource
+    : historicalAttestationMatches ? historySource : null;
+  if (!attestedSource) return null;
+  const target = new Date(Date.UTC(year, month - 1, day + offsetDays));
+  const iso = zonedDateTimeIso(
+    target.getUTCFullYear(), target.getUTCMonth() + 1, target.getUTCDate(),
+    Number(observation[1]), Number(observation[2]), timezone,
+  );
+  const draftEvaluation = exactDeadline(draft.evaluation_ends_at, "draft_evaluation_ends_at");
+  if (!iso || !draftEvaluation || new Date(iso).getTime() !== new Date(draftEvaluation.iso).getTime()) return null;
+  const parsed = new Date(iso);
+  return {
+    year: parsed.getUTCFullYear(),
+    month: parsed.getUTCMonth() + 1,
+    day: parsed.getUTCDate(),
+    iso,
+    exact: true,
+    source: "versioned_bound_relative_anchor",
+    relative_anchor: {
+      anchor_type: cleanText(anchor.anchor_type, 80) || relative.anchor_type,
+      anchor_date: anchorDate,
+      offset_days: offsetDays,
+      observation_time: observation[0],
+      timezone,
+      timezone_basis: cleanText(anchor.timezone_basis, 100) || "versioned_bound_contract",
+      source_url: sourceUrl,
+      evidence_basis: "versioned_bound_required_context_source",
+    },
+    // Esta fuente ya supero las comprobaciones de binding, version,
+    // temporalidad y evidencia anteriores. Conservarla como dato tipado evita
+    // degradar CONTEXT_SOURCE a corroboracion durante una reparacion ajena al
+    // tiempo y permite que la ronda siguiente vuelva a verificar el binding.
+    bound_context_source: {
+      ...attestedSource,
+      url: sourceUrl,
+      role: "CONTEXT_SOURCE",
+      required: true,
+      claim_slots: [...new Set([
+        ...(Array.isArray(attestedSource.claim_slots) ? attestedSource.claim_slots : []),
+        "TEMPORAL_ANCHOR",
+      ])],
+    },
+  };
+}
+
 function verifiedRelativeDeadline(context, discoveredSources) {
   const relative = inferRelativeTemporalContract(context);
   if (!relative?.observation_time || !relative.timezone) return null;
@@ -1015,7 +1150,7 @@ function verifiedRelativeDeadline(context, discoveredSources) {
       },
     };
   }
-  return null;
+  return versionedBoundRelativeDeadline(context, relative);
 }
 
 function repairIssueCodeSet(context) {
@@ -1128,13 +1263,12 @@ function deadlineLabel(deadline, timezone = "UTC") {
     hour12: false,
     timeZone: timezone,
   }).format(parsed);
-  const utc = new Intl.DateTimeFormat("es-ES", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  }).format(parsed);
-  return `${local} (${timezone}; ${utc} UTC)`;
+  // El instante autoritativo ya se conserva como ISO UTC en los campos
+  // temporales. Repetir aquí una segunda zona dentro del texto contractual
+  // hace que el clasificador de familias interprete dos representaciones del
+  // mismo instante como zonas alternativas y bloquee una reparación segura.
+  // La UI puede mostrar la conversión UTC como información derivada.
+  return `${local} (${timezone})`;
 }
 
 export function validIanaTimezone(value) {
@@ -1518,15 +1652,18 @@ function metricThresholdAnalysis(context) {
     : dimension.aggregation === "minimum" ? `el menor ${metric} entre las plataformas elegibles`
       : dimension.aggregation === "arithmetic_mean" ? `la media aritmética del ${metric} de las plataformas elegibles`
         : `el ${metric} de ${dimension.platform}`;
+  const observationPolicy = dimension.aggregation === "maximum"
+    ? `En el instante contractual se inicia una única sesión de captura de la página canónica, que debe completarse en ${METRIC_OBSERVATION_POLICY.capture_window_seconds} segundos. La primera respuesta válida de esa sesión congela el conjunto de plataformas elegibles y, para cada ficha, se conserva el primer valor devuelto dentro de la misma sesión. No se mezclan respuestas de sesiones o ciclos de actualización distintos; los cambios posteriores quedan fuera. Si la captura completa no puede cerrarse dentro de la ventana, el resultado se detiene para revisión humana específica con la evidencia fechada disponible.`
+    : `En el instante contractual se inicia una única sesión de captura, que debe completarse en ${METRIC_OBSERVATION_POLICY.capture_window_seconds} segundos. Se conserva la primera respuesta válida de la fuente para la dimensión contratada; los cambios posteriores y las respuestas de otra sesión quedan fuera. Si la captura no puede completarse dentro de la ventana, el resultado se detiene para revisión humana específica con la evidencia fechada disponible.`;
   const platformPolicy = dimension.aggregation === "maximum"
-    ? `Se usa el mayor ${metric} entre las fichas de plataforma elegibles del mismo juego y edición contractuales; no se promedian valores ni se mezclan ediciones.`
+    ? `El conjunto elegible comprende exclusivamente las fichas de plataforma que ${sourceName} agrupa bajo la página canónica del mismo producto y edición objeto de la pregunta en el instante de observación. Se excluyen expansiones, remasterizaciones, relanzamientos y ediciones con una página canónica distinta. Se toma el máximo numérico del conjunto: no existe jerarquía entre plataformas, los empates no alteran el resultado y nunca se promedian ni mezclan ediciones. ${observationPolicy}`
     : dimension.aggregation === "minimum"
       ? `Se usa el menor ${metric} entre las plataformas elegibles expresamente comprendidas por el contrato; no se promedian valores.`
       : dimension.aggregation === "arithmetic_mean"
         ? `Se calcula la media aritmética sin ponderar de todos los ${metric} elegibles expresamente comprendidos por el contrato, conservando la precisión publicada.`
         : `Solo se usa la ficha oficial de ${dimension.platform}; los valores de otras plataformas quedan fuera del contrato.`;
   const missingDataTreatment = dimension.aggregation === "maximum"
-    ? `Cada ficha elegible sin ${metric}, con «tbd» o sin dato no aporta ningún valor. Solo se cumple Sí cuando al menos una ficha elegible del mismo juego y edición muestra una puntuación que supera el umbral; una ausencia no se transforma en cero ni en otra métrica.`
+    ? `Cada ficha del conjunto elegible sin ${metric}, con «tbd» o sin dato queda fuera del máximo y no aporta ningún valor. Solo se cumple Sí cuando al menos una ficha del conjunto muestra una puntuación que supera el umbral; si ninguna aporta un valor, la condición de Sí no se cumple. Una ausencia no se transforma en cero ni en otra métrica.`
     : `Si en el instante de observación ${sourceName} no muestra el ${metric} exigido y solo aparece «tbd» o no hay dato, la condición de Sí no se cumple. La ausencia no se transforma en cero ni en otra métrica.`;
   return { contract: {
     metric,
@@ -1546,6 +1683,9 @@ function metricThresholdAnalysis(context) {
     aggregate_description: aggregateDescription,
     excluded_metric: excludedMetric,
     platform_policy: platformPolicy,
+    observation_policy: observationPolicy,
+    observation_policy_version: METRIC_OBSERVATION_POLICY.version,
+    capture_window_seconds: METRIC_OBSERVATION_POLICY.capture_window_seconds,
     missing_data_treatment: missingDataTreatment,
   }, error_code: null };
 }
@@ -1797,16 +1937,43 @@ function addDay(iso, days) {
   return new Date(new Date(iso).getTime() + days * 86_400_000).toISOString();
 }
 
+export function deriveResolutionDeadline(
+  evaluationEndsAt,
+  existingValues = [],
+  policy = RESOLUTION_DEADLINE_POLICY,
+) {
+  const evaluation = new Date(cleanText(evaluationEndsAt, 100));
+  if (!Number.isFinite(evaluation.getTime())) return null;
+  for (const value of Array.isArray(existingValues) ? existingValues : [existingValues]) {
+    const existing = new Date(cleanText(value, 100));
+    if (Number.isFinite(existing.getTime()) && existing > evaluation) return existing.toISOString();
+  }
+  const sourceDelay = Math.max(0, Math.min(
+    Number(policy?.source_availability_delay_seconds) || 0,
+    Number(policy?.maximum_margin_seconds) || RESOLUTION_DEADLINE_POLICY.maximum_margin_seconds,
+  ));
+  const reviewMargin = Math.max(0, Math.min(
+    Number(policy?.human_review_margin_seconds) || 0,
+    Number(policy?.maximum_margin_seconds) || RESOLUTION_DEADLINE_POLICY.maximum_margin_seconds,
+  ));
+  const deadline = evaluation.getTime() + (sourceDelay + reviewMargin) * 1_000;
+  return deadline > evaluation.getTime() ? new Date(deadline).toISOString() : addDay(evaluation.toISOString(), 1);
+}
+
 function sourceObject(value) {
   if (!isRecord(value)) return null;
   const url = safePublicUrl(value.url);
   if (!url) return null;
   const excerpt = cleanText(value.excerpt ?? value.content ?? value.supports ?? value.snippet, 2_000);
+  const role = cleanText(value.role, 80) || "Fuente oficial alternativa";
+  const claimSlots = Array.isArray(value.claim_slots)
+    ? [...new Set(value.claim_slots.map((slot) => cleanText(slot, 80).toUpperCase()).filter(Boolean))].slice(0, 12)
+    : [];
   return {
     url,
     name: cleanText(value.name ?? value.title ?? new URL(url).hostname, 240),
     publisher: cleanText(value.publisher ?? new URL(url).hostname, 240),
-    role: cleanText(value.role, 80) || "Fuente oficial alternativa",
+    role,
     ...(excerpt ? { excerpt } : {}),
     ...(value.validated_reachable === true ? { validated_reachable: true } : {}),
     ...(value.authority_verified === true ? { authority_verified: true } : {}),
@@ -1825,9 +1992,9 @@ function sourceObject(value) {
       ? { registry_categories: value.registry_categories.map((category) => cleanText(category, 120)).filter(Boolean).slice(0, 20) } : {}),
     ...(cleanText(value.draft_category, 120) ? { draft_category: cleanText(value.draft_category, 120) } : {}),
     ...(cleanText(value.validation_version, 120) ? { validation_version: cleanText(value.validation_version, 120) } : {}),
-    ...(Array.isArray(value.claim_slots)
-      ? { claim_slots: [...new Set(value.claim_slots.map((slot) => cleanText(slot, 80).toUpperCase()).filter(Boolean))].slice(0, 12) }
-      : {}),
+    ...(claimSlots.length ? { claim_slots: claimSlots } : {}),
+    ...(value.required === true && role.toUpperCase() === "CONTEXT_SOURCE"
+      && claimSlots.includes("TEMPORAL_ANCHOR") ? { required: true } : {}),
   };
 }
 
@@ -1882,6 +2049,57 @@ export function isVerifiedPrimarySource(value, category = null) {
     && cleanText(value.registry_parser_version, 120)
     && ["fetched_content_v1", "fetched_content_and_canonical_url_v1"]
       .includes(cleanText(value.relevance_basis, 120)));
+}
+
+export function hasCurrentPrimarySourceAttestation(draft, nowMs = Date.now()) {
+  if (!isRecord(draft) || !isRecord(draft.primary_source)
+    || !isRecord(draft._primary_source_attestation)) return false;
+  const source = draft.primary_source;
+  const attestation = draft._primary_source_attestation;
+  const sourceUrl = safePublicUrl(source.url);
+  const finalUrl = safePublicUrl(attestation.final_url);
+  const checkedAt = new Date(cleanText(attestation.checked_at, 100)).getTime();
+  const expiresAt = new Date(cleanText(attestation.expires_at, 100)).getTime();
+  const version = Number(draft.content_version);
+  const attestedVersion = Number(attestation.draft_version);
+  const fingerprint = cleanText(draft.content_fingerprint, 64).toLowerCase();
+  const attestedFingerprint = cleanText(attestation.content_fingerprint, 64).toLowerCase();
+  const draftId = cleanText(draft.id, 80).toLowerCase();
+  const attestedDraftId = cleanText(attestation.draft_id, 80).toLowerCase();
+  const registrySourceId = cleanText(source.registry_source_id, 80).toLowerCase();
+  const attestedRegistrySourceId = cleanText(attestation.registry_source_id, 80).toLowerCase();
+  return attestation.verified === true
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(cleanText(attestation.check_id, 80))
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(draftId)
+    && attestedDraftId === draftId
+    && Number.isSafeInteger(version) && version > 0 && attestedVersion === version
+    && /^[0-9a-f]{64}$/.test(fingerprint) && attestedFingerprint === fingerprint
+    && sourceUrl !== null && finalUrl === sourceUrl
+    && registrySourceId !== "" && attestedRegistrySourceId === registrySourceId
+    && cleanText(attestation.validation_version, 120) === PRIMARY_SOURCE_VALIDATION_VERSION
+    && cleanText(source.validation_version, 120) === PRIMARY_SOURCE_VALIDATION_VERSION
+    && source.registry_role_verified === true
+    && source.authority_verified === true
+    && source.relevance_verified === true
+    && source.validated_reachable === true
+    && Number.isFinite(checkedAt) && checkedAt <= nowMs + 60_000
+    && Number.isFinite(expiresAt) && expiresAt > nowMs && expiresAt > checkedAt;
+}
+
+export function attestedPrimarySourceRefutesIssue(issue, draft, nowMs = Date.now()) {
+  if (!isRecord(issue)
+    || cleanText(issue.code, 80).toUpperCase() !== "INSUFFICIENT_EVIDENCE"
+    || cleanText(issue.field, 80).toLowerCase() !== "primary_source"
+    || !hasCurrentPrimarySourceAttestation(draft, nowMs)) return false;
+  const message = normalize(issue.message);
+  // La atestacion de red puede refutar existencia, acceso, registro o encaje
+  // del producto. No refuta objeciones contractuales genuinas como retencion,
+  // granularidad historica o disponibilidad futura del valor.
+  return /\b(?:inexistente|inaccesible|inalcanzable|nonexistent|unreachable)\b/.test(message)
+    || /\bno (?:existe|contiene|incluye) (?:el |la )?(?:producto|sujeto|juego|pagina|product|subject|game|page)\b/.test(message)
+    || /\bdoes not (?:exist|contain|include) (?:the )?(?:product|subject|game|page)\b/.test(message)
+    || /\b(?:url|fuente|source)\b.{0,80}\b(?:invalida|invalid|no valida|not valid)\b/.test(message);
 }
 
 export function inferPrimarySource(context, subject = null, archetype = null, discoveredSources = []) {
@@ -1989,15 +2207,15 @@ function archetypeCriteria(archetype, subject, publisher, deadline, duration, co
     const comparison = metric.comparison_text;
     const relative = isRecord(deadline.relative_anchor) ? deadline.relative_anchor : null;
     const relativeClause = relative
-      ? ` Este instante corresponde a ${relative.offset_days} días después del ${relative.anchor_type} contractual fechado el ${relative.anchor_date}.`
+      ? ` Este instante corresponde a ${relative.offset_days} días después del ${relative.anchor_type} contractual fechado el ${relative.anchor_date}. La fecha-ancla queda fijada por la evidencia oficial fechada conservada durante la preparación; cambios posteriores de la página no desplazan el instante contractual.`
       : "";
     return {
       timezone,
       question: `¿Será ${comparison} ${metric.aggregate_description} de ${subject} en el instante de observación ${limit}${relative ? `, ${relative.offset_days} días después del ${relative.anchor_type} contractual` : ""}?`,
       yes_criteria: `Se resuelve a Sí si, exactamente en ${limit}, ${metric.source_name} muestra para ${subject} el dato exigido y ${metric.aggregate_description} es ${comparison} (${metric.operator} ${metric.threshold}) en su escala contractual de ${metric.scale_min} a ${metric.scale_max}.${relativeClause} ${metric.platform_policy}`,
       no_criteria: `Se resuelve a No si, exactamente en ${limit}, ${metric.aggregate_description} no es ${comparison} (${metric.operator} ${metric.threshold}), o se aplica el tratamiento de dato ausente.${relativeClause} ${metric.missing_data_treatment}`,
-      edge_cases: `La métrica contratada es exclusivamente ${metric.metric}, con escala de ${metric.scale_min} a ${metric.scale_max} y precisión publicada de ${metric.precision} decimal(es); ${metric.excluded_metric} queda excluido. ${metric.platform_policy} Se conserva una captura fechada del instante de observación y los cambios posteriores no alteran el resultado. Una retirada de la página o un conflicto material entre fuentes detiene la resolución para revisión humana específica, sin inventar, sustituir ni redondear datos.`,
-      public_criteria: `Atinara observará en ${limit} ${metric.aggregate_description} de ${subject}.${relativeClause} El resultado será Sí exactamente cuando el valor cumpla ${metric.operator} ${metric.threshold}; ${metric.excluded_metric} no sustituye la métrica contratada y «tbd» no cuenta como puntuación.`,
+      edge_cases: `La métrica contratada es exclusivamente ${metric.metric}, con escala de ${metric.scale_min} a ${metric.scale_max} y precisión publicada de ${metric.precision} decimal(es); ${metric.excluded_metric} queda excluido. ${metric.platform_policy} Se conserva la evidencia fechada de la única sesión de observación y los cambios posteriores no alteran el resultado. Una retirada de la página o un conflicto material entre fuentes detiene la resolución para revisión humana específica, sin inventar, sustituir ni redondear datos.`,
+      public_criteria: `Atinara iniciará en ${limit} una única sesión de observación de ${metric.aggregate_description} de ${subject}, con una ventana máxima de ${metric.capture_window_seconds} segundos.${relativeClause} El resultado será Sí exactamente cuando el valor congelado cumpla ${metric.operator} ${metric.threshold}; ${metric.excluded_metric} no sustituye la métrica contratada y «tbd» no cuenta como puntuación.`,
       metric,
     };
   }
@@ -2412,7 +2630,9 @@ export function buildDeterministicRepair(context, discoveredSources = []) {
   const criteria = archetypeCriteria(archetype, subject, publisher, deadline, duration, context, timezone);
   // Las alternativas heredadas nunca se autocertifican. El único origen
   // admisible aquí es la colección revalidada en esta ejecución por el fixer.
-  const alternatives = mergeVerifiedAlternativeSources(discoveredSources)
+  const boundContextSources = isRecord(deadline.bound_context_source)
+    ? [deadline.bound_context_source] : [];
+  const alternatives = mergeVerifiedAlternativeSources(boundContextSources, discoveredSources)
     .filter((source) => source.url !== primarySource.url);
   const patch = {
     market_slug: safeMarketSlug(draft.market_slug, subject, archetype, deadline),
@@ -2430,11 +2650,19 @@ export function buildDeterministicRepair(context, discoveredSources = []) {
     closes_at: deadline.iso,
     timezone: criteria.timezone || timezone,
     resolution_deadline: (() => {
-      for (const value of [draft.resolution_deadline, candidate.source_resolution_deadline]) {
-        const existing = new Date(cleanText(value, 100));
-        if (Number.isFinite(existing.getTime()) && existing > new Date(deadline.iso)) return existing.toISOString();
-      }
-      return addDay(deadline.iso, 1);
+      const existingContract = isRecord(context?.binding?.resolution_contract)
+        ? context.binding.resolution_contract : {};
+      const sourceDelay = Number(existingContract.finality_delay_seconds);
+      return deriveResolutionDeadline(
+        deadline.iso,
+        [draft.resolution_deadline, candidate.source_resolution_deadline],
+        {
+          ...RESOLUTION_DEADLINE_POLICY,
+          source_availability_delay_seconds: Number.isFinite(sourceDelay) && sourceDelay >= 0
+            ? sourceDelay
+            : RESOLUTION_DEADLINE_POLICY.source_availability_delay_seconds,
+        },
+      );
     })(),
     yes_criteria: criteria.yes_criteria,
     no_criteria: criteria.no_criteria,
@@ -2452,7 +2680,12 @@ export function buildDeterministicRepair(context, discoveredSources = []) {
     archetype,
     patch,
     issue_plan: issuePlan,
-    temporal_contract: deadline.relative_anchor ?? null,
+    temporal_contract: {
+      ...(deadline.relative_anchor ?? {}),
+      resolution_deadline_policy_version: RESOLUTION_DEADLINE_POLICY.version,
+      source_availability_delay_seconds: RESOLUTION_DEADLINE_POLICY.source_availability_delay_seconds,
+      human_review_margin_seconds: RESOLUTION_DEADLINE_POLICY.human_review_margin_seconds,
+    },
     explanations: Object.keys(patch).map((field) => ({
       field,
       reason: `Campo deducido mediante el arquetipo ${archetype}, la procedencia autorizada y las incidencias ${issuePlan.codes.join(", ") || "estructurales"}.`,
@@ -2527,7 +2760,9 @@ export function buildResolutionPlan(context, draft, sources, archetype) {
   const existing = isRecord(context?.binding?.resolution_contract) ? context.binding.resolution_contract : {};
   const metric = archetype === "metric_threshold" ? metricThresholdContract({ ...context, draft }) : null;
   const milestone = archetype === "milestone_threshold" ? milestoneContract({ ...context, draft }) : null;
-  const relativeAnchor = isRecord(context?.repair_temporal_contract) ? context.repair_temporal_contract : null;
+  const temporalContract = isRecord(context?.repair_temporal_contract) ? context.repair_temporal_contract : null;
+  const relativeAnchor = temporalContract?.anchor_type && temporalContract?.anchor_date
+    ? temporalContract : null;
   const plan = {
     plan_version: Number(existing.plan_version) || 1,
     contract_schema_version: cleanText(existing.contract_schema_version || "atinara-resolution-contract-v1", 100),
@@ -2545,6 +2780,10 @@ export function buildResolutionPlan(context, draft, sources, archetype) {
     resolution_deadline: new Date(draft.resolution_deadline).toISOString(),
     temporal_basis: relativeAnchor ? "verified_relative_anchor" : "absolute_contract_time",
     ...(relativeAnchor ? { relative_anchor: relativeAnchor } : {}),
+    resolution_deadline_policy_version: cleanText(
+      temporalContract?.resolution_deadline_policy_version || RESOLUTION_DEADLINE_POLICY.version,
+      100,
+    ),
     yes_criteria: cleanText(draft.yes_criteria),
     no_criteria: cleanText(draft.no_criteria),
     edge_cases: cleanText(draft.edge_cases),
@@ -2553,7 +2792,9 @@ export function buildResolutionPlan(context, draft, sources, archetype) {
     manual_review_instructions: "Comparar las fuentes oficiales por precedencia con los criterios aprobados, conservar evidencia fechada y exigir confirmación humana para el resultado.",
     missing_data_treatment: "manual_review_no_assumption",
     aggregation: "exact_state",
-    source_conflict_treatment: "pause_and_specific_human_review",
+    source_conflict_treatment: relativeAnchor
+      ? "La evidencia oficial contextual fechada fija la fecha-ancla durante la preparación. Un conflicto material previo a la confirmación invalida la revisión; cambios posteriores no desplazan el instante contractual."
+      : "pause_and_specific_human_review",
     postponement_treatment: "preserve_approved_period",
     cancellation_treatment: "evaluate_at_deadline_unless_identity_conflict",
     sources,
@@ -2588,9 +2829,12 @@ export function buildResolutionPlan(context, draft, sources, archetype) {
     dimension_aggregation: metric.dimension_aggregation,
     metric_platform: metric.platform,
     platform_policy: metric.platform_policy,
+    observation_policy: metric.observation_policy,
+    observation_policy_version: metric.observation_policy_version,
+    capture_window_seconds: metric.capture_window_seconds,
     metric_missing_data_treatment: metric.missing_data_treatment,
     observation_at: new Date(draft.evaluation_ends_at).toISOString(),
     observation_timezone: cleanText(draft.timezone, 100),
-    manual_review_instructions: `Capturar manualmente la página canónica de ${metric.source_name} en el instante aprobado, comprobar la escala ${metric.scale_min}-${metric.scale_max}, aplicar ${metric.aggregation} y después ${metric.operator} ${metric.threshold} al ${metric.metric}; excluir ${metric.excluded_metric}.`,
+    manual_review_instructions: `Iniciar una única sesión de captura de la página canónica de ${metric.source_name} en el instante aprobado y completarla en ${metric.capture_window_seconds} segundos; congelar el conjunto y el primer valor de cada dimensión en esa sesión, comprobar la escala ${metric.scale_min}-${metric.scale_max}, aplicar ${metric.aggregation} y después ${metric.operator} ${metric.threshold} al ${metric.metric}; excluir ${metric.excluded_metric} y no mezclar ciclos de actualización.`,
   };
 }

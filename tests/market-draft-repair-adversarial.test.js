@@ -137,7 +137,7 @@ function releaseContext(overrides = {}) {
 }
 
 test("Corrector adversarial · before es una frontera estricta en cualquier día del mes", () => {
-  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v8");
+  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v12");
   assert.equal(
     repair.inferInclusiveDeadline("Will Project Aurora release before August 31, 2026?").iso,
     "2026-08-30T23:59:59.000Z",
@@ -1288,8 +1288,10 @@ test("Corrector adversarial · User Score > 8 conserva métrica, escala, fuente,
   assert.equal(plan.scale_max, 10);
   assert.equal(plan.precision, 1);
   assert.equal(plan.aggregation, "maximum");
-  assert.match(plan.platform_policy, /mismo juego y edición contractuales/);
-  assert.match(plan.metric_missing_data_treatment, /al menos una ficha elegible/);
+  assert.match(plan.platform_policy, /página canónica del mismo producto y edición objeto de la pregunta/);
+  assert.match(plan.platform_policy, /máximo numérico/);
+  assert.match(plan.platform_policy, /no existe jerarquía entre plataformas/);
+  assert.match(plan.metric_missing_data_treatment, /al menos una ficha del conjunto/);
   assert.match(plan.manual_review_instructions, /excluir Metascore de crítica/);
 
   const contradictory = structuredClone(context);
@@ -1394,8 +1396,25 @@ test("Corrector adversarial · la dimensión métrica se infiere del contrato o 
   assert.equal(repaired.unresolved, null);
   assert.equal(repair.inferMetricContract(existential).aggregation, "maximum");
   assert.match(repaired.patch.yes_criteria, /mayor Metascore/);
-  assert.match(repaired.patch.edge_cases, /mismo juego y edición contractuales/);
-  assert.match(repaired.patch.no_criteria, /al menos una ficha elegible/);
+  assert.match(repaired.patch.edge_cases, /página canónica del mismo producto y edición objeto de la pregunta/);
+  assert.match(repaired.patch.edge_cases, /máximo numérico/);
+  assert.match(repaired.patch.yes_criteria, /única sesión de captura/);
+  assert.match(repaired.patch.yes_criteria, /primera respuesta válida/);
+  assert.match(repaired.patch.yes_criteria, /no se mezclan respuestas/i);
+  assert.match(repaired.patch.public_criteria, /ventana máxima de 300 segundos/);
+  assert.match(repaired.patch.no_criteria, /ficha del conjunto elegible/);
+  const observationPlan = repair.buildResolutionPlan(
+    { ...existential, repair_temporal_contract: repaired.temporal_contract },
+    repair.applyRepairPatch(existential.draft, repaired),
+    [
+      { role: "PRIMARY_RESOLUTION", url: "https://www.metacritic.com/game/marvel-tokon-fighting-souls/" },
+      { role: "CORROBORATION", url: "https://blog.playstation.com/marvel-tokon-fighting-souls/" },
+    ],
+    repaired.archetype,
+  );
+  assert.equal(observationPlan.observation_policy_version, "atinara-metric-observation-policy-v1");
+  assert.equal(observationPlan.capture_window_seconds, 300);
+  assert.match(observationPlan.manual_review_instructions, /no mezclar ciclos de actualización/);
 
   const scoped = repair.inferMetricContract(base(
     "Will Marvel Tokon: Fighting Souls have the Metacritic score for PlayStation 5 above 95 before January 1, 2027?",
@@ -1489,7 +1508,8 @@ test("Corrector adversarial · una respuesta rejected vacía nunca se convierte 
     result: "rejected",
     issues: explicit,
   });
-  assert.match(validatorEdge, /enforceReviewIssueEvidence\(result, issues\)/);
+  assert.match(validatorEdge, /enforceReviewIssueEvidence\(normalizedResult, issues\)/);
+  assert.match(validatorEdge, /if \(!everyIssueSafelyDismissed\) return null/);
 });
 
 test("Corrector adversarial · Gemini no puede cambiar reglas contractuales deterministas", () => {
@@ -1641,4 +1661,202 @@ test("Corrector adversarial · ET usa DST y EST/EDT conservan su offset contract
     assert.equal(result.unresolved.code, "RELATIVE_TIME_ANCHOR_UNVERIFIED", observation);
     assert.deepEqual(result.patch, {}, observation);
   }
+});
+
+test("Corrector adversarial · una ancla versionada compatible sobrevive a una reparación no temporal", () => {
+  const sourceUrl = "https://publisher.example/project-aurora";
+  const context = {
+    draft: {
+      id: "11111111-1111-4111-8111-111111111111",
+      content_version: 4,
+      question: "Will Project Aurora have a Metacritic score above 80 seven days after release?",
+      category: "Reviews/Premios",
+      yes_criteria: "Yes if the Metacritic score is above 80.",
+      no_criteria: "No otherwise.",
+      evaluation_ends_at: "2026-08-13T14:00:00.000Z",
+      closes_at: "2026-08-13T14:00:00.000Z",
+      resolution_deadline: "2026-08-14T14:05:00.000Z",
+      timezone: "America/New_York",
+      primary_source: { url: "https://www.metacritic.com/game/project-aurora/" },
+      alternative_sources: [{
+        url: sourceUrl,
+        role: "CONTEXT_SOURCE",
+        required: true,
+        authority_verified: true,
+        relevance_verified: true,
+        validated_reachable: true,
+      }],
+    },
+    radar_candidate: {
+      source_question: "Will Project Aurora have a Metacritic score above 80 seven days after release?",
+      source_resolution_rules: "Resolves at 10:00 AM ET seven days after release.",
+      source_resolution_url: "https://www.metacritic.com/game/project-aurora/",
+    },
+    repairable_content_issues: [{
+      code: "AMBIGUOUS_CRITERIA",
+      field: "yes_criteria",
+      message: "The aggregation procedure needs a deterministic observation rule.",
+    }],
+    binding: {
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      status: "draft",
+      market_id: null,
+      locked_at: null,
+      plan_version: 4,
+      adapter_version: "atinara-draft-repair-v9",
+      resolution_contract: {
+        temporal_basis: "verified_relative_anchor",
+        sources: [{ url: sourceUrl, role: "CONTEXT_SOURCE", required: true }],
+        relative_anchor: {
+          anchor_type: "official_release",
+          anchor_date: "2026-08-06",
+          offset_days: 7,
+          observation_time: "10:00",
+          timezone: "America/New_York",
+          source_url: sourceUrl,
+        },
+      },
+    },
+  };
+
+  const reused = repair.inferEvaluationDeadline(context, []);
+  assert.equal(reused.source, "versioned_bound_relative_anchor");
+  assert.equal(reused.iso, "2026-08-13T14:00:00.000Z");
+  assert.equal(reused.relative_anchor.evidence_basis, "versioned_bound_required_context_source");
+  assert.equal(reused.bound_context_source.role, "CONTEXT_SOURCE");
+  assert.equal(reused.bound_context_source.required, true);
+  assert.deepEqual(reused.bound_context_source.claim_slots, ["TEMPORAL_ANCHOR"]);
+  const preserved = repair.mergeVerifiedAlternativeSources([reused.bound_context_source]);
+  assert.equal(preserved.length, 1);
+  assert.equal(preserved[0].role, "CONTEXT_SOURCE");
+  assert.equal(preserved[0].required, true);
+  const repaired = repair.buildDeterministicRepair(context, [
+    primaryFor(context, "Project Aurora official Metacritic score page."),
+  ]);
+  assert.equal(repaired.unresolved, null);
+  const preservedInPatch = repaired.patch.alternative_sources
+    .find((source) => source.url === sourceUrl);
+  assert.equal(preservedInPatch.role, "CONTEXT_SOURCE");
+  assert.equal(preservedInPatch.required, true);
+
+  const degraded = structuredClone(context);
+  degraded.draft.content_version = 5;
+  degraded.draft.content_fingerprint = "b".repeat(64);
+  degraded.draft.alternative_sources = [];
+  degraded.binding.plan_version = 5;
+  degraded.binding.adapter_version = "atinara-draft-repair-v11";
+  degraded.binding.resolution_contract.sources = [];
+  degraded.binding.resolution_contract.relative_anchor.evidence_basis =
+    "versioned_bound_required_context_source";
+  degraded.bound_context_attestation = {
+    verified: true,
+    draft_id: degraded.draft.id,
+    current_version: 5,
+    previous_version: 4,
+    current_fingerprint: degraded.draft.content_fingerprint,
+    source_url: sourceUrl,
+    relative_anchor: structuredClone(degraded.binding.resolution_contract.relative_anchor),
+    source: {
+      url: sourceUrl,
+      role: "CONTEXT_SOURCE",
+      required: true,
+      claim_slots: ["TEMPORAL_ANCHOR"],
+      authority_verified: true,
+      relevance_verified: true,
+      validated_reachable: true,
+    },
+  };
+  const recovered = repair.inferEvaluationDeadline(degraded, []);
+  assert.equal(recovered.source, "versioned_bound_relative_anchor");
+  assert.equal(recovered.bound_context_source.url, sourceUrl);
+  assert.equal(repair.inferEvaluationDeadline({
+    ...degraded,
+    bound_context_attestation: {
+      ...degraded.bound_context_attestation,
+      current_fingerprint: "c".repeat(64),
+    },
+  }, []), null);
+
+  assert.equal(repair.inferEvaluationDeadline({
+    ...context,
+    binding: { ...context.binding, plan_version: 3 },
+  }, []), null);
+  assert.equal(repair.inferEvaluationDeadline({
+    ...context,
+    repairable_content_issues: [{
+      code: "TEMPORAL_INCOHERENCE",
+      field: "evaluation_ends_at",
+      message: "The temporal instant is disputed.",
+    }],
+  }, []), null);
+  assert.equal(repair.inferEvaluationDeadline({
+    ...context,
+    draft: {
+      ...context.draft,
+      alternative_sources: [{
+        ...context.draft.alternative_sources[0],
+        authority_verified: false,
+      }],
+    },
+  }, []), null);
+});
+
+test("Validador adversarial · solo una atestación primaria fresca y ligada a la versión es autoritativa", () => {
+  const now = Date.parse("2026-08-11T10:00:00.000Z");
+  const draft = {
+    id: "11111111-1111-4111-8111-111111111111",
+    content_version: 8,
+    content_fingerprint: "a".repeat(64),
+    primary_source: {
+      url: "https://reviews.example/project-aurora",
+      registry_source_id: "22222222-2222-4222-8222-222222222222",
+      validation_version: "atinara-primary-source-validation-v1",
+      registry_role_verified: true,
+      authority_verified: true,
+      relevance_verified: true,
+      validated_reachable: true,
+    },
+    _primary_source_attestation: {
+      verified: true,
+      check_id: "33333333-3333-4333-8333-333333333333",
+      draft_id: "11111111-1111-4111-8111-111111111111",
+      draft_version: 8,
+      content_fingerprint: "a".repeat(64),
+      registry_source_id: "22222222-2222-4222-8222-222222222222",
+      validation_version: "atinara-primary-source-validation-v1",
+      final_url: "https://reviews.example/project-aurora",
+      checked_at: "2026-08-11T09:59:00.000Z",
+      expires_at: "2026-08-11T10:09:00.000Z",
+    },
+  };
+  assert.equal(repair.hasCurrentPrimarySourceAttestation(draft, now), true);
+  assert.equal(repair.attestedPrimarySourceRefutesIssue({
+    code: "INSUFFICIENT_EVIDENCE",
+    field: "primary_source",
+    message: "La URL es inexistente o no contiene el producto declarado.",
+  }, draft, now), true);
+  assert.equal(repair.attestedPrimarySourceRefutesIssue({
+    code: "INSUFFICIENT_EVIDENCE",
+    field: "primary_source",
+    message: "La fuente no garantiza retención histórica del valor después de la observación.",
+  }, draft, now), false);
+  assert.equal(repair.hasCurrentPrimarySourceAttestation({
+    ...draft,
+    content_version: 9,
+  }, now), false);
+  assert.equal(repair.hasCurrentPrimarySourceAttestation({
+    ...draft,
+    id: "44444444-4444-4444-8444-444444444444",
+  }, now), false);
+  assert.equal(repair.hasCurrentPrimarySourceAttestation({
+    ...draft,
+    _primary_source_attestation: {
+      ...draft._primary_source_attestation,
+      expires_at: "2026-08-11T09:59:59.999Z",
+    },
+  }, now), false);
+  assert.equal(repair.hasCurrentPrimarySourceAttestation({
+    ...draft,
+    primary_source: { ...draft.primary_source, relevance_verified: false },
+  }, now), false);
 });

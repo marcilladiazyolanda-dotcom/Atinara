@@ -125,7 +125,7 @@ test("Corrector · PS6 usa official_announcement, fecha inclusiva UTC y criterio
       "Sony Interactive Entertainment official news about PlayStation 6 / PS6.",
     ),
   ]);
-  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v8");
+  assert.equal(repair.AUTONOMOUS_REPAIR_VERSION, "atinara-draft-repair-v12");
   assert.equal(result.archetype, "official_announcement");
   assert.match(result.patch.subject, /PlayStation 6 \/ PS6/);
   assert.equal(result.patch.evaluation_ends_at, "2026-12-31T23:59:59.000Z");
@@ -425,7 +425,9 @@ test("Corrector · la investigación web conserva solo un excerpt acotado", () =
   assert.match(fixerEdge, /readLimitedExcerpt/);
   assert.match(fixerEdge, /reader\.cancel\(\)/);
   assert.match(fixerEdge, /excerpt: validated\.excerpt/);
-  assert.match(fixerEdge, /role: cleanText\(previous\?\.role, 80\) === "FALLBACK_RESOLUTION" \? "FALLBACK_RESOLUTION" : "CORROBORATION"/);
+  assert.match(fixerEdge, /const isTemporalAnchor = Boolean\(temporalAnchorSource && source\.url === temporalAnchorSource\)/);
+  assert.match(fixerEdge, /isTemporalAnchor \? "CONTEXT_SOURCE"/);
+  assert.match(fixerEdge, /required: isTemporalAnchor/);
 });
 
 test("Corrector · proveedor limitado degrada sin veto técnico ni falsa revisión humana", () => {

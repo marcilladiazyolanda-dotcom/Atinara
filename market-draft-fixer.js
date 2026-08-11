@@ -6,6 +6,7 @@
   if (!root || !client) return;
 
   const RETURN_KEY = "atinara:market-draft-repair:return:v3";
+  const ATTEMPT_KEY_PREFIX = "atinara:market-draft-repair:attempt:v1";
   let timer = null;
   let restoring = false;
 
@@ -131,14 +132,36 @@
     }, 80);
   }
 
-  async function errorMessage(error) {
+  function attemptStorageKey(draft) {
+    return `${ATTEMPT_KEY_PREFIX}:${draft.id}:${draft.version}`;
+  }
+
+  function repairAttemptKey(draft) {
+    const key = attemptStorageKey(draft);
+    try {
+      const stored = safeText(sessionStorage.getItem(key), 80);
+      if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(stored)) return stored;
+      const created = crypto.randomUUID();
+      sessionStorage.setItem(key, created);
+      return created;
+    } catch {
+      return crypto.randomUUID();
+    }
+  }
+
+  function clearRepairAttempt(draft) {
+    try { sessionStorage.removeItem(attemptStorageKey(draft)); } catch { /* El servidor conserva la idempotencia. */ }
+  }
+
+  async function repairFailure(error) {
     let message = firstRepairErrorMessage([
       error?.message,
       error?.context?.message
     ]);
+    let body = null;
     try {
       if (error?.context && typeof error.context.clone === "function") {
-        const body = await error.context.clone().json();
+        body = await error.context.clone().json();
         message = firstRepairErrorMessage([
           body?.escalation?.reason,
           body?.escalation?.message,
@@ -150,7 +173,20 @@
     } catch {
       // El mensaje genérico sigue siendo seguro.
     }
-    return message || "No se pudieron aplicar las correcciones. El borrador continúa privado.";
+    const attemptId = safeText(body?.attempt_id, 80);
+    const phase = safeText(body?.failure_phase, 80) || "desconocida";
+    const retryable = body?.retryable === true
+      || Number(error?.context?.status) === 429
+      || Number(error?.context?.status) >= 500;
+    const preserved = body?.state_preserved !== false;
+    const explanation = message || "No se pudieron aplicar las correcciones.";
+    return {
+      attemptId,
+      phase,
+      retryable,
+      preserved,
+      message: `${explanation} ${preserved ? "El último estado autoritativo se conserva." : "Atinara no pudo confirmar el estado persistido."}${retryable ? " Puedes reintentarlo con seguridad." : " Revisa la causa indicada antes de continuar."}`,
+    };
   }
 
   async function runRepair(button) {
@@ -168,11 +204,13 @@
     }
 
     try {
+      const attemptId = repairAttemptKey(draft);
       const { data, error } = await client.functions.invoke("market-draft-fixer", {
         body: {
           action: "repair-and-revalidate",
           draft_id: draft.id,
-          expected_version: draft.version
+          expected_version: draft.version,
+          attempt_id: attemptId
         }
       });
       if (error) throw error;
@@ -182,13 +220,15 @@
         ? "Correcciones aplicadas y revisión aprobada."
         : "Correcciones aplicadas; la revisión conserva observaciones pendientes.");
       const changedFields = Array.isArray(data?.changed_fields) ? data.changed_fields : [];
+      clearRepairAttempt(draft);
 
       sessionStorage.setItem(RETURN_KEY, JSON.stringify({
         draftId: draft.id,
         status: approved ? "success" : "warning",
         message,
         changedFields,
-        newVersion: data?.new_version || null
+        newVersion: data?.new_version || null,
+        attemptId: safeText(data?.attempt_id, 80)
       }));
       if (status) {
         status.dataset.tone = approved ? "success" : "warning";
@@ -196,11 +236,14 @@
       }
       setTimeout(() => window.location.reload(), 700);
     } catch (error) {
+      const failure = await repairFailure(error);
       if (status) {
         status.hidden = false;
         status.dataset.tone = "error";
-        status.textContent = await errorMessage(error);
+        const attempt = failure.attemptId ? ` Intento ${failure.attemptId.slice(0, 8)}.` : "";
+        status.textContent = `${failure.message}${attempt} Fase: ${failure.phase}.`;
       }
+      if (!failure.retryable) clearRepairAttempt(draft);
       button.disabled = false;
       button.textContent = "Aplicar correcciones y volver a revisar";
     }

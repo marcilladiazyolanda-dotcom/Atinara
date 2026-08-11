@@ -270,8 +270,9 @@ test("Paso 13.5.2 · el orden no semántico de fuentes y espacios equivalentes n
 });
 
 test("Paso 13.5.2 · validate-market-draft usa Gemini vigente, JSON Schema y un solo retry inválido", () => {
-  assert.match(validator, /gemini-3\.5-flash-lite/);
+  assert.match(validator, /gemini-3\.1-flash-lite/);
   assert.match(validator, /x-goog-api-key/);
+  assert.match(validator, /responseMimeType: "application\/json"/);
   assert.match(validator, /responseJsonSchema/);
   assert.match(validator, /thinkingConfig: \{ thinkingLevel: "minimal" \}/);
   assert.doesNotMatch(validator, /temperature:/);

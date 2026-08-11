@@ -9,6 +9,7 @@ const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
 const radarEdge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
 const expertEdge = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const migration = readFileSync(join(root, "supabase/migrations/20260809190000_harden_expert_market_cycle_v1.sql"), "utf8");
+const cycleV2Migration = readFileSync(join(root, "supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql"), "utf8");
 
 function between(source, start, end) {
   const from = source.indexOf(start);
@@ -17,11 +18,14 @@ function between(source, start, end) {
   return source.slice(from, to);
 }
 
-test("Agente Editor · analizar es de solo lectura y no prepara ni revalida Radar", () => {
-  const flow = between(adminJs, "  async function analyzeRadarCandidate", "  async function runBindingAction");
+test("Agente Editor · analizar empieza en lectura y la recuperación factual es una acción separada", () => {
+  const flow = between(adminJs, "  async function analyzeRadarCandidate", "  async function recoverRadarExpertCandidate");
   assert.match(flow, /refreshRadarExpertAnalysis\(candidateId, \{ force: true \}\)/);
   assert.doesNotMatch(flow, /revalidateRadarCandidate|prepareRadarCandidate|invokeRadar/);
   assert.match(flow, /sin preparar, guardar ni publicar/);
+  const recovery = between(adminJs, "  async function recoverRadarExpertCandidate", "  async function runBindingAction");
+  assert.match(recovery, /revalidateRadarCandidate/);
+  assert.match(recovery, /último estado autoritativo se conserva/);
 });
 
 test("Agente Editor · un expediente bloqueado sigue siendo legible y solo ofrece Analizar", () => {
@@ -43,11 +47,12 @@ test("Agente Editor · ausencia real de run se representa como null", () => {
 });
 
 test("Radar · un fallo de datos se aísla hasta una fila y conserva las sanas", () => {
-  const isolation = between(radarEdge, "async function persistBatchWithDataIsolation", "function quarantinedProviderFailure");
+  const isolation = between(radarEdge, "async function persistBatchWithDataIsolation", "function quarantinedProviderNotice");
+  assert.match(isolation, /writeAuthoritativePersistenceBatch/);
+  assert.match(isolation, /outcome\.persistedCount \+= batchResult\.acceptedCount/);
+  assert.match(isolation, /outcome\.quarantined\.push\(\.\.\.batchResult\.quarantined\)/);
   assert.match(isolation, /entries\.slice\(0, middle\)/);
   assert.match(isolation, /entries\.slice\(middle\)/);
-  assert.match(isolation, /outcome\.persistedCount \+= entries\.length/);
-  assert.match(isolation, /outcome\.quarantined\.push/);
   assert.match(radarEdge, /RADAR_CANDIDATES_QUARANTINED/);
 });
 
@@ -74,6 +79,9 @@ test("Corrector · solo consume revisión v3 exacta y exige deadline posterior",
   assert.match(contextRpc, /atinara-market-draft-schema-v3/);
   assert.match(contextRpc, /review_refresh_required/);
   assert.match(migration, /resolution_deadline <= draft\.evaluation_ends_at/);
+  assert.match(cycleV2Migration, /review_validator_value in \('atinara-market-gate-v3', 'step13\.4-deterministic-v3'\)/);
+  assert.match(cycleV2Migration, /content_fingerprint/);
+  assert.match(cycleV2Migration, /repair_applicable/);
 });
 
 test("Observabilidad · cada final de proveedor deja historial append-only y Gemini conserva el recuento", () => {

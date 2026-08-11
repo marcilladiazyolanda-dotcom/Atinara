@@ -173,7 +173,8 @@ test("Corrector experto · >95 es raro pero válido en la escala crítica 0–10
   assert.equal(metric.aggregation, "maximum");
 
   assert.match(validatorEdge, /if \(code === "INVALID_METRIC"\)/);
-  assert.match(validatorEdge, /if \(inferMetricContract\(\{ draft \}\)\) return null/);
+  assert.match(validatorEdge, /if \(inferMetricContract\(\{ draft \}\)\) return true/);
+  assert.match(validatorEdge, /everyIssueSafelyDismissed/);
   assert.match(validatorEdge, /La rareza o baja probabilidad nunca hacen inválida una métrica/);
 });
 
