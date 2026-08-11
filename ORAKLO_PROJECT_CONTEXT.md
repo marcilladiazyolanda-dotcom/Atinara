@@ -16,18 +16,19 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
 > autenticado de Editor y varios refrescos controlados del Radar se completaron
 > sin preparar, confirmar ni publicar. Marvel sigue `approved` en v9 y el Radar
-> final dejó todos los proveedores disponibles. GitHub Pages todavía sirve el
-> frontend anterior; Yol
-> debe subir el ZIP incremental y solo después se podrá validar el recurso
-> publicado. No hacer push directo a `main`.
+> final dejó todos los proveedores disponibles. GitHub Pages ya sirve el corte
+> `v=20260811-radar-eligibility2` desde `main = d58173d5245708b3ff789a931b16f5f89721d58b`;
+> el smoke autenticado posterior a la subida confirmó assets, navegación,
+> cooldown, tema, opciones y archivo de rechazados. No hacer push directo a
+> `main`.
 
 ### Elegibilidad, fuentes y resiliencia del Radar · 11 de agosto de 2026
 
-- Fuente exacta: `origin/main =
-  1f562bbfc71eb92a0c8b173ad84bd3e99530e401`, worktree aislado
-  `ATINARA-radar-eligibility-20260811`, rama
-  `codex/radar-eligibility-sources-20260811`. No se descartó ni mezcló ningún
-  cambio ajeno y no se hizo push.
+- Fuente publicada exacta: `origin/main =
+  d58173d5245708b3ff789a931b16f5f89721d58b`. La verificación posterior se hizo
+  en el worktree aislado `ATINARA-security-advisors-20260811`, rama
+  `codex/security-advisors-20260811`; no se descartó ni mezcló ningún cambio
+  ajeno y no se hizo push.
 - La revisión factual operativa se sustituyó por una decisión determinista y
   append-only de elegibilidad: `eligible`, `terminal`, `inactive_option`,
   `technical_hold`, `invalid` o `duplicate`. Un fallo técnico conserva el
@@ -68,6 +69,14 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   muestran `200` para Radar v49/v50 y Editor v20. Un cambio de pestaña no
   repitió timestamps de proveedor y el cooldown bajó de 31 a 29 segundos en
   2,2 s.
+- Tras la publicación manual, un nuevo refresh real en Pages terminó con
+  Polymarket, Kalshi e Ideas gaming `Disponible` y 74, 79 y 0 registros
+  procesados, respectivamente. El botón pasó por `Actualizando…` y volvió a
+  `Disponible en 147 s`; el contador continuó descendiendo en tiempo real y
+  cambiar entre pestañas no volvió a consultar proveedores. El catálogo activo
+  mostró 2 eventos y 13 opciones únicas, todas con la probabilidad individual
+  del proveedor; al desplegar Marvel aparecieron las 12 opciones y no se
+  duplicó ninguna pregunta.
 - El smoke del Editor sobre una opción Marvel `> 85` produjo una propuesta
   validada y aplicable, con fuente oficial de Steam y sin
   `RADAR_FACTUAL_VERIFICATION_REQUIRED`; no se aplicó al formulario ni se creó
@@ -82,6 +91,25 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   histórico caducado y binding de revisión/check contra TOCTOU. Los advisors no
   muestran errores de rendimiento nuevos; los avisos RLS de tablas `private`
   sin políticas son el cierre intencional y las RPC exigen administradora.
+- La revisión posterior de Advisors clasificó 83 avisos
+  `authenticated_security_definer_function_executable` y 18 avisos
+  `anon_security_definer_function_executable`. Las 83 funciones fijan
+  `search_path`, ninguna concede `EXECUTE` al pseudo-rol `PUBLIC`, las 18
+  anónimas son únicamente contratos `get_public_*` o `get_prediction_quote`, y
+  ocho RPC administrativas distintas rechazaron una identidad autenticada no
+  administradora con SQLSTATE `42501` dentro de `BEGIN/ROLLBACK`. La Data API
+  también rechazó `get_admin_market_catalog` para `anon` con `401/42501`.
+- El aviso `extension_in_public` corresponde al metadato no relocatable de
+  `pg_net` 0.20.3: sus 12 funciones viven en el esquema `net`, ninguna función
+  o trigger de Atinara las referencia y `public.http_get` devuelve `PGRST202`
+  por no formar parte del esquema expuesto. No se movió ni recreó la extensión.
+  Los 49 avisos de rendimiento restantes son solo `INFO` (14 claves foráneas
+  sin índice y 35 índices aún sin uso con el volumen actual).
+- El aviso nativo de contraseñas filtradas sí expresa una limitación residual
+  del plan Supabase Free. El alta normal y la recuperación comprueban HIBP por
+  k-anonimato y fallan cerradas, pero una llamada directa a Auth no puede ser
+  interceptada por el cliente. La protección HIBP nativa requiere plan Pro;
+  no se cambió facturación ni se sustituyó Auth por un flujo privilegiado.
 - Las huellas finales coinciden con la línea base: mercados
   `70d93479e2efe650e3623be40e9aee688216abdbe9866dd5f2a02f67da3ee137`,
   predicciones
@@ -95,11 +123,13 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   `78e4fe5967094925270379a635bbb442aa85c3ccc5284a2a38a87c420bc91ee4`.
   Siguen 15 mercados, 9 predicciones, 2 perfiles, 2.932 Karma, 40 Prestigio,
   15 estados LMSR y 17 precios. No hubo predicción, liquidación ni publicación.
-- GitHub Pages aún usa el JavaScript/CSS anterior. La independencia de altura de
-  tarjetas, el despliegue de todas las opciones, la taxonomía visual y el nuevo
-  contador están probados localmente pero no deben declararse publicados hasta
-  que Yol suba el ZIP y se repita el smoke real en escritorio/móvil y
-  claro/oscuro.
+- GitHub Pages sirve `admin-markets.js` y `styles.css` con
+  `v=20260811-radar-eligibility2`. El smoke real confirmó altura independiente
+  mediante `align-items/start` y `align-self/start`, despliegue 4 → 13 botones
+  `Detalles`, 13 preguntas únicas, 13 probabilidades, cero referencias a la
+  antigua comprobación factual y conmutación dark → light → dark. Madden no
+  aparece en los dos eventos activos y sus registros permanecen en auditoría
+  como `Evento ya resuelto` u `Opción no disponible`.
 
 ### Cierre definitivo Radar → Editor → Corrector → publicación · 11 de agosto de 2026
 

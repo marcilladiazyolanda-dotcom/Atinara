@@ -13,10 +13,12 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El backend coordinado está activo en producción. El frontend de este árbol aún
-no está en GitHub Pages: Yol debe sincronizarlo mediante el ZIP incremental y
-después debe repetirse el smoke del recurso publicado. No se debe afirmar que
-Pages está corregido antes de esa comprobación.
+El backend coordinado está activo en producción y GitHub Pages ya sirve el
+corte `v=20260811-radar-eligibility2` desde
+`d58173d5245708b3ff789a931b16f5f89721d58b`. El smoke autenticado posterior a
+la subida confirmó el refresco real, el cooldown en tiempo real, la persistencia
+al cambiar de pestaña, las opciones completas y los temas claro y oscuro sin
+preparar, confirmar ni publicar mercados.
 
 - `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
   el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
@@ -25,11 +27,12 @@ Pages está corregido antes de esa comprobación.
   Observatorio bajo una sola Constitución versionada. Entrega JSON estructurado,
   separa hechos, contexto e inferencias, limita herramientas y nunca almacena
   cadena de pensamiento.
-- El Radar usa `atinara-prediction-policy-v4`: un proveedor abierto sirve para
-  descubrir, pero nunca demuestra que el hecho siga sin resolver. La puerta
-  factual conserva el evento canónico completo, vuelve a ejecutarse antes de
-  preparar y antes de cualquier confirmación, programación o publicación, y
-  registra dictámenes privados, inmutables y enlazados a la candidata.
+- El Radar usa `atinara-prediction-policy-v5`: un proveedor abierto sirve para
+  descubrir, pero nunca demuestra que el hecho siga sin resolver. La puerta de
+  elegibilidad conserva el evento canónico completo, vuelve a ejecutarse antes
+  de preparar y antes de cualquier confirmación, programación o publicación, y
+  registra decisiones privadas, append-only y ligadas a candidata, revisión y
+  fuente. La antigua comprobación factual ya no bloquea el flujo operativo.
 - El Corrector y el validador comparten una taxonomía cerrada y constructores
   para los diez arquetipos admitidos. Cada incidencia tiene una disposición
   explícita de reparación, investigación o escalado seguro. Las fuentes
@@ -48,8 +51,8 @@ Pages está corregido antes de esa comprobación.
   Las restantes también están aplicadas y registradas en producción. La
   corrección operativa `20260809180000_fix_radar_refresh_timeout.sql` también
   está aplicada y no debe repetirse.
-- `market-radar` v33, `market-draft-fixer` v16,
-  `validate-market-draft` v26 y `market-expert` v17 están activas con
+- `market-radar` v50, `market-draft-fixer` v16,
+  `validate-market-draft` v26 y `market-expert` v20 están activas con
   `verify_jwt=true`. Radar separa disponibilidad técnica, descartes de contenido
   y cuarentena por fila; Gemini conserva el último estado válido y no bloquea a
   los demás proveedores. Editor, Validador y Corrector comparten una taxonomía
@@ -60,6 +63,12 @@ Pages está corregido antes de esa comprobación.
   `20260811104727 · isolate_radar_poison_records_v4`. Sus archivos locales
   conservan los timestamps `20260809204739`, `20260811100833` y
   `20260811104727`, respectivamente.
+- La puerta vigente se completó con la migración local no repetible
+  `20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql`, registrada
+  remotamente como `20260811185229 · replace_radar_fact_gate_with_eligibility_v7`.
+  El bootstrap histórico solo concede `technical_hold`; una fuente primaria
+  exige registro y evidencia exacta, y una revisión material distinta invalida
+  la procedencia del borrador.
 - El borrador privado de regresión Marvel está reparado como versión 9 mediante
   reglas generales: `resolution_deadline` se deriva del periodo evaluado y la
   política temporal, las representaciones UTC/Europe-Madrid equivalentes no se
@@ -74,11 +83,18 @@ Pages está corregido antes de esa comprobación.
   El aislamiento se hace en una sola RPC por lote con subtransacciones SQL por
   candidata, por lo que una fila venenosa no agota el presupuesto ni pierde el
   resto del lote.
-- La suite final pasa sintaxis de 71 archivos JavaScript, 319/319 pruebas y
+- La suite final pasa sintaxis de 72 archivos JavaScript, 348/348 pruebas y
   TypeScript. Las pruebas SQL de ciclo y aislamiento pasaron dentro de
   transacciones con `ROLLBACK`; la prueba positiva de la puerta de publicación
   también materializó y deshizo su resultado, manteniendo obligatoria la
   confirmación humana.
+- Los avisos de Advisors sobre `SECURITY DEFINER` son contratos revisados, no
+  una autorización implícita: todas las funciones advertidas fijan
+  `search_path`, las RPC administrativas comprueban administradora en servidor
+  y fallan con `42501` para una identidad autenticada ordinaria. La protección
+  nativa contra contraseñas filtradas continúa pendiente de un plan Supabase
+  Pro; en Free, el alta y la recuperación normales usan HIBP por k-anonimato y
+  fallan cerradas, sin enviar la contraseña ni su hash completo.
 - Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
   configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
   Los dos schedulers preparados permanecen desactivados y son independientes.
