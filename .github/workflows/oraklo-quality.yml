@@ -14,6 +14,8 @@ jobs:
   validate:
     name: Sintaxis y pruebas unitarias
     runs-on: ubuntu-latest
+    env:
+      ATINARA_EXTERNAL_AI_DISABLED: "1"
     steps:
       - name: Descargar el repositorio
         uses: actions/checkout@v6
@@ -24,6 +26,11 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Preparar Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.1.14"
+
       - name: Instalar dependencias bloqueadas
         run: npm ci --ignore-scripts
 
@@ -32,3 +39,6 @@ jobs:
 
       - name: Validar JavaScript y pruebas
         run: npm run validate
+
+      - name: Comprobar Edge Functions sin llamadas externas
+        run: npm run test:edge

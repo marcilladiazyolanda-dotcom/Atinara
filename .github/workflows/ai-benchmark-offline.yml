@@ -1,0 +1,31 @@
+name: Benchmark IA offline
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Contratos y fixtures sin red externa
+    runs-on: ubuntu-latest
+    env:
+      ATINARA_EXTERNAL_AI_DISABLED: "1"
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Instalar dependencias bloqueadas
+        run: npm ci --ignore-scripts
+
+      - name: Ejecutar benchmark técnico offline
+        run: npm run benchmark:offline
