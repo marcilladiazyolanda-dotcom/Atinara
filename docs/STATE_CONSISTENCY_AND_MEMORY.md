@@ -82,6 +82,20 @@ distintas:
 Estas reglas no suavizan ninguna puerta: preparar, guardar, confirmar, programar
 y publicar siguen revalidando sus contratos autoritativos en el backend.
 
+## Memoria de AI Gateway y Agent Engine V2.1
+
+Las inferencias y las decisiones de dominio son memorias distintas:
+
+- `private.ai_invocation_attempts` conserva solo metadatos, lifecycle y fingerprints; nunca el prompt, input o output.
+- `private.market_agent_runs` y `private.market_agent_steps` conservan identidad de registry, tool, estado, huella de progreso y resumen acotado.
+- La revisión, borrador, binding, confirmación, publicación y resolución siguen viviendo en sus tablas autoritativas existentes. Una traza de agente no acredita ninguno de esos estados.
+- `AI_TELEMETRY_WRITE_FAILED` no cambia una respuesta válida, no crea un retry de inferencia y deja la muestra fuera de métricas.
+- Reservas de proveedor son idempotentes por invocation/proveedor/tarea/día UTC y no sustituyen locks, CAS o idempotencia del dominio.
+- Runs, steps e intentos no admiten `UPDATE`; los roles API tampoco admiten `DELETE`. La purga usa cutoffs internos de 90/180 días y se audita.
+- Un run registra la versión y hash de registry. Si SQL y handlers divergen, el runtime falla antes de ejecutar herramientas.
+
+El rollback a v1 cambia el modo de transporte o el bundle de una Edge, pero no borra estas memorias ni desactiva RLS. La tabla registry combinada v1 y los wrappers v1 se conservan.
+
 ## Inventario de escrituras
 
 | Acción | Inicio | Backend autoritativo | Versión / concurrencia | Atomicidad e idempotencia | Doble clic / retry | Auditoría y resultado |
@@ -118,3 +132,5 @@ y publicar siguen revalidando sus contratos autoritativos en el backend.
 8. Restaurar significa crear historia nueva enlazada a la anterior, no modificar snapshots.
 9. Ninguna Edge Function de preparación, revisión, corrección o evidencia puede confirmar, publicar o resolver.
 10. Toda función `security definer` fija `search_path`, comprueba rol y revoca permisos por defecto.
+11. Toda inferencia usa el contrato común; la Edge no elige transporte ni aporta fingerprints.
+12. Toda operación larga comparte un `absoluteDeadlineAt` y reserva tiempo para persistencia y respuesta.

@@ -66,6 +66,14 @@
 
   const safeText = (value, max = 1200) => String(value ?? "").trim().slice(0, max);
 
+  function renderRepairMessage(container, title, message) {
+    const heading = document.createElement("strong");
+    const body = document.createElement("span");
+    heading.textContent = safeText(title, 160);
+    body.textContent = safeText(message, 1_200);
+    container.replaceChildren(heading, body);
+  }
+
   function safeRepairErrorText(value, max = 800) {
     if (typeof value !== "string") return "";
     const text = safeText(value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " "), max);
@@ -107,18 +115,31 @@
     const panel = document.createElement("section");
     panel.className = "admin-expert-repair-panel";
     panel.dataset.expertRepairPanel = "true";
-    panel.innerHTML = `
-      <div>
-        <p class="eyebrow">Corrector Autónomo · hasta tres rondas auditadas</p>
-        <h4>Resolver ${issueCount} ${issueCount === 1 ? "incongruencia" : "incongruencias"}</h4>
-      </div>
-      <p>Atinara detectará el arquetipo, completará lo deducible, validará fuentes oficiales, sincronizará el Plan de Resolución y volverá a revisar. Los fallos técnicos se registran aparte y no se presentan como una falsa petición de edición humana.</p>
-      <div class="admin-expert-repair-panel-actions">
-        <button class="primary-button" type="button" data-expert-repair-draft>Aplicar correcciones y volver a revisar</button>
-        <small>No confirma, programa ni publica por ti. La confirmación humana seguirá siendo obligatoria.</small>
-      </div>
-      <p class="admin-expert-repair-panel-status" data-expert-repair-status hidden></p>
-    `;
+    const heading = document.createElement("div");
+    const eyebrow = document.createElement("p");
+    const title = document.createElement("h4");
+    const description = document.createElement("p");
+    const panelActions = document.createElement("div");
+    const repairButton = document.createElement("button");
+    const authority = document.createElement("small");
+    const repairStatus = document.createElement("p");
+    eyebrow.className = "eyebrow";
+    eyebrow.textContent = "Corrector Autónomo · hasta tres rondas auditadas";
+    title.textContent = `Resolver ${issueCount} ${issueCount === 1 ? "incongruencia" : "incongruencias"}`;
+    description.textContent = "Atinara detectará el arquetipo, completará lo deducible, validará fuentes oficiales, sincronizará el Plan de Resolución y volverá a revisar. Los fallos técnicos se registran aparte y no se presentan como una falsa petición de edición humana.";
+    panelActions.className = "admin-expert-repair-panel-actions";
+    repairButton.className = "primary-button";
+    repairButton.type = "button";
+    repairButton.dataset.expertRepairDraft = "true";
+    repairButton.textContent = "Aplicar correcciones y volver a revisar";
+    authority.textContent = "No confirma, programa ni publica por ti. La confirmación humana seguirá siendo obligatoria.";
+    repairStatus.className = "admin-expert-repair-panel-status";
+    repairStatus.dataset.expertRepairStatus = "true";
+    repairStatus.setAttribute("role", "status");
+    repairStatus.hidden = true;
+    heading.append(eyebrow, title);
+    panelActions.append(repairButton, authority);
+    panel.append(heading, description, panelActions, repairStatus);
     const actions = gate.querySelector(".admin-gate-actions");
     if (actions) gate.insertBefore(panel, actions);
     else gate.appendChild(panel);
@@ -200,6 +221,7 @@
     if (status) {
       status.hidden = false;
       status.dataset.tone = "warning";
+      status.setAttribute("role", "status");
       status.textContent = "El Corrector Experto está alineando pregunta, criterios, zona horaria, fuentes y Plan de Resolución.";
     }
 
@@ -216,22 +238,28 @@
       if (error) throw error;
       const reviewStatus = safeText(data?.review?.status || "inconclusive", 50);
       const approved = reviewStatus === "approved";
-      const message = safeText(data?.message, 1000) || (approved
+      const telemetryIncomplete = Array.isArray(data?.warnings)
+        && data.warnings.includes("AI_TELEMETRY_WRITE_FAILED");
+      const domainMessage = safeText(data?.message, 1000) || (approved
         ? "Correcciones aplicadas y revisión aprobada."
         : "Correcciones aplicadas; la revisión conserva observaciones pendientes.");
+      const message = telemetryIncomplete
+        ? `${domainMessage} Observabilidad incompleta: el resultado se conserva y la inferencia no se repetirá.`
+        : domainMessage;
       const changedFields = Array.isArray(data?.changed_fields) ? data.changed_fields : [];
       clearRepairAttempt(draft);
 
       sessionStorage.setItem(RETURN_KEY, JSON.stringify({
         draftId: draft.id,
-        status: approved ? "success" : "warning",
+        status: approved && !telemetryIncomplete ? "success" : "warning",
         message,
         changedFields,
         newVersion: data?.new_version || null,
         attemptId: safeText(data?.attempt_id, 80)
       }));
       if (status) {
-        status.dataset.tone = approved ? "success" : "warning";
+        status.dataset.tone = approved && !telemetryIncomplete ? "success" : "warning";
+        status.setAttribute("role", "status");
         status.textContent = message;
       }
       setTimeout(() => window.location.reload(), 700);
@@ -240,6 +268,7 @@
       if (status) {
         status.hidden = false;
         status.dataset.tone = "error";
+        status.setAttribute("role", "alert");
         const attempt = failure.attemptId ? ` Intento ${failure.attemptId.slice(0, 8)}.` : "";
         status.textContent = `${failure.message}${attempt} Fase: ${failure.phase}.`;
       }
@@ -283,7 +312,11 @@
         const changed = Array.isArray(result.changedFields) && result.changedFields.length
           ? ` Campos modificados: ${result.changedFields.join(", ")}.`
           : "";
-        banner.innerHTML = `<strong>${result.status === "success" ? "Corrección completada" : "Corrección aplicada con revisión pendiente"}</strong><span>${safeText(result.message, 1000)}${changed}</span>`;
+        renderRepairMessage(
+          banner,
+          result.status === "success" ? "Corrección completada" : "Corrección aplicada con revisión pendiente",
+          `${safeText(result.message, 1000)}${changed}`,
+        );
         editor.prepend(banner);
         sessionStorage.removeItem(RETURN_KEY);
         restoring = false;
@@ -394,6 +427,22 @@
   document.head.appendChild(style);
 
   const safeText = (value, max = 1200) => String(value ?? "").trim().slice(0, max);
+
+  function renderPublicationStatus(container, title, message, detail = "") {
+    if (!container) return;
+    const heading = document.createElement("strong");
+    const body = document.createElement("span");
+    heading.textContent = safeText(title, 160);
+    body.textContent = safeText(message, 1_200);
+    const children = [heading, body];
+    if (detail) {
+      const extra = document.createElement("small");
+      extra.textContent = safeText(detail, 1_200);
+      children.push(extra);
+    }
+    container.replaceChildren(...children);
+    container.setAttribute("role", container.dataset.tone === "error" ? "alert" : "status");
+  }
 
   function currentPublicationContext() {
     const form = document.querySelector("#admin-market-form");
@@ -561,16 +610,24 @@
       banner.dataset.publicationSuccessBanner = "true";
       const publicUrl = `index.html?market=${encodeURIComponent(publication.marketId)}`;
       const detailUrl = `market-detail.html?id=${encodeURIComponent(publication.marketId)}`;
-      banner.innerHTML = `
-        <div>
-          <strong>Mercado publicado y visible</strong>
-          <span>${safeText(publication.question || publication.marketId, 600)}</span>
-        </div>
-        <div class="admin-publication-success-actions">
-          <a class="primary-button" href="${publicUrl}">Abrir en Explorar mercados</a>
-          <a class="secondary-button" href="${detailUrl}">Abrir ficha pública</a>
-        </div>
-      `;
+      const copy = document.createElement("div");
+      const heading = document.createElement("strong");
+      const question = document.createElement("span");
+      const actions = document.createElement("div");
+      const explore = document.createElement("a");
+      const detail = document.createElement("a");
+      heading.textContent = "Mercado publicado y visible";
+      question.textContent = safeText(publication.question || publication.marketId, 600);
+      actions.className = "admin-publication-success-actions";
+      explore.className = "primary-button";
+      explore.href = publicUrl;
+      explore.textContent = "Abrir en Explorar mercados";
+      detail.className = "secondary-button";
+      detail.href = detailUrl;
+      detail.textContent = "Abrir ficha pública";
+      copy.append(heading, question);
+      actions.append(explore, detail);
+      banner.append(copy, actions);
       table.parentElement?.insertBefore(banner, table);
     }
 
@@ -623,7 +680,7 @@
     if (fieldset) fieldset.setAttribute("aria-busy", "true");
     if (status) {
       status.dataset.tone = "info";
-      status.innerHTML = "<strong>Validando y publicando…</strong><span>Atinara bloqueará automáticamente un Plan de Resolución compatible antes de materializar el mercado.</span>";
+      renderPublicationStatus(status, "Validando y publicando…", "Atinara bloqueará automáticamente un Plan de Resolución compatible antes de materializar el mercado.");
     }
 
     try {
@@ -634,7 +691,7 @@
       if (safeText(data?.status, 40) === "scheduled") {
         if (status) {
           status.dataset.tone = "success";
-          status.innerHTML = `<strong>Mercado programado</strong><span>Se publicará en la fecha autorizada y el Plan de Resolución ha quedado validado.</span>`;
+          renderPublicationStatus(status, "Mercado programado", "Se publicará en la fecha autorizada y el Plan de Resolución ha quedado validado.");
         }
         setTimeout(() => window.location.reload(), 900);
         return;
@@ -643,14 +700,14 @@
       const publication = storePublication(data || {}, context);
       if (status) {
         status.dataset.tone = "success";
-        status.innerHTML = "<strong>Mercado publicado</strong><span>Abriendo el catálogo administrativo con el nuevo mercado resaltado.</span>";
+        renderPublicationStatus(status, "Mercado publicado", "Abriendo el catálogo administrativo con el nuevo mercado resaltado.");
       }
       openCatalog(publication);
     } catch (error) {
       const raw = await detailedError(error);
       if (status) {
         status.dataset.tone = "error";
-        status.innerHTML = `<strong>Publicación bloqueada de forma segura</strong><span>${friendlyPublicationError(raw)}</span>${raw ? `<small>${safeText(raw, 1200)}</small>` : ""}`;
+        renderPublicationStatus(status, "Publicación bloqueada de forma segura", friendlyPublicationError(raw), raw);
       }
       button.disabled = false;
       button.textContent = previousLabel;

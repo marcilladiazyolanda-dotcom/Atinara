@@ -6,6 +6,18 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
 Contrato operativo de los agentes: [`docs/ATINARA_AGENT_ENGINE.md`](docs/ATINARA_AGENT_ENGINE.md).
 
+## Agent Engine V2.1 y AI Gateway · implementación local
+
+El árbol incorpora una transición multiproveedor local, todavía no desplegada ni activada. Las cuatro rutas de inferencia activas llaman a un contrato común y la quinta superficie, Radar, conserva cero inferencias y un contrato dormido de compatibilidad. Los modelos Gemini exactos permanecen disponibles mediante `legacy_direct`; la promoción a `gateway_gemini_parity` se hace tarea por tarea.
+
+- Contratos, políticas, saneamiento, deadlines, validación determinista, presupuesto atómico y telemetría viven en `supabase/functions/_shared/ai/`.
+- Agent Runtime v2 selecciona herramientas registradas, controla loops, replans, huellas y un único writer; nunca confirma, publica, resuelve o liquida.
+- OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
+- El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
+- Las tres migraciones V2.1 son locales y pendientes de revisión/aplicación manual. No modificar ni repetir migraciones ya aplicadas.
+
+Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
+
 ## Estado vigente · cierre definitivo del ciclo experto
 
 Atinara conserva su producto social de predicciones con Karma ficticio y, sobre
@@ -185,22 +197,22 @@ Una nueva comprobación administrativa de Supabase, exclusivamente de lectura, v
 ## Resolución asistida por IA
 
 - `admin-resolution.html` es el panel privado de revisión de mercados cerrados.
-- `analyze-market-resolution` usa Tavily Search en modo básico para recopilar fuentes anteriores al cierre y Gemini 3 Flash Preview para analizarlas.
+- `analyze-market-resolution` recopila fuentes anteriores al cierre y envía una proyección mínima a la tarea `market_resolution_analysis` del AI Gateway. La ruta de compatibilidad conserva Gemini 3 Flash Preview y `Interactions → generateContent`.
 - `approve-market-resolution` exige una administradora autenticada y ejecuta la resolución atómica en Supabase.
 - La IA nunca puede resolver por sí sola: una persona debe revisar las fuentes, elegir el resultado y confirmar la liquidación.
 - Si la ficha usa referencias como «último» o «próximo» sin identificar una fecha concreta, el sistema propone `Anulado`, explica la ambigüedad y usa la ficha original como evidencia. La anulación sigue necesitando confirmación humana.
 - Si el mercado está definido pero la búsqueda no encuentra pruebas suficientes, muestra `No concluyente` sin convertirlo en un error técnico ni habilitar una resolución insegura.
-- Si Tavily o Gemini no están disponibles, el panel permite una resolución manual protegida que también exige fuentes HTTPS y revisión humana.
+- Si la investigación o el análisis no están disponibles, el panel conserva el estado y permite una resolución manual protegida que también exige fuentes HTTPS y revisión humana.
 - Las fuentes aprobadas y la explicación quedan visibles en la ficha pública del mercado.
 
-Las claves se configuran únicamente como secretos `GEMINI_API_KEY` y `TAVILY_API_KEY` de las Edge Functions. Nunca deben añadirse al frontend ni al repositorio. Cada análisis normal realiza tres búsquedas básicas de Tavily y una petición de texto a Gemini; los límites gratuitos dependen de cada proveedor.
+Las claves se configuran únicamente como Edge secrets y nunca se añaden al frontend o al repositorio. El frontend no conoce el proveedor, modelo, error crudo, payload ni presupuesto.
 
 ## Radar administrativo de mercados · Paso 13.5
 
 - `admin-markets.html` conserva `Crear manualmente` y añade una pestaña `Radar de mercados` únicamente para administradoras.
 - `market-radar` centraliza las consultas externas, valida el JWT y `oraklo_admin`, limita hosts, tiempo, tamaño, reintentos y consumo, y conserva resultados parciales cuando una fuente falla.
 - Polymarket usa `GET /public-search`; Kalshi parte de `GET /series` con `Entertainment + Video games` y consulta sus mercados abiertos. No se consultan posiciones, traders, wallets, órdenes o perfiles externos.
-- Tavily busca un máximo de seis fuentes públicas por actualización y Gemini adapta como máximo doce candidatas por lote, solo si sus secretos existentes están disponibles. La llamada de Gemini usa entrada acotada, salida JSON, razonamiento mínimo, límite de tokens y timeout de 35 s para evitar la incidencia de latencia detectada tras la activación. Sin secretos, la fuente se declara no configurada y la creación manual continúa.
+- La ruta operativa del Radar es determinista y ejecuta cero llamadas de modelo. El contrato histórico de enriquecimiento permanece dormido y centralizado en el AI Gateway para compatibilidad, pruebas y una decisión futura explícita.
 - El score de 0 a 100 separa popularidad relativa, relevancia gaming, claridad, actualidad, incertidumbre y novedad. Las probabilidades externas son referencia privada y nunca alimentan el LMSR de Atinara.
 - `Preparar borrador` vuelve a comprobar estado y duplicados, muestra el origen de cada campo y rellena el formulario real. Los huecos no fiables permanecen vacíos; solo `Guardar borrador privado` persiste la propuesta y conserva la revisión semántica y confirmación humana existentes.
 - La migración mantiene candidatas, estado de proveedores y procedencia en `private`, con RLS y permisos mínimos. No añade campos públicos a `markets`.

@@ -2,7 +2,6 @@ export const API_HOST_ALLOWLIST = Object.freeze({
   igdb: ["api.igdb.com"],
   twitch: ["api.twitch.tv", "id.twitch.tv"],
   youtube: ["www.googleapis.com"],
-  gemini: ["generativelanguage.googleapis.com"],
   tavily: ["api.tavily.com"],
 });
 

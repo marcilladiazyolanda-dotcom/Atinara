@@ -18,13 +18,13 @@ function redactMonitoringString(value) {
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token oculto]")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, "[id oculto]")
     .replace(
-      /\b(access_token|refresh_token|authorization|password|passwd|email|session|apikey|api_key|token)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
+      /\b(access_token|refresh_token|authorization|password|passwd|email|session|apikey|api_key|token|prompt|input|output|response|provider_error|budget)\b(\s*[:=]\s*)([^\s&,;]+)/gi,
       `$1$2${ORAKLO_REDACTED_VALUE}`
     );
 }
 
 function isSensitiveMonitoringKey(key) {
-  return /^(access_?token|refresh_?token|authorization|cookie|dsn|email|password|passwd|secret|session|token|username)$/i.test(
+  return /^(access_?token|refresh_?token|authorization|budget|cookie|dsn|email|input|output|password|passwd|prompt|provider(?:_error|_response)?|request|response|secret|session|token|username)$/i.test(
     String(key || "")
   );
 }

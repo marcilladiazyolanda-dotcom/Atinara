@@ -7,6 +7,7 @@ const { test, before } = require("node:test");
 
 const root = join(__dirname, "..");
 const corePath = join(root, "supabase/functions/_shared/market-radar.mjs");
+const aiOutputPath = join(root, "supabase/functions/_shared/ai/task-output-validation.mjs");
 const edge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
 const marketExpertEdge = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const baseMigration = readFileSync(join(root, "supabase/migrations/20260804194933_add_market_radar.sql"), "utf8");
@@ -15,11 +16,16 @@ const visibilityMigration = readFileSync(join(root, "supabase/migrations/2026081
 const revalidationMigration = readFileSync(join(root, "supabase/migrations/20260811155800_allow_needs_review_radar_revalidation_v6.sql"), "utf8");
 const adminUi = readFileSync(join(root, "admin-markets.js"), "utf8");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminAgentBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
 const styles = readFileSync(join(root, "styles.css"), "utf8");
+const aiTaskPolicy = readFileSync(join(root, "supabase/functions/_shared/ai/task-policy.mjs"), "utf8");
+const aiModelCatalog = readFileSync(join(root, "supabase/functions/_shared/ai/model-catalog.mjs"), "utf8");
 let radar;
+let aiOutput;
 
 before(async () => {
   radar = await import(pathToFileURL(corePath).href);
+  aiOutput = await import(pathToFileURL(aiOutputPath).href);
 });
 
 const now = "2026-08-06T12:00:00.000Z";
@@ -544,7 +550,7 @@ test("una afirmación terminal del modelo no prevalece sobre el cierre probado d
   assert.equal(rejected.verification_reason_code, "PROVIDER_NOT_OPEN");
 });
 
-test("los lotes de Gemini son pequeños, monoproveedor y conservan las candidatas aplazadas", () => {
+test("los lotes de enriquecimiento IA son pequeños, monoproveedor y conservan las candidatas aplazadas", () => {
   const polymarket = Array.from({ length: 19 }, (_, index) => ({
     provider: "polymarket",
     external_id: `poly-${index}`,
@@ -557,7 +563,7 @@ test("los lotes de Gemini son pequeños, monoproveedor y conservan las candidata
     event_group_key: `kalshi:event-${Math.floor(index / 3)}`,
     quality_score: 80 - index,
   }));
-  const plan = radar.buildGeminiCandidateBatches([...polymarket, ...kalshi], {
+  const plan = radar.buildAiCandidateBatches([...polymarket, ...kalshi], {
     maxGroups: 20,
     maxCandidates: 24,
     batchSize: 7,
@@ -777,26 +783,29 @@ test("las URLs privadas, locales y protocolos inseguros se rechazan", () => {
     "api.tavily.com",
     "external-api.kalshi.com",
     "gamma-api.polymarket.com",
-    "generativelanguage.googleapis.com",
   ]);
 });
 
-test("Gemini interpreta texto JSON dividido e ignora razonamiento", () => {
-  const result = radar.parseGeminiAdaptations({ candidates: [{ content: { parts: [{ thought: true, text: "privado" }, { text: '{"candidates":[{"external_id":"m-' }, { text: '1"}]}' }] } }] });
-  assert.deepEqual(result, [{ external_id: "m-1" }]);
+test("el Gateway interpreta texto JSON dividido e ignora bloques de razonamiento", () => {
+  const result = aiOutput.parseTaskProviderEnvelope("radar_candidate_enrichment", {
+    candidates: [{ content: { parts: [{ thought: true, text: "privado" }, { text: '{"candidates":[{"candidate_index":' }, { text: "0}]}" }] } }],
+  });
+  assert.deepEqual(result, { candidates: [{ candidate_index: 0 }] });
 });
 
-test("Gemini se vincula por índices enteros controlados sin aceptar duplicados ni IDs alterados", () => {
-  const decisions = radar.indexGeminiDecisions([
-    { candidate_index: 1, external_id: "alterado", eligible: true },
-    { candidate_index: 1, eligible: false },
-    { candidate_index: "0", eligible: true },
-    { candidate_index: 3, eligible: true },
-    { candidate_index: 0, eligible: false },
-  ], 3);
-  assert.deepEqual([...decisions.keys()], [1, 0]);
-  assert.equal(decisions.get(1).eligible, true);
-  assert.equal(decisions.get(0).eligible, false);
+test("el contrato Radar rechaza índices duplicados o alterados", () => {
+  const decision = {
+    candidate_index: 0, eligible: true, conclusive: false,
+    reason_code: "VERIFICATION_REQUIRED", reason: "La evidencia requiere revisión.",
+    confidence: 50, ttl_minutes: 60,
+    facts: { event_resolved_at: null, official_reveal_at: null, release_at: null, subject_announced: null, temporal_coherence: null },
+    atinara_question: "¿Ocurrirá el evento?", atinara_category: "Eventos",
+    atinara_resolution_criteria: "Se resolverá con una fuente oficial.",
+  };
+  assert.throws(
+    () => aiOutput.validateTaskOutput("radar_candidate_enrichment", { candidates: [decision, decision, decision] }, { candidateCount: 3 }),
+    (error) => error.code === "AI_OUTPUT_CONTRACT_INVALID",
+  );
 });
 
 test("una actualización explícita nunca reutiliza un estado abierto y solo conserva rechazos terminales idénticos", () => {
@@ -967,19 +976,16 @@ test("la Edge valida evento y pertenencia del hijo en Polymarket", () => {
   assert.doesNotMatch(edge, /polymarket\.com\/es\//);
 });
 
-test("Tavily se consulta una vez por evento padre y Gemini recibe evidencia estructurada", () => {
+test("Tavily se consulta una vez por evento padre y el contrato IA dormido queda centralizado", () => {
   const researchSource = edge.slice(
     edge.indexOf("async function researchGroupsWithTavily"),
-    edge.indexOf("type GeminiBatchResult"),
+    edge.indexOf("function officialEventResolutionSignals"),
   );
   assert.match(edge, /groupCandidates\(candidates\)/);
   assert.match(edge, /evidenceByGroup/);
   assert.match(edge, /include_domains/);
-  assert.match(edge, /event_resolved_at: \{ type:/);
-  assert.match(edge, /responseJsonSchema: geminiResponseJsonSchema/);
-  assert.match(edge, /geminiProviderSchemaSupported/);
-  assert.match(edge, /providerPayload = await send\(false\)/);
-  assert.match(edge, /failClosedCandidates/);
+  assert.doesNotMatch(edge, /GEMINI_MODEL|GEMINI_API_KEY|generativelanguage\.googleapis\.com|:generateContent/);
+  assert.match(aiTaskPolicy, /radar_candidate_enrichment:[\s\S]*?dataClass: "public_market"/);
   assert.match(edge, /mapWithConcurrency\(groups, TAVILY_CONCURRENCY/);
   assert.match(edge, /get_market_radar_authoritative_source_domains_v1/);
   assert.match(edge, /childQuestions/);
@@ -1009,15 +1015,15 @@ test("la caché solo conserva decisiones de elegibilidad vigentes", () => {
 
 test("la vista solo expone candidatas evaluadas con la política predictiva vigente", () => {
   assert.match(edge, /filter\(\(candidate\) => cleanText\(candidate\.eligibility_policy_version, 80\) === RADAR_ELIGIBILITY_POLICY_VERSION\)/);
-  assert.match(edge, /canApplyPredictivePolicyOverride\(adapted, decision, now\)/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
+  assert.doesNotMatch(edge, /canApplyPredictivePolicyOverride/);
 });
 
-test("el estado de Gemini refleja éxito total o fallo parcial real", () => {
-  assert.match(edge, /finalizeProviderRefresh\([\s\S]*?"gemini"/);
-  assert.match(edge, /persistProcessorPartialFailure/);
-  assert.match(edge, /"partial_error",[\s\S]*?processedDecisions/);
-  assert.match(edge, /Math\.min\(Math\.max\(processedDecisions, 0\), MAX_GEMINI_CANDIDATES\)/);
-  assert.match(edge, /deferredCandidates: plan\.deferred\.length \+ quotaDeferredCandidates/);
+test("Radar no ejecuta IA y conserva contadores de verificación deterministas", () => {
+  assert.doesNotMatch(edge, /finalizeProviderRefresh\([\s\S]*?"gemini"/);
+  assert.doesNotMatch(edge, /persistProcessorPartialFailure|verifyAndAdaptWithGemini|verifyGeminiBatch/);
+  assert.match(edge, /let processedVerificationCount = 0/);
+  assert.match(edge, /let failedVerificationBatches = 0/);
   assert.match(edge, /deferred_verification_count: deferredVerificationCount/);
 });
 
@@ -1112,14 +1118,14 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /\["exact_duplicate", "semantic_duplicate"\]/);
   assert.match(adminUi, /edgeInvocationError/);
   assert.match(adminUi, /window\.atinaraMarketAdminBridge/);
-  assert.match(adminHtml, /await bridge\.prepareRadarCandidate\(candidateId, \{ throwOnError: true \}\)/);
-  assert.match(adminHtml, /await bridge\.refreshRadarExpertAnalysis\(candidateId/);
-  assert.match(adminHtml, /packageMatchesPreparation\(pkg, preparationRevision\)/);
+  assert.match(adminAgentBridge, /await bridge\.prepareRadarCandidate\(candidateId, \{ throwOnError: true \}\)/);
+  assert.match(adminAgentBridge, /await bridge\.refreshRadarExpertAnalysis\(candidateId/);
+  assert.match(adminAgentBridge, /packageMatchesPreparation\(pkg, preparationRevision\)/);
   assert.doesNotMatch(adminHtml, /debe conservar una verificación factual vigente antes de abrir el formulario/);
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260812-agent-engine2/);
+  assert.match(adminHtml, /v=20260812-agent-engine-v21/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
@@ -1145,17 +1151,17 @@ test("la evidencia oficial enlazada completa portadas sin depender de un resulta
   assert.match(edge, /MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP = 3/);
   assert.match(edge, /const relatedTargets:/);
   assert.match(edge, /page\.relatedUrls/);
-  assert.match(edge, /fetchVerifiedOfficialPage\(target\.url, authoritativeDomains, relatedDeadlineAt\)/);
+  assert.match(edge, /fetchVerifiedOfficialPage\([\s\S]*?target\.url,[\s\S]*?authoritativeDomains,[\s\S]*?relatedDeadlineAt,[\s\S]*?environment\.execution\.signal/);
   assert.match(edge, /MAX_SELECTION_FOLLOWUP_GROUPS = 4/);
   assert.match(edge, /const incompleteSelectionGroups = groups\.filter/);
   assert.match(edge, /const incompleteMetricGroups = groups\.filter/);
   assert.match(edge, /official "\$\{subject\}" release date launch date/);
   assert.match(edge, /item\.supported_contract_kinds\.includes\("review"\)/);
-  assert.match(edge, /const deterministicOpen = !deterministic/);
-  assert.match(edge, /isDeterministicUnresolvedEvidence\(item, adapted, now\)/);
-  assert.match(edge, /!deterministicOpen && !aiConclusionPresent/);
+  assert.match(edge, /const terminalEvidence = exactEvidence\.filter/);
+  assert.match(edge, /const groupSelectionHold = groupSelectionHolds\.get/);
+  assert.match(edge, /if \(groupResolution \|\| terminalEvidence\.length\)/);
   assert.match(edge, /include_raw_content: false/);
-  assert.match(edge, /fetchVerifiedOfficialPage\(target\.url, authoritativeDomains, followupDeadlineAt\)/);
+  assert.match(edge, /fetchVerifiedOfficialPage\([\s\S]*?target\.url,[\s\S]*?authoritativeDomains,[\s\S]*?followupDeadlineAt,[\s\S]*?environment\.execution\.signal/);
   assert.doesNotMatch(edge, /EA Sports FC 27|Big Walk|Marvel Tokon/i);
 });
 
@@ -1169,22 +1175,15 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /MAX_PROVIDER_PAGES = 3/);
   assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 240/);
   assert.match(edge, /MAX_VISIBLE_GROUPS = 60/);
-  assert.match(edge, /MAX_GEMINI_GROUPS = 30/);
-  assert.match(edge, /MAX_GEMINI_CANDIDATES = 180/);
-  assert.match(edge, /GEMINI_BATCH_SIZE = 9/);
-  assert.match(edge, /GEMINI_CONCURRENCY = 2/);
-  assert.match(edge, /GEMINI_TIMEOUT_MS = 20_000/);
-  assert.match(edge, /GEMINI_MODEL = "gemini-3\.1-flash-lite"/);
+  assert.match(edge, /MAX_AI_ENRICHMENT_GROUPS = 30/);
+  assert.match(edge, /MAX_AI_ENRICHMENT_CANDIDATES = 180/);
+  assert.match(edge, /AI_ENRICHMENT_BATCH_SIZE = 9/);
   assert.match(edge, /REFRESH_COOLDOWN_MS = 60_000/);
-  assert.match(edge, /thinkingLevel: "minimal"/);
-  assert.match(edge, /responseMimeType: "application\/json"/);
-  assert.match(edge, /responseJsonSchema: geminiResponseJsonSchema/);
-  assert.match(edge, /candidate_index: \{ type: "integer"/);
-  assert.match(edge, /indexGeminiDecisions\(decisions, candidates\.length\)/);
-  assert.doesNotMatch(edge, /parent_event_resolved: \{ type:/);
-  assert.doesNotMatch(edge, /atinara_resolution_source_url: \{ type:/);
+  assert.match(aiModelCatalog, /"gemini\.legacy\.radar"/);
+  assert.match(aiTaskPolicy, /radar_candidate_enrichment:[\s\S]*?timeoutMs: 20_000/);
+  assert.doesNotMatch(edge, /GEMINI_MODEL|GEMINI_API_KEY|generativelanguage\.googleapis\.com|:generateContent/);
   assert.match(edge, /selectVerifiedResolutionUrl\(candidate, evidence, authoritativeDomains\)/);
-  assert.match(edge, /propagateResolvedEventGroups\(verified, eventResolutions, now\)/);
+  assert.match(edge, /const groupResolutions = new Map\(officialEventResolutionSignals/);
   assert.match(edge, /officialEventResolutionSignals\(candidates, evidenceByGroup, now\)/);
   assert.match(edge, /cooldown_until:\s*new Date\(Date\.now\(\) \+ REFRESH_COOLDOWN_MS\)\.toISOString\(\)/);
   assert.match(edge, /requires_eligibility_refresh: responseCandidates\.length === 0/);

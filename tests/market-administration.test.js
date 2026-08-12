@@ -10,11 +10,15 @@ const saveActorFix = readFileSync(join(root, "supabase/migrations/20260808131500
 const whitespaceFix = readFileSync(join(root, "supabase/migrations/20260808132500_fix_market_text_normalization.sql"), "utf8");
 const bindingAliasFix = readFileSync(join(root, "supabase/migrations/20260808133500_fix_binding_source_alias_ambiguity.sql"), "utf8");
 const validator = readFileSync(join(root, "supabase/functions/validate-market-draft/index.ts"), "utf8");
+const aiTaskPolicy = readFileSync(join(root, "supabase/functions/_shared/ai/task-policy.mjs"), "utf8");
+const geminiLegacyAdapter = readFileSync(join(root, "supabase/functions/_shared/ai/providers/gemini-legacy.mjs"), "utf8");
+const aiModelCatalog = readFileSync(join(root, "supabase/functions/_shared/ai/model-catalog.mjs"), "utf8");
 const fixer = readFileSync(join(root, "supabase/functions/market-draft-fixer/index.ts"), "utf8");
 const fixerUi = readFileSync(join(root, "market-draft-fixer.js"), "utf8");
 const definition = readFileSync(join(root, "supabase/functions/_shared/market-definition.ts"), "utf8");
 const adminUi = readFileSync(join(root, "admin-markets.js"), "utf8");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminAgentBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
 const styles = readFileSync(join(root, "styles.css"), "utf8");
 const adminHelpers = require("../market-admin-validation.js");
 
@@ -46,7 +50,7 @@ test("4 · exige fuentes públicas HTTPS principal y alternativa", () => {
 test("5 · detecta opciones o criterios solapados", () => {
   assert.match(migration, /OPTIONS_NOT_BINARY/);
   assert.match(migration, /OPTIONS_OVERLAP/);
-  assert.match(validator, /opciones solapadas/);
+  assert.match(aiTaskPolicy, /opciones solapadas/);
 });
 
 test("6 · una revisión aprobada aún exige confirmación humana", () => {
@@ -233,8 +237,8 @@ test("Paso 13.5.2 · el round-trip conserva milisegundos, zona y metadatos de fu
   ]);
   assert.deepEqual(payload.alternative_sources.map((source) => source.precedence), [7, 4]);
   assert.match(adminUi, /step: "0\.001"/);
-  assert.match(adminHtml, /_timestamp_precision = "milliseconds-v1"/);
-  assert.match(adminHtml, /return helpers\.toIsoOrEmpty\(raw, timeZone\)/);
+  assert.match(adminAgentBridge, /_timestamp_precision = "milliseconds-v1"/);
+  assert.match(adminAgentBridge, /return helpers\.toIsoOrEmpty\(raw, timeZone\)/);
 });
 
 test("Paso 13.5.2 · el orden no semántico de fuentes y espacios equivalentes no cambia el payload", () => {
@@ -269,17 +273,16 @@ test("Paso 13.5.2 · el orden no semántico de fuentes y espacios equivalentes n
   assert.equal(adminHelpers.canonicalizeDraftPayload(duplicateUrl).alternative_sources.length, 2);
 });
 
-test("Paso 13.5.2 · validate-market-draft usa Gemini vigente, JSON Schema y un solo retry inválido", () => {
-  assert.match(validator, /gemini-3\.1-flash-lite/);
-  assert.match(validator, /x-goog-api-key/);
-  assert.match(validator, /responseMimeType: "application\/json"/);
-  assert.match(validator, /responseJsonSchema/);
-  assert.match(validator, /thinkingConfig: \{ thinkingLevel: "minimal" \}/);
-  assert.doesNotMatch(validator, /temperature:/);
-  assert.match(validator, /const first = await callGemini[\s\S]+const second = await callGemini/);
-  assert.match(validator, /if \(first\.technicalStatus !== "invalid_response"\) return first/);
-  assert.match(validator, /part\.thought !== true/);
-  assert.match(validator, /textParts\.join\(""\)/);
+test("Paso 13.5.2 · validate-market-draft usa Gateway Gemini vigente y un solo retry inválido", () => {
+  assert.doesNotMatch(validator, /gemini-3\.1-flash-lite|x-goog-api-key|generativelanguage\.googleapis\.com/);
+  assert.match(validator, /AI_TASK_CONTRACTS\.market_draft_validation/);
+  assert.match(aiModelCatalog, /gemini-3\.1-flash-lite/);
+  assert.match(aiTaskPolicy, /responseMimeType: "application\/json"/);
+  assert.match(aiTaskPolicy, /responseJsonSchema/);
+  assert.match(aiTaskPolicy, /thinkingConfig: \{ thinkingLevel: "minimal" \}/);
+  assert.doesNotMatch(aiTaskPolicy, /temperature:/);
+  assert.match(aiTaskPolicy, /invalidOutputRetries: 1/);
+  assert.match(geminiLegacyAdapter, /parseOutput/);
   assert.match(validator, /safe_provider_metadata_input/);
   assert.match(validator, /beginning\.idempotency_replay === true && beginning\.completed === true/);
   assert.match(validator, /export const validatorTestSurface/);

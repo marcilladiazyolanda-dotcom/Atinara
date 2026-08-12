@@ -9,37 +9,27 @@ import {
   RADAR_REASON_CODES,
   adaptKalshiResponse,
   adaptPolymarketResponse,
-  applyAdaptation,
   applyDeterministicRadarEligibility,
   applyEligibilityDecision,
   buildCacheKey,
   buildCoverResolutionSignals,
   buildDraftPrefill,
-  buildGeminiCandidateBatches,
   buildResolutionAuthorityEvidence,
-  canApplyPredictivePolicyOverride,
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
-  compactGeminiCandidate,
-  compactGeminiDefinition,
   diversifyGroups,
   detectOfficialCoverEventResolution,
   detectOfficialCoverSelectionHold,
   deriveDeterministicUnresolvedProof,
   evidenceHasPotentialTerminalClaim,
-  evidenceSupportsReasonCode,
-  evaluateDeterministicEligibility,
-  evaluatePredictiveEligibility,
   evaluateProviderEligibility,
   extractOfficialHtmlText,
   extractOfficialRelatedUrls,
   groupCandidates,
   hasSpeculativeEvidenceLanguage,
-  indexGeminiDecisions,
   isAdaptedIdeaComplete,
   isBlockingDuplicateMatch,
-  isDeterministicUnresolvedEvidence,
   isRecord,
   isResolutionAuthorityEvidence,
   isVerifiedOfficialEvidence,
@@ -48,10 +38,8 @@ import {
   normalizeRadarCandidatePresentation,
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
-  parseGeminiAdaptations,
   providerResolutionSourceUrls,
   providerResultLabel,
-  propagateResolvedEventGroups,
   publicProviderError,
   safeIsoDate,
   safeNumber,
@@ -60,17 +48,19 @@ import {
   selectVerifiedResolutionUrl,
   summarizeRejections,
 } from "../_shared/market-radar.mjs";
-import {
-  createAtinaraAgentRun,
-} from "../_shared/atinara-agent-runtime.mjs";
+import { createAbsoluteExecutionContext, createChildAbort, deadlineSleep, fetchWithinDeadline } from "../_shared/ai/deadline.mjs";
+import { createAiPersistence } from "../_shared/ai/persistence.mjs";
+import { persistAgentTelemetry } from "../_shared/ai/telemetry.mjs";
+import { ATINARA_AGENT_REGISTRY_VERSION, assertAgentRegistrySnapshot } from "../_shared/atinara-agent-registries-v2.mjs";
+import { createAtinaraAgentRunV2 } from "../_shared/atinara-agent-runtime-v2.mjs";
 
 type JsonRecord = Record<string, unknown>;
 type Environment = NonNullable<ReturnType<typeof getEnvironment>>;
 
 const MAX_REQUEST_BYTES = 8_192;
+const OPERATION_TIMEOUT_MS = 135_000;
+const FINALIZATION_RESERVE_MS = 15_000;
 const PROVIDER_TIMEOUT_MS = 14_000;
-const GEMINI_TIMEOUT_MS = 20_000;
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const MAX_PROVIDER_PAGES = 3;
 const MAX_NORMALIZED_PER_PROVIDER = 240;
 const RADAR_PERSISTENCE_BATCH_SIZE = 24;
@@ -78,10 +68,9 @@ const MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER = 64;
 const PERSISTENCE_ISOLATION_BUDGET_MS = 20_000;
 const PERSISTENCE_RPC_START_MARGIN_MS = 750;
 const MAX_VISIBLE_GROUPS = 60;
-const MAX_GEMINI_GROUPS = 30;
-const MAX_GEMINI_CANDIDATES = 180;
-const GEMINI_BATCH_SIZE = 9;
-const GEMINI_CONCURRENCY = 2;
+const MAX_AI_ENRICHMENT_GROUPS = 30;
+const MAX_AI_ENRICHMENT_CANDIDATES = 180;
+const AI_ENRICHMENT_BATCH_SIZE = 9;
 const TAVILY_CONCURRENCY = 4;
 const MAX_KALSHI_SERIES = 25;
 const KALSHI_CONCURRENCY = 4;
@@ -107,12 +96,6 @@ const OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS = 12_000;
 const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
 const PROVIDER_RETRY_JITTER_MS = 250;
 
-// Algunos modelos aceptan JSON mode pero rechazan el subconjunto de JSON
-// Schema del proveedor con INVALID_ARGUMENT. Una vez observado en la misma
-// instancia, las demás tandas evitan repetir ese 400 y mantienen la validación
-// estricta en la capa de aplicación.
-let geminiProviderSchemaSupported = true;
-
 const KALSHI_API_ROOT = "https://api.elections.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA_ROOT = "https://gamma-api.polymarket.com";
 
@@ -121,64 +104,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-const GEMINI_REASON_CODES = [
-  RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
-  RADAR_REASON_CODES.SOURCE_STALE,
-  RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
-  RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
-  RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
-  RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
-  RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-] as const;
-
-function geminiResponseJsonSchema(candidateCount: number): JsonRecord {
-  return {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      candidates: {
-        type: "array",
-        minItems: candidateCount,
-        maxItems: candidateCount,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            candidate_index: { type: "integer", minimum: 0, maximum: Math.max(0, candidateCount - 1) },
-            eligible: { type: "boolean" },
-            conclusive: { type: "boolean" },
-            reason_code: { type: "string", enum: [...GEMINI_REASON_CODES] },
-            reason: { type: "string" },
-            confidence: { type: "integer", minimum: 0, maximum: 100 },
-            ttl_minutes: { type: "integer", minimum: 5, maximum: 1_440 },
-            facts: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                event_resolved_at: { type: ["string", "null"] },
-                official_reveal_at: { type: ["string", "null"] },
-                release_at: { type: ["string", "null"] },
-                subject_announced: { type: ["boolean", "null"] },
-                temporal_coherence: { type: ["boolean", "null"] },
-              },
-              required: ["event_resolved_at", "official_reveal_at", "release_at", "subject_announced", "temporal_coherence"],
-            },
-            atinara_question: { type: "string" },
-            atinara_category: { type: "string", enum: [...RADAR_CATEGORIES] },
-            atinara_resolution_criteria: { type: "string" },
-          },
-          required: [
-            "candidate_index", "eligible", "conclusive", "reason_code",
-            "reason", "confidence", "ttl_minutes", "facts", "atinara_question",
-            "atinara_category", "atinara_resolution_criteria",
-          ],
-        },
-      },
-    },
-    required: ["candidates"],
-  };
-}
 
 function toRecord(value: unknown): JsonRecord | null {
   return isRecord(value) ? value as JsonRecord : null;
@@ -229,6 +154,7 @@ type ProviderPersistenceOutcome = {
 
 type FetchJsonOptions = {
   onRateLimit?: (error: ProviderRequestError) => void;
+  execution?: Environment["execution"];
 };
 
 type RpcOptions = {
@@ -316,13 +242,18 @@ function getSecretKey(): string {
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 }
 
-function getEnvironment() {
+function getEnvironment(execution: {
+  invocationId: string;
+  agentRunId: string | null;
+  absoluteDeadlineAt: number;
+  signal: AbortSignal;
+}) {
   const environment = {
     supabaseUrl: Deno.env.get("SUPABASE_URL") ?? "",
     publishableKey: getPublishableKey(),
     secretKey: getSecretKey(),
     tavilyKey: Deno.env.get("TAVILY_API_KEY") ?? "",
-    geminiKey: Deno.env.get("GEMINI_API_KEY") ?? "",
+    execution,
   };
   return environment.supabaseUrl && environment.publishableKey && environment.secretKey ? environment : null;
 }
@@ -334,6 +265,13 @@ function restHeaders(key: string, authorization?: string): Record<string, string
   return headers;
 }
 
+async function fetchInternal(environment: Environment, input: string, init: RequestInit): Promise<Response> {
+  return fetchWithinDeadline(input, init, environment.execution, {
+    timeoutPolicyMs: 30_000,
+    finalizationReserveMs: FINALIZATION_RESERVE_MS,
+  });
+}
+
 async function rpc(
   environment: Environment,
   name: string,
@@ -343,11 +281,11 @@ async function rpc(
   options: RpcOptions = {},
 ): Promise<unknown> {
   const key = service ? environment.secretKey : environment.publishableKey;
-  const response = await fetch(`${environment.supabaseUrl}/rest/v1/rpc/${name}`, {
+  const response = await fetchInternal(environment, `${environment.supabaseUrl}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers: restHeaders(key, service ? undefined : authorization),
     body: JSON.stringify(args),
-    signal: options.signal,
+    signal: options.signal ?? environment.execution.signal,
   });
   const payload = await response.json().catch(() => ({})) as unknown;
   if (!response.ok) {
@@ -367,8 +305,9 @@ async function rpc(
 }
 
 async function authenticateAdmin(environment: Environment, authorization: string): Promise<{ adminId: string } | Response> {
-  const response = await fetch(`${environment.supabaseUrl}/auth/v1/user`, {
+  const response = await fetchInternal(environment, `${environment.supabaseUrl}/auth/v1/user`, {
     headers: { Authorization: authorization, apikey: environment.publishableKey },
+    signal: environment.execution.signal,
   });
   if (!response.ok) return jsonResponse({ error: "AUTH_REQUIRED", message: "Inicia sesión para usar el Radar." }, 401);
   const user = await response.json() as JsonRecord;
@@ -411,11 +350,12 @@ async function fetchJson(
   options: FetchJsonOptions = {},
 ): Promise<unknown> {
   if (!validateApiUrl(url)) throw new Error("PROVIDER_HOST_NOT_ALLOWED");
+  const execution = options.execution;
+  if (!execution) throw new Error("ABSOLUTE_DEADLINE_REQUIRED");
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const child = createChildAbort(execution, timeoutMs, FINALIZATION_RESERVE_MS);
     try {
-      const response = await fetch(url, { ...init, signal: controller.signal });
+      const response = await fetch(url, { ...init, signal: child.signal });
       if (response.ok) {
         const text = await response.text();
         if (text.length > 3_000_000) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
@@ -431,14 +371,14 @@ async function fetchJson(
         options.onRateLimit?.(rateLimitError);
         const delayMs = retryAfterMs ?? providerRetryDelay(attempt);
         if (attempt === 0 && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          await deadlineSleep(delayMs, execution, FINALIZATION_RESERVE_MS);
           continue;
         }
         throw rateLimitError;
       }
       if (response.status >= 500) {
         if (attempt === 0) {
-          await new Promise((resolve) => setTimeout(resolve, providerRetryDelay(attempt)));
+          await deadlineSleep(providerRetryDelay(attempt), execution, FINALIZATION_RESERVE_MS);
           continue;
         }
         throw new ProviderRequestError(`PROVIDER_HTTP_${response.status}`, response.status);
@@ -449,27 +389,30 @@ async function fetchJson(
       if (error instanceof ProviderRequestError
         || attempt === 1
         || (error instanceof Error && /INVALID|NOT_ALLOWED|TOO_LARGE|HTTP_4(?!29)/.test(error.message))) throw error;
-      await new Promise((resolve) => setTimeout(resolve, providerRetryDelay(attempt)));
+      await deadlineSleep(providerRetryDelay(attempt), execution, FINALIZATION_RESERVE_MS);
     } finally {
-      clearTimeout(timeout);
+      child.cleanup();
     }
   }
   throw new Error("PROVIDER_UNAVAILABLE");
 }
 
-async function verifyPublicUrl(value: string, allowedHost: string): Promise<string | null> {
+async function verifyPublicUrl(
+  value: string,
+  allowedHost: string,
+  execution: Environment["execution"],
+): Promise<string | null> {
   const initial = safePublicUrl(value, [allowedHost]);
   if (!initial) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  const child = createChildAbort(execution, PROVIDER_TIMEOUT_MS, FINALIZATION_RESERVE_MS);
   try {
-    const response = await fetch(initial, { method: "GET", redirect: "follow", signal: controller.signal, headers: { Accept: "text/html" } });
+    const response = await fetch(initial, { method: "GET", redirect: "follow", signal: child.signal, headers: { Accept: "text/html" } });
     if (!response.ok) return null;
     return safePublicUrl(response.url, [allowedHost]);
   } catch {
     return null;
   } finally {
-    clearTimeout(timeout);
+    child.cleanup();
   }
 }
 
@@ -683,12 +626,13 @@ async function fetchVerifiedOfficialPage(
   value: unknown,
   authoritativeDomains: ReadonlySet<string>,
   deadlineAt: number,
+  requestSignal: AbortSignal,
 ): Promise<VerifiedOfficialPage | null> {
   let current = safePublicUrl(value);
   if (!current || !isOfficialEvidenceUrl(current, authoritativeDomains)) return null;
   for (let redirects = 0; redirects <= MAX_OFFICIAL_SOURCE_REDIRECTS; redirects += 1) {
     const remaining = deadlineAt - Date.now();
-    if (remaining <= 0) return null;
+    if (remaining <= 0 || requestSignal.aborted) return null;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.min(OFFICIAL_SOURCE_FETCH_TIMEOUT_MS, remaining));
     try {
@@ -696,7 +640,7 @@ async function fetchVerifiedOfficialPage(
         method: "GET",
         redirect: "manual",
         cache: "no-store",
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, requestSignal]),
         headers: { Accept: "text/html, application/xhtml+xml, text/plain;q=0.8" },
       });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -1063,7 +1007,7 @@ async function buildAuthoritativeFactCheck(
   };
 }
 
-async function discoverPolymarket(now: string, filters: ReturnType<typeof safeFilters>) {
+async function discoverPolymarket(environment: Environment, now: string, filters: ReturnType<typeof safeFilters>) {
   const categoryQueries: Record<string, string> = {
     Lanzamientos: "video game release delay",
     Eventos: "gaming event game awards",
@@ -1079,18 +1023,18 @@ async function discoverPolymarket(now: string, filters: ReturnType<typeof safeFi
   url.searchParams.set("page", "1");
   url.searchParams.set("keep_closed_markets", "0");
   url.searchParams.set("search_profiles", "false");
-  const payload = toRecord(await fetchJson(url)) ?? {};
+  const payload = toRecord(await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
   const rawEvents = toRecordArray(payload.events);
   const validatedEvents: JsonRecord[] = [];
   for (const searchEvent of rawEvents.slice(0, 60)) {
     const slug = cleanText(searchEvent.slug, 400);
     if (!slug) continue;
     try {
-      const canonical = toRecord(await fetchJson(new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(slug)}`)));
+      const canonical = toRecord(await fetchJson(new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(slug)}`), {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
       if (!canonical || cleanText(canonical.id, 220) !== cleanText(searchEvent.id, 220)) continue;
       const markets = toRecordArray(canonical.markets);
       if (!markets.length || markets.length > MAX_CANONICAL_EVENT_CHILDREN) continue;
-      const canonicalUrl = await verifyPublicUrl(`https://polymarket.com/event/${slug}`, "polymarket.com");
+      const canonicalUrl = await verifyPublicUrl(`https://polymarket.com/event/${slug}`, "polymarket.com", environment.execution);
       if (!canonicalUrl) continue;
       validatedEvents.push({ ...canonical, markets, canonical_url_verified: true });
     } catch {
@@ -1152,17 +1096,17 @@ async function mapWithConcurrency<T, U>(items: T[], concurrency: number, worker:
   return results;
 }
 
-async function kalshiTaxonomy() {
+async function kalshiTaxonomy(environment: Environment) {
   const taxonomyUrl = new URL(`${KALSHI_API_ROOT}/search/tags_by_categories`);
   try {
-    return taxonomyValues(await fetchJson(taxonomyUrl));
+    return taxonomyValues(await fetchJson(taxonomyUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
   } catch {
     return null;
   }
 }
 
-async function discoverKalshi(now: string) {
-  const exact = await kalshiTaxonomy();
+async function discoverKalshi(environment: Environment, now: string) {
+  const exact = await kalshiTaxonomy(environment);
   const category = exact?.category ?? "Entertainment";
   const tag = exact?.tag ?? "Video games";
   const seriesUrl = new URL(`${KALSHI_API_ROOT}/series`);
@@ -1170,7 +1114,7 @@ async function discoverKalshi(now: string) {
   seriesUrl.searchParams.set("tags", tag);
   seriesUrl.searchParams.set("include_volume", "true");
   seriesUrl.searchParams.set("include_product_metadata", "true");
-  const seriesPayload = toRecord(await fetchJson(seriesUrl)) ?? {};
+  const seriesPayload = toRecord(await fetchJson(seriesUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
   const series = toRecordArray(seriesPayload.series)
     .sort((left, right) => seriesPriority(right) - seriesPriority(left))
     .slice(0, MAX_KALSHI_SERIES);
@@ -1190,7 +1134,7 @@ async function discoverKalshi(now: string) {
       eventsUrl.searchParams.set("min_close_ts", String(minimumClose));
       eventsUrl.searchParams.set("limit", "200");
       if (cursor) eventsUrl.searchParams.set("cursor", cursor);
-      const pagePayload = toRecord(await fetchJson(eventsUrl)) ?? {};
+      const pagePayload = toRecord(await fetchJson(eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
       events.push(...toRecordArray(pagePayload.events));
       cursor = cleanText(pagePayload.cursor, 500);
       if (!cursor) break;
@@ -1206,7 +1150,7 @@ async function discoverKalshi(now: string) {
       try {
         const canonicalUrl = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(listedTicker)}`);
         canonicalUrl.searchParams.set("with_nested_markets", "true");
-        const canonicalPayload = toRecord(await fetchJson(canonicalUrl)) ?? {};
+        const canonicalPayload = toRecord(await fetchJson(canonicalUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
         event = toRecord(canonicalPayload.event) ?? canonicalPayload;
       } catch {
         continue;
@@ -1248,13 +1192,13 @@ async function discoverKalshi(now: string) {
   return attachCanonicalFactContext(adapted, events, "kalshi");
 }
 
-async function fetchKalshiMarketRecord(ticker: string): Promise<JsonRecord | null> {
+async function fetchKalshiMarketRecord(environment: Environment, ticker: string): Promise<JsonRecord | null> {
   try {
-    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/markets/${encodeURIComponent(ticker)}`))) ?? {};
+    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/markets/${encodeURIComponent(ticker)}`), {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
     return toRecord(payload.market) ?? payload;
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes("HTTP_404")) throw error;
-    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/historical/markets/${encodeURIComponent(ticker)}`))) ?? {};
+    const payload = toRecord(await fetchJson(new URL(`${KALSHI_API_ROOT}/historical/markets/${encodeURIComponent(ticker)}`), {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
     return toRecord(payload.market) ?? payload;
   }
 }
@@ -1273,7 +1217,7 @@ async function reconcileRejectedKalshiOutcomes(
     .slice(0, MAX_REJECTED_OUTCOME_RECONCILIATIONS);
   if (!pending.length) return 0;
   const checked = await mapWithConcurrency(pending, KALSHI_CONCURRENCY, async (candidate) => {
-    const market = await fetchKalshiMarketRecord(cleanText(candidate.external_market_id, 220));
+    const market = await fetchKalshiMarketRecord(environment, cleanText(candidate.external_market_id, 220));
     const result = normalizeProviderResult(market?.result);
     if (!market || !result) return null;
     const sourceUrl = safePublicUrl(candidate.external_market_url ?? candidate.external_event_url);
@@ -1327,32 +1271,90 @@ type OfficialResearchOutcome = {
   agentExecution: JsonRecord;
 };
 
-async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[], authoritativeDomains: ReadonlySet<string>): Promise<OfficialResearchOutcome> {
+type RadarAgentV2 = ReturnType<typeof createAtinaraAgentRunV2>;
+
+async function createRadarAgentV2(environment: Environment, candidates: JsonRecord[]): Promise<RadarAgentV2> {
+  const registry = toRecord(await rpc(environment, "get_market_agent_registry_v2", {}, undefined, true));
+  if (!registry || registry.version !== ATINARA_AGENT_REGISTRY_VERSION
+    || !/^[0-9a-f]{64}$/i.test(cleanText(registry.hash, 64))) {
+    throw new Error("AGENT_REGISTRY_IDENTITY_MISMATCH");
+  }
+  assertAgentRegistrySnapshot(registry);
+  const executeTool = async (input: JsonRecord) => {
+    if (typeof input.execute !== "function") throw new Error("AGENT_TOOL_HANDLER_INVALID");
+    const value = await (input.execute as () => Promise<unknown> | unknown)();
+    return {
+      value,
+      status: ["completed", "degraded", "failed", "no_op"].includes(cleanText(input.status, 20))
+        ? cleanText(input.status, 20)
+        : "completed",
+      summary: toRecord(input.summary) ?? {},
+    };
+  };
+  const handlers = Object.fromEntries([
+    "read_provider_contract", "search_official_sources", "fetch_official_source",
+    "classify_terminal_evidence", "select_resolution_authority",
+  ].map((tool) => [tool, executeTool]));
+  return createAtinaraAgentRunV2({
+    agentType: "radar_source_agent",
+    registryVersion: registry.version,
+    registryHash: registry.hash,
+    snapshotFingerprint: await sha256Hex(candidates.map((candidate) => ({
+      provider: candidate.provider,
+      external_id: candidate.external_id,
+      fingerprint: candidate.fingerprint,
+    }))),
+    handlers,
+    runId: environment.execution.invocationId,
+    maxSteps: 8,
+    maxRepeatedActions: 2,
+    finalizationReserveMs: FINALIZATION_RESERVE_MS,
+    executionContext: environment.execution,
+  });
+}
+
+async function dispatchRadarTool<T>(
+  agent: RadarAgentV2,
+  tool: string,
+  execute: () => Promise<T> | T,
+  options: { actionKey: string; progressFingerprint: string; status?: string; summary?: JsonRecord },
+): Promise<T> {
+  const result = await agent.dispatch(tool, { execute, status: options.status, summary: options.summary }, {
+    actionKey: options.actionKey,
+    progressFingerprint: options.progressFingerprint,
+  });
+  return result.value as T;
+}
+
+async function researchGroupsWithTavily(
+  environment: Environment,
+  apiKey: string,
+  candidates: JsonRecord[],
+  authoritativeDomains: ReadonlySet<string>,
+): Promise<OfficialResearchOutcome> {
   if (!authoritativeDomains.size) throw new Error("SOURCE_REGISTRY_UNAVAILABLE");
-  const groups = groupCandidates(candidates).slice(0, MAX_GEMINI_GROUPS);
+  const groups = groupCandidates(candidates).slice(0, MAX_AI_ENRICHMENT_GROUPS);
   const evidence = new Map<string, JsonRecord[]>();
   const incompleteGroupKeys = new Set<string>();
-  const agent = createAtinaraAgentRun({
-    agentType: "radar_source_agent",
-    objective: "Encontrar una autoridad resolutiva oficial y descartar resultados terminales sin inventar hechos.",
-    policyVersion: RADAR_ELIGIBILITY_POLICY_VERSION,
-    maxSteps: 8,
-    deadlineAt: Date.now() + OFFICIAL_SOURCE_BUDGET_MS + OFFICIAL_RELATED_SOURCE_BUDGET_MS + OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS + 8_000,
-  });
-  const discoveredByGroup = new Map<string, string[]>();
-  let directContractCount = 0;
-  for (const group of groups) {
-    const urls = [...new Set(toRecordArray(group.candidates)
-      .flatMap((candidate) => providerResolutionSourceUrls(candidate, authoritativeDomains)))]
-      .slice(0, 8);
-    directContractCount += urls.length;
-    discoveredByGroup.set(cleanText(group.event_group_key, 240), urls);
-  }
-  agent.record("read_provider_contract", {
+  const agent = await createRadarAgentV2(environment, candidates);
+  const contractRead = await dispatchRadarTool(agent, "read_provider_contract", () => {
+    const discoveredByGroup = new Map<string, string[]>();
+    let directContractCount = 0;
+    for (const group of groups) {
+      const urls = [...new Set(toRecordArray(group.candidates)
+        .flatMap((candidate) => providerResolutionSourceUrls(candidate, authoritativeDomains)))]
+        .slice(0, 8);
+      directContractCount += urls.length;
+      discoveredByGroup.set(cleanText(group.event_group_key, 240), urls);
+    }
+    return { discoveredByGroup, directContractCount };
+  }, {
     actionKey: "provider-contracts",
-    progressFingerprint: `provider-contracts:${groups.length}:${directContractCount}`,
-    summary: { count: directContractCount, groups: groups.length },
+    progressFingerprint: `provider-contracts:${groups.length}`,
+    summary: { groups: groups.length },
   });
+  const discoveredByGroup = contractRead.discoveredByGroup;
+  const directContractCount = contractRead.directContractCount;
 
   const settled = apiKey ? await mapWithConcurrency(groups, TAVILY_CONCURRENCY, async (group) => {
     const url = new URL("https://api.tavily.com/search");
@@ -1385,7 +1387,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
         include_raw_content: false,
         include_domains: [...authoritativeDomains],
       }),
-    })) ?? {};
+    }, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
     return {
       eventGroupKey: group.event_group_key,
       urls: toRecordArray(payload.results)
@@ -1409,17 +1411,16 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       if (!firstFailure) firstFailure = result.reason;
     }
   }
-  agent.record("search_official_sources", {
+  await dispatchRadarTool(agent, "search_official_sources", () => ({ count: tavilyUrlCount }), {
     status: firstFailure ? (tavilyUrlCount || directContractCount ? "degraded" : "failed") : "completed",
     actionKey: "official-search",
     progressFingerprint: `official-search:${tavilyUrlCount}:${firstFailure ? "degraded" : "complete"}`,
     summary: { count: tavilyUrlCount, configured: Boolean(apiKey), direct_contracts_preserved: directContractCount },
-    retryable: Boolean(firstFailure),
   });
   const usableGroups = [...discoveredByGroup.values()].filter((urls) => urls.length > 0).length;
   if (!usableGroups && firstFailure) throw firstFailure;
 
-  // Tavily descubre URLs, pero sus títulos y snippets nunca entran en Gemini ni
+  // Tavily descubre URLs, pero sus títulos y snippets nunca entran en modelos ni
   // en un snapshot factual. Se recupera el documento oficial con GET acotado y
   // solo se conserva un extracto relevante derivado del contenido recibido.
   const targets: Array<{ eventGroupKey: string; url: string }> = [];
@@ -1435,12 +1436,20 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
     }
   }
   for (const group of groups) evidence.set(group.event_group_key, []);
-  const deadlineAt = Date.now() + OFFICIAL_SOURCE_BUDGET_MS;
+  const deadlineAt = Math.min(
+    environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS,
+    Date.now() + OFFICIAL_SOURCE_BUDGET_MS,
+  );
   const pagePromises = new Map<string, Promise<VerifiedOfficialPage | null>>();
   const verifiedPagesByGroup = new Map<string, VerifiedOfficialPage[]>();
   const verified = await mapWithConcurrency(targets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
     if (!pagePromises.has(target.url)) {
-      pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, deadlineAt));
+      pagePromises.set(target.url, fetchVerifiedOfficialPage(
+        target.url,
+        authoritativeDomains,
+        deadlineAt,
+        environment.execution.signal,
+      ));
     }
     const page = await pagePromises.get(target.url)!;
     const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
@@ -1486,12 +1495,11 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       evidence.set(result.value.eventGroupKey, items.slice(0, MAX_CANONICAL_EVENT_CHILDREN + 8));
     }
   }
-  agent.record("fetch_official_source", {
+  await dispatchRadarTool(agent, "fetch_official_source", () => ({ count: verifiedPageCount }), {
     actionKey: "official-fetch",
     progressFingerprint: `official-fetch:${targets.length}:${verifiedPageCount}`,
     status: verifiedPageCount ? "completed" : "degraded",
     summary: { count: verifiedPageCount, requested: targets.length, authority_contracts: authorityEvidenceCount },
-    retryable: targets.length > verifiedPageCount,
   });
 
   // Para contratos de selección (portadas, ganadores o alineaciones), una
@@ -1532,10 +1540,18 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
     if (relatedTargets.length >= MAX_RELATED_OFFICIAL_SOURCE_URLS) break;
   }
   if (relatedTargets.length) {
-    const relatedDeadlineAt = Date.now() + OFFICIAL_RELATED_SOURCE_BUDGET_MS;
+    const relatedDeadlineAt = Math.min(
+      environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS,
+      Date.now() + OFFICIAL_RELATED_SOURCE_BUDGET_MS,
+    );
     const related = await mapWithConcurrency(relatedTargets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
       if (!pagePromises.has(target.url)) {
-        pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, relatedDeadlineAt));
+        pagePromises.set(target.url, fetchVerifiedOfficialPage(
+          target.url,
+          authoritativeDomains,
+          relatedDeadlineAt,
+          environment.execution.signal,
+        ));
       }
       const page = await pagePromises.get(target.url)!;
       const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
@@ -1625,7 +1641,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
               include_raw_content: false,
               include_domains: domains.length ? domains : [...authoritativeDomains],
             }),
-          }, TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS)) ?? {};
+          }, TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS, { execution: environment.execution })) ?? {};
           return {
             eventGroupKey: cleanText(group.event_group_key, 240),
             urls: [...new Set(toRecordArray(payload.results)
@@ -1650,10 +1666,18 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       }
     }
     if (followupTargets.length) {
-      const followupDeadlineAt = Date.now() + OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS;
+      const followupDeadlineAt = Math.min(
+        environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS,
+        Date.now() + OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS,
+      );
       const followed = await mapWithConcurrency(followupTargets, OFFICIAL_SOURCE_CONCURRENCY, async (target) => {
         if (!pagePromises.has(target.url)) {
-          pagePromises.set(target.url, fetchVerifiedOfficialPage(target.url, authoritativeDomains, followupDeadlineAt));
+          pagePromises.set(target.url, fetchVerifiedOfficialPage(
+            target.url,
+            authoritativeDomains,
+            followupDeadlineAt,
+            environment.execution.signal,
+          ));
         }
         const page = await pagePromises.get(target.url)!;
         const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
@@ -1696,78 +1720,43 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
   const evidenceItems = [...evidence.values()].flat();
   const terminalEvidenceCount = evidenceItems.filter((item) => item.direct_claim === true).length;
   const authorityCount = evidenceItems.filter((item) => isResolutionAuthorityEvidence(item)).length;
-  agent.record("classify_terminal_evidence", {
+  await dispatchRadarTool(agent, "classify_terminal_evidence", () => ({ count: terminalEvidenceCount }), {
     actionKey: "terminal-classification",
     progressFingerprint: `terminal-classification:${terminalEvidenceCount}:${evidenceItems.length}`,
     summary: { count: terminalEvidenceCount, evidence_items: evidenceItems.length },
   });
-  agent.record("select_resolution_authority", {
+  await dispatchRadarTool(agent, "select_resolution_authority", () => ({ count: authorityCount }), {
     actionKey: "authority-selection",
     progressFingerprint: `authority-selection:${authorityCount}:${groups.length}`,
     status: authorityCount ? "completed" : "no_op",
     summary: { count: authorityCount, groups: groups.length, direct_contract_fallback_groups: directAuthorityFallbackGroups },
   });
+  const agentExecution = agent.complete(firstFailure ? "degraded" : "completed") as JsonRecord;
+  const agentTelemetry = await persistAgentTelemetry({
+    persistence: createAiPersistence({
+      supabaseUrl: environment.supabaseUrl,
+      secretKey: environment.secretKey,
+    }),
+    context: environment.execution,
+    execution: agentExecution,
+  });
   return {
     evidenceByGroup: evidence,
     enrichmentError: firstFailure,
     incompleteGroupKeys: [...incompleteGroupKeys].filter(Boolean),
-    agentExecution: agent.complete(firstFailure ? "degraded" : "completed"),
+    agentExecution: {
+      ...agentExecution,
+      telemetry_status: agentTelemetry.status,
+      telemetry_warnings: agentTelemetry.warnings,
+    },
   };
 }
 
-type GeminiBatchResult = {
-  candidates: JsonRecord[];
-  decisionCount: number;
-  incompleteCount: number;
-  eventResolutions: JsonRecord[];
-};
-
-type GeminiVerificationOutcome = {
-  candidates: JsonRecord[];
-  processedDecisions: number;
-  failedBatches: number;
-  incompleteCandidates: number;
-  deferredCandidates: number;
-  firstError: unknown | null;
-};
-
-type GeminiQuotaCircuit = {
-  stopped: boolean;
-  firstRateLimit: ProviderRequestError | null;
-};
-
-function candidateIdentity(candidate: JsonRecord): string {
-  return `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
-}
-
-function withoutDeferredProviderClosure(candidate: JsonRecord): JsonRecord {
-  return {
-    ...candidate,
-    hard_reject_reasons: (Array.isArray(candidate.hard_reject_reasons) ? candidate.hard_reject_reasons : [])
-      .filter((reason) => cleanText(reason, 100) !== RADAR_REASON_CODES.PROVIDER_NOT_OPEN),
-  };
-}
-
-function providerDecisionFactStatus(candidate: JsonRecord, decision: JsonRecord): string {
-  const current = cleanText(candidate.fact_status, 40) || "unknown";
-  if (cleanText(decision.reason_code, 100) !== RADAR_REASON_CODES.PROVIDER_NOT_OPEN) return current;
-  const payload = toRecord(candidate.provider_payload) ?? {};
-  const children = toRecordArray(payload.canonical_event_children);
-  const total = safeNumber(payload.canonical_event_children_total);
-  const completeCanonicalEvent = payload.canonical_event_children_complete === true
-    && typeof total === "number"
-    && Number.isInteger(total)
-    && total > 0
-    && children.length === total;
-  const canonicalProviderUrl = safePublicUrl(candidate.external_market_url)
-    ?? safePublicUrl(candidate.external_event_url);
-  // Cerrado no significa resuelto: conserva fact_status=unresolved, pero solo
-  // cuando el evento completo y el estado del proveedor fueron recuperados.
-  // Una ausencia, timeout o contexto parcial sigue siendo unknown/needs_review.
-  return completeCanonicalEvent && canonicalProviderUrl ? "unresolved" : "unknown";
-}
-
-function officialEventResolutionSignals(candidates: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, now: string): JsonRecord[] {
+function officialEventResolutionSignals(
+  candidates: JsonRecord[],
+  evidenceByGroup: Map<string, JsonRecord[]>,
+  now: string,
+): JsonRecord[] {
   const signals: JsonRecord[] = [];
   for (const group of groupCandidates(candidates)) {
     const officialResolution = detectOfficialCoverEventResolution(
@@ -1775,13 +1764,15 @@ function officialEventResolutionSignals(candidates: JsonRecord[], evidenceByGrou
       evidenceByGroup.get(group.event_group_key) ?? [],
     );
     if (!officialResolution) continue;
-    const outcomes = Array.isArray(officialResolution.outcome_names) ? officialResolution.outcome_names.join(" y ") : officialResolution.winner_name;
+    const outcomes = Array.isArray(officialResolution.outcome_names)
+      ? officialResolution.outcome_names.join(" y ")
+      : officialResolution.winner_name;
     for (const candidate of group.candidates) {
       signals.push({
         event_group_key: group.event_group_key,
-        candidate_identity: candidateIdentity(candidate),
+        candidate_identity: `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`,
         resolved_at: now,
-        reason: `Las fuentes oficiales publicaron ya la selección completa (${outcomes}); el hecho del evento padre está resuelto aunque el proveedor conserve opciones abiertas.`,
+        reason: `Las fuentes oficiales publicaron ya la selecci\u00f3n completa (${outcomes}); el hecho del evento padre est\u00e1 resuelto aunque el proveedor conserve opciones abiertas.`,
         confidence: 100,
         ttl_minutes: 360,
         evidence: officialResolution.evidence,
@@ -1790,284 +1781,6 @@ function officialEventResolutionSignals(candidates: JsonRecord[], evidenceByGrou
     }
   }
   return signals;
-}
-
-async function verifyGeminiBatch(
-  apiKey: string,
-  candidates: JsonRecord[],
-  existing: JsonRecord[],
-  evidenceByGroup: Map<string, JsonRecord[]>,
-  authoritativeDomains: Set<string>,
-  now: string,
-  quotaCircuit: GeminiQuotaCircuit,
-): Promise<GeminiBatchResult> {
-  const candidateIndexes = new Map(candidates.map((candidate, index) => [candidateIdentity(candidate), index]));
-  const groups = groupCandidates(candidates);
-  const safeGroups = groups.map((group) => ({
-    event_group_key: group.event_group_key,
-    title: group.title,
-    candidates: group.candidates.map((candidate: JsonRecord) => {
-      const compact = compactGeminiCandidate(candidate);
-      const candidateIndex = candidateIndexes.get(candidateIdentity(candidate));
-      return compact && Number.isInteger(candidateIndex) ? { candidate_index: candidateIndex, ...compact } : null;
-    }).filter(isRecord),
-    evidence: evidenceByGroup.get(group.event_group_key) ?? [],
-  }));
-  const safeExisting = existing.slice(0, 50).map((item) => compactGeminiDefinition(item)).filter(isRecord);
-  const prompt = `Actúa como editor experto de mercados predictivos para el Radar privado de Atinara. Evalúas si la pregunta constituye una predicción futura, binaria, objetiva y resoluble; no evalúas si crees que el resultado Sí ocurrirá. Solo puedes usar los datos del proveedor y las evidencias incluidas. No inventes hechos, URLs, fechas, nombres, estados ni condiciones. Las evidencias proceden exclusivamente de contenido recuperado por el servidor: si claim_status no es direct, direct_claim no es true o el texto contiene rumor, predicción, posibilidad, votación o preferencia de fans, no permite ninguna conclusión terminal. Tú no puedes crear ni conceder selection_complete, direct_claim, evidence_basis o content_sha256. Escribe reason y atinara_resolution_criteria en español claro, sin códigos técnicos en el texto. Devuelve exactamente un elemento por candidate_index, conserva cada índice entero sin cambiarlo y cumple el esquema JSON. Si un valor factual no está demostrado, usa null. event_resolved_at y official_reveal_at solo pueden indicar que toda la familia del evento padre ya tiene resultado; nunca representan el vencimiento aislado de una opción hija. Una fecha oficial prevista es información para estimar probabilidad, no invalida una opción futura anterior o posterior: una fecha umbral solo es incoherente si el plazo ya venció o existe imposibilidad objetiva demostrada. Que todavía no exista anuncio, nominación, ganador o resultado es incertidumbre válida. Una pregunta directa sobre anuncio, lanzamiento, retraso o tráiler puede ser válida aunque el producto no esté anunciado. En cambio, un premio o una reseña de un producto no anunciado depende de un requisito previo y no es apto. Un juego anunciado puede ser candidato a un premio futuro aunque aún no haya nominaciones. Sin una fuente pública suficiente para resolver el contrato, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Marca EVENT_ALREADY_RESOLVED solo cuando el resultado de la pregunta ya sea público, nunca porque el pronóstico actual parezca muy probable o improbable. Si la evidencia falta para una afirmación factual bloqueante, usa eligible=false, conclusive=false y reason_code=VERIFICATION_REQUIRED. Las comprobaciones deterministas recibidas tienen prioridad. Códigos permitidos: ${GEMINI_REASON_CODES.join(", ")}. Categorías permitidas: ${RADAR_CATEGORIES.join(", ")}. Grupos:\n${JSON.stringify(safeGroups)}\nDefiniciones existentes sin datos personales:\n${JSON.stringify(safeExisting)}`;
-  const url = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`);
-  const requestBody = (providerSchema: boolean) => ({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        ...(providerSchema ? { responseJsonSchema: geminiResponseJsonSchema(candidates.length) } : {}),
-        maxOutputTokens: 8_192,
-        ...(providerSchema ? { thinkingConfig: { thinkingLevel: "minimal" } } : {}),
-      },
-    });
-  const requestOptions: FetchJsonOptions = {
-    onRateLimit: (error) => {
-      quotaCircuit.stopped = true;
-      quotaCircuit.firstRateLimit ??= error;
-    },
-  };
-  const send = (providerSchema: boolean) => fetchJson(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify(requestBody(providerSchema)),
-  }, GEMINI_TIMEOUT_MS, requestOptions);
-  let providerPayload: unknown;
-  if (geminiProviderSchemaSupported) {
-    try {
-      providerPayload = await send(true);
-    } catch (error) {
-      if (!(error instanceof ProviderRequestError) || error.status !== 400) throw error;
-      geminiProviderSchemaSupported = false;
-      providerPayload = await send(false);
-    }
-  } else {
-    providerPayload = await send(false);
-  }
-  const payload = toRecord(providerPayload) ?? {};
-  const decisions = parseGeminiAdaptations(payload) as JsonRecord[];
-  if (!decisions.length) throw new Error("PROVIDER_INVALID_RESPONSE");
-  const byIndex = indexGeminiDecisions(decisions, candidates.length) as Map<number, JsonRecord>;
-  const eventResolutions: JsonRecord[] = [];
-  const verified = candidates.map((candidate, candidateIndex) => {
-    const decision = byIndex.get(candidateIndex) ?? {
-      eligible: false,
-      conclusive: false,
-      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-      reason: "La verificación automática no devolvió una decisión para esta candidata.",
-      confidence: 0,
-      ttl_minutes: 5,
-    };
-    const evidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
-    const resolutionSourceUrl = selectVerifiedResolutionUrl(candidate, evidence, authoritativeDomains);
-    const sanitizedDecision = { ...decision, atinara_resolution_source_url: resolutionSourceUrl };
-    const adapted = applyAdaptation(candidate, sanitizedDecision);
-    const facts = toRecord(decision.facts) ?? {};
-    const inferredDeterministic = evaluateDeterministicEligibility(adapted, facts, now);
-    const deterministic = inferredDeterministic
-      && evidence.some((item) => evidenceSupportsReasonCode(item, inferredDeterministic.reason_code))
-      ? inferredDeterministic
-      : null;
-    const deterministicOpen = !deterministic
-      && isAdaptedIdeaComplete(adapted)
-      && evaluateProviderEligibility(adapted, now) === null
-      && evidence.some((item) => isDeterministicUnresolvedEvidence(item, adapted, now))
-      && !evidence.some((item) => evidenceHasPotentialTerminalClaim(item, adapted, now));
-    const deterministicOpenDecision = deterministicOpen ? {
-      eligible: true,
-      conclusive: true,
-      reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-      reason: "La fuente primaria recuperada demuestra que el instante contractual sigue abierto y permite una resolución objetiva.",
-      confidence: 100,
-      ttl_minutes: 360,
-    } : null;
-    const predictive = !deterministic && !deterministicOpen && canApplyPredictivePolicyOverride(adapted, decision, now)
-      ? evaluatePredictiveEligibility(adapted, facts, now)
-      : null;
-    let eligibilityDecision = deterministic ?? deterministicOpenDecision ?? predictive ?? decision;
-    const unsupportedModelFact = Boolean(inferredDeterministic) && !deterministic;
-    const rawModelTerminal = !deterministic && !deterministicOpen && !predictive
-      && decision.eligible === false
-      && decision.conclusive === true
-      && cleanText(decision.reason_code, 100) !== RADAR_REASON_CODES.VERIFICATION_REQUIRED;
-    if ((rawModelTerminal || unsupportedModelFact) && !deterministicOpen) {
-      eligibilityDecision = {
-        eligible: false,
-        conclusive: false,
-        reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-        reason: "El modelo señaló un posible bloqueo, pero ninguna regla determinista confirmó esa conclusión con el contenido recuperado.",
-        confidence: 0,
-        ttl_minutes: 5,
-      };
-    }
-    const aiConclusionPresent = decision.conclusive === true
-      && isRecord(decision.facts)
-      && Object.values(facts).some((value) => value !== null && value !== "");
-    const verifiedDirectEvidence = evidence.some((item) => isVerifiedOfficialEvidence(item, true));
-    if (eligibilityDecision.eligible === true && eligibilityDecision.conclusive === true
-      && (!isAdaptedIdeaComplete(adapted) || !verifiedDirectEvidence || (!deterministicOpen && !aiConclusionPresent))) {
-      eligibilityDecision = {
-        eligible: false,
-        conclusive: false,
-        reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-        reason: !verifiedDirectEvidence || !aiConclusionPresent
-          ? "La verificación automática no aportó contenido oficial recuperado y una conclusión factual completas."
-          : "La candidata no conserva una pregunta, criterios y fuente de resolución verificables.",
-        confidence: 0,
-        ttl_minutes: 5,
-      };
-    }
-    const decisionCandidate = predictive
-      ? {
-        ...adapted,
-        hard_reject_reasons: (adapted.hard_reject_reasons ?? []).filter((reason: unknown) => !new Set<string>([
-          RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
-          RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
-          RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
-        ]).has(cleanText(reason, 100))),
-      }
-      : adapted;
-    const result = applyEligibilityDecision(decisionCandidate, {
-      ...eligibilityDecision,
-      fact_status: deterministic?.reason_code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "fully_resolved"
-        : eligibilityDecision.eligible === true && eligibilityDecision.conclusive === true ? "unresolved"
-          : "unknown",
-      evidence,
-    }, now);
-    const parentResolvedAt = safeIsoDate(facts.event_resolved_at ?? facts.official_reveal_at);
-    if (parentResolvedAt
-      && result.verification_reason_code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED
-      && evidence.length
-      && (safeNumber(result.verification_confidence) ?? 0) >= 85) {
-      eventResolutions.push({
-        event_group_key: cleanText(candidate.event_group_key, 240),
-        candidate_identity: candidateIdentity(candidate),
-        resolved_at: parentResolvedAt,
-        reason: result.verification_reason,
-        confidence: result.verification_confidence,
-        ttl_minutes: safeNumber(decision.ttl_minutes) ?? 360,
-        evidence,
-      });
-    }
-    return result;
-  });
-  return {
-    candidates: verified,
-    decisionCount: byIndex.size,
-    incompleteCount: Math.max(0, candidates.length - byIndex.size),
-    eventResolutions,
-  };
-}
-
-async function verifyAndAdaptWithGemini(apiKey: string, candidates: JsonRecord[], existing: JsonRecord[], evidenceByGroup: Map<string, JsonRecord[]>, authoritativeDomains: Set<string>, now: string): Promise<GeminiVerificationOutcome> {
-  if (!apiKey) throw new Error("PROVIDER_NOT_CONFIGURED");
-  const plan = buildGeminiCandidateBatches(candidates, {
-    maxGroups: MAX_GEMINI_GROUPS,
-    maxCandidates: MAX_GEMINI_CANDIDATES,
-    batchSize: GEMINI_BATCH_SIZE,
-  }) as { batches: JsonRecord[][]; deferred: JsonRecord[] };
-  if (!plan.batches.length) {
-    return {
-      candidates,
-      processedDecisions: 0,
-      failedBatches: 0,
-      incompleteCandidates: plan.deferred.length,
-      deferredCandidates: plan.deferred.length,
-      firstError: null,
-    };
-  }
-  const quotaCircuit: GeminiQuotaCircuit = { stopped: false, firstRateLimit: null };
-  const settled: Array<PromiseSettledResult<GeminiBatchResult> | undefined> = new Array(plan.batches.length);
-  let batchCursor = 0;
-  async function runGeminiWorker() {
-    while (!quotaCircuit.stopped) {
-      const index = batchCursor++;
-      if (index >= plan.batches.length) return;
-      try {
-        settled[index] = {
-          status: "fulfilled",
-          value: await verifyGeminiBatch(apiKey, plan.batches[index], existing, evidenceByGroup, authoritativeDomains, now, quotaCircuit),
-        };
-      } catch (reason) {
-        settled[index] = { status: "rejected", reason };
-        if (isProviderRateLimit(reason)) {
-          quotaCircuit.stopped = true;
-          if (reason instanceof ProviderRequestError) quotaCircuit.firstRateLimit ??= reason;
-        }
-      }
-    }
-  }
-  await Promise.all(Array.from(
-    { length: Math.min(GEMINI_CONCURRENCY, plan.batches.length) },
-    runGeminiWorker,
-  ));
-  const verifiedByIdentity = new Map<string, JsonRecord>();
-  const eventResolutions: JsonRecord[] = [];
-  let processedDecisions = 0;
-  let failedBatches = 0;
-  let incompleteCandidates = 0;
-  let quotaDeferredCandidates = 0;
-  let firstError: unknown | null = null;
-  for (let index = 0; index < settled.length; index += 1) {
-    const result = settled[index];
-    const batch = plan.batches[index];
-    if (!result) {
-      quotaDeferredCandidates += batch.length;
-      incompleteCandidates += batch.length;
-      for (const candidate of failClosedCandidates(
-        batch,
-        now,
-        "La cuota del proveedor se agotó; la candidata queda diferida y permanece en revisión.",
-        5,
-      )) {
-        verifiedByIdentity.set(candidateIdentity(candidate), candidate);
-      }
-      continue;
-    }
-    if (result.status === "fulfilled") {
-      processedDecisions += result.value.decisionCount;
-      incompleteCandidates += result.value.incompleteCount;
-      eventResolutions.push(...result.value.eventResolutions);
-      for (const candidate of result.value.candidates) verifiedByIdentity.set(candidateIdentity(candidate), candidate);
-      continue;
-    }
-    failedBatches += 1;
-    incompleteCandidates += batch.length;
-    if (!firstError) firstError = result.reason;
-    for (const candidate of failClosedCandidates(batch, now, "La verificación automática de este lote no concluyó; la candidata permanece en revisión.", 5)) {
-      verifiedByIdentity.set(candidateIdentity(candidate), candidate);
-    }
-  }
-  for (const candidate of failClosedCandidates(plan.deferred, now, "La candidata queda en revisión para el siguiente lote automático.", 5)) {
-    verifiedByIdentity.set(candidateIdentity(candidate), candidate);
-  }
-  const verified = candidates.map((candidate) => verifiedByIdentity.get(candidateIdentity(candidate))
-    ?? failClosedCandidates([candidate], now, "La verificación automática no devolvió una decisión concluyente.", 5)[0]);
-  eventResolutions.push(...officialEventResolutionSignals(candidates, evidenceByGroup, now));
-  return {
-    candidates: propagateResolvedEventGroups(verified, eventResolutions, now),
-    processedDecisions,
-    failedBatches,
-    incompleteCandidates: incompleteCandidates + plan.deferred.length,
-    deferredCandidates: plan.deferred.length + quotaDeferredCandidates,
-    firstError: quotaCircuit.firstRateLimit ?? firstError,
-  };
-}
-
-function failClosedCandidates(candidates: JsonRecord[], now: string, reason: string, ttlMinutes = 10) {
-  return candidates.map((candidate) => applyEligibilityDecision(candidate, {
-    eligible: false,
-    conclusive: false,
-    reason_code: RADAR_REASON_CODES.VERIFICATION_REQUIRED,
-    reason,
-    confidence: 0,
-    ttl_minutes: ttlMinutes,
-    evidence: [],
-  }, now));
 }
 
 async function finalizeProviderRefresh(
@@ -2135,7 +1848,9 @@ async function writeAuthoritativePersistenceBatch(
         error_code: "RADAR_REFRESH_IN_PROGRESS",
         error_message: "La actualización del proveedor todavía no ha finalizado.",
       },
-    }, undefined, true, { signal: controller.signal });
+    }, undefined, true, {
+      signal: AbortSignal.any([controller.signal, environment.execution.signal]),
+    });
     const result = toRecord(rawResult);
     const acceptedCount = Math.max(0, Number(result?.accepted_count) || 0);
     const quarantined = toRecordArray(result?.quarantined).map((item) => ({
@@ -2354,43 +2069,6 @@ async function persistProviderFailure(environment: Environment, provider: string
   ).catch(() => null);
 }
 
-async function persistProcessorSuccess(environment: Environment, cacheKey: string, resultCount: number) {
-  await finalizeProviderRefresh(
-    environment,
-    "gemini",
-    cacheKey,
-    "available",
-    Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES),
-    undefined,
-    { accepted: Math.min(Math.max(resultCount, 0), MAX_GEMINI_CANDIDATES) },
-  ).catch(() => null);
-}
-
-async function persistProcessorPartialFailure(environment: Environment, cacheKey: string, failure: JsonRecord, processedDecisions: number) {
-  const message = `${cleanText(failure.message, 220) || "La verificación automática quedó incompleta."} Decisiones válidas: ${Math.max(processedDecisions, 0)}.`;
-  const status = cleanText(failure.code, 80) === "PROVIDER_RATE_LIMITED"
-    ? "rate_limited"
-    : processedDecisions === 0 ? "unavailable" : "partial_error";
-  await finalizeProviderRefresh(
-    environment,
-    "gemini",
-    cacheKey,
-    status,
-    Math.min(Math.max(processedDecisions, 0), MAX_GEMINI_CANDIDATES),
-    {
-      provider: "gemini",
-      code: cleanText(failure.code, 80) || "PROCESSING_INCOMPLETE",
-      status: Number(failure.status) || 206,
-      message,
-      retry_after_seconds: Number(failure.retry_after_seconds) || null,
-    },
-    {
-      accepted: Math.min(Math.max(processedDecisions, 0), MAX_GEMINI_CANDIDATES),
-      failed: 1,
-    },
-  ).catch(() => null);
-}
-
 function hasCurrentEligibility(candidate: JsonRecord, checkedAt = Date.now()): boolean {
   const eligibilityCheckedAt = Date.parse(cleanText(candidate.eligibility_checked_at, 100));
   const eligibilityExpiresAt = Date.parse(cleanText(candidate.eligibility_expires_at, 100));
@@ -2525,7 +2203,9 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const discoveredByProvider = new Map<string, JsonRecord[]>();
   const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => ({
     provider,
-    candidates: provider === "polymarket" ? await discoverPolymarket(now, filters) : await discoverKalshi(now),
+    candidates: provider === "polymarket"
+      ? await discoverPolymarket(environment, now, filters)
+      : await discoverKalshi(environment, now),
   }));
   for (let index = 0; index < discoveryResults.length; index += 1) {
     const result = discoveryResults[index];
@@ -2563,7 +2243,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
   if (scanCandidates.length && authoritativeDomains.size) {
     try {
-      const research = await researchGroupsWithTavily(environment.tavilyKey, scanCandidates, authoritativeDomains);
+      const research = await researchGroupsWithTavily(environment, environment.tavilyKey, scanCandidates, authoritativeDomains);
       evidenceByGroup = research.evidenceByGroup;
       sourceAgentExecution = research.agentExecution;
       incompleteOfficialResearchGroups = new Set(research.incompleteGroupKeys);
@@ -2718,10 +2398,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       .slice(0, MAX_NORMALIZED_PER_PROVIDER);
     const persistableCandidates = providerCandidates.filter((candidate) => {
       if (cleanText(candidate.eligibility_status, 40) !== "technical_hold"
-        || ![
+        || !new Set<string>([
           RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
           RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE,
-        ].includes(cleanText(candidate.eligibility_reason_code, 100))) {
+        ]).has(cleanText(candidate.eligibility_reason_code, 100))) {
         return true;
       }
       const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
@@ -2837,9 +2517,9 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       max_pages: MAX_PROVIDER_PAGES,
       max_kalshi_series: MAX_KALSHI_SERIES,
       max_visible_groups: MAX_VISIBLE_GROUPS,
-      max_gemini_groups: MAX_GEMINI_GROUPS,
-      max_gemini_candidates: MAX_GEMINI_CANDIDATES,
-      gemini_batch_size: GEMINI_BATCH_SIZE,
+      max_ai_enrichment_groups: MAX_AI_ENRICHMENT_GROUPS,
+      max_ai_enrichment_candidates: MAX_AI_ENRICHMENT_CANDIDATES,
+      ai_enrichment_batch_size: AI_ENRICHMENT_BATCH_SIZE,
       max_rejected_outcome_reconciliations: MAX_REJECTED_OUTCOME_RECONCILIATIONS,
     },
   });
@@ -2908,11 +2588,16 @@ function refreshCandidateCacheLease(candidate: JsonRecord, checkedAt: string): J
   };
 }
 
-async function revalidatePolymarketCandidate(candidate: JsonRecord): Promise<JsonRecord | null> {
+async function revalidatePolymarketCandidate(environment: Environment, candidate: JsonRecord): Promise<JsonRecord | null> {
   const eventSlug = cleanText(candidate.external_event_slug, 400);
   const marketId = cleanText(candidate.external_market_id, 220);
   if (!eventSlug || !marketId) return null;
-  const event = toRecord(await fetchJson(new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(eventSlug)}`)));
+  const event = toRecord(await fetchJson(
+    new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(eventSlug)}`),
+    {},
+    PROVIDER_TIMEOUT_MS,
+    { execution: environment.execution },
+  ));
   const markets = toRecordArray(event?.markets);
   if (!event || !markets.length || markets.length > MAX_CANONICAL_EVENT_CHILDREN) return null;
   const canonicalEvent = { ...event, markets, canonical_url_verified: true };
@@ -2932,13 +2617,13 @@ async function revalidatePolymarketCandidate(candidate: JsonRecord): Promise<Jso
   } : null;
 }
 
-async function revalidateKalshiCandidate(candidate: JsonRecord): Promise<JsonRecord | null> {
+async function revalidateKalshiCandidate(environment: Environment, candidate: JsonRecord): Promise<JsonRecord | null> {
   const eventTicker = cleanText(candidate.external_event_id, 220);
   const marketTicker = cleanText(candidate.external_market_id, 220);
   if (!eventTicker || !marketTicker) return null;
   const url = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(eventTicker)}`);
   url.searchParams.set("with_nested_markets", "true");
-  const payload = toRecord(await fetchJson(url)) ?? {};
+  const payload = toRecord(await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
   const event = toRecord(payload.event) ?? payload;
   const markets = toRecordArray(event.markets);
   if (cleanText(event.event_ticker ?? event.ticker, 220) !== eventTicker
@@ -2981,8 +2666,8 @@ async function revalidateCandidateForPreparation(
   let providerCandidate: JsonRecord | null = null;
   try {
     providerCandidate = candidate.provider === "polymarket"
-      ? await revalidatePolymarketCandidate(candidate)
-      : candidate.provider === "kalshi" ? await revalidateKalshiCandidate(candidate) : null;
+      ? await revalidatePolymarketCandidate(environment, candidate)
+      : candidate.provider === "kalshi" ? await revalidateKalshiCandidate(environment, candidate) : null;
   } catch {
     // Un fallo técnico nunca cambia la última decisión autoritativa.
     throw new Error("PROVIDER_UNAVAILABLE");
@@ -3016,6 +2701,7 @@ async function revalidateCandidateForPreparation(
     let sourceAgentExecution: JsonRecord | null = null;
     try {
       const research = await researchGroupsWithTavily(
+        environment,
         environment.tavilyKey,
         [eligibility],
         authoritativeDomains,
@@ -3276,7 +2962,7 @@ async function handleAction(
     let detailedCandidate = candidate;
     try {
       const authoritativeDomains = await loadAuthoritativeSourceDomains(environment);
-      const research = await researchGroupsWithTavily(environment.tavilyKey, [candidate], authoritativeDomains);
+      const research = await researchGroupsWithTavily(environment, environment.tavilyKey, [candidate], authoritativeDomains);
       const evidence = research.evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
       const sourceUrl = selectVerifiedResolutionUrl(candidate, evidence, authoritativeDomains);
       const sourceEvidence = sourceUrl
@@ -3429,11 +3115,15 @@ Deno.serve(async (req: Request) => {
   if (Number(req.headers.get("content-length") ?? 0) > MAX_REQUEST_BYTES) return jsonResponse({ error: "REQUEST_TOO_LARGE", message: "La petición es demasiado grande." }, 413);
   const authorization = req.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) return jsonResponse({ error: "AUTH_REQUIRED", message: "Inicia sesión para usar el Radar." }, 401);
-  const environment = getEnvironment();
-  if (!environment) return jsonResponse({ error: "SERVER_NOT_CONFIGURED", message: "El Radar no está configurado en el servidor." }, 503);
-  const auth = await authenticateAdmin(environment, authorization);
-  if (auth instanceof Response) return auth;
+  const operation = createAbsoluteExecutionContext({ durationMs: OPERATION_TIMEOUT_MS, parentSignal: req.signal });
+  const environment = getEnvironment(operation.context);
+  if (!environment) {
+    operation.cleanup();
+    return jsonResponse({ error: "SERVER_NOT_CONFIGURED", message: "El Radar no está configurado en el servidor." }, 503);
+  }
   try {
+    const auth = await authenticateAdmin(environment, authorization);
+    if (auth instanceof Response) return auth;
     const rawBody = await req.text();
     if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) return jsonResponse({ error: "REQUEST_TOO_LARGE", message: "La petición es demasiado grande." }, 413);
     const parsedBody = toRecord(JSON.parse(rawBody));
@@ -3442,5 +3132,7 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     console.error("Market Radar request failed", error instanceof Error ? error.name : "UnknownError");
     return jsonResponse({ error: "RADAR_FAILED", message: "No se pudo completar la operación del Radar." }, 500);
+  } finally {
+    operation.cleanup();
   }
 });

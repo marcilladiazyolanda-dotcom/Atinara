@@ -10,6 +10,7 @@ const radarPath = join(root, "supabase/functions/_shared/market-radar.mjs");
 const fixerEdge = readFileSync(join(root, "supabase/functions/market-draft-fixer/index.ts"), "utf8");
 const radarEdge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
 const validatorEdge = readFileSync(join(root, "supabase/functions/validate-market-draft/index.ts"), "utf8");
+const aiTaskPolicy = readFileSync(join(root, "supabase/functions/_shared/ai/task-policy.mjs"), "utf8");
 const migration = readFileSync(join(root, "supabase/migrations/20260808180729_add_autonomous_repair_and_market_families_v2.sql"), "utf8");
 const familyDerivationMigration = readFileSync(join(root, "supabase/migrations/20260808182940_strengthen_generic_market_family_derivation.sql"), "utf8");
 const candidateDuplicateMigration = readFileSync(join(root, "supabase/migrations/20260808183415_enforce_exact_candidate_family_duplicates.sql"), "utf8");
@@ -394,12 +395,12 @@ test("Corrector · la taxonomía cerrada da una disposición a cada incidencia d
   for (const code of repair.REPAIRABLE_ISSUE_CODES) {
     assert.ok(repair.REPAIR_ISSUE_CAPABILITIES[code], `Falta capacidad para ${code}`);
   }
-  assert.match(validatorEdge, /enum: VALIDATOR_CONTENT_ISSUE_CODES/);
+  assert.match(aiTaskPolicy, /code: \{ type: "string", enum: VALIDATOR_CODES \}/);
   assert.match(validatorEdge, /VALIDATOR_CONTENT_ISSUE_CODE_SET\.has\(code\)/);
-  assert.match(validatorEdge, /Usa exclusivamente estos códigos cerrados/);
+  assert.match(aiTaskPolicy, /Usa exclusivamente estos códigos cerrados/);
   assert.match(fixerEdge, /blocking_reasons/);
   assert.match(fixerEdge, /semantic_issues/);
-  assert.match(fixerEdge, /code: \{ type: "string", enum: VALIDATOR_CONTENT_ISSUE_CODES \}/);
+  assert.match(aiTaskPolicy, /unresolved_issues/);
   assert.match(fixerEdge, /semanticUnresolvedEscalation/);
   assert.match(fixerEdge, /REPAIR_ROUND_REPEATED/);
   assert.match(fixerEdge, /seenRoundSignatures/);
@@ -431,9 +432,10 @@ test("Corrector · la investigación web conserva solo un excerpt acotado", () =
 });
 
 test("Corrector · proveedor limitado degrada sin veto técnico ni falsa revisión humana", () => {
-  assert.match(fixerEdge, /GEMINI_RATE_LIMITED/);
-  assert.match(fixerEdge, /GEMINI_TIMEOUT/);
-  assert.match(fixerEdge, /GEMINI_INVALID_RESPONSE/);
+  assert.match(fixerEdge, /createAiGateway/);
+  assert.match(fixerEdge, /code\.startsWith\("AI_"\)/);
+  assert.match(fixerEdge, /AI_PROVIDER_INVALID_RESPONSE/);
+  assert.doesNotMatch(fixerEdge, /GEMINI_RATE_LIMITED|GEMINI_TIMEOUT|GEMINI_INVALID_RESPONSE/);
   assert.match(fixerEdge, /repair_applied: allChanged\.size > 0/);
   assert.match(fixerEdge, /technical_incident/);
   assert.match(fixerEdge, /ok: false,\s+error: "AUTOMATIC_REVIEW_TECHNICAL_INCOMPLETE"/);

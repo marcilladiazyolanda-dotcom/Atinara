@@ -8976,6 +8976,47 @@ body .market-price-ranges button[aria-pressed="true"] {
   font-size: 0.82rem;
 }
 
+.market-agent-timeline {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.market-agent-timeline > h4 {
+  margin: 0;
+}
+
+.market-agent-timeline ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.market-agent-timeline li {
+  overflow-wrap: anywhere;
+}
+
+.market-agent-timeline time {
+  margin-left: 8px;
+  color: var(--secondary-text);
+  font-size: 0.8rem;
+}
+
+.market-agent-observability-warning {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
+  color: var(--warning-text);
+  background: var(--warning-surface);
+  overflow-wrap: anywhere;
+}
+
 .radar-empty {
   border: 1px dashed var(--border-lavender);
   border-radius: 12px;
@@ -9091,5 +9132,14 @@ body .market-price-ranges button[aria-pressed="true"] {
   .radar-rejection-filter {
     flex: 1 1 180px;
     justify-content: space-between;
+  }
+
+  .market-agent-timeline {
+    padding: 12px;
+  }
+
+  .market-agent-timeline time {
+    display: block;
+    margin: 4px 0 0;
   }
 }

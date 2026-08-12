@@ -6,6 +6,7 @@ const { test } = require("node:test");
 const root = join(__dirname, "..");
 const adminJs = readFileSync(join(root, "admin-markets.js"), "utf8");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
 const radarEdge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
 const expertEdge = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const migration = readFileSync(join(root, "supabase/migrations/20260809190000_harden_expert_market_cycle_v1.sql"), "utf8");
@@ -29,11 +30,11 @@ test("Agente Editor · analizar empieza en lectura y no ofrece recuperación fac
 });
 
 test("Agente Editor · un expediente bloqueado sigue siendo legible y solo ofrece Analizar", () => {
-  const blocked = between(adminHtml, "      function blockedDossierMarkup", "      function dossierMarkup");
+  const blocked = between(adminBridge, "  function blockedDossierMarkup", "  function dossierMarkup");
   assert.match(blocked, /Estado tipado/);
   assert.match(blocked, /data-radar-expert/);
   assert.doesNotMatch(blocked, /data-expert-apply/);
-  const applyFlow = between(adminHtml, "        if (target) {", "        const analyzeButton");
+  const applyFlow = between(adminBridge, "    if (target) {", "    const analyzeButton");
   const packageIndex = applyFlow.indexOf("await loadPackage(candidateId, true)");
   const gateIndex = applyFlow.indexOf("packageCanApply(currentPackage, candidateId)");
   const prepareIndex = applyFlow.indexOf("await bridge.prepareRadarCandidate(candidateId");
@@ -84,9 +85,9 @@ test("Corrector · solo consume revisión v3 exacta y exige deadline posterior",
   assert.match(cycleV2Migration, /repair_applicable/);
 });
 
-test("Observabilidad · cada final de proveedor deja historial append-only y Gemini conserva el recuento", () => {
+test("Observabilidad · cada final de proveedor deja historial append-only y Radar conserva cero invocaciones IA", () => {
   assert.match(migration, /create table if not exists private\.market_radar_provider_run_history/);
   assert.match(migration, /RADAR_PROVIDER_HISTORY_APPEND_ONLY/);
-  assert.match(radarEdge, /finalizeProviderRefresh\([\s\S]*?"gemini"[\s\S]*?processedDecisions/);
+  assert.doesNotMatch(radarEdge, /GEMINI_API_KEY|generativelanguage\.googleapis\.com|:generateContent/);
   assert.doesNotMatch(radarEdge, /record_market_radar_provider_failure/);
 });

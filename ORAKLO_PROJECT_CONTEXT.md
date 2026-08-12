@@ -22,6 +22,54 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > será público cuando Yol suba el nuevo ZIP y se repita el smoke. No hacer push
 > directo a `main`.
 
+### Implementación local Agent Engine V2.1 + AI Gateway · 12 de agosto de 2026
+
+- Base verificada antes de editar: `HEAD = origin/main =
+  d3073bb274be7a4d4085378b661cee1323485fdf`. La implementación vive en la rama
+  local `codex/atinara-agent-engine-v2-1`; no se hizo commit, push, despliegue,
+  SQL remoto, cambio de secretos ni activación de flags.
+- Las invocaciones Gemini activas se extrajeron de `market-expert`,
+  `market-draft-fixer`, `validate-market-draft` y
+  `analyze-market-resolution` al contrato común de
+  `supabase/functions/_shared/ai/`. `market-radar` conserva cero inferencias y
+  su contrato histórico dormido queda centralizado para paridad y rollback.
+  Ninguna de esas cinco Edge contiene ya URL, modelo o `generateContent`
+  directo.
+- La transición es por tarea: `legacy_direct` preserva los modelos y
+  particularidades vigentes; `gateway_gemini_parity` exige presupuesto medido;
+  `gateway_routing` queda pendiente de promoción. OpenRouter y NVIDIA NIM
+  permanecen apagados, con presupuesto cero y sin dependencia de credenciales
+  o endpoints gratuitos para completar el hito local.
+- El Gateway calcula fingerprints después de sanear, resuelve política y
+  transporte desde registros cerrados, reserva presupuesto atómico, limita
+  bytes y deadline y aplica validadores deterministas específicos por tarea.
+  Los errores y la telemetría no transportan prompts, payloads, respuestas ni
+  secretos. Un fallo de observabilidad conserva el outcome y no repite la
+  inferencia.
+- Runtime v2 incorpora Issue, Strategy y Tool Registry, dispatcher real,
+  detección de loops/no progreso/stale snapshot, dos replans máximos y un solo
+  writer por ronda. Editor y Radar no escriben mercados; Corrector mantiene CAS,
+  idempotencia, una versión por ronda y revalidación. Ningún agente confirma,
+  publica, resuelve o liquida.
+- Las migraciones locales nuevas son `20260812141508_harden_radar_eligibility_rls_v1.sql`,
+  `20260812141511_add_ai_gateway_telemetry_and_budgets_v1.sql` y
+  `20260812141515_add_agent_engine_v2_v1.sql`. Son aditivas, preservan v1 y sus
+  wrappers, fuerzan RLS en los ledgers Radar y crean wrappers estrechos
+  service-only/admin. Las tres se aplicaron en orden sobre PostgreSQL temporal y
+  sus nuevas suites transaccionales pasaron dentro de `BEGIN/ROLLBACK`.
+- Verificación local: 410/410 pruebas unitarias; sintaxis válida en 106
+  JavaScript; 9/9 Edge Functions comprobadas con Deno 2.1.14; TypeScript verde;
+  5/5 fixtures de benchmark offline con cero red; tres suites SQL V2.1
+  ejecutadas con rollback; auditoría npm con cero vulnerabilidades; y recorrido
+  administrativo local verde en 1280×720 y 390×844 sin errores de consola ni
+  desbordamiento horizontal.
+- El corpus público contiene solo cinco fixtures técnicos `draft`. Continúan
+  pendientes del hito operativo: credenciales y capability discovery live,
+  corpus revisado, ground truth `approved`, benchmark live, shadow de 14 días,
+  canary, despliegue, cambios de modo y cualquier promoción de proveedor.
+  Producción y GitHub Pages siguen en el corte descrito debajo hasta una acción
+  manual posterior de Yol.
+
 ### Cierre de agente, autoridad y publicación · 12 de agosto de 2026
 
 - Base local exacta: `origin/main =

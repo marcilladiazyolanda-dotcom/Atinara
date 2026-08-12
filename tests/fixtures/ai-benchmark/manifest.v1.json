@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "atinara-ai-benchmark-manifest-v1",
+  "groundTruthPolicyVersion": "atinara-ground-truth-review-v1",
+  "targetCaseCounts": {
+    "radar_candidate_enrichment": 80,
+    "market_expert_reasoning": 60,
+    "market_draft_validation": 60,
+    "market_draft_repair": 60,
+    "market_resolution_analysis": 40
+  },
+  "fixtureFiles": [
+    "radar_candidate_enrichment.v1.jsonl",
+    "market_expert_reasoning.v1.jsonl",
+    "market_draft_validation.v1.jsonl",
+    "market_draft_repair.v1.jsonl",
+    "market_resolution_analysis.v1.jsonl"
+  ],
+  "publicFixturesAreGroundTruth": false,
+  "allowedStates": ["draft", "reviewed_once", "disputed", "approved"],
+  "holdoutRequires": "approved"
+}

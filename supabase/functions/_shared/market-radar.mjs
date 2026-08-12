@@ -18,7 +18,6 @@ export const RADAR_API_HOSTS = Object.freeze([
   "external-api.kalshi.com",
   "api.elections.kalshi.com",
   "api.tavily.com",
-  "generativelanguage.googleapis.com",
 ]);
 
 export const RADAR_VERIFICATION_STATUSES = Object.freeze([
@@ -2466,7 +2465,7 @@ export function groupCandidates(candidates = []) {
   }).sort((a, b) => b.quality_score - a.quality_score);
 }
 
-export function buildGeminiCandidateBatches(candidates = [], options = {}) {
+export function buildAiCandidateBatches(candidates = [], options = {}) {
   const maxGroups = Math.max(1, Math.floor(safeNumber(options.maxGroups) ?? 20));
   const maxCandidates = Math.max(1, Math.floor(safeNumber(options.maxCandidates) ?? 126));
   const batchSize = Math.max(1, Math.floor(safeNumber(options.batchSize) ?? 14));
@@ -2569,61 +2568,6 @@ export function summarizeRejections(candidates = []) {
   return { total: items.length, counts, items };
 }
 
-export function compactGeminiCandidate(candidate) {
-  if (!isRecord(candidate)) return null;
-  return {
-    external_id: cleanText(candidate.external_id, 220),
-    event_group_key: cleanText(candidate.event_group_key, 240),
-    provider: cleanText(candidate.provider, 40),
-    eligibility_policy_version: cleanText(candidate.eligibility_policy_version, 80),
-    title: cleanText(candidate.source_title, 500),
-    question: cleanText(candidate.source_question, 700),
-    description: cleanText(candidate.source_description, 700),
-    close_at: safeIsoDate(candidate.source_close_at),
-    category: cleanText(candidate.source_category, 160),
-    probability: safeProbability(candidate.source_probability),
-    source_result: normalizeProviderResult(candidate.source_result),
-    resolution_rules: cleanText(candidate.source_resolution_rules, 1000),
-    resolution_source_url: safePublicUrl(candidate.source_resolution_url),
-    external_event_url: safePublicUrl(candidate.external_event_url),
-    external_market_url: safePublicUrl(candidate.external_market_url),
-    deterministic_reasons: safeStringArray(candidate.hard_reject_reasons, 20),
-  };
-}
-
-export function compactGeminiDefinition(item) {
-  if (!isRecord(item)) return null;
-  return { id: cleanText(item.id, 220), question: cleanText(item.question ?? item.title, 700), category: cleanText(item.category, 120), close_at: safeIsoDate(item.close_at) };
-}
-
-export function parseGeminiAdaptations(payload) {
-  const direct = Array.isArray(payload?.candidates) ? payload.candidates : Array.isArray(payload) ? payload : [];
-  if (direct.length && direct.every((item) => isRecord(item) && !(item.content?.parts))) return direct.filter(isRecord);
-  const parts = Array.isArray(payload?.candidates?.[0]?.content?.parts) ? payload.candidates[0].content.parts : [];
-  const text = parts.length
-    ? parts.filter((part) => isRecord(part) && part.thought !== true).map((part) => cleanText(part.text, 100_000)).join("")
-    : payload?.text;
-  if (typeof text !== "string") return [];
-  try {
-    const parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, ""));
-    return (Array.isArray(parsed) ? parsed : parsed?.candidates ?? []).filter(isRecord);
-  } catch {
-    return [];
-  }
-}
-
-export function indexGeminiDecisions(decisions = [], candidateCount = 0) {
-  const limit = Math.max(0, Math.floor(safeNumber(candidateCount) ?? 0));
-  const indexed = new Map();
-  for (const decision of Array.isArray(decisions) ? decisions : []) {
-    if (!isRecord(decision)) continue;
-    const candidateIndex = decision.candidate_index;
-    if (!Number.isInteger(candidateIndex) || candidateIndex < 0 || candidateIndex >= limit || indexed.has(candidateIndex)) continue;
-    indexed.set(candidateIndex, decision);
-  }
-  return indexed;
-}
-
 export function canReuseRadarVerification(cached, candidate, now = new Date().toISOString()) {
   if (!isRecord(cached) || !isRecord(candidate)) return false;
   if (cleanText(cached.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return false;
@@ -2660,6 +2604,7 @@ function registeredAuthorityDomain(urlValue, authoritativeDomains) {
     .find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? null;
 }
 
+/** @param {ReadonlySet<string>|Set<string>|string[]} authoritativeDomains */
 export function providerResolutionSourceUrls(candidate, authoritativeDomains = new Set()) {
   const provenance = isRecord(candidate?.source_resolution_provenance)
     ? candidate.source_resolution_provenance : {};
@@ -2758,6 +2703,7 @@ export function resolutionAuthorityContract(candidate, urlValue, authoritativeDo
   };
 }
 
+/** @param {ReadonlySet<string>|Set<string>|string[]} authoritativeDomains */
 export function buildResolutionAuthorityEvidence(candidate, page, retrievedAt, authoritativeDomains = new Set()) {
   const finalUrl = safePublicUrl(page?.url);
   const providerUrls = providerResolutionSourceUrls(candidate, authoritativeDomains);
@@ -3526,7 +3472,7 @@ export function buildCacheKey(filters = {}) {
 }
 
 export function publicProviderError(provider, code, status = 502) {
-  const safeProvider = RADAR_PROVIDERS.includes(provider) || provider === "gemini" ? provider : "radar";
+  const safeProvider = RADAR_PROVIDERS.includes(provider) ? provider : "radar";
   const safeCode = cleanText(code, 100) || "PROVIDER_FAILED";
   const messages = {
     PROVIDER_NOT_CONFIGURED: "El proveedor no está configurado. El resto del Radar continúa disponible.",

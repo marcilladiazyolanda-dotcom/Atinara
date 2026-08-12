@@ -21,6 +21,11 @@
   };
 
   const FRIENDLY_ERRORS = [
+    ["AI_PROVIDER_NOT_CONFIGURED", "El servicio de análisis no está configurado para esta ruta. El borrador conserva su estado."],
+    ["AI_MODEL_NOT_AVAILABLE", "El modelo exacto requerido no está disponible. No se ha sustituido por otro modelo."],
+    ["AI_BUDGET_EXHAUSTED", "El servicio de análisis ha alcanzado su límite operativo. El borrador conserva su estado."],
+    ["AI_BUDGET_RESERVATION_FAILED", "No se pudo reservar de forma segura la ejecución. No se ha enviado contenido a ningún proveedor."],
+    ["AI_TELEMETRY_WRITE_FAILED", "La operación conserva su resultado, pero la observabilidad está incompleta."],
     ["DRAFT_VERSION_MOVED", "El borrador cambió en otra sesión. Recárgalo antes de continuar."],
     ["REVIEW_VERSION_MOVED", "La revisión ya no corresponde a la versión actual."],
     ["CURRENT_APPROVAL_REQUIRED", "La versión actual necesita una nueva revisión aprobada."],

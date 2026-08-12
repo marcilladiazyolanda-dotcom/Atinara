@@ -59,6 +59,18 @@ function safeSummary(value) {
   return output;
 }
 
+/**
+ * @param {{
+ *   agentType:string,
+ *   objective?:string,
+ *   policyVersion?:string,
+ *   runId?:string,
+ *   maxSteps?:number,
+ *   maxRepeatedActions?:number,
+ *   deadlineAt?:number,
+ *   startedAt?:string
+ * }} options
+ */
 export function createAtinaraAgentRun({
   agentType,
   objective,
@@ -123,6 +135,7 @@ export function createAtinaraAgentRun({
     return { accepted: true, sequence: events.length, stop_reason: null };
   };
 
+  /** @param {string} [nextOutcome] @param {string|null} [reason] */
   const complete = (nextOutcome = "completed", reason = null) => {
     if (outcome === "running") outcome = safeText(nextOutcome, 40) || "completed";
     if (reason && !stopReason) stopReason = safeText(reason, 100);

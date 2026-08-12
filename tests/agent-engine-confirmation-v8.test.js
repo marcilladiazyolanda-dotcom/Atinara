@@ -159,9 +159,9 @@ test("Radar, Editor y Corrector comparten el runtime y exponen trazas sanitizada
   assert.match(radarEdge, /createAtinaraAgentRun/);
   assert.match(editorEdge, /agentType:\s*"market_editor_agent"/);
   assert.match(correctorEdge, /agentType:\s*"market_corrector_agent"/);
-  assert.match(correctorEdge, /agent\.record\("build_typed_patch"/);
-  assert.match(correctorEdge, /agent\.record\("persist_single_version"/);
-  assert.match(correctorEdge, /agent\.record\("revalidate_draft"/);
+  assert.match(correctorEdge, /dispatchCorrectorTool\(agent, "build_typed_patch"/);
+  assert.match(correctorEdge, /dispatchCorrectorTool\(agent, "persist_single_version"/);
+  assert.match(correctorEdge, /dispatchCorrectorTool\(agent, "revalidate_draft"/);
   assert.match(admin, /Agente de fuentes/);
   assert.match(admin, /nunca confirma, publica ni resuelve mercados/);
 });

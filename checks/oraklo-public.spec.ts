@@ -32,6 +32,7 @@ test("Atinara mantiene operativo el recorrido público esencial", async ({ page 
 
     await page.goto("admin-resolution.html");
     await expect(page.getByText("Inicia sesión con la cuenta administradora.")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(/Gemini|OpenRouter|NVIDIA/i);
   });
 
   expect(pageErrors, `Errores JavaScript detectados: ${pageErrors.join(" | ")}`).toEqual([]);

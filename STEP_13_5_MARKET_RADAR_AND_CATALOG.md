@@ -1,5 +1,13 @@
 # Paso 13.5 · Radar de mercados y pre-rellenado administrativo
 
+## Estado vigente tras Agent Engine V2.1
+
+La ruta operativa actual del Radar ejecuta cero llamadas de modelo. La antigua adaptación Gemini permanece únicamente como contrato dormido dentro del AI Gateway para pruebas de paridad y rollback; no se activa por añadir V2.1. Las Edge ya no contienen URL, modelo, secreto ni `generateContent` directos.
+
+El Radar sigue usando sus proveedores públicos y fuentes de investigación desde servidor, con allowlists, límites y estado parcial. La elegibilidad y las comprobaciones deterministas continúan siendo autoritativas. Ningún proveedor de IA puede volver elegible, preparar, confirmar o publicar una candidata.
+
+Los apartados que describen lotes y datos enviados a Gemini son registro histórico de la activación original y no describen el flujo operativo V2.1.
+
 Fecha de preparación: 4 de agosto de 2026. Activación y corrección operativa: 5 de agosto de 2026.
 
 Estado: **activado y aceptado técnicamente**. El catálogo ampliado de 24–36 mercados no se implementa en esta entrega. El Radar permanece privado y no creó borradores ni modificó datos públicos durante la aceptación.
@@ -104,7 +112,7 @@ Las tablas tienen RLS, carecen de acceso `anon`/`authenticated` directo y solo l
 
 `source_provenance` conserva proveedor, id/URL externa, título original, fechas, snapshot mínimo de métricas, probabilidad de referencia, huella, versión del adaptador, advertencias, score y fecha de preparación. No añade columnas públicas a `markets`.
 
-## 8. Edge Function
+## 8. Edge Function · registro histórico
 
 `supabase/functions/market-radar/index.ts` admite:
 
@@ -118,7 +126,7 @@ La función exige POST, tamaño máximo, JWT válido y `app_metadata.oraklo_admi
 
 Límites: una página por proveedor, 120 candidatas normalizadas por proveedor, 60 visibles, cuatro series Kalshi y doce candidatas por lote Gemini. No hay Cron: la actualización es manual.
 
-## 9. Datos enviados a Gemini
+## 9. Datos enviados a Gemini · registro histórico, ruta hoy dormida
 
 Solo se envían, para cada candidata ya filtrada y con longitudes acotadas: proveedor, id externo, título, pregunta, descripción, reglas, URL de resolución, fecha de cierre y tags. Para comparar semánticamente se añade una lista limitada a 50 definiciones con id interno, tipo y pregunta, sin datos personales. No se envían email, UUID de usuarias, username, Karma, Prestigio, rango, predicciones, JWT, sesiones, comentarios, traders, wallets ni secretos.
 

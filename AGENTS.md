@@ -84,6 +84,17 @@ Pensar en el futuro B2B no autoriza a añadir funciones fuera del alcance. Oblig
 - Ningún mercado se publica o programa sin validación vigente de claridad, coherencia y resolubilidad en servidor. Un cambio esencial invalida la aprobación anterior.
 - Temporadas y schedulers permanecen en el estado documentado y solo se activan mediante autorización expresa.
 
+### 5.1 AI Gateway y Agent Engine V2.1
+
+- Toda nueva inferencia de modelos debe atravesar el contrato común de `supabase/functions/_shared/ai/`; una Edge de dominio no elige modelo, schema, timeout, presupuesto, retry, fallback ni fingerprint.
+- Los modos de transporte son por tarea: `legacy_direct`, `gateway_gemini_parity` y `gateway_routing`. No crear un flag global que pueda apagar todas las tareas.
+- El Gateway sanea mediante allowlists recursivas, calcula las huellas y valida tamaño, parse, contrato, dominio y política. No se admite coerción silenciosa ni aceptación parcial.
+- OpenRouter y NVIDIA NIM son experimentales, permanecen apagados hasta promoción expresa y solo admiten datos `public_market`. La ausencia de secretos o del modelo exacto no bloquea pruebas locales.
+- El fallback es exclusivamente técnico. Nunca consultar otro modelo para obtener aprobación, cambiar un rechazo, superar una abstención o elevar una confianza.
+- Runtime, herramientas, Gateway, fetches y persistencia comparten un único `absoluteDeadlineAt` y reservan tiempo para finalizar.
+- Telemetría y trazas no almacenan prompts, payloads, respuestas, PII, secretos ni razonamiento. Un fallo de telemetría no cambia una respuesta de dominio válida ni repite la inferencia.
+- Runs, steps e intentos son append-only. La purga solo puede usar una RPC service-only con cutoff fijo interno y auditoría; nunca un bypass de trigger manipulable.
+
 ## 6. Calidad profesional, reparación experta y auditabilidad
 
 ### 6.1 Causa raíz y solución general

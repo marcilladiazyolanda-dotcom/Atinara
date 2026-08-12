@@ -141,6 +141,7 @@ export function repairIssuePlan(context) {
   };
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
 export function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -395,6 +396,7 @@ function primaryIdentityEvidence(identity, text) {
   return { accepted: matchedDistinctive.length >= required, matched_tokens: matchedDistinctive.slice(0, 8) };
 }
 
+/** @param {unknown} value @param {unknown} context @param {string|null} [subject] @param {string|null} [archetype] */
 export function primarySourceRelevance(value, context, subject = null, archetype = null) {
   context = repairInferenceContext(context);
   subject = cleanText(subject, 500) || inferSubject(context);
@@ -669,6 +671,7 @@ export async function validateRegisteredPrimarySource(
   return primaryValidationFailure(candidate, "PRIMARY_SOURCE_REDIRECT_LIMIT", checkedAt, redirectChain, registryEntry);
 }
 
+/** @param {unknown} registry @param {string|null} [category] */
 export function primarySourceRegistryDomains(registry, category = null) {
   const normalizedCategory = normalize(cleanText(category, 120));
   return [...new Set(normalizePrimarySourceRegistry(registry)
@@ -1492,6 +1495,7 @@ export function inferArchetype(context) {
   return inferInclusiveDeadline(source) ? "deadline_ladder_child" : "generic_binary_event";
 }
 
+/** @param {unknown} context @param {string|null} [archetype] */
 export function inferRepairCategory(context, archetype = null) {
   context = repairInferenceContext(context);
   archetype = cleanText(archetype, 80) || inferArchetype(context);
@@ -1852,6 +1856,7 @@ function coverContract(context) {
     : { ...contract, ambiguous: false };
 }
 
+/** @param {unknown} context @param {string|null} [archetype] */
 export function inferSubject(context, archetype = null) {
   context = repairInferenceContext(context);
   archetype = cleanText(archetype, 80) || inferArchetype(context);
@@ -2019,6 +2024,7 @@ export function mergeVerifiedAlternativeSources(...collections) {
     && cleanText(source.role, 80).toUpperCase() !== "PRIMARY_RESOLUTION");
 }
 
+/** @param {unknown} value @param {string|null} [category] */
 export function isVerifiedPrimarySource(value, category = null) {
   if (!isRecord(value)) return false;
   const url = safePublicUrl(value.url);

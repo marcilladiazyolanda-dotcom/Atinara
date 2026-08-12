@@ -7,14 +7,18 @@
     "test": "npm run test:unit",
     "test:unit": "node --test tests/*.test.js",
     "test:syntax": "node scripts/check-javascript-syntax.mjs",
+    "test:edge": "node scripts/check-edge-functions.mjs",
+    "test:sql:static": "node scripts/run-supabase-transaction-tests.mjs",
     "test:monitoring-config": "tsc --project tsconfig.json",
-    "validate": "npm run test:syntax && npm run test:unit && npm run test:monitoring-config",
+    "benchmark:offline": "node scripts/run-ai-benchmark.mjs",
+    "validate": "npm run test:syntax && npm run test:unit && npm run test:monitoring-config && npm run test:sql:static",
     "checkly:test": "checkly test",
     "checkly:deploy": "checkly deploy"
   },
   "devDependencies": {
     "@playwright/test": "1.62.0",
-    "checkly": "8.18.0"
+    "checkly": "8.18.0",
+    "supabase": "2.113.0"
   },
   "overrides": {
     "filelist": "2.0.2"

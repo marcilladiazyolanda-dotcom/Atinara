@@ -504,7 +504,8 @@ test("la autoridad de fuentes viene del registro privado y falla cerrado", () =>
   assert.match(edge, /retrieval_status: "verified_content"/);
   assert.match(edge, /evidence_basis: "retrieved_content"/);
   assert.match(edge, /fetchVerifiedOfficialPage/);
-  assert.match(edge, /rawModelTerminal/);
+  assert.match(edge, /const terminalEvidence = exactEvidence\.filter/);
+  assert.doesNotMatch(edge, /generativelanguage\.googleapis\.com|:generateContent|GEMINI_API_KEY/);
   assert.match(migration, /private\.market_source_registry/);
   assert.match(migration, /allowed_roles @> '\["radar_fact_evidence"\]'::jsonb/);
   assert.match(migration, /allowed_roles @> '\["provider_fact"\]'::jsonb/);

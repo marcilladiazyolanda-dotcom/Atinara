@@ -14,6 +14,10 @@ const validatorEdge = readFileSync(
   join(root, "supabase/functions/validate-market-draft/index.ts"),
   "utf8",
 );
+const aiTaskPolicy = readFileSync(
+  join(root, "supabase/functions/_shared/ai/task-policy.mjs"),
+  "utf8",
+);
 const migrationsDirectory = join(root, "supabase/migrations");
 const expertCycleMigration = readdirSync(migrationsDirectory)
   .filter((name) => /harden_expert_market_cycle/i.test(name))
@@ -175,7 +179,7 @@ test("Corrector experto · >95 es raro pero válido en la escala crítica 0–10
   assert.match(validatorEdge, /if \(code === "INVALID_METRIC"\)/);
   assert.match(validatorEdge, /if \(inferMetricContract\(\{ draft \}\)\) return true/);
   assert.match(validatorEdge, /everyIssueSafelyDismissed/);
-  assert.match(validatorEdge, /La rareza o baja probabilidad nunca hacen inválida una métrica/);
+  assert.match(aiTaskPolicy, /La rareza o baja probabilidad nunca hacen inv.lida una m.trica/);
 });
 
 test("Corrector experto · normaliza anclas EN abreviadas, PT e ISO sin perder el sujeto", () => {

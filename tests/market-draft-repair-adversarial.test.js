@@ -839,7 +839,8 @@ test("Corrector adversarial · el presupuesto global corta muchas fuentes lentas
   assert.equal(result.evidenceChecked[0].code, "SOURCE_VALIDATION_BUDGET_EXHAUSTED");
   assert.deepEqual(result.warnings, ["SOURCE_VALIDATION_BUDGET_EXHAUSTED"]);
   assert.match(fixerEdge, /SOURCE_VALIDATION_BUDGET_MS = 75_000/);
-  assert.match(fixerEdge, /AbortSignal\.timeout\(SOURCE_VALIDATION_BUDGET_MS\)/);
+  assert.match(fixerEdge, /Math\.min\(\s*env\.execution\.absoluteDeadlineAt/);
+  assert.match(fixerEdge, /const sourceValidationSignal = env\.execution\.signal/);
   assert.match(fixerEdge, /MIN_POST_WRITE_BUDGET_MS/);
   assert.match(fixerEdge, /repairSaved \? 200 : 503/);
   assert.match(fixerEdge, /new_version: expectedVersion/);

@@ -69,7 +69,7 @@
   };
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
-  const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming", gemini: "Gemini" };
+  const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming" };
   const RADAR_POLICY_VERSION = "atinara-prediction-policy-v5";
   const RADAR_REASON_LABELS = {
     EVENT_ALREADY_RESOLVED: "Evento ya resuelto",
@@ -2157,8 +2157,14 @@
     setNotice("El Agente Editor está analizando el expediente en modo de solo lectura…", "info");
     renderWorkspace();
     try {
-      await refreshRadarExpertAnalysis(candidateId, { force: true });
-      setNotice("Dictamen experto actualizado sin preparar, guardar ni publicar ningún mercado.", "success");
+      const result = await refreshRadarExpertAnalysis(candidateId, { force: true });
+      const warnings = Array.isArray(result.analysis?.warnings) ? result.analysis.warnings : [];
+      setNotice(
+        warnings.includes("AI_TELEMETRY_WRITE_FAILED")
+          ? "Dictamen experto actualizado. La observabilidad quedó incompleta; el resultado se conserva y no se repetirá la inferencia."
+          : "Dictamen experto actualizado sin preparar, guardar ni publicar ningún mercado.",
+        warnings.includes("AI_TELEMETRY_WRITE_FAILED") ? "warning" : "success",
+      );
     } catch (error) {
       setNotice(expertErrorMessage(error, "El análisis experto no está disponible. El Radar sigue operativo."), "error");
     } finally {

@@ -1,6 +1,7 @@
 import { defineConfig } from "checkly";
 
 const productionUrl = "https://marcilladiazyolanda-dotcom.github.io/Atinara/";
+const checkBaseUrl = process.env.CHECKLY_BASE_URL?.trim() || productionUrl;
 
 export default defineConfig({
   projectName: "Atinara · Producción",
@@ -17,7 +18,7 @@ export default defineConfig({
         timeout: 20000
       },
       use: {
-        baseURL: productionUrl,
+        baseURL: checkBaseUrl,
         locale: "es-ES",
         timezoneId: "Europe/Madrid",
         viewport: {

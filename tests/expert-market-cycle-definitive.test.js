@@ -10,11 +10,15 @@ const radarEdge = read("supabase/functions/market-radar/index.ts");
 const editorEdge = read("supabase/functions/market-expert/index.ts");
 const fixerEdge = read("supabase/functions/market-draft-fixer/index.ts");
 const validatorEdge = read("supabase/functions/validate-market-draft/index.ts");
+const aiTaskPolicy = read("supabase/functions/_shared/ai/task-policy.mjs");
+const geminiLegacyAdapter = read("supabase/functions/_shared/ai/providers/gemini-legacy.mjs");
+const aiOutputValidation = read("supabase/functions/_shared/ai/task-output-validation.mjs");
 const repairSource = read("supabase/functions/_shared/market-draft-repair.mjs");
 const migration = read("supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql");
 const hardeningMigration = read("supabase/migrations/20260811100833_harden_repair_evidence_and_idempotency_v3.sql");
 const radarIsolationMigration = read("supabase/migrations/20260811104727_isolate_radar_poison_records_v4.sql");
 const adminHtml = read("admin-markets.html");
+const adminAgentBridge = read("admin-agent-engine.js");
 const adminJs = read("admin-markets.js");
 const fixerClient = read("market-draft-fixer.js");
 
@@ -36,12 +40,9 @@ test("Radar · cinco descartes de contenido conservan proveedor disponible", () 
 
 test("Radar · 429 respeta Retry-After, abre circuito y preserva last-known-good", () => {
   assert.match(radarEdge, /retryAfterMilliseconds/);
-  assert.match(radarEdge, /GEMINI_MODEL = "gemini-3\.1-flash-lite"/);
-  assert.match(radarEdge, /responseMimeType: "application\/json"/);
-  assert.match(radarEdge, /responseJsonSchema: geminiResponseJsonSchema/);
-  assert.match(radarEdge, /geminiProviderSchemaSupported/);
-  assert.match(radarEdge, /error\.status !== 400/);
-  assert.match(radarEdge, /providerPayload = await send\(false\)/);
+  assert.doesNotMatch(radarEdge, /GEMINI_MODEL|GEMINI_API_KEY|generativelanguage\.googleapis\.com|:generateContent/);
+  assert.match(aiTaskPolicy, /radar_candidate_enrichment:[\s\S]*?legacyRouteId: "gemini\.legacy\.radar"/);
+  assert.match(geminiLegacyAdapter, /schemaFallback/);
   assert.match(radarEdge, /retry_after_seconds/);
   assert.match(radarEdge, /activeProviderCircuit/);
   assert.match(radarEdge, /last_known_good_count/);
@@ -76,15 +77,15 @@ test("Editor · muestra la causa raíz sin cascada ni recuperación factual", ()
   assert.match(editorEdge, /causal_roots:\s*hardBlocks/);
   assert.match(editorEdge, /derived_diagnostics:\s*derivedDiagnostics/);
   assert.match(editorEdge, /automatic_recovery/);
-  assert.match(adminHtml, /Atinara ha detenido esta transición de forma segura/);
-  assert.match(adminHtml, /Referencia \$\{escapeHtml\(code\)\}/);
+  assert.match(adminAgentBridge, /Atinara ha detenido esta transición de forma segura/);
+  assert.match(adminAgentBridge, /Referencia \$\{escapeHtml\(code\)\}/);
   assert.doesNotMatch(adminJs, /recoverRadarExpertCandidate/);
   assert.match(adminJs, /ensureRadarDraftEligibility/);
 });
 
 test("Editor · candidata abierta pero incompleta puede materializar un borrador privado reparable", () => {
   assert.match(editorEdge, /can_materialize_private_repair_draft:\s*canMaterializePrivateRepairDraft/);
-  assert.match(adminHtml, /materialize_market_draft_for_repair_v1/);
+  assert.match(adminAgentBridge, /materialize_market_draft_for_repair_v1/);
   assert.match(migration, /create or replace function public\.materialize_market_draft_for_repair_v1/);
   assert.match(migration, /MARKET_EXPERT_REPAIR_DRAFT_BLOCKED/);
   assert.match(migration, /materialization_mode', 'private_repair_v1'/);
@@ -155,7 +156,7 @@ test("Temporal · UTC, Europe/Madrid, milisegundos y segundo 59 sobreviven al co
     repair.deriveResolutionDeadline(evaluation, [existing]),
     "2026-10-26T22:59:59.987Z",
   );
-  assert.match(adminHtml, /_timestamp_precision = "milliseconds-v1"/);
+  assert.match(adminAgentBridge, /_timestamp_precision = "milliseconds-v1"/);
   assert.match(migration, /expected_fingerprint/);
 });
 
@@ -165,7 +166,7 @@ test("Validador · UTC y la hora local IANA equivalente no forman una incoherenc
   assert.match(validatorEdge, /everyIssueSafelyDismissed/);
   assert.match(validatorEdge, /normalizedResult = "approved"/);
   assert.match(validatorEdge, /if \(!everyIssueSafelyDismissed\) return null/);
-  assert.match(validatorEdge, /Compara instantes, no representaciones/);
+  assert.match(aiTaskPolicy, /Compara instantes, no representaciones/);
   assert.match(validatorEdge, /contractText\.includes\(localTime\)/);
   assert.match(validatorEdge, /contractText\.includes\(normalizedEvidenceText\(timezone\)\)/);
   assert.match(validatorEdge, /new Set\(\["evaluation_ends_at", "timezone"\]\)/);
@@ -177,7 +178,7 @@ test("Validador · una opinión del modelo no invalida una fuente primaria atest
   assert.match(validatorEdge, /attestedPrimarySourceRefutesIssue\(issue, draft\)/);
   assert.match(validatorEdge, /INSUFFICIENT_EVIDENCE/);
   assert.match(validatorEdge, /_primary_source_attestation/);
-  assert.match(validatorEdge, /no contradigas esa atestación ni inventes una consulta externa/);
+  assert.match(aiTaskPolicy, /no contradigas esa atestaci.n ni inventes una consulta externa/);
   assert.match(hardeningMigration, /source_check\.draft_version = draft_row\.content_version/);
   assert.match(hardeningMigration, /source_check\.expires_at > clock_timestamp\(\)/);
   assert.match(hardeningMigration, /private\.market_primary_registry_row_matches_v1/);
@@ -217,22 +218,19 @@ test("Corrector · fallo técnico preserva revisión, versión y estado autorita
   assert.match(fixerEdge, /new_version:\s*expectedVersion/);
   assert.match(migration, /Intentos tecnicos del Corrector separados de revisiones efectivas/);
   assert.match(validatorEdge, /retry_after_seconds/);
-  assert.match(validatorEdge, /safeProviderErrorDetails/);
-  assert.match(validatorEdge, /provider_error_status/);
-  assert.match(validatorEdge, /provider_error_reason/);
-  assert.match(validatorEdge, /GEMINI_MODEL = "gemini-3\.1-flash-lite"/);
-  assert.match(validatorEdge, /responseMimeType: "application\/json"/);
-  assert.match(validatorEdge, /responseJsonSchema/);
-  assert.match(validatorEdge, /schemaFallback/);
-  assert.match(validatorEdge, /generate-content-json-mode-app-schema-v1/);
-  assert.match(validatorEdge, /response\.status === 400/);
-  assert.match(validatorEdge, /diagnoseInvalidReview/);
-  assert.match(validatorEdge, /invalid_response_diagnostics/);
+  assert.match(validatorEdge, /AI_TASK_CONTRACTS\.market_draft_validation/);
+  assert.doesNotMatch(validatorEdge, /GEMINI_MODEL|generativelanguage\.googleapis\.com|x-goog-api-key/);
+  assert.match(aiTaskPolicy, /gemini\.legacy\.validator/);
+  assert.match(aiTaskPolicy, /responseMimeType: "application\/json"/);
+  assert.match(aiTaskPolicy, /responseJsonSchema/);
+  assert.match(geminiLegacyAdapter, /schemaFallback/);
+  assert.match(geminiLegacyAdapter, /spec\.schemaFallbackBody/);
+  assert.match(geminiLegacyAdapter, /ai\.details\.httpStatus === 400/);
   assert.match(validatorEdge, /Array\.isArray\(parsed\.editorial_notes\) \? parsed\.editorial_notes : \[\]/);
-  assert.match(validatorEdge, /enum: \["approved", "rejected"\]/);
-  assert.match(validatorEdge, /Un rejected exige al menos una incidencia concreta/);
-  assert.match(validatorEdge, /result === "rejected" && issues\.length === 0/);
-  assert.doesNotMatch(validatorEdge, /enum: \["approved", "rejected", "inconclusive"\]/);
+  assert.match(aiTaskPolicy, /enum: \["approved", "rejected"\]/);
+  assert.match(aiTaskPolicy, /Un rejected exige al menos una incidencia concreta/);
+  assert.match(aiOutputValidation, /value\.result === "rejected" && value\.issues\.length === 0/);
+  assert.doesNotMatch(aiTaskPolicy, /enum: \["approved", "rejected", "inconclusive"\]/);
   assert.match(validatorEdge, /state_preserved:\s*true/);
 });
 

@@ -1,8 +1,22 @@
-# Atinara Agent Engine · protocolo operativo v1
+# Atinara Agent Engine · producción v1 y transición local V2.1
 
 Estado del documento: protocolo v1 y cierre SQL v8–v11 desplegados y verificados
 en producción el 12 de agosto de 2026. El frontend asociado permanece pendiente
 de la subida manual de Yol.
+
+Agent Engine V2.1 está implementado únicamente en el árbol local. No sustituye todavía el corte productivo, no activa proveedores experimentales y no autoriza migraciones ni despliegues. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
+
+## Transición V2.1
+
+V2.1 conserva los tres agentes y añade selección real de herramientas:
+
+- Issue Registry, Strategy Registry y bindings viven en tablas privadas separadas, proyectadas de la registry v1 sin eliminarla.
+- Tool Registry y handlers viven en código; cada inicio compara correspondencia completa, `registryVersion` y `registryHash` contra SQL.
+- El dispatcher rechaza herramientas no permitidas, estrategias sin write, un segundo writer por ronda, snapshot stale, loops, no progreso y más de dos replans.
+- Editor no escribe mercados. Corrector puede persistir una sola versión por ronda mediante el writer autoritativo existente, CAS e idempotencia.
+- Runs y steps son append-only, sin payloads de dominio, y comparten el deadline absoluto con tools, Gateway y persistencia.
+
+Las inferencias ya no viven dentro de las Edge de dominio. Cada Edge invoca el AI Gateway y la compatibilidad Gemini se conserva en adaptadores centralizados. Los modos se activan tarea por tarea; OpenRouter y NVIDIA permanecen apagados.
 
 ## Corte productivo verificado
 
@@ -34,9 +48,10 @@ El protocolo común es `atinara-agent-protocol-v1` y vive en
 ## Invariantes
 
 Cada ejecución declara una lista cerrada de herramientas, presupuesto de pasos,
-plazo total, límite de repetición y huellas de progreso. Una herramienta no
-declarada, una acción repetida, una huella ya vista, el agotamiento del plazo o
-el presupuesto detienen el ciclo con un código estable.
+plazo total, límite de repetición y huellas de progreso. Runtime v2 hace cumplir
+la parada: una herramienta no declarada, una acción repetida, una huella ya
+vista, el agotamiento del plazo o el presupuesto no se limitan a cortar la
+traza, sino que impiden iniciar el siguiente efecto.
 
 Las trazas almacenan únicamente nombre de herramienta, estado y resúmenes
 sanitizados. No almacenan razonamiento interno, prompts completos, tokens,

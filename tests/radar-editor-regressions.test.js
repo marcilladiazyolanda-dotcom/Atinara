@@ -7,7 +7,9 @@ const { before, test } = require("node:test");
 
 const root = join(__dirname, "..");
 const corePath = join(root, "supabase/functions/_shared/market-radar.mjs");
-const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminPage = readFileSync(join(root, "admin-markets.html"), "utf8");
+const adminBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
+const adminHtml = `${adminPage}\n${adminBridge}`;
 const adminMarkets = readFileSync(join(root, "admin-markets.js"), "utf8");
 const marketExpert = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const policyMigration = readFileSync(join(root, "supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql"), "utf8");
@@ -87,19 +89,19 @@ function kalshiEvent(title, children) {
 
 function extractBridgeFunction(name, nextName) {
   const starts = [
-    adminHtml.indexOf(`      function ${name}(`),
-    adminHtml.indexOf(`      async function ${name}(`),
+    adminBridge.indexOf(`  function ${name}(`),
+    adminBridge.indexOf(`  async function ${name}(`),
   ].filter((index) => index >= 0);
   const ends = [
-    adminHtml.indexOf(`      function ${nextName}(`),
-    adminHtml.indexOf(`      async function ${nextName}(`),
+    adminBridge.indexOf(`  function ${nextName}(`),
+    adminBridge.indexOf(`  async function ${nextName}(`),
   ].filter((index) => index >= 0);
   assert.ok(starts.length, `No se encontró la función frontend ${name}`);
   assert.ok(ends.length, `No se encontró el límite frontend ${nextName}`);
   const start = Math.min(...starts);
   const end = Math.min(...ends.filter((index) => index > start));
   assert.ok(Number.isFinite(end), `No se pudo aislar la función frontend ${name}`);
-  return adminHtml.slice(start, end).trim();
+  return adminBridge.slice(start, end).trim();
 }
 
 function deferred() {
@@ -374,10 +376,10 @@ test("la sesión guarda candidato, revisión y paquete como una unidad y descart
 });
 
 test("Aplicar exige un expediente apto antes de preparar y vuelve a ligarlo después", () => {
-  const applyStart = adminHtml.indexOf("        if (target) {");
-  const applyEnd = adminHtml.indexOf("        const analyzeButton", applyStart);
+  const applyStart = adminBridge.indexOf("    if (target) {");
+  const applyEnd = adminBridge.indexOf("    const analyzeButton", applyStart);
   assert.ok(applyStart >= 0 && applyEnd > applyStart, "No se encontró el manejador Aplicar");
-  const applyFlow = adminHtml.slice(applyStart, applyEnd);
+  const applyFlow = adminBridge.slice(applyStart, applyEnd);
   const prepareIndex = applyFlow.indexOf("await bridge.prepareRadarCandidate(candidateId");
   const reanalyzeIndex = applyFlow.indexOf("await bridge.refreshRadarExpertAnalysis(candidateId");
   const preflightPackageIndex = applyFlow.indexOf("await loadPackage(candidateId, true)");
@@ -393,18 +395,18 @@ test("Aplicar exige un expediente apto antes de preparar y vuelve a ligarlo desp
   assert.ok(applyFlow.includes("rememberPreparedPackage"));
   assert.ok(!adminHtml.includes("window.setTimeout(() => scheduleScan(true), 2_800)"));
 
-  const submitStart = adminHtml.indexOf('      document.addEventListener("submit"');
-  const submitEnd = adminHtml.indexOf("      const observer", submitStart);
-  const submitFlow = adminHtml.slice(submitStart, submitEnd);
+  const submitStart = adminBridge.indexOf('  document.addEventListener("submit"');
+  const submitEnd = adminBridge.indexOf("  const observer", submitStart);
+  const submitFlow = adminBridge.slice(submitStart, submitEnd);
   assert.ok(submitFlow.includes("readPreparedPackage(candidateId)"));
   assert.ok(adminHtml.includes("payload._radar_preparation_revision"));
-  const dossierStart = adminHtml.indexOf("      function dossierMarkup(");
-  const dossierEnd = adminHtml.indexOf("      async function enhanceDetail(", dossierStart);
-  const dossierSource = adminHtml.slice(dossierStart, dossierEnd);
+  const dossierStart = adminBridge.indexOf("  function dossierMarkup(");
+  const dossierEnd = adminBridge.indexOf("  async function enhanceDetail(", dossierStart);
+  const dossierSource = adminBridge.slice(dossierStart, dossierEnd);
   assert.match(dossierSource, /if \(!pkg\?\.available\)[\s\S]+blockedDossierMarkup/);
-  const blockedStart = adminHtml.indexOf("      function blockedDossierMarkup(");
-  const blockedEnd = adminHtml.indexOf("      function dossierMarkup(", blockedStart);
-  const blockedSource = adminHtml.slice(blockedStart, blockedEnd);
+  const blockedStart = adminBridge.indexOf("  function blockedDossierMarkup(");
+  const blockedEnd = adminBridge.indexOf("  function dossierMarkup(", blockedStart);
+  const blockedSource = adminBridge.slice(blockedStart, blockedEnd);
   assert.ok(blockedSource.includes("data-radar-expert"));
   assert.ok(!blockedSource.includes("data-expert-apply"));
 });

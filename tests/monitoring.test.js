@@ -52,6 +52,26 @@ test("redacta correos, UUID, JWT y campos sensibles", () => {
   );
 });
 
+test("elimina prompts, entradas, salidas, errores de proveedor y presupuestos anidados", () => {
+  const sanitized = monitoring.scrubMonitoringValue({
+    prompt: "texto del mercado",
+    input: { question: "dato privado" },
+    output: { verdict: "respuesta del modelo" },
+    response: "respuesta cruda",
+    provider_error: "detalle crudo",
+    budget: 42,
+    safe: "estado técnico"
+  });
+
+  assert.equal(sanitized.prompt, "[dato oculto]");
+  assert.equal(sanitized.input, "[dato oculto]");
+  assert.equal(sanitized.output, "[dato oculto]");
+  assert.equal(sanitized.response, "[dato oculto]");
+  assert.equal(sanitized.provider_error, "[dato oculto]");
+  assert.equal(sanitized.budget, "[dato oculto]");
+  assert.equal(sanitized.safe, "estado técnico");
+});
+
 test("elimina PII, peticiones, extras y breadcrumbs de un evento", () => {
   const sanitized = monitoring.sanitizeSentryEvent({
     message: "Fallo para persona@example.com",

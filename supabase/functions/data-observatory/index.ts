@@ -44,7 +44,6 @@ function credentials() {
     twitchClientId: Deno.env.get("TWITCH_CLIENT_ID") ?? "",
     twitchClientSecret: Deno.env.get("TWITCH_CLIENT_SECRET") ?? "",
     youtubeKey: Deno.env.get("YOUTUBE_API_KEY") ?? "",
-    geminiConfigured: Boolean(Deno.env.get("GEMINI_API_KEY")),
     tavilyConfigured: Boolean(Deno.env.get("TAVILY_API_KEY")),
   };
 }
@@ -103,7 +102,7 @@ function providerStatusPayload() {
     { provider: "igdb", configured: Boolean(config.twitchClientId && config.twitchClientSecret), status: config.twitchClientId && config.twitchClientSecret ? "configured" : "not_configured", adapter_version: PROVIDER_ADAPTER_VERSIONS.igdb, credential_source: "Twitch app credentials" },
     { provider: "twitch", configured: Boolean(config.twitchClientId && config.twitchClientSecret), status: config.twitchClientId && config.twitchClientSecret ? "configured" : "not_configured", adapter_version: PROVIDER_ADAPTER_VERSIONS.twitch, credential_source: "Twitch app credentials" },
     { provider: "youtube", configured: Boolean(config.youtubeKey), status: config.youtubeKey ? "configured" : "not_configured", adapter_version: PROVIDER_ADAPTER_VERSIONS.youtube, retention_mode: "conservative_30_days" },
-    { provider: "market-expert", configured: config.geminiConfigured, status: config.geminiConfigured ? "configured" : "deterministic_only", policy_version: MARKET_INTELLIGENCE_POLICY_VERSION },
+    { provider: "market-expert", configured: true, status: "managed_by_ai_gateway", provider_availability: "server_side_not_disclosed", policy_version: MARKET_INTELLIGENCE_POLICY_VERSION },
     { provider: "source-monitor", configured: true, status: "scheduler_disabled", contract_schema_version: SOURCE_CONTRACT_SCHEMA_VERSION },
     { provider: "tavily-context", configured: config.tavilyConfigured, status: config.tavilyConfigured ? "configured_limited" : "not_configured" },
   ];

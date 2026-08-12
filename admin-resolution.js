@@ -61,7 +61,7 @@ function createAdminStatusMarkup() {
   if (!adminResolutionState.statusMessage) return "";
 
   return `
-    <p class="admin-status-message admin-status-${escapeAdminHtml(adminResolutionState.statusTone)}">
+    <p class="admin-status-message admin-status-${escapeAdminHtml(adminResolutionState.statusTone)}" role="${adminResolutionState.statusTone === "error" ? "alert" : "status"}">
       ${escapeAdminHtml(adminResolutionState.statusMessage)}
     </p>
   `;
@@ -120,15 +120,15 @@ function renderAdminWorkspace() {
       ${escapeAdminHtml(getMarketStatusLabel(market))} · ${escapeAdminHtml(market.question)}
     </option>
   `).join("");
-  let analyzeLabel = "Analizar con IA";
+  let analyzeLabel = "Analizar evidencias";
   if (adminResolutionState.analyzing) analyzeLabel = "Investigando fuentes...";
-  else if (selected?.resolution_result) analyzeLabel = "Auditar con IA";
+  else if (selected?.resolution_result) analyzeLabel = "Auditar evidencias";
 
   let manualButtonMarkup = "";
   if (!selected?.resolution_result) {
     const manualDisabled = adminResolutionState.analyzing || adminResolutionState.approving ? " disabled" : "";
     const manualLabel = adminResolutionState.manualMode
-      ? "Volver al análisis con IA"
+      ? "Volver al análisis asistido"
       : "Resolver manualmente con fuentes";
     manualButtonMarkup = `<button class="secondary-button admin-manual-button" id="admin-toggle-manual" type="button"${manualDisabled}>${manualLabel}</button>`;
   }
@@ -220,7 +220,7 @@ function createAdminAnalysisEmptyMarkup() {
     <div class="admin-analysis-empty">
       <p class="eyebrow">2 · Investigar</p>
       <h2>Esperando análisis</h2>
-      <p>Tavily buscará fuentes anteriores al cierre y Gemini 3 aplicará los criterios del mercado para proponer una resolución.</p>
+      <p>Atinara buscará fuentes anteriores al cierre y aplicará el contrato del mercado para preparar una propuesta revisable.</p>
     </div>
   `;
 }
@@ -255,7 +255,7 @@ function createManualApprovalMarkup() {
     <div class="admin-analysis-result admin-manual-resolution">
       <p class="eyebrow">2 · Resolución manual</p>
       <h2>Revisión humana con fuentes</h2>
-      <p>Esta vía no usa Gemini. Comprueba personalmente el criterio, la fecha de cierre y cada enlace antes de confirmar.</p>
+      <p>Esta vía no usa inferencia automática. Comprueba personalmente el criterio, la fecha de cierre y cada enlace antes de confirmar.</p>
 
       <form class="admin-approval-form" id="admin-manual-approval-form">
         <label class="admin-field" for="admin-manual-result">
@@ -301,15 +301,20 @@ function createAdminAnalysisMarkup(response, market) {
   const proposedResult = ["Sí", "No", "Anulado"].includes(analysis.proposed_result)
     ? analysis.proposed_result
     : "";
-  const resolutionBlocked = response.can_resolve_market === false;
+  const analysisReady = typeof response.analysis_ready_for_human_review === "boolean"
+    ? response.analysis_ready_for_human_review
+    : response.can_resolve_market;
+  const resolutionBlocked = analysisReady === false;
+  const telemetryIncomplete = Array.isArray(response.warnings)
+    && response.warnings.includes("AI_TELEMETRY_WRITE_FAILED");
   const isAlreadyResolved = Boolean(market?.resolution_result);
-  let proposalEyebrow = "2 · Propuesta de la IA";
+  let proposalEyebrow = "2 · Propuesta de análisis";
   if (response.analysis_kind === "definition_check") proposalEyebrow = "2 · Control de definición";
   else if (response.analysis_kind === "no_evidence") proposalEyebrow = "2 · Evidencia insuficiente";
 
   const reasonItems = reasons.length
     ? reasons.map((reason) => `<li>${escapeAdminHtml(reason)}</li>`).join("")
-    : "<li>La IA no ha devuelto motivos estructurados.</li>";
+    : "<li>El análisis no ha devuelto motivos estructurados.</li>";
   const caveatItems = caveats.map((item) => `<li>${escapeAdminHtml(item)}</li>`).join("");
   const caveatMarkup = caveats.length
     ? `<div class="admin-caveats"><h3>Dudas que debes revisar</h3><ul>${caveatItems}</ul></div>`
@@ -335,6 +340,7 @@ function createAdminAnalysisMarkup(response, market) {
         <span class="admin-confidence">Confianza: ${escapeAdminHtml(analysis.confidence || "Baja")}</span>
       </div>
       <p class="admin-analysis-summary">${escapeAdminHtml(analysis.summary || "Sin resumen disponible.")}</p>
+      ${telemetryIncomplete ? '<p class="market-agent-observability-warning" role="status">Observabilidad incompleta. La propuesta se conserva y Atinara no repetirá la inferencia para cambiarla.</p>' : ""}
 
       <div class="admin-reasons">
         <h3>Motivos</h3>
@@ -556,19 +562,19 @@ async function analyzeSelectedMarket() {
 
     if (error) {
       throw Object.assign(new Error("ANALYSIS_FAILED"), {
-        friendlyMessage: await readFunctionError(error, "La IA no ha podido analizar este mercado.")
+        friendlyMessage: await readFunctionError(error, "El servicio de análisis no ha podido revisar este mercado.")
       });
     }
 
     if (!data?.ok) {
       throw Object.assign(new Error("ANALYSIS_FAILED"), {
-        friendlyMessage: "La IA no ha podido analizar este mercado."
+        friendlyMessage: "El servicio de análisis no ha podido revisar este mercado."
       });
     }
 
     adminResolutionState.analysisResponse = data;
   } catch (error) {
-    const message = error?.friendlyMessage || "La IA no ha podido analizar este mercado.";
+    const message = error?.friendlyMessage || "El servicio de análisis no ha podido revisar este mercado.";
     adminResolutionState.statusMessage = /resoluci[oó]n manual/i.test(message)
       ? message
       : `${message} Puedes reintentarlo o continuar con la resolución manual.`;
