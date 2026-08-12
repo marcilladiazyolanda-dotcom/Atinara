@@ -5,6 +5,10 @@ import {
   deriveResolutionDeadline,
   inferMetricContract,
 } from "../_shared/market-draft-repair.mjs";
+import {
+  agentToolSummary,
+  createAtinaraAgentRun,
+} from "../_shared/atinara-agent-runtime.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1458,11 +1462,13 @@ async function storeRun(
       confidence: verdict.confidence ?? null,
       human_review_required: verdict.human_review_required !== false,
       result_json: verdict,
-      tool_summary: safeToolSummary([
-        { tool: "get_normalized_origin", status: "completed", count: 1 },
-        { tool: "validate_resolution_contract", status: "completed", count: 1 },
-        { tool: "build_draft_gate", status: "completed", count: 1 },
-      ]),
+      tool_summary: agentToolSummary(verdict.agent_execution).length
+        ? agentToolSummary(verdict.agent_execution)
+        : safeToolSummary([
+          { tool: "get_normalized_origin", status: "completed", count: 1 },
+          { tool: "validate_resolution_contract", status: "completed", count: 1 },
+          { tool: "build_draft_gate", status: "completed", count: 1 },
+        ]),
       analysis_mode: options.analysisMode || "validate",
       trigger_type: options.triggerType || "manual",
       error_code: options.errorCode || null,
@@ -1498,7 +1504,19 @@ async function analyzeOrigin(
   if (!["radar_candidate", "observatory_signal", "context_story_arc"].includes(originType) || !originId) {
     throw new Error("INTELLIGENCE_ORIGIN_INVALID");
   }
+  const agent = createAtinaraAgentRun({
+    agentType: "market_editor_agent",
+    objective: "Convertir una candidata elegible en una propuesta privada coherente sin eludir bloqueos terminales.",
+    policyVersion: MARKET_INTELLIGENCE_POLICY_VERSION,
+    maxSteps: 6,
+    deadlineAt: Date.now() + 95_000,
+  });
   const origin = await loadOrigin(environment, authorization, originType, originId);
+  agent.record("load_authoritative_origin", {
+    actionKey: `${originType}:${originId}`,
+    progressFingerprint: `origin:${originType}:${originId}:${text(origin.preparation_revision, 80)}`,
+    summary: { origin_type: originType, preparation_revision: text(origin.preparation_revision, 80) },
+  });
   if (originType === "radar_candidate" && body.preparation_revision !== undefined
     && text(body.preparation_revision, 80) !== text(origin.preparation_revision, 80)) {
     throw new Error("PREPARATION_REVISION_MISMATCH");
@@ -1516,18 +1534,61 @@ async function analyzeOrigin(
     }, { authorization }));
     if (cached?.status === "completed" && cached.analysis_fingerprint === analysisFingerprint) {
       const deterministic = createDeterministicVerdict(origin, originType);
-      const reconciled = reconcileSavedVerdict(cached.result_json, deterministic, origin);
+      agent.record("run_deterministic_gate", {
+        actionKey: "deterministic-gate",
+        progressFingerprint: `deterministic:${analysisFingerprint}`,
+        summary: { decision: deterministic.decision, cached: true },
+      });
+      agent.record("request_editorial_enrichment", {
+        status: "no_op",
+        actionKey: "editorial-cache",
+        progressFingerprint: `editorial-cache:${analysisFingerprint}`,
+        summary: { cached: true },
+      });
+      agent.record("validate_resolution_contract", {
+        actionKey: "contract-validation",
+        progressFingerprint: `contract-cache:${analysisFingerprint}`,
+        summary: { cached: true },
+      });
+      agent.record("build_private_draft_gate", {
+        actionKey: "draft-gate",
+        progressFingerprint: `draft-gate-cache:${analysisFingerprint}`,
+        summary: { cached: true },
+      });
+      agent.record("persist_editor_run", {
+        status: "no_op",
+        actionKey: "persist-cache",
+        progressFingerprint: `persist-cache:${analysisFingerprint}`,
+        summary: { cached: true },
+      });
+      const agentExecution = agent.complete("completed", "CACHE_HIT");
+      const reconciled = {
+        ...reconcileSavedVerdict(cached.result_json, deterministic, origin),
+        agent_execution: agentExecution,
+      };
       return jsonResponse({ ok: true, cached: true, run: cached, verdict: reconciled, draft_package: packageFromRun(cached, reconciled, originType, originId, origin) });
     }
   }
 
   const deterministic = createDeterministicVerdict(origin, originType);
+  agent.record("run_deterministic_gate", {
+    actionKey: "deterministic-gate",
+    progressFingerprint: `deterministic:${analysisFingerprint}`,
+    summary: { decision: deterministic.decision, reason_codes: deterministic.reason_codes },
+  });
   let verdict = deterministic;
   let degraded = false;
   let warningCode: string | null = null;
   try {
     const expert = await callGemini(origin, deterministic);
-    if (expert) verdict = mergeExpertVerdict(deterministic, expert, origin);
+    if (expert) {
+      verdict = mergeExpertVerdict(deterministic, expert, origin);
+      agent.record("request_editorial_enrichment", {
+        actionKey: "editorial-enrichment",
+        progressFingerprint: `editorial:${analysisFingerprint}:completed`,
+        summary: { configured: true, model: GEMINI_MODEL },
+      });
+    }
     else {
       degraded = true;
       warningCode = "EXPERT_NOT_CONFIGURED";
@@ -1536,6 +1597,12 @@ async function analyzeOrigin(
         reason_codes: uniqueStrings([...(deterministic.reason_codes as unknown[]), warningCode]),
         summary: `${text(deterministic.summary, 1_500)} El análisis editorial de Gemini no está configurado; se muestra la puerta determinista.`,
       };
+      agent.record("request_editorial_enrichment", {
+        status: "no_op",
+        actionKey: "editorial-enrichment",
+        progressFingerprint: `editorial:${analysisFingerprint}:not-configured`,
+        summary: { configured: false },
+      });
     }
   } catch (error) {
     if (!providerErrorMayDegrade(error)) throw error;
@@ -1550,11 +1617,28 @@ async function analyzeOrigin(
       ]),
       summary: `${text(deterministic.summary, 1_500)} Se muestra una evaluación determinista segura mientras el proveedor editorial se recupera.`,
     };
+    agent.record("request_editorial_enrichment", {
+      status: "degraded",
+      actionKey: "editorial-enrichment",
+      progressFingerprint: `editorial:${analysisFingerprint}:degraded`,
+      summary: { configured: true, warning_code: warningCode },
+      retryable: true,
+    });
   }
 
   verdict = decorateVerdict(verdict);
   const validation = validateExpertVerdict(verdict);
   if (!validation.valid) throw new Error("EXPERT_INVALID_RESPONSE");
+  agent.record("validate_resolution_contract", {
+    actionKey: "contract-validation",
+    progressFingerprint: `contract:${analysisFingerprint}:${text(verdict.source_readiness, 80)}`,
+    summary: { valid: validation.valid, source_readiness: verdict.source_readiness },
+  });
+  agent.record("build_private_draft_gate", {
+    actionKey: "draft-gate",
+    progressFingerprint: `draft-gate:${analysisFingerprint}:${text((verdict.draft_gate as JsonRecord)?.can_prepare, 20)}`,
+    summary: { can_prepare: (verdict.draft_gate as JsonRecord)?.can_prepare === true },
+  });
   // Gemini may take long enough for Radar to publish a newer factual revision.
   // Never let a late response become the newest run for a snapshot it did not analyse.
   const authoritativeOrigin = await loadOrigin(environment, authorization, originType, originId);
@@ -1569,6 +1653,15 @@ async function analyzeOrigin(
       && text(authoritativeOrigin.preparation_revision, 80) !== text(origin.preparation_revision, 80))) {
     throw new Error("PREPARATION_REVISION_MISMATCH");
   }
+  agent.record("persist_editor_run", {
+    actionKey: "persist-editor-run",
+    progressFingerprint: `persist:${analysisFingerprint}`,
+    summary: { origin_type: originType, decision: verdict.decision },
+  });
+  verdict = {
+    ...verdict,
+    agent_execution: agent.complete(degraded ? "degraded" : "completed"),
+  };
   const run = await storeRun(environment, originType, originId, authoritativeOrigin, analysisFingerprint, verdict, {
     errorCode: warningCode,
     modelVersion: degraded ? `${GEMINI_MODEL}:degraded` : GEMINI_MODEL,

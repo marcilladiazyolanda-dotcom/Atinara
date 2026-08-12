@@ -84,6 +84,7 @@
     PROVIDER_EVENT_NOT_FOUND: "Evento de origen no disponible",
     PROVIDER_CHILD_NOT_FOUND: "Opción de origen no disponible",
     RESOLUTION_SOURCE_AUTHORITY_PENDING: "Fuente oficial pendiente",
+    OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "Comprobación oficial temporalmente no disponible",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Selección oficial en comprobación",
     VERIFICATION_REQUIRED: "Comprobación de elegibilidad pendiente",
     VERIFICATION_EXPIRED: "Comprobación de elegibilidad caducada"
@@ -101,6 +102,7 @@
     PROVIDER_EVENT_NOT_FOUND: "El proveedor ya no ofrece el evento indicado.",
     PROVIDER_CHILD_NOT_FOUND: "La opción ya no pertenece al evento de origen.",
     RESOLUTION_SOURCE_AUTHORITY_PENDING: "Atinara volverá a buscar automáticamente una fuente resolutiva oficial y exacta para esta opción.",
+    OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "La consulta de fuentes oficiales no terminó. Es un fallo técnico reintentable y no una prueba de que el evento esté resuelto.",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Atinara ha localizado una selección oficial posiblemente ya publicada. Mantiene oculto el evento mientras completa la comprobación automática.",
     VERIFICATION_REQUIRED: "La comprobación de elegibilidad no ha terminado.",
     VERIFICATION_EXPIRED: "La elegibilidad ha caducado y debe repetirse antes de preparar el borrador."
@@ -845,12 +847,48 @@
     });
   }
 
+  function radarOriginalChildLabel(candidate) {
+    const payload = candidate?.provider_payload && typeof candidate.provider_payload === "object"
+      ? candidate.provider_payload
+      : {};
+    return String(
+      candidate?.family_child_label
+      || payload.yes_sub_title
+      || payload.no_sub_title
+      || ""
+    ).trim();
+  }
+
+  function radarCandidateHeading(candidate) {
+    const question = String(candidate?.atinara_question || candidate?.source_question || candidate?.source_title || "Opción externa").trim();
+    const childLabel = radarOriginalChildLabel(candidate);
+    if (!childLabel || question.toLocaleLowerCase("es").includes(childLabel.toLocaleLowerCase("es"))) return question;
+    return `${question} · Opción del proveedor: ${childLabel}`;
+  }
+
+  function radarAgentExecutionMarkup(candidate) {
+    const execution = candidate?.source_agent_execution;
+    const tools = Array.isArray(execution?.tools) ? execution.tools : [];
+    if (!tools.length) return "<p>Sin ejecución reciente del agente de fuentes en este detalle.</p>";
+    const statusLabels = { completed: "Completado", degraded: "Degradado", failed: "Falló", no_op: "Sin cambios" };
+    const toolLabels = {
+      read_provider_contract: "Leer contrato del proveedor",
+      search_official_sources: "Buscar fuentes oficiales",
+      fetch_official_source: "Comprobar fuente oficial",
+      classify_terminal_evidence: "Descartar un resultado ya conocido",
+      select_resolution_authority: "Seleccionar autoridad de resolución",
+      persist_eligibility: "Guardar elegibilidad",
+    };
+    const executionLabels = { completed: "Completado", degraded: "Disponible con comprobaciones pendientes", failed: "No completado", blocked: "Bloqueado" };
+    return `<p><strong>Estado:</strong> ${escapeHtml(executionLabels[execution.status] || "Completado")} · ${escapeHtml(execution.step_count || tools.length)} pasos acotados.</p><ol class="radar-agent-trace">${tools.map((event) => `<li><strong>${escapeHtml(toolLabels[event.tool] || "Comprobación segura")}</strong><span>${escapeHtml(statusLabels[event.status] || "Completado")}</span></li>`).join("")}</ol><p>Este agente solo investiga y clasifica: nunca confirma, publica ni resuelve mercados.</p>`;
+  }
+
   function radarChildMarkup(candidate) {
     const ready = radarCandidateReady(candidate);
     const status = radarVerificationLabel(candidate);
     return `<li class="radar-event-option">
       <div class="radar-event-option-copy">
-        <strong>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</strong>
+        <strong>${escapeHtml(radarCandidateHeading(candidate))}</strong>
         <span>Probabilidad del proveedor: ${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · Cierre: ${escapeHtml(displayDate(candidate.source_close_at))}</span>
       </div>
       <div class="radar-event-option-actions">
@@ -895,7 +933,7 @@
     const sourceResult = providerResultLabel(candidate.source_result);
     return `<article class="radar-rejection-card">
       <header><div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</span><strong>${escapeHtml(radarReasonLabel(radarRejectionReasonCode(candidate)))}</strong></div><time>${escapeHtml(displayDate(candidate.verified_at))}</time></header>
-      <h4>${escapeHtml(candidate.atinara_question || candidate.source_question || candidate.source_title)}</h4>
+      <h4>${escapeHtml(radarCandidateHeading(candidate))}</h4>
       <p>${escapeHtml(radarReasonDescription(candidate))}</p>
       ${sourceResult ? `<p class="radar-provider-result"><strong>Resultado del proveedor:</strong> ${escapeHtml(sourceResult)}</p>` : ""}
       <div class="radar-rejection-links">${externalLink(candidate.external_event_url || candidate.external_market_url, "Abrir mercado original")}${evidence.slice(0, 2).map((item) => externalLink(item.url, item.title || "Abrir evidencia")).join("")}</div>
@@ -948,13 +986,14 @@
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
     const currentExpertRun = expertRun(candidate.expert_analysis);
     return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
-      <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(candidate.atinara_question || candidate.source_question)}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
+      <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(radarCandidateHeading(candidate))}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
       <div class="radar-detail-grid">
         <section><h3>Procedencia</h3><dl>
           <div><dt>Proveedor</dt><dd>${escapeHtml(RADAR_PROVIDER_LABELS[candidate.provider] || candidate.provider)}</dd></div>
           <div><dt>ID externo</dt><dd><code>${escapeHtml(candidate.external_id)}</code></dd></div>
           <div><dt>Título original</dt><dd>${escapeHtml(candidate.source_title || "No disponible")}</dd></div>
           <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
+          <div><dt>Opción original</dt><dd>${escapeHtml(radarOriginalChildLabel(candidate) || "No diferenciada por el proveedor")}</dd></div>
           <div><dt>Estado y fechas</dt><dd>${escapeHtml(providerStatusLabel(candidate.source_status))} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
           ${candidate.source_result ? `<div><dt>Resultado del proveedor</dt><dd>${escapeHtml(providerResultLabel(candidate.source_result))}</dd></div>` : ""}
         </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original", "primary")}${externalLink(candidate.external_market_url, "Abrir mercado original", "primary")}</div></section>
@@ -985,6 +1024,7 @@
         <section><h3>Agente Editor</h3>${currentExpertRun
           ? `<p><strong>${escapeHtml(currentExpertRun.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
           : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
+        <section><h3>Agente de fuentes</h3>${radarAgentExecutionMarkup(candidate)}</section>
       </div>
       <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
     </section>`;
@@ -1502,7 +1542,6 @@
     let requestError = null;
     let confirmationRequested = false;
     try {
-      await ensureRadarDraftEligibility(draft);
       confirmationRequested = true;
       result = await rpc("confirm_market_draft_review", {
         draft_id_input: draft.id,

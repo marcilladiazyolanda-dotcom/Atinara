@@ -274,6 +274,67 @@ test("Seguridad de fuentes · HTTPS no sustituye autoridad y evidencia exacta", 
   }), true);
 });
 
+test("Autoridad resolutiva · un endpoint genérico o la evidencia de otra opción no habilitan la candidata", () => {
+  const candidate = {
+    provider: "kalshi",
+    external_id: "kalshi:half-life-3",
+    normalizer_version: "atinara-radar-v2",
+    source_question: "Will Half-Life 3 release this year?",
+    family_title: "Video games released this year",
+    source_resolution_rules: "If Half-Life 3 is released before Jan 1, 2027, the market resolves Yes; otherwise it resolves No.",
+    source_resolution_url: "https://store.steampowered.com/charts/mostplayed",
+    source_resolution_provenance: {
+      provider: "kalshi",
+      source_url: "https://store.steampowered.com/charts/mostplayed",
+      upstream_field: "market.settlement_sources",
+      adapter_version: "atinara-radar-v2",
+      declared_by_provider: true,
+    },
+  };
+  const genericPage = {
+    url: candidate.source_resolution_url,
+    title: "Steam Charts",
+    content: "Most played games on Steam, including a passing reference to Half-Life 3.",
+    contentType: "text/html",
+    contentSha256: "a".repeat(64),
+  };
+  assert.equal(
+    radar.buildResolutionAuthorityEvidence(candidate, genericPage, now, authoritativeDomains),
+    null,
+  );
+
+  const exactCandidate = {
+    ...candidate,
+    source_resolution_url: "https://store.steampowered.com/app/123456/HalfLife_3/",
+    source_resolution_provenance: {
+      ...candidate.source_resolution_provenance,
+      source_url: "https://store.steampowered.com/app/123456/HalfLife_3/",
+    },
+  };
+  const exactPage = {
+    ...genericPage,
+    url: exactCandidate.source_resolution_url,
+    title: "Half-Life 3 on Steam",
+  };
+  const evidence = radar.buildResolutionAuthorityEvidence(
+    exactCandidate,
+    exactPage,
+    now,
+    authoritativeDomains,
+  );
+  assert.equal(evidence.parser_version, "atinara-resolution-authority-v3");
+  assert.equal(evidence.candidate_external_id, exactCandidate.external_id);
+  assert.equal(evidence.endpoint_identity_verified, true);
+  assert.equal(
+    radar.selectVerifiedResolutionUrl(exactCandidate, [evidence], authoritativeDomains),
+    exactCandidate.source_resolution_url,
+  );
+  assert.equal(
+    radar.selectVerifiedResolutionUrl({ ...exactCandidate, external_id: "kalshi:other-child" }, [evidence], authoritativeDomains),
+    null,
+  );
+});
+
 test("UI · todas las opciones son desplegables y cada tarjeta conserva su altura", () => {
   assert.match(adminJs, /const candidates = expanded \? allCandidates : highlightedCandidates/);
   assert.match(adminJs, /`Ver las \$\{childCount\} opciones`/);
@@ -296,7 +357,11 @@ test("Estado · una caída del enriquecimiento conserva el último expediente v�
   assert.match(radarEdge, /persistableCandidates[\s\S]*?RESOLUTION_SOURCE_AUTHORITY_PENDING[\s\S]*?currentCandidatesByIdentity/);
   assert.match(radarEdge, /persistProviderResult\([\s\S]*?persistableCandidates,[\s\S]*?providerCandidates\.length/);
   assert.match(radarEdge, /errors\.push\(\{[\s\S]*?SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE/);
+  assert.match(radarEdge, /directAuthorityFallbackGroups[\s\S]*?authorityCandidateIds[\s\S]*?incompleteGroupKeys\.delete/);
+  assert.match(radarEdge, /MAX_CANONICAL_EVENT_CHILDREN \+ 8/);
   assert.match(adminJs, /Elegible · estado conservado/);
+  assert.match(adminJs, /OFFICIAL_TERMINAL_SCAN_UNAVAILABLE:\s*"Comprobación oficial temporalmente no disponible"/);
+  assert.match(adminJs, /Es un fallo técnico reintentable y no una prueba de que el evento esté resuelto/);
 });
 
 test("Contrato · la revisión factual operativa queda retirada y la elegibilidad es append-only", () => {
@@ -314,7 +379,7 @@ test("Contrato · la revisión factual operativa queda retirada y la elegibilida
   assert.match(migration, /then 'technical_hold'[\s\S]*?ELIGIBILITY_REFRESH_REQUIRED/);
   assert.match(migration, /candidate\.id, provenance_revision/);
   assert.match(migration, /where code = 'RADAR_FACTUAL_VERIFICATION_REQUIRED'/);
-  assert.match(adminHtml, /20260811-radar-eligibility2/);
+  assert.match(adminHtml, /20260812-agent-engine2/);
 });
 
 test("Editor · la proyección segura conserva la elegibilidad autoritativa sin incluir leases en la huella", () => {

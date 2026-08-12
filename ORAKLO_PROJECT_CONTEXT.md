@@ -1,11 +1,11 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 11 de agosto de 2026.
+Última actualización del contexto: 12 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine usa `market-radar` v50,
-> `market-draft-fixer` v16, `validate-market-draft` v26 y `market-expert` v20,
+> **Estado vigente:** Atinara Engine usa `market-radar` v54,
+> `market-draft-fixer` v18, `validate-market-draft` v26 y `market-expert` v21,
 > todas activas con `verify_jwt=true`. La puerta determinista de elegibilidad
 > v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
 > revisión factual ya no es un bloqueo operativo. La identidad familiar vigente
@@ -15,12 +15,72 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
 > hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
 > autenticado de Editor y varios refrescos controlados del Radar se completaron
-> sin preparar, confirmar ni publicar. Marvel sigue `approved` en v9 y el Radar
-> final dejó todos los proveedores disponibles. GitHub Pages ya sirve el corte
-> `v=20260811-radar-eligibility2` desde `main = d58173d5245708b3ff789a931b16f5f89721d58b`;
-> el smoke autenticado posterior a la subida confirmó assets, navegación,
-> cooldown, tema, opciones y archivo de rechazados. No hacer push directo a
-> `main`.
+> sin confirmar ni publicar. Marvel sigue `approved` en v9. El refresh v54 dejó
+> Polymarket y Kalshi disponibles y aisló la caída de Tavily como degradación
+> técnica reintentable. GitHub Pages aún sirve el corte anterior
+> `v=20260811-radar-eligibility2`; el frontend `v=20260812-agent-engine2` solo
+> será público cuando Yol suba el nuevo ZIP y se repita el smoke. No hacer push
+> directo a `main`.
+
+### Cierre de agente, autoridad y publicación · 12 de agosto de 2026
+
+- Base local exacta: `origin/main =
+  1ed377b4bceb45589b2add0778a88b7174d0af6d`, worktree aislado
+  `ATINARA-agent-engine-confirmation-20260812`, rama
+  `codex/agent-engine-confirmation-20260812`. No se mezcló ni descartó ningún
+  cambio ajeno y no se hizo push.
+- Producción registra cuatro migraciones nuevas y no repetibles. Los archivos
+  locales `20260811221546_...v8`, `20260812012000_...v9`,
+  `20260812014000_...v10` y `20260812015500_...v11` corresponden a las versiones
+  remotas `20260811230350`, `20260811231921`, `20260811232315` y
+  `20260811232708`.
+- V8 separa confirmación humana y publicación y liga esta última a una
+  atestación append-only exacta de borrador, versión, huella, revisión,
+  candidata, `preparation_revision`, check, `decision_hash` y política. V9
+  rechaza una fuente genérica o perteneciente a otra opción: la autoridad debe
+  proceder del contrato exacto. V10 prohíbe persistir razones técnicas
+  reintentables como terminales. V11 proyecta `technical_hold` como
+  `needs_review`, nunca como rechazo editorial.
+- Las funciones activas y probadas son `market-radar` v54, bundle
+  `fc56eccf4d1a5c2a751b550cb30cfe659974b9c543f4dd38179eea545fce0533`;
+  `market-expert` v21, bundle
+  `138fe047f218a5c559e969583bd155270693a72f6e4fad447a096fe39f7318a2`;
+  y `market-draft-fixer` v18, bundle
+  `e5eb51bed90656c6a9a947ca55277e305d31c8264c4a256b658525fa4712dce8`.
+  Todas conservan `verify_jwt=true` y autorización administrativa en servidor.
+- El refresh real v54 terminó con Polymarket `available` y 48 procesadas,
+  Kalshi `available` y 79 procesadas, y Tavily/Ideas gaming en fallo técnico
+  aislado. La UI conservó la cobertura útil y explicó la degradación. El
+  cooldown descendió de 127 a 124 segundos en tres segundos.
+- Marvel mostró 12 opciones elegibles; la opción `>95` ya preparada fue
+  excluida por identidad exacta. Su borrador continúa v9, revisión efectiva 21
+  `approved`, sin confirmación, programación, publicación ni `market_id`.
+  Madden NFL 27 permanece terminal y oculto aunque Polymarket conserve opciones
+  abiertas: la atestación vigente incluye el comunicado oficial de EA que
+  identifica a Caleb Williams. Las hijas inactivas de Best Multiplayer 2026 se
+  presentan como `PROVIDER_OPTION_INACTIVE`, no como evento padre resuelto.
+- El advisor de seguridad devuelve 152 entradas: 49 `INFO` de tablas privadas
+  con RLS y ninguna policy (denegación intencional), 18 funciones anónimas
+  `SECURITY DEFINER` de lectura, 83 funciones autenticadas con control de
+  administradora o propietaria, un aviso preexistente de `pg_net` y la
+  protección nativa de contraseñas filtradas. No existe una RPC mutadora pública
+  sin control de identidad. La protección nativa requiere plan Pro; HIBP en el
+  cliente protege el flujo normal, pero no una llamada directa a Auth.
+- La validación final pasa 358/358 pruebas, sintaxis de 74 JavaScript,
+  TypeScript y `git diff --check`. Las matrices SQL v8–v11 pasaron en producción
+  dentro de transacciones de prueba. Las huellas canónicas coinciden exactamente
+  con la línea base: mercados
+  `70d93479e2efe650e3623be40e9aee688216abdbe9866dd5f2a02f67da3ee137`,
+  predicciones
+  `170372fee7b857c67a51f2c3b33f9675f5b0b406c6040625520d2d6df2a3059c`,
+  perfiles
+  `8492fdfc993bc473e6a2d9f00924dc8b39b8650f196f86dcf049ed50a179f6bc`,
+  LMSR `b3d1a0a27e6a7a754576057aba35c317c1b651388fe67ffceb13784472a0c927`
+  y precios
+  `8eb3d854e5ff20eb7ccad96efcbabd4d7545e17ffa457e74630d6f2f2e0f7adf`.
+  Siguen 15 mercados, 9 predicciones, 2 perfiles, 2.932 Karma, 40 Prestigio,
+  15 estados LMSR y 17 precios. Ninguna acción confirmó, programó, publicó,
+  predijo, resolvió o liquidó un mercado.
 
 ### Elegibilidad, fuentes y resiliencia del Radar · 11 de agosto de 2026
 
@@ -1196,13 +1256,11 @@ Durante 13.3 Yol autorizó activar primero el contrato económico vivo para que 
   Ninguna acción de esta intervención confirmó, programó, publicó, predijo,
   resolvió o liquidó un mercado.
 
-Siguiente paso operativo: subir manualmente el ZIP incremental de esta
-intervención; el backend v44/v18 y las migraciones v5/v6 ya están activos y no
-deben repetirse. Después, recargar GitHub Pages con `Ctrl+F5` y repetir el smoke
-visual del contador de cooldown, el despliegue de todas las opciones, la
-redacción/probabilidad de cada contrato y la recuperación factual del Editor.
-Confirmar o publicar seguirá siendo una decisión humana separada. El mercado
-antiguo de julio continúa sin aprobar ni liquidar. No ampliar todavía
+Nota histórica del corte v5/v6: aquel ZIP ya fue subido y su smoke se completó.
+El siguiente paso vigente está descrito al comienzo de este documento para el
+corte v8–v11; las migraciones antiguas no deben repetirse. Confirmar o publicar
+seguirá siendo una decisión humana separada. El mercado antiguo de julio
+continúa sin aprobar ni liquidar. No ampliar todavía
 el catálogo, chat, GIF, feed algorítmico,
 temporadas, monetización, dinero real ni compraventa secundaria.
 

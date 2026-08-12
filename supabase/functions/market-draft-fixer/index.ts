@@ -25,6 +25,9 @@ import {
   safePublicUrl,
   validateRepairDraft,
 } from "../_shared/market-draft-repair.mjs";
+import {
+  createAtinaraAgentRun,
+} from "../_shared/atinara-agent-runtime.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -934,6 +937,7 @@ async function executeRepairAndRevalidate(
 ): Promise<Response> {
   const draftId = cleanText(body.draft_id, 100);
   let expectedVersion = Number(body.expected_version);
+  const agent = body.__agent as ReturnType<typeof createAtinaraAgentRun>;
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(draftId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
     return jsonResponse({ error: "INVALID_REPAIR_REQUEST", message: "El identificador o la versión no son válidos." }, 400);
   }
@@ -990,6 +994,21 @@ async function executeRepairAndRevalidate(
   const initialDraft = isRecord(initialContext.draft) ? initialContext.draft : null;
   if (!initialDraft) throw new Error("DRAFT_NOT_FOUND");
   if (Number(initialDraft.content_version) !== expectedVersion) throw new Error("DRAFT_VERSION_MOVED");
+  agent.record("load_authoritative_draft", {
+    actionKey: `load:${expectedVersion}`,
+    progressFingerprint: `draft:${draftId}:${expectedVersion}:${cleanText(initialDraft.content_fingerprint, 80)}`,
+    summary: { draft_version: expectedVersion, review_status: initialDraft.review_status },
+  });
+  agent.record("classify_repair_issues", {
+    actionKey: `classify:${expectedVersion}`,
+    progressFingerprint: `issues:${expectedVersion}:${JSON.stringify(initialContext.repairable_issue_codes ?? initialContext.issue_codes ?? [])}`,
+    summary: {
+      repair_applicable: initialContext.repair_applicable === true,
+      issue_codes: Array.isArray(initialContext.repairable_issue_codes)
+        ? initialContext.repairable_issue_codes
+        : Array.isArray(initialContext.issue_codes) ? initialContext.issue_codes : [],
+    },
+  });
   if (initialContext.review_refresh_required === true || initialContext.review_compatible !== true) {
     const compatibleReview = await revalidate(
       env, authorization, draftId, expectedVersion, compatibilityReviewAttemptId,
@@ -1042,7 +1061,7 @@ async function executeRepairAndRevalidate(
   }
 
   for (let round = 1; round <= AUTONOMOUS_REPAIR_MAX_ROUNDS; round += 1) {
-    if (Date.now() >= sourceValidationDeadlineAt || sourceValidationSignal.aborted) return budgetResponse();
+    if (Date.now() >= sourceValidationDeadlineAt || sourceValidationSignal.aborted || agent.stopped()) return budgetResponse();
     const context = await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization);
     const draft = isRecord(context.draft) ? context.draft : null;
     if (!draft) throw new Error("DRAFT_NOT_FOUND");
@@ -1095,6 +1114,17 @@ async function executeRepairAndRevalidate(
         env, repairContext, primaryDiscovery.source, sourceValidationDeadlineAt, sourceValidationSignal,
       )
       : { sources: [], warnings: [], evidenceChecked: [] };
+    agent.record("discover_official_sources", {
+      status: primaryDiscovery.warnings.length || discovery.warnings.length ? "degraded" : "completed",
+      actionKey: `sources:${round}`,
+      progressFingerprint: `sources:${round}:${primaryDiscovery.source?.url || "none"}:${discovery.sources.map((source) => source.url).join("|")}`,
+      summary: {
+        round,
+        count: (primaryDiscovery.source ? 1 : 0) + discovery.sources.length,
+        warnings: [...primaryDiscovery.warnings, ...discovery.warnings],
+      },
+      retryable: primaryDiscovery.warnings.length > 0 || discovery.warnings.length > 0,
+    });
     discovery.warnings.forEach((warning) => providerWarnings.add(warning));
     evidenceChecked = [...evidenceChecked, ...discovery.evidenceChecked].slice(-30);
     if (discovery.warnings.includes("SOURCE_VALIDATION_BUDGET_EXHAUSTED")) return budgetResponse();
@@ -1146,7 +1176,16 @@ async function executeRepairAndRevalidate(
     }
 
     const roundSignature = repairRoundSignature(deterministic, repaired);
-    if (seenRoundSignatures.has(roundSignature)) {
+    const patchStep = agent.record("build_typed_patch", {
+      actionKey: `patch:${round}`,
+      progressFingerprint: roundSignature,
+      summary: {
+        round,
+        issue_codes: Array.isArray((deterministic.issue_plan as JsonRecord)?.codes)
+          ? (deterministic.issue_plan as JsonRecord).codes : [],
+      },
+    });
+    if (!patchStep.accepted || seenRoundSignatures.has(roundSignature)) {
       return jsonResponse({
         ok: false,
         error: "REPAIR_ROUND_REPEATED",
@@ -1168,6 +1207,11 @@ async function executeRepairAndRevalidate(
     seenRoundSignatures.add(roundSignature);
 
     const changed = changedRepairFields(draft, repaired);
+    agent.record("validate_typed_patch", {
+      actionKey: `validate:${round}`,
+      progressFingerprint: `validated:${round}:${roundSignature}:${changed.join("|")}`,
+      summary: { round, valid: true, changed_fields: changed },
+    });
     if (sourceValidationSignal.aborted
       || Date.now() + MIN_POST_WRITE_BUDGET_MS >= sourceValidationDeadlineAt) return budgetResponse();
     if (!primaryDiscovery.checkSnapshot) throw new Error("PRIMARY_SOURCE_CHECK_REQUIRED");
@@ -1223,9 +1267,28 @@ async function executeRepairAndRevalidate(
       );
       changed.forEach((field) => allChanged.add(field));
       deterministic.explanations.forEach((item: JsonRecord) => allExplanations.push(item));
+      agent.record("persist_single_version", {
+        actionKey: `persist:${round}`,
+        progressFingerprint: `persisted:${round}:${expectedVersion}:${changed.join("|")}`,
+        summary: { round, draft_version: expectedVersion, changed_fields: changed },
+      });
+    } else {
+      agent.record("persist_single_version", {
+        status: "no_op",
+        actionKey: `persist:${round}`,
+        progressFingerprint: `persisted:${round}:${expectedVersion}:no-op`,
+        summary: { round, draft_version: expectedVersion, changed_fields: [] },
+      });
     }
 
     lastReview = await revalidate(env, authorization, draftId, expectedVersion, reviewAttemptIds[round - 1]);
+    agent.record("revalidate_draft", {
+      status: lastReview.classification === "technical" ? "degraded" : "completed",
+      actionKey: `revalidate:${round}`,
+      progressFingerprint: `review:${round}:${expectedVersion}:${cleanText(lastReview.status, 80)}:${cleanText(lastReview.technical_code, 100)}`,
+      summary: { round, draft_version: expectedVersion, review_status: lastReview.status },
+      retryable: lastReview.classification === "technical",
+    });
     if (lastReview.status === "approved") {
       return jsonResponse({
         ok: true,
@@ -1307,16 +1370,16 @@ function repairFailurePhase(code: string): string {
 
 function repairFailureMessage(code: string, retryable: boolean): string {
   const messages: Record<string, string> = {
-    DRAFT_VERSION_MOVED: "El borrador cambiÃ³ mientras se preparaba la correcciÃ³n. RecÃ¡rgalo antes de reintentar.",
-    DRAFT_REPAIR_NOT_APPLICABLE: "Atinara clasificÃ³ una incidencia como reparable, pero no encontrÃ³ una estrategia compatible. El defecto interno quedÃ³ registrado.",
-    SAFE_REPAIR_VALIDATION_FAILED: "El parche propuesto no superÃ³ la validaciÃ³n previa y no se guardÃ³.",
-    COMPATIBLE_REVIEW_REQUIRED: "La revisiÃ³n compatible no pudo completarse; se conservÃ³ el Ãºltimo estado autoritativo.",
-    SOURCE_VALIDATION_BUDGET_EXHAUSTED: "Se agotÃ³ el tiempo seguro de comprobaciÃ³n de fuentes. El estado ya guardado se conserva.",
-    PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente la operaciÃ³n. Atinara respetarÃ¡ el plazo de reintento.",
+    DRAFT_VERSION_MOVED: "El borrador cambió mientras se preparaba la corrección. Recárgalo antes de reintentar.",
+    DRAFT_REPAIR_NOT_APPLICABLE: "Atinara clasificó una incidencia como reparable, pero no encontró una estrategia compatible. El defecto interno quedó registrado.",
+    SAFE_REPAIR_VALIDATION_FAILED: "El parche propuesto no superó la validación previa y no se guardó.",
+    COMPATIBLE_REVIEW_REQUIRED: "La revisión compatible no pudo completarse; se conservó el último estado autoritativo.",
+    SOURCE_VALIDATION_BUDGET_EXHAUSTED: "Se agotó el tiempo seguro de comprobación de fuentes. El estado ya guardado se conserva.",
+    PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente la operación. Atinara respetará el plazo de reintento.",
   };
   return messages[code] || (retryable
-    ? "La fase tÃ©cnica no pudo completarse. El borrador continÃºa privado y puede reintentarse con seguridad."
-    : "La correcciÃ³n se detuvo con una causa tipada. El borrador continÃºa privado y sin confirmaciÃ³n.");
+      ? "La fase técnica no pudo completarse. El borrador continúa privado y puede reintentarse con seguridad."
+      : "La corrección se detuvo con una causa tipada. El borrador continúa privado y sin confirmación.");
 }
 
 async function repairAndRevalidate(
@@ -1330,7 +1393,7 @@ async function repairAndRevalidate(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey)) {
     return jsonResponse({
       error: "INVALID_REPAIR_REQUEST",
-      message: "El identificador de intento no es vÃ¡lido.",
+      message: "El identificador de intento no es válido.",
       failure_phase: "preflight",
       retryable: false,
       state_preserved: true,
@@ -1351,6 +1414,15 @@ async function repairAndRevalidate(
     const replayStatus = Number(beginning.http_status) || (beginning.status === "already_in_progress" ? 202 : 200);
     return jsonResponse({ ...beginning, attempt_id: attemptId, state_preserved: beginning.state_preserved !== false }, replayStatus);
   }
+  const agent = createAtinaraAgentRun({
+    agentType: "market_corrector_agent",
+    objective: "Aplicar el parche mínimo reparable, persistir una sola versión material y volver a validar sin publicar.",
+    policyVersion: AUTONOMOUS_REPAIR_VERSION,
+    runId: attemptId || requestKey,
+    maxSteps: 24,
+    maxRepeatedActions: 4,
+    deadlineAt: Date.now() + SOURCE_VALIDATION_BUDGET_MS + 10_000,
+  });
 
   const complete = async (payloadValue: JsonRecord, httpStatus: number): Promise<Response> => {
     const errorCode = cleanText(payloadValue.error, 120);
@@ -1413,9 +1485,15 @@ async function repairAndRevalidate(
   };
 
   try {
-    const response = await executeRepairAndRevalidate(env, authorization, { ...body, attempt_id: requestKey });
+    const response = await executeRepairAndRevalidate(env, authorization, { ...body, attempt_id: requestKey, __agent: agent });
     const payload = await response.clone().json().catch(() => ({})) as JsonRecord;
-    return await complete(payload, response.status);
+    const agentStatus = response.ok && payload.ok === true
+      ? "completed"
+      : payload.classification === "technical" ? "degraded" : "blocked";
+    return await complete({
+      ...payload,
+      agent_execution: agent.complete(agentStatus, cleanText(payload.error, 100) || null),
+    }, response.status);
   } catch (error) {
     const code = safeErrorCode(error);
     const retryable = /TIMEOUT|RATE_LIMIT|HTTP_5|NETWORK|BUDGET/.test(code);
@@ -1432,6 +1510,7 @@ async function repairAndRevalidate(
       previous_version: expectedVersion,
       new_version: expectedVersion,
       repair_applied: false,
+      agent_execution: agent.complete(retryable ? "degraded" : "failed", code),
     }, status);
   }
 }

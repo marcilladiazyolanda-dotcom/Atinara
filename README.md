@@ -4,6 +4,8 @@ MVP de red social competitiva de predicciones gaming basada en Karma, Prestigio 
 
 Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
+Contrato operativo de los agentes: [`docs/ATINARA_AGENT_ENGINE.md`](docs/ATINARA_AGENT_ENGINE.md).
+
 ## Estado vigente · cierre definitivo del ciclo experto
 
 Atinara conserva su producto social de predicciones con Karma ficticio y, sobre
@@ -13,12 +15,13 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El backend coordinado está activo en producción y GitHub Pages ya sirve el
-corte `v=20260811-radar-eligibility2` desde
-`d58173d5245708b3ff789a931b16f5f89721d58b`. El smoke autenticado posterior a
-la subida confirmó el refresco real, el cooldown en tiempo real, la persistencia
-al cambiar de pestaña, las opciones completas y los temas claro y oscuro sin
-preparar, confirmar ni publicar mercados.
+El backend coordinado está activo en producción. GitHub Pages continúa sirviendo
+el corte anterior `v=20260811-radar-eligibility2`; el frontend de este cierre usa
+`v=20260812-agent-engine2` y no debe declararse publicado hasta que Yol suba el
+ZIP incremental y se repita el smoke. El smoke autenticado contra Pages y el
+backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
+aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
+opciones completas sin confirmar ni publicar mercados.
 
 - `Datos y tendencias` ocupa la tercera pestaña de `Gestionar mercados`, entre
   el Radar y `Mercados publicados`. IGDB, Twitch y YouTube son proveedores
@@ -51,8 +54,8 @@ preparar, confirmar ni publicar mercados.
   Las restantes también están aplicadas y registradas en producción. La
   corrección operativa `20260809180000_fix_radar_refresh_timeout.sql` también
   está aplicada y no debe repetirse.
-- `market-radar` v50, `market-draft-fixer` v16,
-  `validate-market-draft` v26 y `market-expert` v20 están activas con
+- `market-radar` v54, `market-draft-fixer` v18,
+  `validate-market-draft` v26 y `market-expert` v21 están activas con
   `verify_jwt=true`. Radar separa disponibilidad técnica, descartes de contenido
   y cuarentena por fila; Gemini conserva el último estado válido y no bloquea a
   los demás proveedores. Editor, Validador y Corrector comparten una taxonomía
@@ -69,6 +72,14 @@ preparar, confirmar ni publicar mercados.
   El bootstrap histórico solo concede `technical_hold`; una fuente primaria
   exige registro y evidencia exacta, y una revisión material distinta invalida
   la procedencia del borrador.
+- El cierre de agente y publicación añade cuatro migraciones no repetibles. Sus
+  archivos locales `20260811221546_...v8`, `20260812012000_...v9`,
+  `20260812014000_...v10` y `20260812015500_...v11` constan remotamente como
+  `20260811230350`, `20260811231921`, `20260811232315` y `20260811232708`.
+  V8 liga publicación a versión, huella, revisión, candidata y check exactos;
+  v9 exige autoridad resolutiva del contrato exacto; v10 impide convertir
+  errores reintentables en decisiones terminales; v11 proyecta los
+  `technical_hold` como revisión pendiente, nunca como rechazo editorial.
 - El borrador privado de regresión Marvel está reparado como versión 9 mediante
   reglas generales: `resolution_deadline` se deriva del periodo evaluado y la
   política temporal, las representaciones UTC/Europe-Madrid equivalentes no se
@@ -76,25 +87,36 @@ preparar, confirmar ni publicar mercados.
   factual no respaldada y las fuentes de contexto se conservan por historial
   append-only. Su revisión efectiva es `approved`; continúa privado, sin
   confirmación, programación, publicación ni `market_id`.
-- El smoke real final del Radar conservó disponibles todos los proveedores:
-  Gemini 153/153, Kalshi 84 aceptadas y 1 en cuarentena, Polymarket 69 aceptadas
-  y 5 en cuarentena, y Tavily/ideas gaming sin candidatas. Los seis descartes
-  fueron `RADAR_PROVIDER_FACT_REQUIRED`; no degradaron la salud del proveedor.
-  El aislamiento se hace en una sola RPC por lote con subtransacciones SQL por
-  candidata, por lo que una fila venenosa no agota el presupuesto ni pierde el
-  resto del lote.
-- La suite final pasa sintaxis de 72 archivos JavaScript, 348/348 pruebas y
-  TypeScript. Las pruebas SQL de ciclo y aislamiento pasaron dentro de
-  transacciones con `ROLLBACK`; la prueba positiva de la puerta de publicación
-  también materializó y deshizo su resultado, manteniendo obligatoria la
-  confirmación humana.
-- Los avisos de Advisors sobre `SECURITY DEFINER` son contratos revisados, no
-  una autorización implícita: todas las funciones advertidas fijan
-  `search_path`, las RPC administrativas comprueban administradora en servidor
-  y fallan con `42501` para una identidad autenticada ordinaria. La protección
-  nativa contra contraseñas filtradas continúa pendiente de un plan Supabase
-  Pro; en Free, el alta y la recuperación normales usan HIBP por k-anonimato y
-  fallan cerradas, sin enviar la contraseña ni su hash completo.
+- El smoke real con Radar v54 dejó Polymarket `available` con 48 procesadas y
+  Kalshi `available` con 79. Tavily/Ideas gaming falló de forma aislada y
+  reintentable; la UI mostró cobertura degradada y conservó los contratos
+  oficiales útiles. Marvel ofreció 12 opciones elegibles y excluyó la opción
+  `>95` ya ligada a su borrador. El cooldown bajó de 127 a 124 segundos en tres
+  segundos. Madden NFL 27 permaneció terminal y oculto con evidencia oficial
+  directa de EA; Best Multiplayer 2026 se clasificó como opciones no
+  negociables, no como evento padre resuelto.
+- La validación final pasa 358/358 pruebas, sintaxis de 74 JavaScript y
+  TypeScript. Las matrices SQL v8–v11 pasaron en producción dentro de
+  transacciones de prueba sin publicar ni tocar la economía. Las huellas
+  canónicas permanecen idénticas a la línea base: 15 mercados
+  `70d93479e2efe650e3623be40e9aee688216abdbe9866dd5f2a02f67da3ee137`,
+  9 predicciones
+  `170372fee7b857c67a51f2c3b33f9675f5b0b406c6040625520d2d6df2a3059c`,
+  2 perfiles
+  `8492fdfc993bc473e6a2d9f00924dc8b39b8650f196f86dcf049ed50a179f6bc`,
+  15 estados LMSR
+  `b3d1a0a27e6a7a754576057aba35c317c1b651388fe67ffceb13784472a0c927`
+  y 17 precios
+  `8eb3d854e5ff20eb7ccad96efcbabd4d7545e17ffa457e74630d6f2f2e0f7adf`.
+  Karma total sigue en 2.932 y Prestigio total en 40.
+- El advisor de seguridad devuelve 152 avisos: 49 `INFO` por tablas privadas
+  con RLS y ninguna policy (cierre denegatorio intencional), 18 funciones
+  `SECURITY DEFINER` anónimas de lectura pública, 83 funciones autenticadas con
+  controles de administradora o propietaria, una recomendación preexistente de
+  `pg_net` y la protección nativa de contraseñas filtradas. No existe una RPC
+  mutadora pública sin control de identidad. La protección nativa requiere
+  Supabase Pro; en Free, el formulario normal usa HIBP por k-anonimato y falla
+  cerrado, pero no puede interceptar llamadas directas a Auth.
 - Las credenciales de Twitch y YouTube no forman parte del repositorio. Deben
   configurarse, si Yol decide activarlas, únicamente como secretos de Supabase.
   Los dos schedulers preparados permanecen desactivados y son independientes.

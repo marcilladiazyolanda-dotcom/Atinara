@@ -51,6 +51,7 @@ export const RADAR_REASON_CODES = Object.freeze({
   PROVIDER_EVENT_NOT_FOUND: "PROVIDER_EVENT_NOT_FOUND",
   PROVIDER_CHILD_NOT_FOUND: "PROVIDER_CHILD_NOT_FOUND",
   RESOLUTION_SOURCE_AUTHORITY_PENDING: "RESOLUTION_SOURCE_AUTHORITY_PENDING",
+  OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "OFFICIAL_TERMINAL_SCAN_UNAVAILABLE",
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "OFFICIAL_SELECTION_RECHECK_REQUIRED",
   VERIFICATION_REQUIRED: "VERIFICATION_REQUIRED",
   VERIFICATION_EXPIRED: "VERIFICATION_EXPIRED",
@@ -99,6 +100,7 @@ const REASON_COPY = Object.freeze({
   PROVIDER_EVENT_NOT_FOUND: "El evento de origen ya no existe o no se pudo verificar.",
   PROVIDER_CHILD_NOT_FOUND: "La opción de mercado ya no pertenece al evento verificado.",
   RESOLUTION_SOURCE_AUTHORITY_PENDING: "Atinara todavía no ha recuperado una fuente resolutiva oficial y exacta para esta opción.",
+  OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "La comprobación oficial de resultados conocidos no terminó; Atinara conserva el último expediente válido y reintentará.",
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "Una fuente oficial apunta a una selección ya publicada, pero Atinara debe completar su comprobación antes de volver a mostrar el evento.",
   VERIFICATION_REQUIRED: "La candidata necesita completar una comprobación automática antes de preparar un borrador.",
   VERIFICATION_EXPIRED: "La comprobación automática ha caducado y debe repetirse.",
@@ -445,6 +447,28 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
   const originalUrl = safePublicUrl(input.external_market_url ?? input.external_url, PROVIDER_PUBLIC_HOSTS[provider] ?? null);
   const eventUrl = safePublicUrl(input.external_event_url, PROVIDER_PUBLIC_HOSTS[provider] ?? null);
   const resolutionUrl = safePublicUrl(input.resolution_url);
+  const rawResolutionProvenance = isRecord(input.resolution_source_provenance)
+    ? input.resolution_source_provenance : {};
+  const resolutionSourceProvenance = resolutionUrl
+    && cleanText(rawResolutionProvenance.provider, 40) === provider
+    && safePublicUrl(rawResolutionProvenance.source_url) === resolutionUrl
+    && cleanText(rawResolutionProvenance.adapter_version, 100) === RADAR_NORMALIZER_VERSION
+    && [
+      "market.resolutionSource",
+      "event.resolutionSource",
+      "market.settlement_sources",
+      "event.settlement_sources",
+      "market.rules_url",
+      "event.rules_url",
+    ].includes(cleanText(rawResolutionProvenance.upstream_field, 100))
+    ? {
+      provider,
+      source_url: resolutionUrl,
+      upstream_field: cleanText(rawResolutionProvenance.upstream_field, 100),
+      adapter_version: RADAR_NORMALIZER_VERSION,
+      declared_by_provider: true,
+    }
+    : null;
   const eventKey = cleanText(input.event_group_key, 240) || `${provider}:${cleanText(input.external_event_id ?? externalId, 180)}`;
   const probability = safeProbability(input.probability);
   if (probability !== null && (probability <= 1.5 || probability >= 98.5)) warnings.push("Probabilidad extrema: confirma que el mercado sigue siendo útil y abierto.");
@@ -475,6 +499,7 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
     source_settled_at: safeIsoDate(input.settled_at),
     source_resolution_rules: cleanText(input.resolution_rules, 5000) || null,
     source_resolution_url: resolutionUrl,
+    source_resolution_provenance: resolutionSourceProvenance,
     external_url: originalUrl || eventUrl,
     external_event_url: eventUrl,
     external_market_url: originalUrl,
@@ -569,6 +594,11 @@ export function adaptPolymarketResponse(payload, options = {}) {
       const marketId = cleanText(market.id ?? market.conditionId ?? market.slug, 220);
       if (!marketId) continue;
       const marketSlug = cleanText(market.slug, 400);
+      const marketResolutionUrl = safePublicUrl(market.resolutionSource);
+      const eventResolutionUrl = safePublicUrl(event.resolutionSource);
+      const resolutionUrl = marketResolutionUrl ?? eventResolutionUrl;
+      const resolutionUpstreamField = marketResolutionUrl
+        ? "market.resolutionSource" : eventResolutionUrl ? "event.resolutionSource" : null;
       const parsed = parsePolymarketOutcomes(market);
       const childUnavailable = market.closed === true
         || market.archived === true
@@ -593,7 +623,13 @@ export function adaptPolymarketResponse(payload, options = {}) {
         result: market.result ?? market.resolutionResult ?? market.winningOutcome,
         settled_at: market.resolvedAt ?? market.resolutionDate ?? event.resolvedAt ?? event.resolutionDate,
         resolution_rules: market.description ?? event.description,
-        resolution_url: market.resolutionSource ?? event.resolutionSource,
+        resolution_url: resolutionUrl,
+        resolution_source_provenance: resolutionUrl && resolutionUpstreamField ? {
+          provider: "polymarket",
+          source_url: resolutionUrl,
+          upstream_field: resolutionUpstreamField,
+          adapter_version: RADAR_NORMALIZER_VERSION,
+        } : null,
         external_event_id: eventId,
         external_market_id: marketId,
         external_event_slug: eventSlug,
@@ -670,6 +706,12 @@ export function adaptKalshiResponse(payload, options = {}) {
     const resolutionSources = [...new Set(rawResolutionSources
       .map((source) => safePublicUrl(isRecord(source) ? source.url : source))
       .filter(Boolean))].slice(0, 10);
+    const marketRulesUrl = safePublicUrl(market.rules_url);
+    const eventRulesUrl = safePublicUrl(event.rules_url);
+    const resolutionUrl = resolutionSources[0] ?? marketRulesUrl ?? eventRulesUrl;
+    const resolutionUpstreamField = resolutionSources.length
+      ? (Array.isArray(market.settlement_sources) ? "market.settlement_sources" : "event.settlement_sources")
+      : marketRulesUrl ? "market.rules_url" : eventRulesUrl ? "event.rules_url" : null;
     const candidate = baseCandidate("kalshi", `kalshi:${ticker}`, {
       title: event.title ?? market.title,
       question: market.title ?? event.title,
@@ -685,7 +727,13 @@ export function adaptKalshiResponse(payload, options = {}) {
       result: market.result,
       settled_at: market.settlement_ts ?? market.determined_at ?? event.settlement_ts,
       resolution_rules: rules,
-      resolution_url: resolutionSources[0] ?? market.rules_url ?? event.rules_url,
+      resolution_url: resolutionUrl,
+      resolution_source_provenance: resolutionUrl && resolutionUpstreamField ? {
+        provider: "kalshi",
+        source_url: resolutionUrl,
+        upstream_field: resolutionUpstreamField,
+        adapter_version: RADAR_NORMALIZER_VERSION,
+      } : null,
       external_event_id: eventTicker,
       external_market_id: ticker,
       external_event_slug: cleanText(event.slug, 400),
@@ -1869,6 +1917,10 @@ function sameCandidateIdentity(candidate, item) {
   const candidateId = cleanText(candidate?.id, 220);
   const itemId = cleanText(item?.id, 220);
   if (candidateId && itemId && candidateId === itemId) return true;
+  const preparedDraftId = cleanText(candidate?.prepared_draft_id, 220);
+  const itemRadarCandidateId = cleanText(item?.radar_candidate_id, 220);
+  if ((preparedDraftId && itemId === preparedDraftId)
+      || (candidateId && itemRadarCandidateId === candidateId)) return true;
   const candidateProvider = cleanText(candidate?.provider, 80).toLowerCase();
   const itemProvider = cleanText(item?.provider, 80).toLowerCase();
   const candidateExternalId = cleanText(candidate?.external_id, 300);
@@ -2608,6 +2660,180 @@ function registeredAuthorityDomain(urlValue, authoritativeDomains) {
     .find((domain) => host === domain || host.endsWith(`.${domain}`)) ?? null;
 }
 
+export function providerResolutionSourceUrls(candidate, authoritativeDomains = new Set()) {
+  const provenance = isRecord(candidate?.source_resolution_provenance)
+    ? candidate.source_resolution_provenance : {};
+  const url = safePublicUrl(candidate?.source_resolution_url);
+  const provider = cleanText(candidate?.provider, 40);
+  const upstreamField = cleanText(provenance.upstream_field, 100);
+  const trustedFields = [
+    "market.resolutionSource",
+    "event.resolutionSource",
+    "market.settlement_sources",
+    "event.settlement_sources",
+    "market.rules_url",
+    "event.rules_url",
+  ];
+  if (!url
+      || !registeredAuthorityDomain(url, authoritativeDomains)
+      || cleanText(provenance.provider, 40) !== provider
+      || safePublicUrl(provenance.source_url) !== url
+      || provenance.declared_by_provider !== true
+      || cleanText(provenance.adapter_version, 100) !== cleanText(candidate?.normalizer_version, 100)
+      || cleanText(candidate?.normalizer_version, 100) !== RADAR_NORMALIZER_VERSION
+      || !trustedFields.includes(upstreamField)) return [];
+  return [url];
+}
+
+function resolutionContractIdentity(candidate) {
+  const payload = isRecord(candidate?.provider_payload) ? candidate.provider_payload : {};
+  return cleanText(
+    candidateResolutionSubject(candidate)
+      || candidate?.family_child_label
+      || payload?.yes_sub_title
+      || payload?.no_sub_title,
+    240,
+  );
+}
+
+const RESOLUTION_AUTHORITY_IDENTITY_STOPWORDS = new Set([
+  "after", "antes", "como", "con", "del", "desde", "during", "este", "esta", "game",
+  "juego", "para", "release", "released", "sera", "será", "sobre", "the", "will", "year",
+]);
+
+function resolutionAuthorityIdentityTokens(value) {
+  return normalizeComparableText(value).split(" ")
+    .filter((token) => token.length >= 3 && !RESOLUTION_AUTHORITY_IDENTITY_STOPWORDS.has(token));
+}
+
+function resolutionAuthorityIdentityMatches(value, material) {
+  const identity = normalizeComparableText(value);
+  const comparableMaterial = normalizeComparableText(material);
+  const tokens = resolutionAuthorityIdentityTokens(value);
+  if (!identity || !comparableMaterial || !tokens.length) return false;
+  if (comparableMaterial.includes(identity)) return true;
+  const materialTokens = new Set(comparableMaterial.split(" "));
+  return tokens.every((token) => materialTokens.has(token));
+}
+
+function resolutionAuthorityEndpointIdentity(candidate, contract, page) {
+  const finalUrl = safePublicUrl(page?.url);
+  if (!finalUrl) return null;
+  const parsed = new URL(finalUrl);
+  const headerMaterial = `${parsed.pathname} ${cleanText(page?.title, 300)}`;
+  if (resolutionAuthorityIdentityMatches(contract.identity, headerMaterial)) {
+    return "subject_header";
+  }
+  const familyIdentity = cleanText(candidate?.family_title ?? candidate?.source_title, 500);
+  if (resolutionAuthorityIdentityMatches(familyIdentity, headerMaterial)
+      && resolutionAuthorityIdentityMatches(contract.identity, cleanText(page?.content, 300_000))) {
+    return "family_header_child_content";
+  }
+  return null;
+}
+
+export function resolutionAuthorityContract(candidate, urlValue, authoritativeDomains = new Set()) {
+  const url = safePublicUrl(urlValue);
+  const domain = registeredAuthorityDomain(url, authoritativeDomains);
+  const providerUrls = providerResolutionSourceUrls(candidate, authoritativeDomains);
+  if (!url || !domain || !providerUrls.includes(url)) return null;
+  const rules = cleanText(candidate?.source_resolution_rules, 4_000);
+  const identity = resolutionContractIdentity(candidate);
+  const normalizedRules = normalizeComparableText(rules);
+  const identityTokens = normalizeComparableText(identity).split(" ").filter((token) => token.length > 2);
+  const hasIdentity = identityTokens.length > 0 && identityTokens.every((token) => normalizedRules.includes(token));
+  const hasResolutionPredicate = /\b(?:resolv(?:e|es|ed|er|era|erá)|settle[sd]?|determined|determina(?:do|r|rá))\b/i.test(rules);
+  const hasOutcome = /\b(?:yes|no|si|sí|true|false)\b/i.test(rules);
+  if (rules.length < 24 || !hasIdentity || !hasResolutionPredicate || !hasOutcome) return null;
+  return {
+    url,
+    canonical_domain: domain,
+    identity,
+    contract_sha_material: `${domain}|${url}|${identity}|${rules}`,
+    authority_role: "PRIMARY_RESOLUTION",
+    policy_version: "atinara-resolution-authority-v3",
+    provider: cleanText(candidate?.provider, 40),
+    provider_contract_field: cleanText(candidate?.source_resolution_provenance?.upstream_field, 100),
+    adapter_version: cleanText(candidate?.normalizer_version, 100),
+  };
+}
+
+export function buildResolutionAuthorityEvidence(candidate, page, retrievedAt, authoritativeDomains = new Set()) {
+  const finalUrl = safePublicUrl(page?.url);
+  const providerUrls = providerResolutionSourceUrls(candidate, authoritativeDomains);
+  const contractUrl = providerUrls.find((candidateUrl) => {
+    try {
+      const candidateHost = new URL(candidateUrl).hostname.toLowerCase().replace(/^www\./, "");
+      const finalHost = finalUrl ? new URL(finalUrl).hostname.toLowerCase().replace(/^www\./, "") : "";
+      return candidateUrl === finalUrl || candidateHost === finalHost;
+    } catch {
+      return false;
+    }
+  });
+  const contract = resolutionAuthorityContract(candidate, contractUrl, authoritativeDomains);
+  const endpointIdentityBasis = contract
+    ? resolutionAuthorityEndpointIdentity(candidate, contract, page)
+    : null;
+  if (!contract || !finalUrl || !registeredAuthorityDomain(finalUrl, authoritativeDomains)
+      || !endpointIdentityBasis
+      || !/^[0-9a-f]{64}$/i.test(cleanText(page?.contentSha256, 80))) return null;
+  return {
+    title: cleanText(page?.title, 300) || contract.canonical_domain,
+    url: finalUrl,
+    contract_url: contract.url,
+    provider: contract.provider,
+    provider_contract_field: contract.provider_contract_field,
+    adapter_version: contract.adapter_version,
+    published_at: null,
+    source_type: "official",
+    supports: "El endpoint resolutivo declarado por el proveedor coincide con la identidad contractual y responde en un dominio oficial registrado.",
+    retrieved_at: safeIsoDate(retrievedAt),
+    retrieval_status: "verified_authority_endpoint",
+    evidence_basis: "provider_resolution_contract",
+    parser_version: "atinara-resolution-authority-v3",
+    content_sha256: cleanText(page.contentSha256, 80).toLowerCase(),
+    content_type: cleanText(page?.contentType, 100),
+    claim_status: "resolution_authority",
+    direct_claim: false,
+    claim_verifiable: true,
+    authority_role: contract.authority_role,
+    resolution_contract_specific: true,
+    candidate_external_id: cleanText(candidate?.external_id, 220),
+    contract_identity: contract.identity,
+    endpoint_identity_verified: true,
+    endpoint_identity_basis: endpointIdentityBasis,
+    canonical_domain: contract.canonical_domain,
+    contract_policy_version: contract.policy_version,
+    relevance_score: 100,
+    supported_reason_codes: [],
+    supported_fact_statuses: [],
+    supported_contract_kinds: [],
+    unresolved_proof: false,
+  };
+}
+
+export function isResolutionAuthorityEvidence(item) {
+  return isRecord(item)
+    && item.source_type === "official"
+    && item.retrieval_status === "verified_authority_endpoint"
+    && item.evidence_basis === "provider_resolution_contract"
+    && item.parser_version === "atinara-resolution-authority-v3"
+    && item.claim_status === "resolution_authority"
+    && item.direct_claim === false
+    && item.claim_verifiable === true
+    && item.authority_role === "PRIMARY_RESOLUTION"
+    && item.resolution_contract_specific === true
+    && Boolean(cleanText(item.candidate_external_id, 220))
+    && Boolean(cleanText(item.contract_identity, 240))
+    && item.endpoint_identity_verified === true
+    && ["subject_header", "family_header_child_content"].includes(cleanText(item.endpoint_identity_basis, 80))
+    && Boolean(cleanText(item.provider, 40))
+    && Boolean(cleanText(item.provider_contract_field, 100))
+    && Boolean(cleanText(item.adapter_version, 100))
+    && /^[0-9a-f]{64}$/i.test(cleanText(item.content_sha256, 80))
+    && Boolean(safePublicUrl(item.url));
+}
+
 function exactResolutionEvidence(candidate, item) {
   if (!isVerifiedOfficialEvidence(item, true)) return false;
   const subject = candidateResolutionSubject(candidate);
@@ -2641,7 +2867,18 @@ export function selectVerifiedResolutionUrl(candidate, evidence = [], authoritat
   const verifiedEvidence = (Array.isArray(evidence) ? evidence : [])
     .filter((item) => exactResolutionEvidence(candidate, item))
     .filter((item) => Boolean(registeredAuthorityDomain(item.url, authoritativeDomains)));
-  const remember = (urlValue, item = {}) => {
+  const authorityEvidence = (Array.isArray(evidence) ? evidence : [])
+    .filter((item) => isResolutionAuthorityEvidence(item))
+    .filter((item) => cleanText(item.candidate_external_id, 220) === cleanText(candidate?.external_id, 220))
+    .filter((item) => normalizeComparableText(item.contract_identity)
+      === normalizeComparableText(resolutionContractIdentity(candidate)))
+    .filter((item) => Boolean(registeredAuthorityDomain(item.url, authoritativeDomains)))
+    .filter((item) => Boolean(resolutionAuthorityContract(
+      candidate,
+      item.contract_url ?? item.url,
+      authoritativeDomains,
+    )));
+  const remember = (urlValue, item = {}, authorityOnly = false) => {
     const url = safePublicUrl(urlValue);
     if (!url || !registeredAuthorityDomain(url, authoritativeDomains)) return;
     const parsed = new URL(url);
@@ -2651,8 +2888,8 @@ export function selectVerifiedResolutionUrl(candidate, evidence = [], authoritat
       material.includes(comparableSubject)
       || (subjectTokens.length >= 1 && subjectTokens.every((token) => material.split(" ").includes(token)))
     );
-    if (!exactSubject) return;
-    let score = 100;
+    if (!exactSubject && !authorityOnly) return;
+    let score = authorityOnly ? 140 : 200;
     const platform = host.endsWith("playstation.com") ? "playstation"
       : host.endsWith("nintendo.com") ? "nintendo"
         : host.endsWith("xbox.com") ? "xbox"
@@ -2665,9 +2902,13 @@ export function selectVerifiedResolutionUrl(candidate, evidence = [], authoritat
     sources.push({ url, score });
   };
   for (const item of verifiedEvidence) remember(item.url, item);
+  for (const item of authorityEvidence) remember(item.url, item, true);
   const existingUrl = safePublicUrl(candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url);
   const existingProof = verifiedEvidence.find((item) => safePublicUrl(item.url) === existingUrl);
+  const existingAuthority = authorityEvidence.find((item) => safePublicUrl(item.url) === existingUrl
+    || safePublicUrl(item.contract_url) === existingUrl);
   if (existingProof) remember(existingUrl, existingProof);
+  else if (existingAuthority) remember(existingAuthority.url, existingAuthority, true);
   sources.sort((left, right) => right.score - left.score || left.url.localeCompare(right.url));
   return sources[0]?.url ?? null;
 }
@@ -3061,8 +3302,10 @@ export function applyDeterministicRadarEligibility(candidate, decision = null, n
   const code = cleanText(decision?.reason_code, 100) || null;
   const eligible = !decision || decision.eligible !== false;
   const retryableHold = code === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING
+    || code === RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE
     || code === RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED
-    || code === RADAR_REASON_CODES.VERIFICATION_REQUIRED;
+    || code === RADAR_REASON_CODES.VERIFICATION_REQUIRED
+    || code === RADAR_REASON_CODES.VERIFICATION_EXPIRED;
   const status = eligible ? "verified_open"
     : code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "rejected_resolved"
       : code === RADAR_REASON_CODES.DUPLICATE_MARKET ? "rejected_duplicate"

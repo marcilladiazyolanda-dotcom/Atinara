@@ -12,6 +12,7 @@ const admin = fs.readFileSync(path.join(root, "admin-markets.js"), "utf8");
 const draftFixerUi = fs.readFileSync(path.join(root, "market-draft-fixer.js"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260809140000_authoritative_radar_fact_gate_v1.sql"), "utf8");
 const eligibilityMigration = fs.readFileSync(path.join(root, "supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql"), "utf8");
+const agentEngineMigration = fs.readFileSync(path.join(root, "supabase/migrations/20260811221546_close_agent_engine_confirmation_and_source_authority_v8.sql"), "utf8");
 const reconciliationMigration = fs.readFileSync(path.join(root, "supabase/migrations/20260809145000_reconcile_authoritative_radar_fact_gate_v2.sql"), "utf8");
 const legacyAttestationMatrix = fs.readFileSync(path.join(root, "supabase/tests/market_radar_legacy_fact_attestation_transaction.sql"), "utf8");
 const publicationFlow = fs.readFileSync(path.join(root, "supabase/migrations/20260808144221_fix_atomic_resolution_plan_publication_flow.sql"), "utf8");
@@ -644,24 +645,24 @@ test("la UI distingue caché vigente, serializa cargas y no se autoactualiza al 
   assert.doesNotMatch(admin, /state\.radar\.cached[^\n]{0,120}\? "Verificado"/);
 });
 
-test("un borrador Radar renueva elegibilidad antes de confirmar y publicar", () => {
-  assert.match(eligibilityMigration, /create or replace function private\.assert_market_radar_draft_eligibility_v1/);
-  assert.match(eligibilityMigration, /radar_candidate_id[\s\S]*radar_eligibility_check_id[\s\S]*radar_eligibility_decision_hash/);
-  assert.match(eligibilityMigration, /perform private\.assert_market_radar_candidate_eligible_v1/);
-  assert.match(eligibilityMigration, /raise exception 'RADAR_EVENT_ALREADY_RESOLVED'/);
-  assert.match(eligibilityMigration, /create or replace function private\.assert_market_source_publication_ready[\s\S]*assert_market_radar_draft_eligibility_v1/);
-  assert.match(eligibilityMigration, /before update of workflow_status, radar_candidate_id, source_provenance/);
-  assert.match(eligibilityMigration, /old_radar_linked[\s\S]*new\.radar_candidate_id is distinct from old\.radar_candidate_id/);
-  assert.match(eligibilityMigration, /new_link is distinct from old_link/);
-  assert.match(eligibilityMigration, /RADAR_DRAFT_ELIGIBILITY_LINK_IMMUTABLE/);
+test("un borrador Radar confirma en privado y renueva una ligadura exacta antes de publicar", () => {
+  assert.match(agentEngineMigration, /create table if not exists private\.market_draft_eligibility_bindings/);
+  assert.match(agentEngineMigration, /draft_version[\s\S]*draft_fingerprint[\s\S]*preparation_revision[\s\S]*eligibility_check_id/);
+  assert.match(agentEngineMigration, /create or replace function private\.assert_market_radar_draft_eligibility_v1/);
+  assert.match(agentEngineMigration, /RADAR_DRAFT_ELIGIBILITY_BINDING_REQUIRED/);
+  assert.match(agentEngineMigration, /if new\.workflow_status in \('scheduled', 'published'\)/);
+  assert.doesNotMatch(agentEngineMigration, /if new\.workflow_status in \('human_confirmed', 'scheduled', 'published'\)/);
 
-  const confirmStart = publicationFlow.indexOf("create or replace function public.confirm_market_draft_review");
+  const confirmStart = agentEngineMigration.indexOf("create or replace function public.confirm_market_draft_review");
+  const triggerStart = agentEngineMigration.indexOf("create or replace function private.market_draft_radar_eligibility_gate_v1");
+  const confirmBody = agentEngineMigration.slice(confirmStart, triggerStart);
+  assert.match(confirmBody, /ensure_market_source_confirmation_ready_v1/);
+  assert.doesNotMatch(confirmBody, /ensure_market_source_publication_ready/);
+
   const materializeStart = publicationFlow.indexOf("create or replace function private.materialize_market_draft");
   const publishStart = publicationFlow.indexOf("create or replace function public.publish_market_draft");
-  const confirmBody = publicationFlow.slice(confirmStart, materializeStart);
   const materializeBody = publicationFlow.slice(materializeStart, publishStart);
   const publishBody = publicationFlow.slice(publishStart, publicationFlow.indexOf("create or replace function public.get_admin_market_draft", publishStart));
-  assert.match(confirmBody, /ensure_market_source_publication_ready/);
   assert.ok(publishBody.indexOf("ensure_market_source_publication_ready") < publishBody.indexOf("if scheduled_for_input is not null"));
   assert.ok(materializeBody.indexOf("assert_market_source_publication_ready") < materializeBody.indexOf("insert into public.markets"));
 
@@ -675,7 +676,8 @@ test("un borrador Radar renueva elegibilidad antes de confirmar y publicar", () 
   const publishUi = admin.slice(publishStartUi, admin.indexOf("async function requestReview", publishStartUi) > 0
     ? admin.indexOf("async function requestReview", publishStartUi)
     : admin.indexOf("async function loadRadar", publishStartUi));
-  assert.ok(confirmUi.indexOf("ensureRadarDraftEligibility(draft)") < confirmUi.indexOf('rpc("confirm_market_draft_review"'));
+  assert.doesNotMatch(confirmUi, /ensureRadarDraftEligibility\(draft\)/);
+  assert.match(confirmUi, /rpc\("confirm_market_draft_review"/);
   assert.ok(publishUi.indexOf("ensureRadarDraftEligibility(draft)") < publishUi.indexOf('rpc("publish_market_draft"'));
   assert.match(admin, /confirmationRequested &&/);
   assert.match(admin, /publicationRequested &&/);

@@ -16,6 +16,7 @@ import {
   buildCoverResolutionSignals,
   buildDraftPrefill,
   buildGeminiCandidateBatches,
+  buildResolutionAuthorityEvidence,
   canApplyPredictivePolicyOverride,
   canReuseRadarVerification,
   candidateResolutionSubject,
@@ -40,6 +41,7 @@ import {
   isBlockingDuplicateMatch,
   isDeterministicUnresolvedEvidence,
   isRecord,
+  isResolutionAuthorityEvidence,
   isVerifiedOfficialEvidence,
   isVerifiedTerminalEvidence,
   normalizeProviderResult,
@@ -47,6 +49,7 @@ import {
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
   parseGeminiAdaptations,
+  providerResolutionSourceUrls,
   providerResultLabel,
   propagateResolvedEventGroups,
   publicProviderError,
@@ -57,6 +60,9 @@ import {
   selectVerifiedResolutionUrl,
   summarizeRejections,
 } from "../_shared/market-radar.mjs";
+import {
+  createAtinaraAgentRun,
+} from "../_shared/atinara-agent-runtime.mjs";
 
 type JsonRecord = Record<string, unknown>;
 type Environment = NonNullable<ReturnType<typeof getEnvironment>>;
@@ -1314,12 +1320,41 @@ async function reconcileRejectedKalshiOutcomes(
   return outcome.persistedCount;
 }
 
-async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[], authoritativeDomains: ReadonlySet<string>) {
-  if (!apiKey) throw new Error("PROVIDER_NOT_CONFIGURED");
+type OfficialResearchOutcome = {
+  evidenceByGroup: Map<string, JsonRecord[]>;
+  enrichmentError: unknown | null;
+  incompleteGroupKeys: string[];
+  agentExecution: JsonRecord;
+};
+
+async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[], authoritativeDomains: ReadonlySet<string>): Promise<OfficialResearchOutcome> {
   if (!authoritativeDomains.size) throw new Error("SOURCE_REGISTRY_UNAVAILABLE");
   const groups = groupCandidates(candidates).slice(0, MAX_GEMINI_GROUPS);
   const evidence = new Map<string, JsonRecord[]>();
-  const settled = await mapWithConcurrency(groups, TAVILY_CONCURRENCY, async (group) => {
+  const incompleteGroupKeys = new Set<string>();
+  const agent = createAtinaraAgentRun({
+    agentType: "radar_source_agent",
+    objective: "Encontrar una autoridad resolutiva oficial y descartar resultados terminales sin inventar hechos.",
+    policyVersion: RADAR_ELIGIBILITY_POLICY_VERSION,
+    maxSteps: 8,
+    deadlineAt: Date.now() + OFFICIAL_SOURCE_BUDGET_MS + OFFICIAL_RELATED_SOURCE_BUDGET_MS + OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS + 8_000,
+  });
+  const discoveredByGroup = new Map<string, string[]>();
+  let directContractCount = 0;
+  for (const group of groups) {
+    const urls = [...new Set(toRecordArray(group.candidates)
+      .flatMap((candidate) => providerResolutionSourceUrls(candidate, authoritativeDomains)))]
+      .slice(0, 8);
+    directContractCount += urls.length;
+    discoveredByGroup.set(cleanText(group.event_group_key, 240), urls);
+  }
+  agent.record("read_provider_contract", {
+    actionKey: "provider-contracts",
+    progressFingerprint: `provider-contracts:${groups.length}:${directContractCount}`,
+    summary: { count: directContractCount, groups: groups.length },
+  });
+
+  const settled = apiKey ? await mapWithConcurrency(groups, TAVILY_CONCURRENCY, async (group) => {
     const url = new URL("https://api.tavily.com/search");
     const childQuestions = group.candidates
       .slice(0, 8)
@@ -1358,14 +1393,31 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
         .filter((item): item is string => Boolean(item && isOfficialEvidenceUrl(item, authoritativeDomains)))
         .slice(0, 6),
     };
-  });
-  let firstFailure: unknown = null;
-  const discoveredByGroup = new Map<string, string[]>();
-  for (const result of settled) {
-    if (result.status === "fulfilled") discoveredByGroup.set(result.value.eventGroupKey, result.value.urls);
-    else if (!firstFailure) firstFailure = result.reason;
+  }) : [];
+  let firstFailure: unknown = apiKey ? null : new Error("PROVIDER_NOT_CONFIGURED");
+  if (!apiKey) groups.forEach((group) => incompleteGroupKeys.add(cleanText(group.event_group_key, 240)));
+  let tavilyUrlCount = 0;
+  for (const [index, result] of settled.entries()) {
+    if (result.status === "fulfilled") {
+      const direct = discoveredByGroup.get(result.value.eventGroupKey) ?? [];
+      const merged = [...new Set([...direct, ...result.value.urls])].slice(0, 10);
+      tavilyUrlCount += result.value.urls.length;
+      discoveredByGroup.set(result.value.eventGroupKey, merged);
+    }
+    else {
+      incompleteGroupKeys.add(cleanText(groups[index]?.event_group_key, 240));
+      if (!firstFailure) firstFailure = result.reason;
+    }
   }
-  if (!discoveredByGroup.size && firstFailure) throw firstFailure;
+  agent.record("search_official_sources", {
+    status: firstFailure ? (tavilyUrlCount || directContractCount ? "degraded" : "failed") : "completed",
+    actionKey: "official-search",
+    progressFingerprint: `official-search:${tavilyUrlCount}:${firstFailure ? "degraded" : "complete"}`,
+    summary: { count: tavilyUrlCount, configured: Boolean(apiKey), direct_contracts_preserved: directContractCount },
+    retryable: Boolean(firstFailure),
+  });
+  const usableGroups = [...discoveredByGroup.values()].filter((urls) => urls.length > 0).length;
+  if (!usableGroups && firstFailure) throw firstFailure;
 
   // Tavily descubre URLs, pero sus títulos y snippets nunca entran en Gemini ni
   // en un snapshot factual. Se recupera el documento oficial con GET acotado y
@@ -1393,19 +1445,54 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
     const page = await pagePromises.get(target.url)!;
     const group = groups.find((item) => item.event_group_key === target.eventGroupKey);
     const retrievedAt = new Date().toISOString();
-    return page && group ? { eventGroupKey: target.eventGroupKey, page, item: await relevantVerifiedEvidence(page, group, retrievedAt) } : null;
+    const authorityItems: JsonRecord[] = page && group
+      ? toRecordArray(group.candidates).flatMap((candidate) => {
+        const item = buildResolutionAuthorityEvidence(candidate, page, retrievedAt, authoritativeDomains);
+        return item ? [item as JsonRecord] : [];
+      })
+      : [];
+    return page && group ? {
+      eventGroupKey: target.eventGroupKey,
+      page,
+      item: await relevantVerifiedEvidence(page, group, retrievedAt),
+      authorityItems,
+    } : null;
   });
-  for (const result of verified) {
-    if (result.status !== "fulfilled" || !result.value) continue;
+  let verifiedPageCount = 0;
+  let authorityEvidenceCount = 0;
+  for (const [index, result] of verified.entries()) {
+    if (result.status !== "fulfilled" || !result.value) {
+      incompleteGroupKeys.add(cleanText(targets[index]?.eventGroupKey, 240));
+      if (!firstFailure) firstFailure = result.status === "rejected"
+        ? result.reason : new Error("OFFICIAL_SOURCE_FETCH_INCOMPLETE");
+      continue;
+    }
+    verifiedPageCount += 1;
     const pages = verifiedPagesByGroup.get(result.value.eventGroupKey) ?? [];
     if (!pages.some((page) => page.url === result.value?.page.url)) pages.push(result.value.page);
     verifiedPagesByGroup.set(result.value.eventGroupKey, pages);
     if (result.value.item) {
       const items = evidence.get(result.value.eventGroupKey) ?? [];
       if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
-      evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+      evidence.set(result.value.eventGroupKey, items.slice(0, MAX_CANONICAL_EVENT_CHILDREN + 8));
+    }
+    for (const authorityItem of result.value.authorityItems) {
+      const items = evidence.get(result.value.eventGroupKey) ?? [];
+      const authorityKey = `${authorityItem.candidate_external_id}:${authorityItem.url}:${authorityItem.contract_url}`;
+      if (!items.some((item) => `${item.candidate_external_id ?? ""}:${item.url}:${item.contract_url ?? ""}` === authorityKey)) {
+        items.unshift(authorityItem);
+        authorityEvidenceCount += 1;
+      }
+      evidence.set(result.value.eventGroupKey, items.slice(0, MAX_CANONICAL_EVENT_CHILDREN + 8));
     }
   }
+  agent.record("fetch_official_source", {
+    actionKey: "official-fetch",
+    progressFingerprint: `official-fetch:${targets.length}:${verifiedPageCount}`,
+    status: verifiedPageCount ? "completed" : "degraded",
+    summary: { count: verifiedPageCount, requested: targets.length, authority_contracts: authorityEvidenceCount },
+    retryable: targets.length > verifiedPageCount,
+  });
 
   // Para contratos de selección (portadas, ganadores o alineaciones), una
   // búsqueda puede devolver la portada general aunque el anuncio exhaustivo
@@ -1464,7 +1551,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       if (result.value.item) {
         const items = evidence.get(result.value.eventGroupKey) ?? [];
         if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
-        evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+        evidence.set(result.value.eventGroupKey, items.slice(0, MAX_CANONICAL_EVENT_CHILDREN + 8));
       }
     }
   }
@@ -1520,7 +1607,7 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
       });
     }
   }
-  if (factualFollowupGroups.length) {
+  if (apiKey && factualFollowupGroups.length) {
     const followupSearches = await mapWithConcurrency(
       factualFollowupGroups,
       TAVILY_SELECTION_FOLLOWUP_CONCURRENCY,
@@ -1582,12 +1669,50 @@ async function researchGroupsWithTavily(apiKey: string, candidates: JsonRecord[]
         if (result.value.item) {
           const items = evidence.get(result.value.eventGroupKey) ?? [];
           if (!items.some((item) => item.url === result.value?.item?.url)) items.push(result.value.item);
-          evidence.set(result.value.eventGroupKey, items.slice(0, 6));
+          evidence.set(result.value.eventGroupKey, items.slice(0, MAX_CANONICAL_EVENT_CHILDREN + 8));
         }
       }
     }
   }
-  return evidence;
+  // Tavily es enriquecimiento, no autoridad única. Si el contrato del proveedor
+  // aportó un endpoint oficial exacto para cada hija y ese contenido se recuperó,
+  // el escaneo terminal de la familia está completo aunque la búsqueda auxiliar
+  // haya fallado. Una fuente genérica o evidencia cruzada nunca satisface esto.
+  let directAuthorityFallbackGroups = 0;
+  for (const group of groups) {
+    const groupKey = cleanText(group.event_group_key, 240);
+    if (!incompleteGroupKeys.has(groupKey)) continue;
+    const authorityCandidateIds = new Set((evidence.get(groupKey) ?? [])
+      .filter((item) => isResolutionAuthorityEvidence(item))
+      .map((item) => cleanText(item.candidate_external_id, 220))
+      .filter(Boolean));
+    const groupCandidates = toRecordArray(group.candidates);
+    if (groupCandidates.length > 0 && groupCandidates.every((candidate) =>
+      authorityCandidateIds.has(cleanText(candidate.external_id, 220)))) {
+      incompleteGroupKeys.delete(groupKey);
+      directAuthorityFallbackGroups += 1;
+    }
+  }
+  const evidenceItems = [...evidence.values()].flat();
+  const terminalEvidenceCount = evidenceItems.filter((item) => item.direct_claim === true).length;
+  const authorityCount = evidenceItems.filter((item) => isResolutionAuthorityEvidence(item)).length;
+  agent.record("classify_terminal_evidence", {
+    actionKey: "terminal-classification",
+    progressFingerprint: `terminal-classification:${terminalEvidenceCount}:${evidenceItems.length}`,
+    summary: { count: terminalEvidenceCount, evidence_items: evidenceItems.length },
+  });
+  agent.record("select_resolution_authority", {
+    actionKey: "authority-selection",
+    progressFingerprint: `authority-selection:${authorityCount}:${groups.length}`,
+    status: authorityCount ? "completed" : "no_op",
+    summary: { count: authorityCount, groups: groups.length, direct_contract_fallback_groups: directAuthorityFallbackGroups },
+  });
+  return {
+    evidenceByGroup: evidence,
+    enrichmentError: firstFailure,
+    incompleteGroupKeys: [...incompleteGroupKeys].filter(Boolean),
+    agentExecution: agent.complete(firstFailure ? "degraded" : "completed"),
+  };
 }
 
 type GeminiBatchResult = {
@@ -2425,7 +2550,8 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   let deferredVerificationCount = 0;
   let processedVerificationCount = 0;
   let failedVerificationBatches = 0;
-  let officialResearchComplete = false;
+  let incompleteOfficialResearchGroups = new Set<string>();
+  let sourceAgentExecution: JsonRecord | null = null;
   const scanCandidates = candidates.filter((candidate) => candidate.eligibility_status === "eligible");
   if (!authoritativeDomains.size) {
     errors.push({
@@ -2437,10 +2563,27 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
   if (scanCandidates.length && authoritativeDomains.size) {
     try {
-      evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, scanCandidates, authoritativeDomains);
-      officialResearchComplete = true;
-      await persistProviderResult(environment, "tavily", cacheKey, []);
+      const research = await researchGroupsWithTavily(environment.tavilyKey, scanCandidates, authoritativeDomains);
+      evidenceByGroup = research.evidenceByGroup;
+      sourceAgentExecution = research.agentExecution;
+      incompleteOfficialResearchGroups = new Set(research.incompleteGroupKeys);
+      if (research.enrichmentError) {
+        const failure = research.enrichmentError instanceof Error
+          && research.enrichmentError.message === "PROVIDER_NOT_CONFIGURED"
+          ? publicProviderError("tavily", "PROVIDER_NOT_CONFIGURED", 503)
+          : providerFailure(research.enrichmentError, "tavily");
+        errors.push({
+          ...failure,
+          classification: "enrichment",
+          degrades_provider: false,
+          message: "La búsqueda auxiliar se degradó, pero Atinara conservó y comprobó los contratos oficiales aportados por los proveedores.",
+        });
+        await persistProviderFailure(environment, "tavily", cacheKey, failure);
+      } else {
+        await persistProviderResult(environment, "tavily", cacheKey, []);
+      }
     } catch (error) {
+      incompleteOfficialResearchGroups = new Set(scanCandidates.map((candidate) => cleanText(candidate.event_group_key, 240)).filter(Boolean));
       const failure = error instanceof Error && error.message === "PROVIDER_NOT_CONFIGURED"
         ? publicProviderError("tavily", "PROVIDER_NOT_CONFIGURED", 503)
         : providerFailure(error, "tavily");
@@ -2468,19 +2611,23 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     if (groupKey && hold) groupSelectionHolds.set(groupKey, hold);
   }
   candidates = candidates.map((candidate) => {
-    if (candidate.eligibility_status !== "eligible") return candidate;
+    if (candidate.eligibility_status !== "eligible") return sourceAgentExecution
+      ? { ...candidate, source_agent_execution: sourceAgentExecution }
+      : candidate;
     const groupEvidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
+    const groupResearchComplete = !incompleteOfficialResearchGroups.has(cleanText(candidate.event_group_key, 240));
     const subject = cleanText(candidateResolutionSubject(candidate), 240);
     const subjectTokens = sourceTokens(subject).filter((token) => !SOURCE_GENERIC_ANCHORS.has(token));
     const exactEvidence = groupEvidence.filter((item) => {
       const materialTokens = new Set(sourceTokens(`${item.title ?? ""} ${item.supports ?? ""}`));
-      return subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token));
+      return isResolutionAuthorityEvidence(item)
+        || (subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token)));
     });
     const groupResolution = groupResolutions.get(cleanText(candidate.event_group_key, 240));
     const groupSelectionHold = groupSelectionHolds.get(cleanText(candidate.event_group_key, 240));
     const terminalEvidence = exactEvidence.filter((item) => evidenceHasPotentialTerminalClaim(item, candidate, now));
     if (groupResolution || terminalEvidence.length) {
-      return applyDeterministicRadarEligibility(candidate, {
+      return applyDeterministicRadarEligibility({ ...candidate, source_agent_execution: sourceAgentExecution }, {
         eligible: false,
         conclusive: true,
         reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
@@ -2492,7 +2639,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       }, now) as JsonRecord;
     }
     if (groupSelectionHold) {
-      return applyDeterministicRadarEligibility(candidate, {
+      return applyDeterministicRadarEligibility({ ...candidate, source_agent_execution: sourceAgentExecution }, {
         eligible: false,
         conclusive: false,
         reason_code: RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED,
@@ -2502,13 +2649,24 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         evidence: groupSelectionHold.evidence ?? [],
       }, now) as JsonRecord;
     }
+    if (!groupResearchComplete) {
+      return applyDeterministicRadarEligibility({ ...candidate, source_agent_execution: sourceAgentExecution }, {
+        eligible: false,
+        conclusive: false,
+        reason_code: RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE,
+        reason: "La comprobación oficial de resultados conocidos no terminó. Atinara conserva el último expediente válido y volverá a intentarlo.",
+        confidence: 0,
+        ttl_minutes: 5,
+        evidence: [],
+      }, now) as JsonRecord;
+    }
     const resolutionSourceUrl = selectVerifiedResolutionUrl(candidate, exactEvidence, authoritativeDomains);
     if (!resolutionSourceUrl) {
-      return applyDeterministicRadarEligibility(candidate, {
+      return applyDeterministicRadarEligibility({ ...candidate, source_agent_execution: sourceAgentExecution }, {
         eligible: false,
         conclusive: false,
         reason_code: RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
-        reason: officialResearchComplete
+        reason: groupResearchComplete
           ? "Atinara no encontró todavía una fuente resolutiva oficial y exacta para esta opción. La volverá a comprobar automáticamente."
           : "La búsqueda de fuentes oficiales no terminó. Se conserva el último expediente válido y Atinara volverá a intentarlo automáticamente.",
         confidence: 0,
@@ -2517,10 +2675,13 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       }, now) as JsonRecord;
     }
     const sourceEvidence = resolutionSourceUrl
-      ? exactEvidence.filter((item) => safePublicUrl(item.url) === resolutionSourceUrl).slice(0, 6)
+      ? exactEvidence.filter((item) => safePublicUrl(item.url) === resolutionSourceUrl
+        && (item.evidence_basis !== "provider_resolution_contract"
+          || cleanText(item.candidate_external_id, 220) === cleanText(candidate.external_id, 220))).slice(0, 6)
       : [];
     return {
       ...candidate,
+      ...(sourceAgentExecution ? { source_agent_execution: sourceAgentExecution } : {}),
       atinara_resolution_source_url: resolutionSourceUrl,
       resolution_source_evidence: sourceEvidence,
       eligibility_evidence: sourceEvidence,
@@ -2557,7 +2718,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       .slice(0, MAX_NORMALIZED_PER_PROVIDER);
     const persistableCandidates = providerCandidates.filter((candidate) => {
       if (cleanText(candidate.eligibility_status, 40) !== "technical_hold"
-        || cleanText(candidate.eligibility_reason_code, 100) !== RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING) {
+        || ![
+          RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+          RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE,
+        ].includes(cleanText(candidate.eligibility_reason_code, 100))) {
         return true;
       }
       const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
@@ -2699,9 +2863,17 @@ function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente." };
   const state = cleanText(candidate.state, 40);
-  if (!["available", "needs_review", "prepared"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
+  const selfDuplicateRepair = state === "rejected"
+    && cleanText(candidate.verification_status, 80) === "rejected_duplicate"
+    && Boolean(candidate.prepared_draft_id)
+    && !toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch);
+  const repairablePrepared = state === "prepared"
+    && Boolean(candidate.prepared_draft_id)
+    && cleanText(candidate.eligibility_status, 40) !== "terminal"
+    && !toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch);
+  if (!["available", "needs_review", "prepared"].includes(state) && !selfDuplicateRepair) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
-  if (verificationStatus.startsWith("rejected_")) {
+  if (verificationStatus.startsWith("rejected_") && !selfDuplicateRepair && !repairablePrepared) {
     const rejection = prepareRevalidationError(candidate);
     return { ok: false, error: rejection?.error ?? "RADAR_CANDIDATE_INELIGIBLE", message: rejection?.message ?? "La candidata ya no es elegible." };
   }
@@ -2841,13 +3013,18 @@ async function revalidateCandidateForPreparation(
       throw new Error("ELIGIBILITY_SCAN_UNAVAILABLE");
     }
     let evidence: JsonRecord[] = [];
+    let sourceAgentExecution: JsonRecord | null = null;
     try {
-      const evidenceByGroup = await researchGroupsWithTavily(
+      const research = await researchGroupsWithTavily(
         environment.tavilyKey,
         [eligibility],
         authoritativeDomains,
       );
-      evidence = evidenceByGroup.get(cleanText(eligibility.event_group_key, 240)) ?? [];
+      evidence = research.evidenceByGroup.get(cleanText(eligibility.event_group_key, 240)) ?? [];
+      sourceAgentExecution = research.agentExecution;
+      if (research.incompleteGroupKeys.includes(cleanText(eligibility.event_group_key, 240))) {
+        throw research.enrichmentError ?? new Error("OFFICIAL_SOURCE_FETCH_INCOMPLETE");
+      }
     } catch {
       // La exploración puede conservar el último estado válido durante una
       // degradación. Preparar, confirmar o publicar falla cerrado cuando no se
@@ -2858,13 +3035,14 @@ async function revalidateCandidateForPreparation(
       .filter((token) => !SOURCE_GENERIC_ANCHORS.has(token));
     const exactEvidence = evidence.filter((item) => {
       const materialTokens = new Set(sourceTokens(`${item.title ?? ""} ${item.supports ?? ""}`));
-      return subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token));
+      return isResolutionAuthorityEvidence(item)
+        || (subjectTokens.length >= 1 && subjectTokens.every((token) => materialTokens.has(token)));
     });
     const coverResolution = detectOfficialCoverEventResolution([eligibility], exactEvidence);
     const coverSelectionHold = detectOfficialCoverSelectionHold([eligibility], exactEvidence);
     const terminalEvidence = exactEvidence.filter((item) => evidenceHasPotentialTerminalClaim(item, eligibility, checkedAt));
     if (coverResolution || terminalEvidence.length) {
-      eligibility = applyDeterministicRadarEligibility(eligibility, {
+      eligibility = applyDeterministicRadarEligibility({ ...eligibility, source_agent_execution: sourceAgentExecution }, {
         eligible: false,
         conclusive: true,
         reason_code: RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
@@ -2874,7 +3052,7 @@ async function revalidateCandidateForPreparation(
         evidence: coverResolution?.evidence ?? terminalEvidence,
       }, checkedAt) as JsonRecord;
     } else if (coverSelectionHold) {
-      eligibility = applyDeterministicRadarEligibility(eligibility, {
+      eligibility = applyDeterministicRadarEligibility({ ...eligibility, source_agent_execution: sourceAgentExecution }, {
         eligible: false,
         conclusive: false,
         reason_code: RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED,
@@ -2886,7 +3064,7 @@ async function revalidateCandidateForPreparation(
     } else {
       const resolutionSourceUrl = selectVerifiedResolutionUrl(eligibility, exactEvidence, authoritativeDomains);
       if (!resolutionSourceUrl) {
-        eligibility = applyDeterministicRadarEligibility(eligibility, {
+        eligibility = applyDeterministicRadarEligibility({ ...eligibility, source_agent_execution: sourceAgentExecution }, {
           eligible: false,
           conclusive: false,
           reason_code: RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
@@ -2897,10 +3075,13 @@ async function revalidateCandidateForPreparation(
         }, checkedAt) as JsonRecord;
       } else {
         const sourceEvidence = exactEvidence
-          .filter((item) => safePublicUrl(item.url) === resolutionSourceUrl)
+          .filter((item) => safePublicUrl(item.url) === resolutionSourceUrl
+            && (item.evidence_basis !== "provider_resolution_contract"
+              || cleanText(item.candidate_external_id, 220) === cleanText(eligibility.external_id, 220)))
           .slice(0, 6);
         eligibility = normalizeRadarCandidatePresentation({
           ...eligibility,
+          ...(sourceAgentExecution ? { source_agent_execution: sourceAgentExecution } : {}),
           atinara_resolution_source_url: resolutionSourceUrl,
           resolution_source_evidence: sourceEvidence,
           eligibility_evidence: sourceEvidence,
@@ -3095,14 +3276,17 @@ async function handleAction(
     let detailedCandidate = candidate;
     try {
       const authoritativeDomains = await loadAuthoritativeSourceDomains(environment);
-      const evidenceByGroup = await researchGroupsWithTavily(environment.tavilyKey, [candidate], authoritativeDomains);
-      const evidence = evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
+      const research = await researchGroupsWithTavily(environment.tavilyKey, [candidate], authoritativeDomains);
+      const evidence = research.evidenceByGroup.get(cleanText(candidate.event_group_key, 240)) ?? [];
       const sourceUrl = selectVerifiedResolutionUrl(candidate, evidence, authoritativeDomains);
       const sourceEvidence = sourceUrl
-        ? evidence.filter((item) => safePublicUrl(item.url) === sourceUrl).slice(0, 6)
+        ? evidence.filter((item) => safePublicUrl(item.url) === sourceUrl
+          && (item.evidence_basis !== "provider_resolution_contract"
+            || cleanText(item.candidate_external_id, 220) === cleanText(candidate.external_id, 220))).slice(0, 6)
         : [];
       detailedCandidate = {
         ...candidate,
+        source_agent_execution: research.agentExecution,
         atinara_resolution_source_url: sourceUrl,
         resolution_source_evidence: sourceEvidence,
       };
@@ -3112,7 +3296,34 @@ async function handleAction(
     return jsonResponse({ ok: true, candidate: detailedCandidate });
   }
   if (action === "check-eligibility") {
-    const candidate = toRecord(await rpc(environment, "get_market_radar_candidate_for_revalidation_v1", { candidate_id_input: candidateId }, undefined, true));
+    const draftId = cleanText(body.draft_id, 80);
+    const draftVersion = Number(body.draft_version);
+    const draftFingerprint = cleanText(body.draft_fingerprint, 80).toLowerCase();
+    const draftScoped = Boolean(draftId || body.draft_version !== undefined || draftFingerprint);
+    if (draftScoped && (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(draftId)
+      || !Number.isSafeInteger(draftVersion) || draftVersion < 1
+      || !/^[0-9a-f]{64}$/.test(draftFingerprint)
+    )) {
+      return jsonResponse({
+        error: "INVALID_DRAFT_ELIGIBILITY_SCOPE",
+        message: "La versión privada que se desea comprobar no es válida. Recarga el borrador antes de reintentar.",
+      }, 400);
+    }
+    const candidate = toRecord(await rpc(
+      environment,
+      draftScoped
+        ? "get_market_radar_candidate_for_draft_revalidation_v2"
+        : "get_market_radar_candidate_for_revalidation_v1",
+      draftScoped ? {
+        candidate_id_input: candidateId,
+        draft_id_input: draftId,
+        expected_version_input: draftVersion,
+        expected_fingerprint_input: draftFingerprint,
+      } : { candidate_id_input: candidateId },
+      undefined,
+      true,
+    ));
     if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
     const preflight = candidateRevalidationPreflight(candidate);
     if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
@@ -3138,6 +3349,18 @@ async function handleAction(
           current_fact_check_id: result.candidate.current_eligibility_check_id,
         }
         : result.candidate;
+      const eligibilityBinding = draftScoped
+        ? toRecord(await rpc(environment, "bind_market_radar_draft_eligibility_v2", {
+          candidate_id_input: candidateId,
+          draft_id_input: draftId,
+          expected_version_input: draftVersion,
+          expected_fingerprint_input: draftFingerprint,
+          expected_preparation_revision_input: Number(result.candidate.preparation_revision),
+          eligibility_check_id_input: Number(result.candidate.current_eligibility_check_id),
+          actor_id_input: adminId,
+          attempt_id_input: operationId,
+        }, undefined, true))
+        : null;
       return jsonResponse({
         ok: true,
         candidate: compatibilityCandidate,
@@ -3146,6 +3369,7 @@ async function handleAction(
         eligibility_expires_at: result.candidate.eligibility_expires_at,
         revalidated: true,
         prepared: false,
+        ...(eligibilityBinding ? { draft_eligibility_binding: eligibilityBinding } : {}),
         ...(requestedAction === "revalidate" ? {
           legacy_fact_attestation: {
             ok: true,
