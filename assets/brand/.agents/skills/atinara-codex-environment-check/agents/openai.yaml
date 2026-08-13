@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Comprobar Codex"
-  short_description: "Verifica instrucciones, skills, reglas, apps, Sonar y entorno local."
-  default_prompt: "Aplica la habilidad $atinara-codex-environment-check a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: false

@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Coherencia documental"
-  short_description: "Evita memorias obsoletas, duplicados y enlaces canónicos rotos."
-  default_prompt: "Aplica la habilidad $atinara-docs-memory-consistency a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

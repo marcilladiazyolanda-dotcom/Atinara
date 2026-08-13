@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Regresión UI"
-  short_description: "Valida responsive, accesibilidad, estados y rutas reales de interfaz."
-  default_prompt: "Aplica la habilidad $atinara-ui-regression a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

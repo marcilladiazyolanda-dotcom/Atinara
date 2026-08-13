@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Verificación de entrega"
-  short_description: "Ejecuta la puerta final antes de ZIP, commit, PR o despliegue."
-  default_prompt: "Aplica la habilidad $atinara-release-verification a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Diagnóstico de incidencias"
-  short_description: "Investiga fallos reales y separa síntoma, causa y capas afectadas."
-  default_prompt: "Aplica la habilidad $atinara-incident-diagnostics a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true
