@@ -69,6 +69,13 @@ por cada pareja; nunca se usa un comodín para la regla de `UPDATE`:
 | `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808221745_fix_radar_editor_atomic_preparation.sql` | Reclasificación completa anterior al corte factual. |
 | `plsql:NullComparison` | `supabase/migrations/20260809140000_authoritative_radar_fact_gate_v1.sql` | Las dos expresiones usan `coalesce` para equiparar explícitamente `NULL` y cadena vacía; no comparan directamente con `NULL`. |
 
+Al pegar una regla o una ruta, hay que comprobar que el valor no contiene
+espacios iniciales o finales. Sonar trata ese espacio como parte del patrón y el
+criterio deja de coincidir. Después de guardar, se revisan de nuevo los siete
+pares en el panel y se hace un push real para que el análisis automático aplique
+la configuración; volver a ejecutar solo el workflow de GitHub Actions no crea
+un análisis nuevo de Sonar.
+
 Estas seis rutas ya están aplicadas en producción y permanecen byte a byte
 intactas. Las pruebas SQL editables sí deben corregir el patrón que detecte
 Sonar; no se incluyen en esta excepción.

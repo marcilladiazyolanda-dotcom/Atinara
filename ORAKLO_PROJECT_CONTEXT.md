@@ -101,10 +101,32 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   ejecutables no se repitieron porque este worktree no dispone de PostgreSQL
   desechable ni `ATINARA_TEST_DATABASE_URL`; ya habían pasado con rollback en el
   corte V2.1 inmediatamente anterior y no se modificó ninguna migración.
-- El Quality Gate remoto no se declara verde todavía: queda pendiente la subida
-  manual de este paquete, aplicar las excepciones exactas en el panel de Sonar y
-  esperar el nuevo análisis. Ninguna excepción amplia sobre código editable es
-  aceptable.
+- En este corte local el Quality Gate remoto no se declaró verde: todavía
+  quedaban pendientes la subida manual del paquete, las excepciones exactas en
+  el panel de Sonar y un análisis nuevo. Ninguna excepción amplia sobre código
+  editable es aceptable.
+
+### Verificación publicada de SonarQube Cloud · 13 de agosto de 2026
+
+- `origin/main = e620a10bf2bedb15f3460e7b0f7de277bdde775f` contiene la
+  implementación V2.1, los workflows y las correcciones editables de Sonar.
+  `Calidad de Atinara`, `Benchmark IA offline` y GitHub Pages terminaron en
+  `success` para ese mismo SHA. Pages sirve la release coordinada
+  `20260812-agent-engine-v21`.
+- La validación independiente del árbol publicado volvió a superar 412/412
+  pruebas, sintaxis de 106 JavaScript, TypeScript, cinco suites SQL estáticas,
+  9/9 Edge Functions con Deno 2.1.14, benchmark offline 5/5 sin red, auditoría
+  npm sin vulnerabilidades y `git diff --check`.
+- El análisis automático de Sonar corresponde al mismo SHA. Seguridad,
+  mantenibilidad, duplicación y hotspots ya cumplen la puerta; la fiabilidad
+  permanece en E únicamente por diez incidencias de las seis migraciones
+  aplicadas documentadas debajo.
+- Sonar conserva los siete criterios manuales, pero la ruta
+  `supabase/migrations/20260808120000_add_authoritative_draft_versions_and_review_attempts.sql`
+  fue guardada con un espacio inicial. Debe retirarse ese espacio y lanzarse un
+  análisis nuevo mediante un push real. Hasta comprobar el resultado del nuevo
+  análisis no se declara verde el Quality Gate ni se avanza al despliegue
+  operativo.
 
 ### Cierre de agente, autoridad y publicación · 12 de agosto de 2026
 
