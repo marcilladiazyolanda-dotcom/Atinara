@@ -1,0 +1,49 @@
+name: Configuración Codex de Atinara
+
+on:
+  push:
+    paths:
+      - ".codex/**"
+      - ".agents/**"
+      - "SECURITY.md"
+      - "docs/ATINARA_CODEX_SETUP.md"
+      - "docs/ATINARA_AGENT_ENGINE.md"
+      - "docs/ATINARA_AI_GATEWAY.md"
+      - "docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md"
+      - "supabase/functions/AGENTS.md"
+      - "supabase/migrations/AGENTS.md"
+      - "supabase/tests/radar_eligibility_v7_transaction.sql"
+      - "scripts/validate-codex-setup.py"
+      - ".github/workflows/codex-configuration.yml"
+  pull_request:
+    paths:
+      - ".codex/**"
+      - ".agents/**"
+      - "SECURITY.md"
+      - "docs/ATINARA_CODEX_SETUP.md"
+      - "docs/ATINARA_AGENT_ENGINE.md"
+      - "docs/ATINARA_AI_GATEWAY.md"
+      - "docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md"
+      - "supabase/functions/AGENTS.md"
+      - "supabase/migrations/AGENTS.md"
+      - "supabase/tests/radar_eligibility_v7_transaction.sql"
+      - "scripts/validate-codex-setup.py"
+      - ".github/workflows/codex-configuration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validar configuración, skills y subagentes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Mostrar versión de Python
+        run: python3 --version
+
+      - name: Validar configuración Codex de Atinara
+        run: python3 scripts/validate-codex-setup.py

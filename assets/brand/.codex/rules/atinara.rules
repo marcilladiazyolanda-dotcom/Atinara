@@ -1,0 +1,254 @@
+# Atinara: reglas de escalado para comandos remotos, destructivos o publicables.
+# Complementan AGENTS.md y los permisos de apps. No conceden autorización de producto.
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "push"],
+    decision = "prompt",
+    justification = "Todo push remoto de Atinara requiere autorización expresa de Yol",
+    match = [
+        "git push",
+        "git push origin main",
+        "git push -u origin codex/fix-radar",
+        "git.exe push --force-with-lease origin codex/fix-radar",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], ["pull", "rebase"]],
+    decision = "prompt",
+    justification = "Pull y rebase pueden mezclar o reescribir trabajo ajeno y deben revisarse antes",
+    match = [
+        "git pull",
+        "git pull --rebase origin main",
+        "git.exe rebase origin/main",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "reset", "--hard"],
+    decision = "prompt",
+    justification = "Un reset duro puede destruir cambios locales o evidencias de trabajo",
+    match = [
+        "git reset --hard",
+        "git.exe reset --hard origin/main",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "clean"],
+    decision = "prompt",
+    justification = "git clean puede eliminar archivos no versionados, paquetes o evidencias",
+    match = [
+        "git clean -fd",
+        "git.exe clean -fdx",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "restore"],
+    decision = "prompt",
+    justification = "git restore puede descartar cambios locales y debe usarse solo tras inspección",
+    match = [
+        "git restore admin-markets.js",
+        "git.exe restore --source origin/main -- styles.css",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "checkout", "--"],
+    decision = "prompt",
+    justification = "git checkout -- descarta cambios locales y requiere revisión humana",
+    match = [
+        "git checkout -- styles.css",
+    ],
+)
+
+prefix_rule(
+    pattern = [["git", "git.exe"], "branch", ["-D", "--delete"]],
+    decision = "prompt",
+    justification = "Eliminar ramas puede borrar una vía de recuperación",
+    match = [
+        "git branch -D codex/fix-radar",
+        "git.exe branch --delete codex/fix-radar",
+    ],
+)
+
+prefix_rule(
+    pattern = [["gh", "gh.exe"], "pr", ["create", "merge", "close", "reopen", "edit", "ready", "review"]],
+    decision = "prompt",
+    justification = "Crear, modificar, revisar o integrar un PR es una escritura remota",
+    match = [
+        "gh pr create --draft",
+        "gh.exe pr merge 12 --squash",
+        "gh pr review 12 --approve",
+    ],
+)
+
+prefix_rule(
+    pattern = [["gh", "gh.exe"], "issue", ["create", "edit", "close", "reopen", "delete"]],
+    decision = "prompt",
+    justification = "Modificar issues de Atinara es una escritura remota",
+    match = [
+        "gh issue create --title incidencia",
+        "gh.exe issue close 42",
+    ],
+)
+
+prefix_rule(
+    pattern = [["gh", "gh.exe"], "release", ["create", "delete", "edit", "upload"]],
+    decision = "prompt",
+    justification = "Las releases son publicaciones remotas y requieren autorización",
+    match = [
+        "gh release create v1.0.0",
+        "gh.exe release upload v1.0.0 build.zip",
+    ],
+)
+
+prefix_rule(
+    pattern = [["gh", "gh.exe"], "workflow", ["run", "enable", "disable"]],
+    decision = "prompt",
+    justification = "Lanzar o alterar workflows remotos puede desplegar o modificar servicios",
+    match = [
+        "gh workflow run checkly-deploy.yml",
+        "gh.exe workflow disable checkly-deploy.yml",
+    ],
+)
+
+prefix_rule(
+    pattern = [["gh", "gh.exe"], "run", ["rerun", "cancel", "delete"]],
+    decision = "prompt",
+    justification = "Reejecutar, cancelar o borrar ejecuciones remotas consume recursos o altera evidencia",
+    match = [
+        "gh run rerun 123456",
+        "gh.exe run cancel 123456",
+    ],
+)
+
+# Supabase CLI directo.
+prefix_rule(
+    pattern = [["supabase", "supabase.exe"], "db", ["push", "reset"]],
+    decision = "prompt",
+    justification = "db push y db reset alteran esquema, historial o datos y requieren autorización",
+    match = [
+        "supabase db push",
+        "supabase.exe db reset",
+    ],
+)
+
+prefix_rule(
+    pattern = [["supabase", "supabase.exe"], "migration", ["repair", "up"]],
+    decision = "prompt",
+    justification = "Aplicar o reparar migraciones puede desalinear código y producción",
+    match = [
+        "supabase migration repair 20260813000000 --status applied",
+        "supabase.exe migration up",
+    ],
+)
+
+prefix_rule(
+    pattern = [["supabase", "supabase.exe"], "functions", ["deploy", "delete"]],
+    decision = "prompt",
+    justification = "Desplegar o eliminar Edge Functions modifica un entorno remoto",
+    match = [
+        "supabase functions deploy market-radar",
+        "supabase.exe functions delete market-radar",
+    ],
+)
+
+prefix_rule(
+    pattern = [["supabase", "supabase.exe"], "secrets", ["set", "unset"]],
+    decision = "prompt",
+    justification = "La gestión de secretos es una operación privilegiada",
+    match = [
+        "supabase secrets set GEMINI_API_KEY=value",
+        "supabase.exe secrets unset GEMINI_API_KEY",
+    ],
+)
+
+prefix_rule(
+    pattern = [["supabase", "supabase.exe"], "link"],
+    decision = "prompt",
+    justification = "Cambiar el proyecto Supabase enlazado puede dirigir comandos al entorno equivocado",
+    match = [
+        "supabase link --project-ref abcdefghijklmnop",
+    ],
+)
+
+# Forma habitual en Atinara: npx --no-install supabase.
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "--no-install", "supabase", "db", ["push", "reset"]],
+    decision = "prompt",
+    justification = "La envoltura npx no debe eludir la aprobación de cambios de base de datos",
+    match = [
+        "npx --no-install supabase db push",
+        "npx.cmd --no-install supabase db reset",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "--no-install", "supabase", "migration", ["repair", "up"]],
+    decision = "prompt",
+    justification = "La envoltura npx no debe eludir la aprobación de migraciones",
+    match = [
+        "npx --no-install supabase migration repair 20260813000000 --status applied",
+        "npx.cmd --no-install supabase migration up",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "--no-install", "supabase", "functions", ["deploy", "delete"]],
+    decision = "prompt",
+    justification = "La envoltura npx no debe eludir la aprobación de Edge Functions",
+    match = [
+        "npx --no-install supabase functions deploy market-radar",
+        "npx.cmd --no-install supabase functions delete market-radar",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "--no-install", "supabase", "secrets", ["set", "unset"]],
+    decision = "prompt",
+    justification = "La envoltura npx no debe eludir la aprobación de secretos",
+    match = [
+        "npx --no-install supabase secrets set GEMINI_API_KEY=value",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "--no-install", "supabase", "link"],
+    decision = "prompt",
+    justification = "La envoltura npx no debe cambiar silenciosamente el proyecto enlazado",
+    match = [
+        "npx --no-install supabase link --project-ref abcdefghijklmnop",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npm", "npm.cmd"], "run", "checkly:deploy"],
+    decision = "prompt",
+    justification = "El despliegue de Checkly es una escritura remota",
+    match = [
+        "npm run checkly:deploy",
+        "npm.cmd run checkly:deploy",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npx", "npx.cmd"], "checkly", "deploy"],
+    decision = "prompt",
+    justification = "El despliegue directo de Checkly requiere autorización",
+    match = [
+        "npx checkly deploy",
+        "npx.cmd checkly deploy",
+    ],
+)
+
+prefix_rule(
+    pattern = [["npm", "npm.cmd"], "publish"],
+    decision = "prompt",
+    justification = "Publicar un paquete es una acción externa irreversible para consumidores",
+    match = [
+        "npm publish",
+        "npm.cmd publish",
+    ],
+)
