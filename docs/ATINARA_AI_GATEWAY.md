@@ -1,6 +1,6 @@
 # Atinara AI Gateway V2.1
 
-Estado: implementado y verificado localmente. No desplegado ni activado en producción. Gemini sigue siendo el transporte de paridad; OpenRouter y NVIDIA NIM permanecen experimentales y apagados.
+Estado: implementado, verificado y desplegado en producción el 13 de agosto de 2026 con las cinco tareas en `legacy_direct`. Gemini sigue siendo el único transporte activo mediante el adaptador de compatibilidad centralizado; `gateway_gemini_parity`, `gateway_routing`, OpenRouter y NVIDIA NIM permanecen sin activar.
 
 ## Fronteras
 

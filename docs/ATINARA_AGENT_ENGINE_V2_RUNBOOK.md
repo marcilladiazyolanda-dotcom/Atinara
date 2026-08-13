@@ -2,6 +2,11 @@
 
 Este runbook separa la implementación local de cualquier activación. No autoriza push, despliegue, migraciones remotas, cambios de secretos, flags, benchmark live, canary ni publicación de mercados.
 
+Estado productivo verificado el 13 de agosto de 2026: las tres migraciones V2.1
+están aplicadas una sola vez y las cinco Edge están activas en `legacy_direct`.
+OpenRouter, NVIDIA NIM, `gateway_gemini_parity` y `gateway_routing` siguen
+apagados. Cualquier paso posterior requiere una autorización nueva y expresa.
+
 ## Verificación local
 
 Tooling fijado:
@@ -29,13 +34,16 @@ Las pruebas SQL transaccionales aceptan `--execute` solo contra una base local d
 
 ## Orden de migraciones
 
-Aplicar una sola vez y en este orden después de una revisión manual:
+Aplicadas una sola vez en producción y en este orden; no repetir:
 
 1. `20260812141508_harden_radar_eligibility_rls_v1.sql`.
 2. `20260812141511_add_ai_gateway_telemetry_and_budgets_v1.sql`.
 3. `20260812141515_add_agent_engine_v2_v1.sql`.
 
 Antes de la primera, validar `docs/ATINARA_RPC_DEPENDENCY_MATRIX.md` y ejecutar las pruebas positivas/negativas. Las migraciones son aditivas: no editar migraciones aplicadas, no eliminar la tabla registry v1 y no retirar wrappers v1.
+
+Supabase registra las versiones productivas como `20260813163839`,
+`20260813163918` y `20260813163959`, respectivamente.
 
 Después de aplicar en un entorno de prueba, ejecutar dentro de `BEGIN/ROLLBACK`:
 
@@ -45,7 +53,12 @@ Después de aplicar en un entorno de prueba, ejecutar dentro de `BEGIN/ROLLBACK`
 - `ai_gateway_budget_telemetry_transaction.sql`;
 - `agent_engine_v2_transaction.sql`.
 
-## Despliegue futuro por función
+Las cinco matrices pasaron juntas en producción dentro de `BEGIN/ROLLBACK` el
+13 de agosto de 2026. La suite v7 prueba la elegibilidad de candidata que le
+corresponde; el binding de borrador introducido en v8 se valida en
+`agent_engine_confirmation_v8_transaction.sql`.
+
+## Promoción futura por función
 
 Cada tarea avanza independientemente:
 
@@ -59,7 +72,12 @@ Cada tarea avanza independientemente:
 
 Orden: Radar sin inferencia, Market Expert, Corrector, Validator y Resolución. OpenRouter y NVIDIA conservan flags separados en `false` y budgets cero.
 
-## Comprobación manual de Gemini previa al despliegue
+El despliegue base de esas cinco funciones ya se completó en ese orden y con
+JWT obligatorio: Radar v55, Expert v22, Corrector v19, Validator v27 y
+Resolución v15. Los pasos 4–7 continúan pendientes y no deben inferirse del
+despliegue base.
+
+## Comprobación manual de Gemini previa a un cambio de modo o nuevo despliegue
 
 No automatizar rotaciones ni leer valores.
 

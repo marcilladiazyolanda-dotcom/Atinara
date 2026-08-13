@@ -1,10 +1,10 @@
-# Atinara Agent Engine · producción v1 y transición local V2.1
+# Atinara Agent Engine · V2.1 productivo en `legacy_direct`
 
-Estado del documento: protocolo v1 y cierre SQL v8–v11 desplegados y verificados
-en producción el 12 de agosto de 2026. El frontend asociado permanece pendiente
-de la subida manual de Yol.
+Estado del documento: protocolo v1, cierre SQL v8–v11 y base V2.1 desplegados y
+verificados en producción. La activación V2.1 se realizó el 13 de agosto de 2026
+sin cambiar secretos, frontend, proveedor ni autoridad de dominio.
 
-Agent Engine V2.1 está implementado únicamente en el árbol local. No sustituye todavía el corte productivo, no activa proveedores experimentales y no autoriza migraciones ni despliegues. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
+Agent Engine V2.1 está activo como capa de contratos, runtime y persistencia, pero todas las tareas conservan `legacy_direct`. No están activados `gateway_gemini_parity`, `gateway_routing`, OpenRouter ni NVIDIA NIM. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
 
 ## Transición V2.1
 
@@ -20,14 +20,21 @@ Las inferencias ya no viven dentro de las Edge de dominio. Cada Edge invoca el A
 
 ## Corte productivo verificado
 
-- `market-radar` v54 (`verify_jwt=true`, bundle
-  `fc56eccf4d1a5c2a751b550cb30cfe659974b9c543f4dd38179eea545fce0533`).
-- `market-expert` v21 (`verify_jwt=true`, bundle
-  `138fe047f218a5c559e969583bd155270693a72f6e4fad447a096fe39f7318a2`).
-- `market-draft-fixer` v18 (`verify_jwt=true`, bundle
-  `e5eb51bed90656c6a9a947ca55277e305d31c8264c4a256b658525fa4712dce8`).
+- `market-radar` v55 (`verify_jwt=true`, bundle
+  `b2c842c717d265c09abaaaccb5eed0d013b2ab8be262a9d2e5d15d672531b861`).
+- `market-expert` v22 (`verify_jwt=true`, bundle
+  `9b5b8bf1f547cad8638598aa2a081c1de7e0c08efbc4032df5c574bff1b5a6e8`).
+- `market-draft-fixer` v19 (`verify_jwt=true`, bundle
+  `1e6b006b31601bdfb884c7266133d64dd2879e3e9142b0dccda059c68a0fa9a4`).
+- `validate-market-draft` v27 (`verify_jwt=true`, bundle
+  `494afb960213898ef9db1c2d4aab788c8d744d0c3d81037311412c3f727f1b2d`).
+- `analyze-market-resolution` v15 (`verify_jwt=true`, bundle
+  `9d065ad553ea8dd1c5903fe6e3aff1610ad03d11c982c4fa21c6fc364b78f235`).
 - Migraciones remotas no repetibles `20260811230350` (v8),
   `20260811231921` (v9), `20260811232315` (v10) y `20260811232708` (v11).
+- Migraciones V2.1 remotas no repetibles `20260813163839` (RLS Radar),
+  `20260813163918` (Gateway, budgets y telemetría) y `20260813163959`
+  (registries y runtime v2).
 
 La v9 exige autoridad resolutiva del contrato y de la opción exactos. La v10
 impide que una caída reintentable se persista como resultado terminal. La v11

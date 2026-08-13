@@ -23,7 +23,6 @@ declare
   replay_result jsonb;
   candidate_row private.external_market_candidates%rowtype;
   check_row private.market_radar_eligibility_checks%rowtype;
-  draft_fixture private.market_drafts%rowtype;
   original_pointer bigint;
   terminal_pointer bigint;
   original_revision bigint;
@@ -292,17 +291,11 @@ begin
     if sqlerrm <> 'RADAR_ELIGIBILITY_APPEND_ONLY' then raise; end if;
   end;
 
-  draft_fixture.radar_candidate_id := candidate_row.id;
-  draft_fixture.source_provenance := jsonb_build_object(
-    'radar_candidate_id', candidate_row.id,
-    'radar_preparation_revision', original_revision,
-    'radar_eligibility_check_id', check_row.id,
-    'radar_eligibility_policy_version', check_row.policy_version,
-    'radar_eligibility_status', check_row.status,
-    'radar_eligibility_decision_hash', check_row.decision_hash
-  );
-  perform private.assert_market_radar_draft_eligibility_v1(
-    draft_fixture, checked_at_value
+  -- V7 owns candidate eligibility. Since v8, draft publication additionally
+  -- requires a material fingerprint and an exact append-only binding; that
+  -- separate contract is covered by agent_engine_confirmation_v8_transaction.
+  perform private.assert_market_radar_candidate_eligible_v1(
+    candidate_row.id, original_revision
   );
 
   -- Rotating A to B without changing the material projection keeps R valid.
@@ -342,8 +335,8 @@ begin
      or candidate_row.current_eligibility_check_id is not distinct from original_pointer then
     raise exception 'RADAR_SAME_REVISION_CHECK_ROTATION_FAILED: %', apply_result;
   end if;
-  perform private.assert_market_radar_draft_eligibility_v1(
-    draft_fixture, checked_at_value + interval '30 seconds'
+  perform private.assert_market_radar_candidate_eligible_v1(
+    candidate_row.id, original_revision
   );
 
   -- A material refresh to R+1/B must invalidate the old R/A provenance.
@@ -383,10 +376,10 @@ begin
     raise exception 'RADAR_MATERIAL_REFRESH_DID_NOT_INCREMENT_REVISION: %', apply_result;
   end if;
   begin
-    perform private.assert_market_radar_draft_eligibility_v1(
-      draft_fixture, checked_at_value + interval '45 seconds'
+    perform private.assert_market_radar_candidate_eligible_v1(
+      candidate_row.id, original_revision
     );
-    raise exception 'RADAR_STALE_DRAFT_PROVENANCE_WAS_ACCEPTED';
+    raise exception 'RADAR_STALE_CANDIDATE_REVISION_WAS_ACCEPTED';
   exception when sqlstate '40001' then
     if sqlerrm <> 'RADAR_PREPARATION_REVISION_MISMATCH' then raise; end if;
   end;
