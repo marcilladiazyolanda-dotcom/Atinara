@@ -1,0 +1,6 @@
+interface:
+  display_name: "Atinara · Revisión de seguridad"
+  short_description: "Orienta Codex Security con el modelo de amenazas real de Atinara."
+  default_prompt: "Aplica la habilidad $atinara-security-review a la tarea actual de Atinara y respeta AGENTS.md."
+policy:
+  allow_implicit_invocation: true
