@@ -108,7 +108,7 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 
 ### Verificación publicada de SonarQube Cloud · 13 de agosto de 2026
 
-- `origin/main = e620a10bf2bedb15f3460e7b0f7de277bdde775f` contiene la
+- `origin/main = 43ed85cec0d81c9f23c813710d389b98838ac530` contiene la
   implementación V2.1, los workflows y las correcciones editables de Sonar.
   `Calidad de Atinara`, `Benchmark IA offline` y GitHub Pages terminaron en
   `success` para ese mismo SHA. Pages sirve la release coordinada
@@ -119,14 +119,19 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   npm sin vulnerabilidades y `git diff --check`.
 - El análisis automático de Sonar corresponde al mismo SHA. Seguridad,
   mantenibilidad, duplicación y hotspots ya cumplen la puerta; la fiabilidad
-  permanece en E únicamente por diez incidencias de las seis migraciones
-  aplicadas documentadas debajo.
-- Sonar conserva los siete criterios manuales, pero la ruta
-  `supabase/migrations/20260808120000_add_authoritative_draft_versions_and_review_attempts.sql`
-  fue guardada con un espacio inicial. Debe retirarse ese espacio y lanzarse un
-  análisis nuevo mediante un push real. Hasta comprobar el resultado del nuevo
-  análisis no se declara verde el Quality Gate ni se avanza al despliegue
-  operativo.
+  permanece en E únicamente por una incidencia
+  `plsql:DeleteOrUpdateWithoutWhereCheck` sobre la migración aplicada
+  `20260808120000_add_authoritative_draft_versions_and_review_attempts.sql`.
+- El panel de Sonar conserva ahora los siete criterios exactos documentados,
+  incluida esa ruta sin espacios iniciales o finales. La configuración quedó
+  guardada y verificada mediante la API de settings. Sonar no permite relanzar
+  el análisis automático sin un push real; este cambio documental puede usarse
+  para provocarlo. Hasta comprobar el resultado nuevo no se declara verde el
+  Quality Gate ni se avanza al despliegue operativo.
+- El preflight remoto de solo lectura confirmó Supabase `ACTIVE_HEALTHY`. Las
+  tres migraciones V2.1 siguen pendientes, sus tablas todavía no existen y las
+  cinco Edge de IA desplegadas conservan el transporte Gemini directo de V1.
+  No se ejecutó SQL, despliegue, cambio de secretos, flags ni datos.
 
 ### Cierre de agente, autoridad y publicación · 12 de agosto de 2026
 
