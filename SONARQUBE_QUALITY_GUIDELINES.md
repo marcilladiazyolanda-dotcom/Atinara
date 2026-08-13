@@ -36,9 +36,14 @@ La distribución explicaba el origen:
 ### Migraciones
 
 Las migraciones aplicadas no se reescriben. El análisis automático de
-SonarQube Cloud no aplica exclusiones avanzadas desde
-`.sonarcloud.properties`; ese archivo solo mantiene el alcance básico del
-análisis. La excepción selectiva debe guardarse en el panel del proyecto:
+SonarQube Cloud admite `sonar.cpd.exclusions` en `.sonarcloud.properties`; se
+usa únicamente para retirar los snapshots SQL inmutables del cálculo de
+duplicación. Esos archivos siguen dentro del análisis de seguridad, fiabilidad
+y mantenibilidad. Las exclusiones por regla y ruta continúan configurándose en
+el panel del proyecto, porque `sonar.issue.ignore.multicriteria` no forma parte
+de los parámetros admitidos por el análisis automático.
+
+Para los literales repetidos:
 
 1. `Administration` → `General Settings` → `Analysis Scope`.
 2. Abrir `Ignore Issues on Multiple Criteria`.
@@ -50,10 +55,29 @@ Esta combinación omite únicamente los literales repetidos de las migraciones
 históricas. Los mismos archivos siguen analizándose para cualquier otra regla
 de seguridad, fiabilidad o calidad.
 
+El corte del 12 de agosto de 2026 requiere además excepciones exactas para
+sentencias de backfill que recorrieron deliberadamente todas las filas y para
+dos comparaciones `coalesce(..., '') = ''`. Se crea un criterio independiente
+por cada pareja; nunca se usa un comodín para la regla de `UPDATE`:
+
+| Regla | Ruta exacta | Motivo verificado |
+|---|---|---|
+| `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808120000_add_authoritative_draft_versions_and_review_attempts.sql` | Backfill completo y no repetible de metadatos de revisión. |
+| `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808180729_add_autonomous_repair_and_market_families_v2.sql` | Recorrido completo para activar los triggers de familia recién instalados. |
+| `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808185135_deduplicate_market_family_matches.sql` | Recorrido completo para deduplicar los arrays mediante el trigger vigente. |
+| `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808204159_fix_radar_prepare_identity_and_blocking_duplicates.sql` | Reclasificación completa que elimina autocoincidencias. |
+| `plsql:DeleteOrUpdateWithoutWhereCheck` | `supabase/migrations/20260808221745_fix_radar_editor_atomic_preparation.sql` | Reclasificación completa anterior al corte factual. |
+| `plsql:NullComparison` | `supabase/migrations/20260809140000_authoritative_radar_fact_gate_v1.sql` | Las dos expresiones usan `coalesce` para equiparar explícitamente `NULL` y cadena vacía; no comparan directamente con `NULL`. |
+
+Estas seis rutas ya están aplicadas en producción y permanecen byte a byte
+intactas. Las pruebas SQL editables sí deben corregir el patrón que detecte
+Sonar; no se incluyen en esta excepción.
+
 Nunca se debe:
 
 - excluir toda la carpeta de migraciones;
 - desactivar una regla para todo el proyecto;
+- aplicar `DeleteOrUpdateWithoutWhereCheck` a un patrón de carpeta;
 - modificar una migración aplicada solo para silenciar Sonar;
 - marcar manualmente un problema como resuelto si el código editable sigue
   conteniendo la causa.

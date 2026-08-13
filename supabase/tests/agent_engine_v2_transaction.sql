@@ -111,12 +111,19 @@ reset role;
 do $append_only$
 begin
   begin
-    update private.market_agent_runs set stop_reason = 'mutated';
+    update private.market_agent_runs
+    set stop_reason = 'mutated'
+    where invocation_id like 'agent-sql-v21-%';
     raise exception 'TEST_AGENT_ENGINE_V2_RUN_UPDATE_ALLOWED';
   exception when sqlstate '55000' then null;
   end;
   begin
-    update private.market_agent_steps set summary = '{}'::jsonb;
+    update private.market_agent_steps
+    set summary = '{}'::jsonb
+    where run_id in (
+      select id from private.market_agent_runs
+      where invocation_id like 'agent-sql-v21-%'
+    );
     raise exception 'TEST_AGENT_ENGINE_V2_STEP_UPDATE_ALLOWED';
   exception when sqlstate '55000' then null;
   end;

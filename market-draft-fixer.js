@@ -558,7 +558,7 @@
   }
 
   function announcePublication(payload) {
-    const eventPayload = { ...payload, nonce: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}` };
+    const eventPayload = { ...payload, nonce: crypto.randomUUID() };
     try {
       const channel = new BroadcastChannel(PUBLICATION_CHANNEL);
       channel.postMessage({ type: "market-published", payload: eventPayload });

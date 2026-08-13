@@ -70,6 +70,42 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   Producción y GitHub Pages siguen en el corte descrito debajo hasta una acción
   manual posterior de Yol.
 
+### Corrección local de SonarQube Cloud · 12 de agosto de 2026
+
+- Base verificada: `origin/main =
+  ec844c78793ed490899fc87b21583ca549a35839`, rama local aislada
+  `codex/atinara-sonar-cleanup`. No se hizo commit, push, despliegue, SQL
+  remoto, cambio de secretos ni activación de flags.
+- El análisis publicado contenía 40 incidencias abiertas de tipo Bug o
+  Vulnerability. Las 30 situadas en código, tests y workflow editables se
+  corrigieron localmente: pin inmutable de la acción Deno, callbacks explícitos,
+  comparadores de orden, entropía Web Crypto, agrupación de regex, eliminación
+  de claves duplicadas y ramas idénticas, `WHERE` acotado en tests SQL y
+  sustitución de autoasignaciones de prueba.
+- El aterrizaje posterior a publicación ya no usa `innerHTML`: normaliza el ID
+  como UUID, limita el texto recibido desde storage/BroadcastChannel y construye
+  el aviso con DOM y `textContent`. La navegación conserva el ID codificado y
+  nunca interpreta la pregunta como markup.
+- Las diez incidencias restantes pertenecen a seis migraciones ya aplicadas y
+  no se reescribieron. `SONARQUBE_QUALITY_GUIDELINES.md` documenta las parejas
+  exactas de regla/ruta que Yol debe configurar en Analysis Scope. La
+  duplicación de migraciones se excluye solo del cálculo CPD mediante
+  `sonar.cpd.exclusions`; los archivos continúan dentro del análisis de
+  seguridad, fiabilidad y mantenibilidad. `supabase/tests/**` queda clasificado
+  expresamente como código de prueba.
+- Verificación local posterior: 412/412 pruebas unitarias, sintaxis válida en
+  106 JavaScript, 9/9 Edge Functions con Deno 2.1.14, TypeScript verde, cinco
+  suites SQL con límites transaccionales validados estáticamente, benchmark
+  offline 5/5 con cero red, `npm audit` con cero vulnerabilidades, prueba de
+  navegador del aviso de publicación y `git diff --check` verde. Las suites SQL
+  ejecutables no se repitieron porque este worktree no dispone de PostgreSQL
+  desechable ni `ATINARA_TEST_DATABASE_URL`; ya habían pasado con rollback en el
+  corte V2.1 inmediatamente anterior y no se modificó ninguna migración.
+- El Quality Gate remoto no se declara verde todavía: queda pendiente la subida
+  manual de este paquete, aplicar las excepciones exactas en el panel de Sonar y
+  esperar el nuevo análisis. Ninguna excepción amplia sobre código editable es
+  aceptable.
+
 ### Cierre de agente, autoridad y publicación · 12 de agosto de 2026
 
 - Base local exacta: `origin/main =

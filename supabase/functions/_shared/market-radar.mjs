@@ -917,7 +917,7 @@ function familyTimezone(candidate, source) {
   const uniqueContext = [...new Map(contextContracts.filter(Boolean).map((contract) => [contract.id, contract])).values()];
   if (uniqueContext.length === 1) return uniqueContext[0];
   if (uniqueContext.length > 1) {
-    const labels = uniqueContext.map((contract) => contract.label).sort();
+    const labels = uniqueContext.map((contract) => contract.label).sort((left, right) => left.localeCompare(right));
     return {
       id: `AMBIGUOUS:${labels.join("|")}`,
       mode: "ambiguous",
@@ -936,7 +936,7 @@ function familyTimezone(candidate, source) {
   const uniqueExplicit = [...new Map(explicit.map((contract) => [contract.id, contract])).values()];
   if (uniqueExplicit.length === 1) return uniqueExplicit[0];
   if (uniqueExplicit.length > 1) {
-    const labels = uniqueExplicit.map((contract) => contract.label).sort();
+    const labels = uniqueExplicit.map((contract) => contract.label).sort((left, right) => left.localeCompare(right));
     return {
       id: `AMBIGUOUS:${labels.join("|")}`,
       mode: "ambiguous",
@@ -1453,7 +1453,7 @@ function factualIdentityTokenSets(group) {
   const push = (value) => {
     const tokens = factualIdentityTokens(value);
     if (!tokens.length) return;
-    const key = [...tokens].sort().join(":");
+    const key = [...tokens].sort((left, right) => left.localeCompare(right)).join(":");
     if (seen.has(key)) return;
     seen.add(key);
     sets.push(tokens);
@@ -1487,7 +1487,7 @@ function factualPlatformScopeFromText(valueInput) {
   if (/\blinux\b/.test(value)) add("linux");
   if (!platforms.length && /\b(?:console|consoles)\b/.test(value)) add("console");
   if (!platforms.length && /\bmobile\b/.test(value)) add("mobile");
-  return platforms.sort();
+  return platforms.sort((left, right) => left.localeCompare(right));
 }
 
 function factualCandidatePlatformScope(candidate) {
@@ -2095,7 +2095,7 @@ export function predictionContractKind(candidate) {
 }
 
 function isNamedAwardCandidate(question) {
-  return /^(?:will .+ win\b|ganara .+ (?:premio|goty)\b)|(?:\bwin game of the year\b|\bganar el premio\b)/.test(question);
+  return /(?:^(?:will .+ win\b|ganara .+ (?:premio|goty)\b)|(?:\bwin game of the year\b|\bganar el premio\b))/.test(question);
 }
 
 function providerEvidence(candidate) {

@@ -130,7 +130,7 @@ export function repairIssuePlan(context) {
     : [];
   const codes = [...new Set(issues
     .map((issue) => cleanText(issue.code, 100).toUpperCase())
-    .filter(Boolean))].sort();
+    .filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const unsupported = codes.filter((code) => !REPAIR_ISSUE_CAPABILITIES[code]);
   return {
     codes,
@@ -649,7 +649,6 @@ export async function validateRegisteredPrimarySource(
           registry_domain: registryEntry.canonical_domain,
           registry_parser_version: registryEntry.parser_version,
           registry_role: PRIMARY_SOURCE_REGISTRY_ROLE,
-          registry_role_verified: true,
           registry_categories: registryEntry.categories,
           draft_category: cleanText(draftCategory, 120),
           authority_basis: "private_source_registry_primary_resolution_v1",
@@ -677,7 +676,7 @@ export function primarySourceRegistryDomains(registry, category = null) {
   return [...new Set(normalizePrimarySourceRegistry(registry)
     .filter((entry) => entry.categories.length === 0
       || (normalizedCategory && entry.categories.includes(normalizedCategory)))
-    .map((entry) => entry.canonical_domain))].sort();
+    .map((entry) => entry.canonical_domain))].sort((left, right) => left.localeCompare(right));
 }
 
 export async function discoverRegisteredPrimarySource(context, registry, options = {}) {
@@ -1629,11 +1628,9 @@ function metricThresholdAnalysis(context) {
   if (targetUser && targetCritic) return { contract: null, error_code: "METRIC_NOT_INFERABLE" };
   const rulesUser = userPattern.test(rules);
   const rulesCritic = criticPattern.test(rules);
-  const metricKind = targetUser ? "user"
-    : targetCritic ? "critic"
-      : rulesUser && !rulesCritic ? "user"
-        : rulesCritic && !rulesUser ? "critic"
-          : metacritic ? "critic" : "critic";
+  const metricKind = targetUser || (!targetCritic && rulesUser && !rulesCritic)
+    ? "user"
+    : "critic";
   if (opencritic && metricKind === "user") return { contract: null, error_code: "METRIC_NOT_INFERABLE" };
 
   const scale = metricKind === "user" ? { min: 0, max: 10, precision: 1 } : { min: 0, max: 100, precision: 0 };

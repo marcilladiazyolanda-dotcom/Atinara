@@ -5,8 +5,23 @@
   const PUBLICATION_RELOAD_KEY = "atinara:public-market-auto-reload:v1";
   const PUBLICATION_EVENT_KEY = "atinara:market-published-event:v1";
   const PUBLICATION_CHANNEL = "atinara-market-catalog-v1";
+  const MARKET_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const safeText = (value, max = 800) => String(value ?? "").trim().slice(0, max);
+  const safeMarketId = (value) => {
+    const candidate = safeText(value, 80);
+    return MARKET_ID_PATTERN.test(candidate) ? candidate.toLowerCase() : "";
+  };
+  const normalizePublication = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const normalizedMarketId = safeMarketId(value.marketId);
+    if (!normalizedMarketId) return null;
+    return {
+      marketId: normalizedMarketId,
+      question: safeText(value.question, 600)
+    };
+  };
   const search = new URLSearchParams(window.location.search);
-  const queryMarketId = String(search.get("market") || "").trim();
+  const queryMarketId = safeMarketId(search.get("market"));
 
   let publication = null;
   let marketId = queryMarketId;
@@ -15,11 +30,11 @@
   let refreshInFlight = false;
 
   try {
-    publication = JSON.parse(sessionStorage.getItem(PUBLICATION_KEY) || "null");
+    publication = normalizePublication(JSON.parse(sessionStorage.getItem(PUBLICATION_KEY) || "null"));
   } catch {
     sessionStorage.removeItem(PUBLICATION_KEY);
   }
-  if (!marketId) marketId = String(publication?.marketId || "").trim();
+  if (!marketId) marketId = publication?.marketId || "";
 
   const style = document.createElement("style");
   style.textContent = `
@@ -59,8 +74,6 @@
   `;
   document.head.appendChild(style);
 
-  const safeText = (value, max = 800) => String(value ?? "").trim().slice(0, max);
-
   function cardForMarket() {
     if (!marketId) return null;
     const directCard = [...document.querySelectorAll("#market-list .market-card[data-market-id]")]
@@ -96,13 +109,17 @@
       banner.setAttribute("role", "status");
       document.querySelector(".markets-section")?.prepend(banner);
     }
-    banner.innerHTML = `
-      <div>
-        <strong>Mercado publicado y disponible</strong>
-        <span>${safeText(publication?.question || marketId, 600)}</span>
-      </div>
-      <a class="primary-button" href="market-detail.html?id=${encodeURIComponent(marketId)}">Abrir mercado</a>
-    `;
+    const summary = document.createElement("div");
+    const title = document.createElement("strong");
+    const question = document.createElement("span");
+    const link = document.createElement("a");
+    title.textContent = "Mercado publicado y disponible";
+    question.textContent = safeText(publication?.question || marketId, 600);
+    link.className = "primary-button";
+    link.href = `market-detail.html?id=${encodeURIComponent(marketId)}`;
+    link.textContent = "Abrir mercado";
+    summary.append(title, question);
+    banner.replaceChildren(summary, link);
 
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     sessionStorage.removeItem(PUBLICATION_RELOAD_KEY);
@@ -143,11 +160,12 @@
   }
 
   async function refreshForPublication(nextPublication) {
-    if (!nextPublication?.marketId) return;
-    publication = nextPublication;
-    marketId = String(nextPublication.marketId).trim();
+    const normalizedPublication = normalizePublication(nextPublication);
+    if (!normalizedPublication) return;
+    publication = normalizedPublication;
+    marketId = normalizedPublication.marketId;
     started = Date.now();
-    sessionStorage.setItem(PUBLICATION_KEY, JSON.stringify(nextPublication));
+    sessionStorage.setItem(PUBLICATION_KEY, JSON.stringify(normalizedPublication));
     if (refreshInFlight) return;
     refreshInFlight = true;
     try {

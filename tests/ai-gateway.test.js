@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { canonicalJson, newInvocationId } from "../supabase/functions/_shared/ai/contracts.mjs";
 import { createAiGateway } from "../supabase/functions/_shared/ai/gateway.mjs";
 import { AI_ERROR_CODES } from "../supabase/functions/_shared/ai/errors.mjs";
 import { AI_TASK_CONTRACTS } from "../supabase/functions/_shared/ai/task-policy.mjs";
@@ -107,6 +108,14 @@ function interactionsEnvelope(value) {
 function response(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", ...headers } });
 }
+
+test("los contratos canónicos ordenan claves y generan IDs con Web Crypto", () => {
+  assert.equal(
+    canonicalJson({ z: 1, a: { y: 2, b: 3 } }),
+    canonicalJson({ a: { b: 3, y: 2 }, z: 1 }),
+  );
+  assert.match(newInvocationId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
 
 function dependencies({ mode = "legacy_direct", fetchImpl, reserveBudget, recordInvocation, runtime = {}, capabilityReader } = {}) {
   const calls = { budgets: [], telemetry: [], fetches: [] };

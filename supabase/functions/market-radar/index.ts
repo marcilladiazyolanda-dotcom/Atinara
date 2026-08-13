@@ -333,7 +333,8 @@ function retryAfterMilliseconds(headers: Headers, nowMs = Date.now()): number | 
 }
 
 function providerRetryDelay(attempt: number): number {
-  const jitter = Math.floor(Math.random() * (PROVIDER_RETRY_JITTER_MS + 1));
+  const entropy = crypto.getRandomValues(new Uint32Array(1))[0];
+  const jitter = entropy % (PROVIDER_RETRY_JITTER_MS + 1);
   return Math.min(MAX_PROVIDER_RETRY_DELAY_MS, (500 * (2 ** attempt)) + jitter);
 }
 
@@ -799,7 +800,7 @@ function canonicalJson(value: unknown): string {
     if (Array.isArray(item)) return item.map(normalize);
     if (!isRecord(item)) return item ?? null;
     const record = item as JsonRecord;
-    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, normalize(record[key])]));
+    return Object.fromEntries(Object.keys(record).sort((left, right) => left.localeCompare(right)).map((key) => [key, normalize(record[key])]));
   };
   return JSON.stringify(normalize(value));
 }
@@ -2530,7 +2531,7 @@ function candidatePreflight(candidate: JsonRecord): { ok: true } | { ok: false; 
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente. Actualiza el Radar." };
   const state = cleanText(candidate.state, 40);
   if (["prepared", "dismissed", "expired"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
-  if (toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch)) return { ok: false, error: "CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
+  if (toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match))) return { ok: false, error: "CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_")) {
     const rejection = prepareRevalidationError(candidate);
@@ -2546,11 +2547,11 @@ function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | {
   const selfDuplicateRepair = state === "rejected"
     && cleanText(candidate.verification_status, 80) === "rejected_duplicate"
     && Boolean(candidate.prepared_draft_id)
-    && !toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch);
+    && !toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
   const repairablePrepared = state === "prepared"
     && Boolean(candidate.prepared_draft_id)
     && cleanText(candidate.eligibility_status, 40) !== "terminal"
-    && !toRecordArray(candidate.duplicate_matches).some(isBlockingDuplicateMatch);
+    && !toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
   if (!["available", "needs_review", "prepared"].includes(state) && !selfDuplicateRepair) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_") && !selfDuplicateRepair && !repairablePrepared) {

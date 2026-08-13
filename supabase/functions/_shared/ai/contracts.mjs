@@ -94,7 +94,7 @@ function canonicalizeValue(value, depth = 0) {
   }
   if (Array.isArray(value)) return value.map((item) => canonicalizeValue(item, depth + 1));
   if (!isRecord(value)) throw aiError(AI_ERROR_CODES.INVALID_REQUEST, { httpStatus: 400 });
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalizeValue(value[key], depth + 1)]));
+  return Object.fromEntries(Object.keys(value).sort((left, right) => left.localeCompare(right)).map((key) => [key, canonicalizeValue(value[key], depth + 1)]));
 }
 
 export function canonicalJson(value) {
@@ -108,5 +108,11 @@ export async function sha256Hex(value) {
 }
 
 export function newInvocationId() {
-  return globalThis.crypto?.randomUUID?.() ?? `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    throw aiError(AI_ERROR_CODES.INVALID_REQUEST, {
+      httpStatus: 500,
+      details: { phase: "invocation_id" },
+    });
+  }
+  return globalThis.crypto.randomUUID();
 }

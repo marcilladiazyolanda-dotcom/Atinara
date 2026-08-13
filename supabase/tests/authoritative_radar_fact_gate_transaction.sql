@@ -97,7 +97,7 @@ begin
   exception when insufficient_privilege then null;
   end;
   begin
-    update private.market_radar_fact_checks set reason = reason where false;
+    update private.market_radar_fact_checks set reason = 'sonar-permission-test' where false;
     raise exception 'TEST_SERVICE_ROLE_RAW_FACT_UPDATE_ACCEPTED';
   exception when insufficient_privilege then null;
   end;

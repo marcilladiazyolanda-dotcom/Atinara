@@ -40,6 +40,44 @@ test("la configuración local de Sonar usa únicamente parámetros admitidos por
   assert.doesNotMatch(properties, /sonar\.exclusions=[^\n]*supabase\/migrations/);
   assert.doesNotMatch(properties, /sonar\.issue\.ignore\.multicriteria/);
   assert.doesNotMatch(properties, /sonar\.issue\.ignore\.allfile/);
+  assert.match(properties, /sonar\.test\.inclusions=[^\n]*supabase\/tests\/\*\*/);
+  assert.match(properties, /^sonar\.cpd\.exclusions=supabase\/migrations\/\*\*\/\*\.sql$/m);
+});
+
+test("la corrección Sonar conserva análisis SQL y elimina los patrones inseguros detectados", () => {
+  const workflow = read(".github/workflows/oraklo-quality.yml");
+  const adminMarkets = read("admin-markets.js");
+  const adminValidation = read("market-admin-validation.js");
+  const landing = read("market-publication-landing.js");
+  const browserFixer = read("market-draft-fixer.js");
+  const aiContracts = read("supabase/functions/_shared/ai/contracts.mjs");
+  const draftRepair = read("supabase/functions/_shared/market-draft-repair.mjs");
+  const resolutionContract = read("supabase/functions/_shared/market-intelligence/resolution-contract.mjs");
+  const radarShared = read("supabase/functions/_shared/market-radar.mjs");
+  const edgeFixer = read("supabase/functions/market-draft-fixer/index.ts");
+  const radarEdge = read("supabase/functions/market-radar/index.ts");
+  const agentSql = read("supabase/tests/agent_engine_v2_transaction.sql");
+  const factSql = read("supabase/tests/authoritative_radar_fact_gate_transaction.sql");
+  const attestationSql = read("supabase/tests/market_radar_legacy_fact_attestation_transaction.sql");
+
+  assert.match(workflow, /denoland\/setup-deno@[0-9a-f]{40} # v2\.0\.5/);
+  assert.doesNotMatch(adminMarkets, /\.map\(radarGroupMarkup\)/);
+  assert.doesNotMatch(adminMarkets, /draftBaseline:\s*null/);
+  assert.match(landing, /const normalizePublication =/);
+  assert.match(landing, /MARKET_ID_PATTERN/);
+  assert.match(landing, /banner\.replaceChildren\(summary, link\)/);
+  assert.doesNotMatch(landing, /\.innerHTML\s*=/);
+  [browserFixer, aiContracts, radarEdge].forEach((source) => {
+    assert.doesNotMatch(source, /Math\.random\(/);
+  });
+  [adminValidation, aiContracts, draftRepair, resolutionContract, radarShared, edgeFixer, radarEdge]
+    .forEach((source) => assert.doesNotMatch(source, /\.sort\(\)/));
+  assert.match(draftRepair, /const metricKind = targetUser \|\| \(!targetCritic && rulesUser && !rulesCritic\)/);
+  assert.doesNotMatch(draftRepair, /\?\s*"critic"\s*:\s*"critic"/);
+  assert.doesNotMatch(radarEdge, /\.some\(isBlockingDuplicateMatch\)/);
+  assert.match(agentSql, /update private\.market_agent_runs[\s\S]*?where invocation_id like 'agent-sql-v21-%'/);
+  assert.doesNotMatch(factSql, /set reason = reason/);
+  assert.doesNotMatch(attestationSql, /set attestation_sha256 = attestation_sha256/);
 });
 
 test("la trampa de foco del acceso no compara elementos de tipos opcionales", () => {

@@ -113,7 +113,7 @@ begin
   end;
   begin
     update private.market_radar_legacy_fact_attestations
-    set attestation_sha256 = attestation_sha256 where false;
+    set attestation_sha256 = repeat('0', 64) where false;
     raise exception 'TEST_SERVICE_RAW_ATTESTATION_UPDATE_ACCEPTED';
   exception when insufficient_privilege then null;
   end;

@@ -672,7 +672,9 @@ function semanticUnresolvedEscalation(value: JsonRecord | null): JsonRecord | nu
 
 function repairRoundSignature(deterministic: JsonRecord, repaired: JsonRecord): string {
   const issuePlan = isRecord(deterministic.issue_plan) ? deterministic.issue_plan : {};
-  const codes = Array.isArray(issuePlan.codes) ? issuePlan.codes.map((value) => cleanText(value, 100)).sort() : [];
+  const codes = Array.isArray(issuePlan.codes)
+    ? issuePlan.codes.map((value) => cleanText(value, 100)).sort((left, right) => left.localeCompare(right))
+    : [];
   const fields = [
     "question", "subject", "evaluation_ends_at", "timezone", "resolution_deadline",
     "yes_criteria", "no_criteria", "edge_cases", "public_criteria", "description",
@@ -710,7 +712,7 @@ function repairAuditIssuePlan(value: unknown): JsonRecord {
     ? [...new Set(plan.codes
       .map((code) => cleanText(code, 100).toUpperCase())
       .filter((code) => REPAIRABLE_ISSUE_CODE_SET.has(code)))]
-      .sort()
+      .sort((left, right) => left.localeCompare(right))
       .slice(0, REPAIRABLE_ISSUE_CODES.length)
     : [];
   return {

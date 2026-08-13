@@ -1047,7 +1047,8 @@ test("la preparaciÃ³n revalida proveedor y aplica elegibilidad en una transacciÃ
   assert.match(edge, /const authoritativeCandidate = toRecord\(applied\.candidate\)/);
   assert.match(edge, /eligibility_check_input: eligibilityCheck/);
   assert.match(edge, /const readiness = candidateReady\(authoritativeCandidate\)/);
-  assert.match(edge, /some\(isBlockingDuplicateMatch\)/);
+  assert.match(edge, /some\(\(match\) => isBlockingDuplicateMatch\(match\)\)/);
+  assert.doesNotMatch(edge, /some\(isBlockingDuplicateMatch\)/);
   assert.match(edge, /RADAR_CANDIDATE_RESOLVED/);
   assert.match(edge, /RADAR_CANDIDATE_INELIGIBLE/);
   assert.match(edge, /RADAR_CANDIDATE_UNANNOUNCED/);

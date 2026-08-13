@@ -24,7 +24,7 @@
     gateNotice: "",
     gateNoticeTone: "info",
     draftDirty: false,
-    draftBaseline: null,
+    draftBaseline: "",
     pendingAction: null,
     actionTrigger: null,
     radar: {
@@ -1033,7 +1033,7 @@
   function radarMarkup() {
     const groups = Array.isArray(state.radar.groups) ? state.radar.groups : [];
     const cards = groups.length
-      ? `<div class="radar-candidate-grid">${groups.map(radarGroupMarkup).join("")}</div>`
+      ? `<div class="radar-candidate-grid">${groups.map((group, index) => radarGroupMarkup(group, index)).join("")}</div>`
       : `<div class="admin-empty-state radar-empty"><strong>No hay eventos con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
     const errors = state.radar.errors.length
       ? `<aside class="radar-partial-error" role="status"><strong>Cobertura degradada temporalmente.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>Se conserva el último resultado válido cuando existe; la creación manual y las demás fuentes siguen disponibles.</span></aside>`
@@ -1252,13 +1252,13 @@
     const form = document.querySelector("#admin-market-form");
     if (!form) {
       state.draftDirty = false;
-      state.draftBaseline = null;
+      state.draftBaseline = "";
       return;
     }
     const baseDraft = state.selected?.draft || {};
     state.draftBaseline = form.dataset.draftId
       ? JSON.stringify(helpers.canonicalizeDraftPayload(baseDraft))
-      : null;
+      : "";
     form.dataset.lastCanonical = JSON.stringify(
       helpers.canonicalizeDraftPayload(helpers.collectDraftPayload(form, baseDraft))
     );

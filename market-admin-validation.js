@@ -98,7 +98,7 @@
         ? input
         : [
             ...preferredKeys.filter((key) => Object.hasOwn(input, key)).map((key) => input[key]),
-            ...Object.keys(input).filter((key) => !preferredKeys.includes(key)).sort().map((key) => input[key])
+            ...Object.keys(input).filter((key) => !preferredKeys.includes(key)).sort((left, right) => left.localeCompare(right)).map((key) => input[key])
           ];
       const parts = values.map((item) => visit(item, depth + 1)).filter(Boolean);
       return [...new Set(parts)].join(" · ");
@@ -211,7 +211,7 @@
   function canonicalJson(value) {
     if (Array.isArray(value)) return value.map(canonicalJson);
     if (value && typeof value === "object") {
-      return Object.keys(value).sort().reduce((result, key) => {
+      return Object.keys(value).sort((left, right) => left.localeCompare(right)).reduce((result, key) => {
         result[key] = canonicalJson(value[key]);
         return result;
       }, {});
@@ -284,7 +284,7 @@
       .split(/\r?\n/)
       .map(normalizeUrl)
       .filter(Boolean))]
-      .sort()
+      .sort((left, right) => left.localeCompare(right))
       .map((url) => ({ ...(baseAlternatives.get(url) || {}), url }));
 
     const evaluationInput = read("evaluation_ends_at");
