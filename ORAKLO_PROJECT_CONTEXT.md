@@ -1,12 +1,14 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 12 de agosto de 2026.
+Última actualización del contexto: 13 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine usa `market-radar` v54,
-> `market-draft-fixer` v18, `validate-market-draft` v26 y `market-expert` v21,
-> todas activas con `verify_jwt=true`. La puerta determinista de elegibilidad
+> **Estado vigente:** Atinara Engine V2.1 usa `market-radar` v55,
+> `market-draft-fixer` v19, `validate-market-draft` v27, `market-expert` v22 y
+> `analyze-market-resolution` v15, todas activas con `verify_jwt=true`. Las
+> cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
+> desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
 > v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
 > revisión factual ya no es un bloqueo operativo. La identidad familiar vigente
 > es v4 y la revisión automática del borrador usa política v3.
@@ -17,10 +19,53 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > autenticado de Editor y varios refrescos controlados del Radar se completaron
 > sin confirmar ni publicar. Marvel sigue `approved` en v9. El refresh v54 dejó
 > Polymarket y Kalshi disponibles y aisló la caída de Tavily como degradación
-> técnica reintentable. GitHub Pages aún sirve el corte anterior
-> `v=20260811-radar-eligibility2`; el frontend `v=20260812-agent-engine2` solo
-> será público cuando Yol suba el nuevo ZIP y se repita el smoke. No hacer push
+> técnica reintentable. Las tres migraciones V2.1 quedaron aplicadas una sola
+> vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
+
+### Activación productiva controlada de V2.1 en `legacy_direct` · 13 de agosto de 2026
+
+- Base canónica verificada antes de actuar: `HEAD = origin/main =
+  88bb409330e554ae5494addfac1b7343a347aab6`, worktree limpio y divergencia
+  `0/0`. La intervención no hizo commit, push, deploy de frontend, cambio de
+  secretos, benchmark live, activación de proveedores ni acción sobre mercados.
+- Las migraciones locales V2.1 se aplicaron en el orden cerrado y Supabase las
+  registra como `20260813163839_harden_radar_eligibility_rls_v1`,
+  `20260813163918_add_ai_gateway_telemetry_and_budgets_v1` y
+  `20260813163959_add_agent_engine_v2_v1`. Son aditivas y conservan registry,
+  wrappers y rollback v1.
+- Los trece ledgers y registries privados auditados tienen RLS habilitado y
+  forzado, sin privilegios directos para `anon`, `authenticated` o
+  `service_role`. Las cinco suites SQL v7, v8, RLS v12, budget/telemetría y
+  Agent Engine v2 pasaron juntas en producción dentro de `BEGIN/ROLLBACK`.
+  `radar_eligibility_v7_transaction.sql` se corrigió localmente para probar la
+  elegibilidad de candidata que pertenece a v7; el binding de borrador vigente
+  desde v8 continúa cubierto por `agent_engine_confirmation_v8_transaction.sql`.
+- Se desplegaron secuencialmente Radar v55
+  (`b2c842c717d265c09abaaaccb5eed0d013b2ab8be262a9d2e5d15d672531b861`),
+  Expert v22
+  (`9b5b8bf1f547cad8638598aa2a081c1de7e0c08efbc4032df5c574bff1b5a6e8`),
+  Corrector v19
+  (`1e6b006b31601bdfb884c7266133d64dd2879e3e9142b0dccda059c68a0fa9a4`),
+  Validator v27
+  (`494afb960213898ef9db1c2d4aab788c8d744d0c3d81037311412c3f727f1b2d`)
+  y Resolución v15
+  (`9d065ad553ea8dd1c5903fe6e3aff1610ad03d11c982c4fa21c6fc364b78f235`).
+  Las cuatro rutas que infieren usan el Gateway común; ninguna Edge conserva
+  URL o transporte directo de proveedor. Radar continúa ejecutando cero IA.
+- El control final confirmó cinco settings en `legacy_direct`, rutas nulas,
+  flags experimentales apagados, quince límites diarios en cero y cero
+  reservas, intentos, runs o steps. Los smokes sin credencial devolvieron `401`
+  en las cinco Edge y no iniciaron inferencias.
+- Los hashes y recuentos autoritativos de mercados, predicciones, perfiles,
+  Karma, Prestigio, maker state e histórico son idénticos al baseline previo.
+  La validación local posterior pasó 412/412 pruebas, sintaxis de 106
+  JavaScript, TypeScript, cinco suites SQL estáticas, 9/9 Edge checks y
+  benchmark offline 5/5 con cero red.
+- Continúan pendientes de autorización separada: comprobar credenciales sin
+  leer valores, smoke autenticado de paridad, capability discovery live,
+  ground truth aprobado, benchmark live, shadow, canary y cualquier cambio a
+  `gateway_gemini_parity`, `gateway_routing` o proveedor experimental.
 
 ### Implementación local Agent Engine V2.1 + AI Gateway · 12 de agosto de 2026
 

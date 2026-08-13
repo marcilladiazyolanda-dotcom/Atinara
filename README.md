@@ -6,15 +6,16 @@ Web pública canónica: https://marcilladiazyolanda-dotcom.github.io/Atinara/
 
 Contrato operativo de los agentes: [`docs/ATINARA_AGENT_ENGINE.md`](docs/ATINARA_AGENT_ENGINE.md).
 
-## Agent Engine V2.1 y AI Gateway · implementación local
+## Agent Engine V2.1 y AI Gateway · producción en `legacy_direct`
 
-El árbol incorpora una transición multiproveedor local, todavía no desplegada ni activada. Las cuatro rutas de inferencia activas llaman a un contrato común y la quinta superficie, Radar, conserva cero inferencias y un contrato dormido de compatibilidad. Los modelos Gemini exactos permanecen disponibles mediante `legacy_direct`; la promoción a `gateway_gemini_parity` se hace tarea por tarea.
+La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producción con las cinco tareas fijadas a `legacy_direct`. Las cuatro rutas de inferencia activas llaman a un contrato común y Radar conserva cero inferencias y un contrato dormido de compatibilidad. Los modelos Gemini exactos permanecen disponibles mediante el adaptador legacy centralizado; la promoción a `gateway_gemini_parity` se hará tarea por tarea y todavía no está autorizada.
 
 - Contratos, políticas, saneamiento, deadlines, validación determinista, presupuesto atómico y telemetría viven en `supabase/functions/_shared/ai/`.
 - Agent Runtime v2 selecciona herramientas registradas, controla loops, replans, huellas y un único writer; nunca confirma, publica, resuelve o liquida.
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
-- Las tres migraciones V2.1 son locales y pendientes de revisión/aplicación manual. No modificar ni repetir migraciones ya aplicadas.
+- Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
+- Producción usa Radar v55, Expert v22, Corrector v19, Validator v27 y Resolución v15, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
