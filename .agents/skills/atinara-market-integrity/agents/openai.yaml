@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Integridad de mercados"
-  short_description: "Protege Radar, Editor, Corrector, familias y ciclo de publicación."
-  default_prompt: "Aplica la habilidad $atinara-market-integrity a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

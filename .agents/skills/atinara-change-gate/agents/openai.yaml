@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Puerta de cambio"
-  short_description: "Controla baseline, causa raíz, alcance, implementación y pruebas."
-  default_prompt: "Aplica la habilidad $atinara-change-gate a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

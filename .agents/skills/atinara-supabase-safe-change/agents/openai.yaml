@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Supabase seguro"
-  short_description: "Protege Auth, RLS, RPC, migraciones, Edge Functions y producción."
-  default_prompt: "Aplica la habilidad $atinara-supabase-safe-change a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true

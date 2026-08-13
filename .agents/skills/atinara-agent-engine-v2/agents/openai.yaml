@@ -1,6 +1,0 @@
-interface:
-  display_name: "Atinara · Agent Engine V2.1"
-  short_description: "Mantiene Gateway, runtime, registries, budgets y modos por tarea."
-  default_prompt: "Aplica la habilidad $atinara-agent-engine-v2 a la tarea actual de Atinara y respeta AGENTS.md."
-policy:
-  allow_implicit_invocation: true
