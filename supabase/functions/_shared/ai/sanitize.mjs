@@ -30,7 +30,7 @@ const PUBLIC_JSON_ALLOWED_KEYS = new Set(`
   claim_slots claim_status claim_verifiable closes_at code confidence conclusive content_criterion content_kind
   content_sha256 content_type contextual_basis contextual_basis_refs context_type contract contract_identity contract_policy_version contract_schema_version contract_url
   created_at data_class decision delay_treatment deleted_entity_treatment description details deterministic
-  direct_claim disposition dispositions draft duration_contract edge_case edge_cases eligible eligibility_checked_at endpoint_identity_basis endpoint_identity_verified
+  direct_claim disposition dispositions draft duplicate_matches duration_contract edge_case edge_cases eligible eligibility_checked_at endpoint_identity_basis endpoint_identity_verified
   eligibility_evidence eligibility_expires_at eligibility_policy_version eligibility_reason eligibility_reason_code
   eligibility_status entity_label entity_type evaluation_at evaluation_ends_at evaluation_period_label evidence
   evidence_basis evidence_mode exact expected_boolean_state expected_result explicit_void_conditions expires_at
@@ -125,6 +125,9 @@ function sanitizePublicJson(value, limits, path, depth) {
   for (const [key, item] of Object.entries(value)) {
     if (isProhibitedKey(key)) throw aiError(AI_ERROR_CODES.DATA_CLASS_PROHIBITED, { httpStatus: 400, details: { phase: `${path}.${key}` } });
     if (!PUBLIC_JSON_ALLOWED_KEYS.has(key)) {
+      throw aiError(AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, { httpStatus: 400, details: { phase: `${path}.${key}` } });
+    }
+    if (key === "duplicate_matches" && !Array.isArray(item)) {
       throw aiError(AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, { httpStatus: 400, details: { phase: `${path}.${key}` } });
     }
     output[key] = sanitizePublicJson(item, limits, `${path}.${key}`, depth + 1);

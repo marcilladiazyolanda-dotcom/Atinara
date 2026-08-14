@@ -102,6 +102,8 @@ Atinara usa validadores deterministas específicos por tarea, no un validador JS
 
 El sanitizer aplica vocabulario cerrado en todos los niveles, límites de profundidad, arrays, strings, URLs y bytes. Rechaza identidad, contacto, sesiones, cookies, JWT, secretos, Karma, Prestigio, saldo, posiciones y predicciones privadas. Los IDs internos y el payload crudo de proveedor se eliminan de la proyección editorial.
 
+En `market_expert_reasoning`, `origin.duplicate_matches` es dato ordinario de mercado: se valida siempre como array y admite tanto el array vacío como coincidencias saneadas producidas por la clasificación determinista. `PUBLIC_JSON` es el vocabulario transversal de campos de mercado, pero declarar esta clave no amplía la clase de datos ni las claves admitidas dentro de cada coincidencia. La proyección productiva elimina recursivamente `id` y claves `*_id`; el Gateway sigue rechazando identificadores no proyectados, PII, secretos y cualquier campo anidado fuera del vocabulario cerrado antes de reservar presupuesto o invocar al proveedor.
+
 Data classes:
 
 - `public_market`: única clase admisible para OpenRouter o NVIDIA NIM.

@@ -11,6 +11,7 @@ import {
 import { createAiGateway } from "../supabase/functions/_shared/ai/gateway.mjs";
 import { AI_ERROR_CODES } from "../supabase/functions/_shared/ai/errors.mjs";
 import { AI_TASK_CONTRACTS } from "../supabase/functions/_shared/ai/task-policy.mjs";
+import { classifyMarketRelations } from "../supabase/functions/_shared/market-radar.mjs";
 
 const canonicalJsonFixture = JSON.parse(readFileSync(
   new URL("./fixtures/atinara-canonical-json-v1.json", import.meta.url),
@@ -372,6 +373,126 @@ test("el sanitizer aplica una allowlist recursiva y rechaza claves anidadas desc
     gateway.generateStructured(request, context()),
     (error) => error.code === AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED,
   );
+});
+
+function sanitizedDuplicateMatch(patch = {}) {
+  const candidate = {
+    provider: "kalshi",
+    source_title: "Grand Theft Auto VI release date",
+    source_question: "Will Grand Theft Auto VI be released before September 1, 2026?",
+    atinara_question: "Will Grand Theft Auto VI be released before September 1, 2026?",
+  };
+  const produced = classifyMarketRelations(candidate, [{
+    id: "published-market-id",
+    question: "¿Grand Theft Auto VI será lanzado el 31 de agosto de 2026 o antes?",
+  }]).duplicates[0];
+  assert.equal(produced.id, "published-market-id");
+  assert.equal(produced.relationship, "exact_duplicate");
+  assert.equal(produced.blocking, true);
+  const { id: _internalId, ...sanitized } = produced;
+  return { ...sanitized, ...patch };
+}
+
+test("market_expert_reasoning admite duplicate_matches vacío y con datos de mercado saneados", async () => {
+  const fingerprints = [];
+  for (const duplicateMatches of [[], [sanitizedDuplicateMatch()]]) {
+    const { gateway, calls } = dependencies({
+      fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
+    });
+    const request = productRequest("market_expert_reasoning");
+    request.input.origin.duplicate_matches = duplicateMatches;
+    const result = await gateway.generateStructured(request, context());
+
+    assert.deepEqual(result.value, VALID.market_expert_reasoning.output);
+    assert.equal(result.metadata.transportMode, "legacy_direct");
+    assert.match(result.metadata.inputFingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(calls.fetches.length, 1);
+    fingerprints.push(result.metadata.inputFingerprint);
+  }
+  assert.notEqual(fingerprints[0], fingerprints[1]);
+});
+
+test("la proyección productiva de Market Expert permanece alineada con la allowlist del Gateway", async () => {
+  const source = readFileSync(new URL("../supabase/functions/market-expert/index.ts", import.meta.url), "utf8");
+  const producerBlock = source.match(/function safeOrigin\(origin: JsonRecord\)[\s\S]*?const allowed = \[([\s\S]*?)\];/)?.[1];
+  const projectionBlock = source.match(/function modelSafeOrigin\(origin: JsonRecord\)([\s\S]*?)function modelSafeDeterministic/)?.[1];
+  assert.ok(producerBlock);
+  assert.ok(projectionBlock);
+  assert.match(source, /return safeOrigin\(raw as JsonRecord\);/);
+  assert.match(source, /input: \{ origin: modelSafeOrigin\(origin\), deterministic: modelSafeDeterministic\(deterministic\) \}/);
+  assert.match(projectionBlock, /key !== "id" && !key\.endsWith\("_id"\) && !excluded\.has\(key\)/);
+
+  const producerKeys = [...producerBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const excludedBlock = projectionBlock.match(/const excluded = new Set\(\[([\s\S]*?)\]\);/)?.[1];
+  assert.ok(excludedBlock);
+  const excludedKeys = new Set([...excludedBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+  const projectedKeys = producerKeys.filter((key) => key !== "id" && !key.endsWith("_id") && !excludedKeys.has(key));
+  assert.ok(projectedKeys.includes("duplicate_matches"));
+
+  const { gateway, calls } = dependencies({
+    fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
+  });
+  const projectedBatches = [projectedKeys.slice(0, 80), projectedKeys.slice(80)];
+  for (const batch of projectedBatches) {
+    const request = productRequest("market_expert_reasoning");
+    request.input.origin = Object.fromEntries(batch.map((key) => [key, null]));
+    if (Object.hasOwn(request.input.origin, "duplicate_matches")) request.input.origin.duplicate_matches = [];
+    const result = await gateway.generateStructured(request, context());
+    assert.deepEqual(result.value, VALID.market_expert_reasoning.output);
+  }
+  assert.equal(calls.fetches.length, projectedBatches.length);
+});
+
+test("duplicate_matches conserva su contrato de array", async () => {
+  for (const invalidValue of [null, "not-an-array", { relationship: "exact_duplicate" }, 1]) {
+    const { gateway, calls } = dependencies({
+      fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
+    });
+    const request = productRequest("market_expert_reasoning");
+    request.input.origin.duplicate_matches = invalidValue;
+    await assert.rejects(
+      gateway.generateStructured(request, context()),
+      (error) => {
+        assert.equal(error.code, AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED);
+        assert.equal(error.httpStatus, 400);
+        assert.equal(error.details?.phase, "input.origin.duplicate_matches");
+        return true;
+      },
+    );
+    assert.equal(calls.fetches.length, 0);
+    assert.equal(calls.budgets.length, 0);
+  }
+});
+
+test("duplicate_matches no amplía identificadores, PII, secretos ni campos desconocidos", async () => {
+  const rejected = [
+    { patch: { id: "internal-market-id" }, code: AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, field: "id" },
+    { patch: { external_id: "provider-market-id" }, code: AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, field: "external_id" },
+    { patch: { user_id: "internal-user-id" }, code: AI_ERROR_CODES.DATA_CLASS_PROHIBITED, field: "user_id" },
+    { patch: { question: "Contacto editorial: persona@example.invalid" }, code: AI_ERROR_CODES.DATA_CLASS_PROHIBITED, field: "question" },
+    { patch: { summary: "Bearer abcdefghijklmnopqrstuvwxyz" }, code: AI_ERROR_CODES.DATA_CLASS_PROHIBITED, field: "summary" },
+    { patch: { internal_note: "no permitido" }, code: AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, field: "internal_note" },
+  ];
+
+  for (const { patch, code, field } of rejected) {
+    const { gateway, calls } = dependencies({
+      fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
+    });
+    const request = productRequest("market_expert_reasoning");
+    request.input.origin.duplicate_matches = [sanitizedDuplicateMatch(patch)];
+
+    await assert.rejects(
+      gateway.generateStructured(request, context()),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.equal(error.httpStatus, 400);
+        assert.equal(error.details?.phase, `input.origin.duplicate_matches[0].${field}`);
+        return true;
+      },
+    );
+    assert.equal(calls.fetches.length, 0);
+    assert.equal(calls.budgets.length, 0);
+  }
 });
 
 test("la huella se calcula después de sanear y es canónica", async () => {
