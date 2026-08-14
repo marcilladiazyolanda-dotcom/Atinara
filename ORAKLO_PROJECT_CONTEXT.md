@@ -23,14 +23,19 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
 
-### Paquete local Atinara Canonical JSON v1 · 14 de agosto de 2026
+### Publicación y verificación de Atinara Canonical JSON v1 · 14 de agosto de 2026
 
-- La rama local `codex/atinara-canonical-json-v1`, creada directamente desde `origin/main` `20ba48d7a5eae3add57a865a724a6f4fe9b2dce5`, introduce `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"` para las huellas compartidas por AI Gateway, Agent Runtime V2 y Registry V2. Este trabajo no cambia producción ni activa modos, proveedores, presupuestos o red externa.
+- `origin/main = bcebd8ea62c5212aebfb0b7ba35f0b63c35129b9` publica los diez archivos del paquete `ATINARA_CANONICAL_JSON_V1`, creado originalmente desde la base `20ba48d7a5eae3add57a865a724a6f4fe9b2dce5`. Introduce `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"` para las huellas compartidas por AI Gateway, Agent Runtime V2 y Registry V2.
 - El serializador directo ordena claves recursivamente por unidades UTF-16 sin locale, conserva arrays densos, no normaliza Unicode y usa serialización ECMAScript para strings y números. No ejecuta `toJSON` ni accessors y rechaza valores no JSON o ambiguos con los códigos vigentes.
 - La versión identifica contrato, fixture y documentación, pero no se añade al contenido hasheado ni a datos persistidos. Cualquier incompatibilidad futura exige v2 y una transición explícita.
 - El fixture compartido conserva como literales cinco inputs saneados, cinco outputs validados, un snapshot de Registry V2 y los payloads simples de progreso y replan de Runtime V2. Las 13 huellas forman la puerta de compatibilidad del paquete.
 - El defecto de `localeCompare()` queda cubierto por claves `0`, `1`, `2`, `10`, `4294967294`, `4294967295`, Unicode y claves especiales. Su canonical string literal tiene SHA-256 independiente `14141cffbafc63c88d3468cf5e5fcfc139597f0ac4b2f7b28a8951c0e35ede8e`; el candidato anterior `72c408...` no se usa como evidencia.
 - El objetivo es “sin alterar las cadenas ni huellas de los valores productivos válidos cubiertos por los contratos V2.1 actuales; los valores no JSON o previamente ambiguos se rechazan conforme al contrato v1”. No se modifica frontend, README, migraciones, SQL, Edge entrypoints, Auth, modos, flags, presupuestos, proveedores ni datos.
+- Los cuatro workflows asociados al SHA publicado —configuración Codex, benchmark IA offline, calidad y GitHub Pages— terminaron en `success`. SonarQube Cloud analizó el mismo SHA y devolvió Quality Gate `OK`: fiabilidad, seguridad y mantenibilidad A, duplicación nueva `0.8 %` y hotspots revisados `100 %`.
+- El baseline independiente sobre una rama limpia del mismo SHA superó 420/420 pruebas, sintaxis de 107 JavaScript, canonicalización idéntica Node/Deno, TypeScript, cinco suites SQL estáticas, 9/9 Edge Functions, benchmark offline 5/5 con `externalNetworkCalls=0`, auditoría npm sin vulnerabilidades, validador Codex y `git diff --check`.
+- La lectura productiva confirmó Supabase `ACTIVE_HEALTHY`, las migraciones V2.1 `20260813163839`, `20260813163918` y `20260813163959` aplicadas una sola vez, y las cinco Edge activas con JWT obligatorio en Radar v55, Expert v22, Corrector v19, Validator v27 y Resolución v15.
+- Esos cinco bundles desplegados todavía contienen el canonicalizador anterior basado en `localeCompare()` y `Object.fromEntries`; no declaran `ATINARA_CANONICAL_JSON_VERSION`. Por tanto, el contrato v1 está publicado y validado en GitHub, pero su propagación a producción requiere un redeploy posterior, separado y expresamente autorizado de las cinco Edge. No se ejecutó ese redeploy ni se cambiaron modos, flags, presupuestos, proveedores, secretos o datos.
+- La auditoría no usó SQL remoto. El catálogo estático desplegado conserva OpenRouter y NVIDIA NIM con `enabled: false`, pero los valores actuales de modos, flags y presupuestos persistidos no se vuelven a afirmar como lectura directa del 14 de agosto hasta disponer de autorización para una consulta remota estrictamente de solo lectura.
 
 ### Activación productiva controlada de V2.1 en `legacy_direct` · 13 de agosto de 2026
 
