@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { canonicalJson, newInvocationId } from "../supabase/functions/_shared/ai/contracts.mjs";
+import {
+  ATINARA_CANONICAL_JSON_VERSION,
+  canonicalJson,
+  newInvocationId,
+  sha256Hex,
+} from "../supabase/functions/_shared/ai/contracts.mjs";
 import { createAiGateway } from "../supabase/functions/_shared/ai/gateway.mjs";
 import { AI_ERROR_CODES } from "../supabase/functions/_shared/ai/errors.mjs";
 import { AI_TASK_CONTRACTS } from "../supabase/functions/_shared/ai/task-policy.mjs";
+
+const canonicalJsonFixture = JSON.parse(readFileSync(
+  new URL("./fixtures/atinara-canonical-json-v1.json", import.meta.url),
+  "utf8",
+));
 
 const VALID = Object.freeze({
   radar_candidate_enrichment: {
@@ -115,6 +126,161 @@ test("los contratos canónicos ordenan claves y generan IDs con Web Crypto", () 
     canonicalJson({ a: { b: 3, y: 2 }, z: 1 }),
   );
   assert.match(newInvocationId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
+function assertCanonicalError(thunk, code, httpStatus) {
+  assert.throws(thunk, (error) => {
+    assert.equal(error.code, code);
+    assert.equal(error.httpStatus, httpStatus);
+    return true;
+  });
+}
+
+function nestedCanonicalValue(depth) {
+  let value = "leaf";
+  for (let index = 0; index < depth; index += 1) value = { value };
+  return value;
+}
+
+test("Canonical JSON v1 fija version, orden UTF-16 y golden literal independiente", async () => {
+  assert.equal(ATINARA_CANONICAL_JSON_VERSION, canonicalJsonFixture.version);
+  const integerUnicode = canonicalJsonFixture.goldenCases.find(({ id }) => id === "integer-unicode-key-order");
+  assert.equal(
+    integerUnicode.expectedCanonicalJson,
+    "{\"0\":\"zero\",\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\",\"4294967294\":\"max-index\",\"4294967295\":\"not-index\",\"__proto__\":\"data\",\"a\":\"prefix\",\"aa\":\"longer\",\"á\":\"decomposed\",\"constructor\":\"ctor\",\"prototype\":\"proto\",\"á\":\"composed\",\"😀\":\"emoji\"}",
+  );
+  assert.equal(integerUnicode.expectedSha256, "14141cffbafc63c88d3468cf5e5fcfc139597f0ac4b2f7b28a8951c0e35ede8e");
+  assert.equal(canonicalJson(integerUnicode.input), integerUnicode.expectedCanonicalJson);
+  assert.equal(await sha256Hex(integerUnicode.expectedCanonicalJson), integerUnicode.expectedSha256);
+
+  const insertionCases = canonicalJsonFixture.goldenCases.filter(({ id }) => id.startsWith("insertion-order-"));
+  assert.equal(canonicalJson(insertionCases[0].input), canonicalJson(insertionCases[1].input));
+  assert.notEqual(
+    canonicalJson(canonicalJsonFixture.goldenCases.find(({ id }) => id === "composed-unicode").input),
+    canonicalJson(canonicalJsonFixture.goldenCases.find(({ id }) => id === "decomposed-unicode").input),
+  );
+});
+
+test("Canonical JSON v1 conserva claves de datos ordinarias sin ejecutar toJSON", () => {
+  const ordinaryKeys = JSON.parse('{"toJSON":"valor","prototype":"p","constructor":"c","__proto__":"dato"}');
+  assert.equal(
+    canonicalJson(ordinaryKeys),
+    '{"__proto__":"dato","constructor":"c","prototype":"p","toJSON":"valor"}',
+  );
+  assert.equal(Object.getPrototypeOf(ordinaryKeys), Object.prototype);
+
+  const nullPrototype = Object.create(null);
+  Object.defineProperty(nullPrototype, "b", { value: 2, enumerable: true });
+  Object.defineProperty(nullPrototype, "a", { value: 1, enumerable: true });
+  assert.equal(canonicalJson(nullPrototype), '{"a":1,"b":2}');
+
+  let toJsonCalls = 0;
+  const functionToJson = { value: 1 };
+  Object.defineProperty(functionToJson, "toJSON", {
+    enumerable: true,
+    value() { toJsonCalls += 1; },
+  });
+  assertCanonicalError(() => canonicalJson(functionToJson), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  assert.equal(toJsonCalls, 0);
+});
+
+test("Canonical JSON v1 valida arrays densos y propiedades propias", () => {
+  assert.equal(canonicalJson([3, 2, 1]), "[3,2,1]");
+
+  const sparse = new Array(2);
+  sparse[1] = "present";
+  assertCanonicalError(() => canonicalJson(sparse), AI_ERROR_CODES.INVALID_REQUEST, 400);
+
+  const accessor = ["value"];
+  let getterCalls = 0;
+  Object.defineProperty(accessor, "0", {
+    enumerable: true,
+    get() { getterCalls += 1; return "forbidden"; },
+  });
+  assertCanonicalError(() => canonicalJson(accessor), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  assert.equal(getterCalls, 0);
+
+  const nonEnumerable = ["value"];
+  Object.defineProperty(nonEnumerable, "0", { value: "value", enumerable: false });
+  assertCanonicalError(() => canonicalJson(nonEnumerable), AI_ERROR_CODES.INVALID_REQUEST, 400);
+
+  const extraKey = ["value"];
+  extraKey.extra = true;
+  assertCanonicalError(() => canonicalJson(extraKey), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  const nonIndexKey = ["value"];
+  nonIndexKey["01"] = true;
+  assertCanonicalError(() => canonicalJson(nonIndexKey), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  const symbolArray = ["value"];
+  symbolArray[Symbol("extra")] = true;
+  assertCanonicalError(() => canonicalJson(symbolArray), AI_ERROR_CODES.INVALID_REQUEST, 400);
+
+  const customPrototype = ["value"];
+  Object.setPrototypeOf(customPrototype, Object.create(Array.prototype));
+  assertCanonicalError(() => canonicalJson(customPrototype), AI_ERROR_CODES.INVALID_REQUEST, 400);
+});
+
+test("Canonical JSON v1 rechaza valores ambiguos sin invocar accessors", () => {
+  const invalidRoots = [undefined, () => {}, Symbol("value"), 1n, new Date(), new Map(), new Set(), new (class Value {})()];
+  for (const value of invalidRoots) {
+    assertCanonicalError(() => canonicalJson(value), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  }
+  for (const value of [undefined, () => {}, Symbol("value"), 1n]) {
+    assertCanonicalError(() => canonicalJson({ value }), AI_ERROR_CODES.INVALID_REQUEST, 400);
+    assertCanonicalError(() => canonicalJson([value]), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  }
+
+  let getterCalls = 0;
+  const accessor = {};
+  Object.defineProperty(accessor, "value", {
+    enumerable: true,
+    get() { getterCalls += 1; return "forbidden"; },
+  });
+  assertCanonicalError(() => canonicalJson(accessor), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  assert.equal(getterCalls, 0);
+
+  const nonEnumerable = {};
+  Object.defineProperty(nonEnumerable, "value", { value: 1, enumerable: false });
+  assertCanonicalError(() => canonicalJson(nonEnumerable), AI_ERROR_CODES.INVALID_REQUEST, 400);
+
+  const symbolProperty = { value: 1 };
+  symbolProperty[Symbol("extra")] = true;
+  assertCanonicalError(() => canonicalJson(symbolProperty), AI_ERROR_CODES.INVALID_REQUEST, 400);
+
+  const shared = { value: 1 };
+  assert.equal(canonicalJson({ first: shared, second: shared }), '{"first":{"value":1},"second":{"value":1}}');
+  const cycle = {};
+  cycle.self = cycle;
+  assertCanonicalError(() => canonicalJson(cycle), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  const arrayCycle = [];
+  arrayCycle.push(arrayCycle);
+  assertCanonicalError(() => canonicalJson(arrayCycle), AI_ERROR_CODES.INVALID_REQUEST, 400);
+});
+
+test("Canonical JSON v1 conserva profundidad y errores numericos existentes", () => {
+  assert.doesNotThrow(() => canonicalJson(nestedCanonicalValue(19)));
+  assert.doesNotThrow(() => canonicalJson(nestedCanonicalValue(20)));
+  assertCanonicalError(
+    () => canonicalJson(nestedCanonicalValue(21)),
+    AI_ERROR_CODES.INPUT_TOO_LARGE,
+    413,
+  );
+  assert.equal(canonicalJson([-0, 1e21, 1e-7, Number.MAX_SAFE_INTEGER]), "[0,1e+21,1e-7,9007199254740991]");
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assertCanonicalError(() => canonicalJson(value), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  }
+});
+
+test("Canonical JSON v1 rechaza lone surrogates sin cambiar sha256Hex(string)", async () => {
+  for (const invalidString of ["\ud800", "\udfff"]) {
+    assertCanonicalError(() => canonicalJson(invalidString), AI_ERROR_CODES.INVALID_REQUEST, 400);
+    const invalidKey = {};
+    Object.defineProperty(invalidKey, invalidString, { value: true, enumerable: true });
+    assertCanonicalError(() => canonicalJson(invalidKey), AI_ERROR_CODES.INVALID_REQUEST, 400);
+  }
+  assert.equal(
+    await sha256Hex("\ud800"),
+    "83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097",
+  );
 });
 
 function dependencies({ mode = "legacy_direct", fetchImpl, reserveBudget, recordInvocation, runtime = {}, capabilityReader } = {}) {

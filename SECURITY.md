@@ -112,6 +112,7 @@ Límites principales:
 - Runs, steps, checks e intentos son append-only cuando así lo define su contrato. La purga solo puede ejecutarse mediante el wrapper service-only autorizado, con cortes internos y auditoría.
 - Telemetría no almacena prompts, payloads, respuestas crudas, PII, secretos ni razonamiento interno. Un fallo de telemetría no repite una inferencia válida ni cambia su resultado de dominio.
 - Radar continúa sin inferencias mientras ese sea el contrato productivo documentado.
+- Las huellas de Gateway, Runtime V2 y Registry V2 usan canonicalización versionada: `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"`. La versión no se incorpora al contenido hasheado ni a datos persistidos; v1 conserva las huellas productivas válidas y cualquier cambio incompatible exige v2, transición explícita y pruebas cruzadas Node/Deno.
 
 ### 5.6 Datos y privacidad
 

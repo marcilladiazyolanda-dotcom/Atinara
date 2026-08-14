@@ -1,0 +1,653 @@
+{
+  "version": "atinara-canonical-json-v1",
+  "expectedDomainCompatibilityCaseCount": 13,
+  "domainCompatibilityCases": [
+    {
+      "id": "ai-gateway.market_draft_validation.sanitized-input",
+      "domain": "ai-gateway",
+      "sourceCaseId": "validator.protocol.001",
+      "input": {
+        "draft": {
+          "question": "¿Se anunciará el Proyecto Aurora?",
+          "yes_criteria": "Anuncio oficial."
+        },
+        "primarySourceAttested": true
+      },
+      "expectedCanonicalJson": "{\"draft\":{\"question\":\"¿Se anunciará el Proyecto Aurora?\",\"yes_criteria\":\"Anuncio oficial.\"},\"primarySourceAttested\":true}",
+      "expectedSha256": "3135975718dc39ba110b32f121006eb75dfdfee22cfeba3da06a1d0b74002269"
+    },
+    {
+      "id": "ai-gateway.market_draft_validation.validated-output",
+      "domain": "ai-gateway",
+      "sourceCaseId": "validator.protocol.001",
+      "input": {
+        "result": "approved",
+        "issues": [],
+        "editorial_notes": []
+      },
+      "expectedCanonicalJson": "{\"editorial_notes\":[],\"issues\":[],\"result\":\"approved\"}",
+      "expectedSha256": "04af5e7b5ee17595b017d27b2a08753de9a810c912c7e5c3959385e2e5d54256"
+    },
+    {
+      "id": "ai-gateway.market_expert_reasoning.sanitized-input",
+      "domain": "ai-gateway",
+      "sourceCaseId": "expert.protocol.001",
+      "input": {
+        "origin": {
+          "provider": "official_web",
+          "title": "Anuncio público de prueba"
+        },
+        "deterministic": {
+          "integrity_status": "pass"
+        }
+      },
+      "expectedCanonicalJson": "{\"deterministic\":{\"integrity_status\":\"pass\"},\"origin\":{\"provider\":\"official_web\",\"title\":\"Anuncio público de prueba\"}}",
+      "expectedSha256": "f8ab66cdb947c47fcc5f7636e7b17de0c24afa6e652948999ca9ebf23d45e0fb"
+    },
+    {
+      "id": "ai-gateway.market_expert_reasoning.validated-output",
+      "domain": "ai-gateway",
+      "sourceCaseId": "expert.protocol.001",
+      "input": {
+        "decision": "create",
+        "integrity_status": "pass",
+        "forecastability_status": "forecastable",
+        "confidence": 82,
+        "human_review_required": true,
+        "reason_codes": [],
+        "summary": "La propuesta es comprobable mediante una fuente pública.",
+        "suggested_changes": [],
+        "uncertainties": [],
+        "proposal_patch": {
+          "question": "",
+          "subject": "",
+          "category": "",
+          "yes_criteria": "",
+          "no_criteria": "",
+          "edge_cases": "",
+          "public_criteria": "",
+          "description": ""
+        },
+        "policy_version": "atinara-market-constitution-v1",
+        "schema_version": "atinara-market-expert-v1"
+      },
+      "expectedCanonicalJson": "{\"confidence\":82,\"decision\":\"create\",\"forecastability_status\":\"forecastable\",\"human_review_required\":true,\"integrity_status\":\"pass\",\"policy_version\":\"atinara-market-constitution-v1\",\"proposal_patch\":{\"category\":\"\",\"description\":\"\",\"edge_cases\":\"\",\"no_criteria\":\"\",\"public_criteria\":\"\",\"question\":\"\",\"subject\":\"\",\"yes_criteria\":\"\"},\"reason_codes\":[],\"schema_version\":\"atinara-market-expert-v1\",\"suggested_changes\":[],\"summary\":\"La propuesta es comprobable mediante una fuente pública.\",\"uncertainties\":[]}",
+      "expectedSha256": "4cea7fca373476a92d1c37587c13e031dc2dce15d44033242efe37e54a6d9bb5"
+    },
+    {
+      "id": "ai-gateway.market_draft_repair.sanitized-input",
+      "domain": "ai-gateway",
+      "sourceCaseId": "repair.protocol.001",
+      "input": {
+        "context": {
+          "question": "¿Se anunciará el Proyecto Aurora?"
+        },
+        "deterministic": {
+          "issues": []
+        }
+      },
+      "expectedCanonicalJson": "{\"context\":{\"question\":\"¿Se anunciará el Proyecto Aurora?\"},\"deterministic\":{\"issues\":[]}}",
+      "expectedSha256": "96a38c7b2a7645950c0760e6d2fa69aa90e43a793c092217390274d60c0b5f5e"
+    },
+    {
+      "id": "ai-gateway.market_draft_repair.validated-output",
+      "domain": "ai-gateway",
+      "sourceCaseId": "repair.protocol.001",
+      "input": {
+        "patch": {
+          "description": "",
+          "assumptions": "",
+          "delay_treatment": "",
+          "cancellation_treatment": "",
+          "leak_treatment": "",
+          "rename_treatment": ""
+        },
+        "explanations": [],
+        "unresolved_issues": []
+      },
+      "expectedCanonicalJson": "{\"explanations\":[],\"patch\":{\"assumptions\":\"\",\"cancellation_treatment\":\"\",\"delay_treatment\":\"\",\"description\":\"\",\"leak_treatment\":\"\",\"rename_treatment\":\"\"},\"unresolved_issues\":[]}",
+      "expectedSha256": "f7991a6da3b43106e5238bed13e5391efc432d0f81541319410107a5861cc0e7"
+    },
+    {
+      "id": "ai-gateway.market_resolution_analysis.sanitized-input",
+      "domain": "ai-gateway",
+      "sourceCaseId": "resolution.protocol.001",
+      "input": {
+        "market": {
+          "question": "¿Se anunció el Proyecto Aurora?",
+          "closes_at": "2026-08-01T00:00:00Z"
+        },
+        "researchText": "La fuente oficial publicó un anuncio antes del cierre.",
+        "sources": [
+          {
+            "title": "Fuente oficial de prueba",
+            "url": "https://example.com/anuncio",
+            "cited_text": "Anuncio publicado."
+          }
+        ],
+        "searchQueries": [
+          "anuncio oficial"
+        ]
+      },
+      "expectedCanonicalJson": "{\"market\":{\"closes_at\":\"2026-08-01T00:00:00Z\",\"question\":\"¿Se anunció el Proyecto Aurora?\"},\"researchText\":\"La fuente oficial publicó un anuncio antes del cierre.\",\"searchQueries\":[\"anuncio oficial\"],\"sources\":[{\"cited_text\":\"Anuncio publicado.\",\"title\":\"Fuente oficial de prueba\",\"url\":\"https://example.com/anuncio\"}]}",
+      "expectedSha256": "7195f0a8fde76d33d38c9ee338a976cd696ac395e30cc611c89b9eaa46d1a199"
+    },
+    {
+      "id": "ai-gateway.market_resolution_analysis.validated-output",
+      "domain": "ai-gateway",
+      "sourceCaseId": "resolution.protocol.001",
+      "input": {
+        "proposed_result": "Si",
+        "confidence": "Alta",
+        "summary": "La fuente incluida documenta el anuncio antes del cierre.",
+        "reasons": [
+          "El anuncio está recogido en la evidencia incluida."
+        ],
+        "cutoff_analysis": "La publicación es anterior al cierre indicado.",
+        "caveats": [],
+        "recommended_note": "Revisar la fuente antes de la aprobación humana.",
+        "source_dates": [
+          {
+            "title": "Fuente oficial de prueba",
+            "published_at": "2026-07-31",
+            "relevance": "Acredita el anuncio."
+          }
+        ]
+      },
+      "expectedCanonicalJson": "{\"caveats\":[],\"confidence\":\"Alta\",\"cutoff_analysis\":\"La publicación es anterior al cierre indicado.\",\"proposed_result\":\"Si\",\"reasons\":[\"El anuncio está recogido en la evidencia incluida.\"],\"recommended_note\":\"Revisar la fuente antes de la aprobación humana.\",\"source_dates\":[{\"published_at\":\"2026-07-31\",\"relevance\":\"Acredita el anuncio.\",\"title\":\"Fuente oficial de prueba\"}],\"summary\":\"La fuente incluida documenta el anuncio antes del cierre.\"}",
+      "expectedSha256": "dca1e4c7d4708d15594027cf0f271323845e8532921abec6ae6c5f92cc3df4d2"
+    },
+    {
+      "id": "ai-gateway.radar_candidate_enrichment.sanitized-input",
+      "domain": "ai-gateway",
+      "sourceCaseId": "radar.protocol.001",
+      "input": {
+        "groups": [
+          {
+            "candidates": [
+              {
+                "question": "¿Se anunciará el Proyecto Aurora antes del cierre?"
+              }
+            ]
+          }
+        ],
+        "existing": {
+          "prediction_policy_version": "v5"
+        }
+      },
+      "expectedCanonicalJson": "{\"existing\":{\"prediction_policy_version\":\"v5\"},\"groups\":[{\"candidates\":[{\"question\":\"¿Se anunciará el Proyecto Aurora antes del cierre?\"}]}]}",
+      "expectedSha256": "a026e574e91e79d65911c9eaa6f8b859e3485cb6742d04c03ea1d738c7fe775c"
+    },
+    {
+      "id": "ai-gateway.radar_candidate_enrichment.validated-output",
+      "domain": "ai-gateway",
+      "sourceCaseId": "radar.protocol.001",
+      "input": {
+        "candidates": [
+          {
+            "candidate_index": 0,
+            "eligible": true,
+            "conclusive": true,
+            "reason_code": "VERIFICATION_REQUIRED",
+            "reason": "La evidencia permite mantener la candidata para revisión humana.",
+            "confidence": 80,
+            "ttl_minutes": 60,
+            "facts": {
+              "event_resolved_at": null,
+              "official_reveal_at": null,
+              "release_at": null,
+              "subject_announced": true,
+              "temporal_coherence": true
+            },
+            "atinara_question": "¿Se anunciará el Proyecto Aurora antes del cierre?",
+            "atinara_category": "Lanzamientos",
+            "atinara_resolution_criteria": "Solo un anuncio oficial anterior al cierre permite resolver Sí."
+          }
+        ]
+      },
+      "expectedCanonicalJson": "{\"candidates\":[{\"atinara_category\":\"Lanzamientos\",\"atinara_question\":\"¿Se anunciará el Proyecto Aurora antes del cierre?\",\"atinara_resolution_criteria\":\"Solo un anuncio oficial anterior al cierre permite resolver Sí.\",\"candidate_index\":0,\"conclusive\":true,\"confidence\":80,\"eligible\":true,\"facts\":{\"event_resolved_at\":null,\"official_reveal_at\":null,\"release_at\":null,\"subject_announced\":true,\"temporal_coherence\":true},\"reason\":\"La evidencia permite mantener la candidata para revisión humana.\",\"reason_code\":\"VERIFICATION_REQUIRED\",\"ttl_minutes\":60}]}",
+      "expectedSha256": "93eb34132a3789b063135d6217d132c961e6e49cc150cb9e377a148028e9e3e4"
+    },
+    {
+      "id": "registry-v2.snapshot",
+      "domain": "registry-v2",
+      "input": {
+        "version": "atinara-agent-registry-v2.1.0",
+        "issues": [
+          {
+            "code": "EDGE_CASES_REQUIRED",
+            "repairable": true
+          }
+        ],
+        "strategies": [
+          {
+            "strategy_key": "block_exact_duplicate",
+            "handler_key": "block_exact_duplicate",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "bounded_retry_backoff",
+            "handler_key": "bounded_retry_backoff",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "derive_edge_cases",
+            "handler_key": "derive_edge_cases",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": [
+              "edge_cases"
+            ]
+          },
+          {
+            "strategy_key": "derive_evaluation_period",
+            "handler_key": "derive_evaluation_period",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "derive_or_escalate_temporal_contract",
+            "handler_key": "derive_or_escalate_temporal_contract",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "derive_public_criteria",
+            "handler_key": "derive_public_criteria",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "derive_resolution_deadline",
+            "handler_key": "derive_resolution_deadline",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "infer_canonical_subject",
+            "handler_key": "infer_canonical_subject",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "infer_category",
+            "handler_key": "infer_category",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "infer_metric_contract",
+            "handler_key": "infer_metric_contract",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "infer_or_escalate_subject",
+            "handler_key": "infer_or_escalate_subject",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "isolate_and_retry_batch",
+            "handler_key": "isolate_and_retry_batch",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "normalize_binary_options",
+            "handler_key": "normalize_binary_options",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "normalize_iana_timezone",
+            "handler_key": "normalize_iana_timezone",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "preserve_effective_review_and_retry",
+            "handler_key": "preserve_effective_review_and_retry",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "preserve_last_known_good",
+            "handler_key": "preserve_last_known_good",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "quarantine_terminal_fact",
+            "handler_key": "quarantine_terminal_fact",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "quarantine_unresolvable_contract",
+            "handler_key": "quarantine_unresolvable_contract",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "reanalyze_current_revision",
+            "handler_key": "reanalyze_current_revision",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "rebuild_binary_question",
+            "handler_key": "rebuild_binary_question",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "rebuild_or_escalate_contract",
+            "handler_key": "rebuild_or_escalate_contract",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "rebuild_or_escalate_criteria",
+            "handler_key": "rebuild_or_escalate_criteria",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "rebuild_resolution_criteria",
+            "handler_key": "rebuild_resolution_criteria",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "refresh_deterministic_eligibility",
+            "handler_key": "refresh_deterministic_eligibility",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "refresh_factual_dossier",
+            "handler_key": "refresh_factual_dossier",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "refresh_normalized_candidate",
+            "handler_key": "refresh_normalized_candidate",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "reload_authoritative_version",
+            "handler_key": "reload_authoritative_version",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "request_specific_contract_decision",
+            "handler_key": "request_specific_contract_decision",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "request_specific_editorial_decision",
+            "handler_key": "request_specific_editorial_decision",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "request_specific_source_decision",
+            "handler_key": "request_specific_source_decision",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "research_corroboration",
+            "handler_key": "research_corroboration",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "research_registered_primary",
+            "handler_key": "research_registered_primary",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "research_registered_sources",
+            "handler_key": "research_registered_sources",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "retry_after_backoff",
+            "handler_key": "retry_after_backoff",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "retry_semantic_review",
+            "handler_key": "retry_semantic_review",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "suppress_when_causal_root_exists",
+            "handler_key": "suppress_when_causal_root_exists",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "surface_invalid_repair_strategy",
+            "handler_key": "surface_invalid_repair_strategy",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "surface_missing_repair_strategy",
+            "handler_key": "surface_missing_repair_strategy",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "surface_provider_configuration_defect",
+            "handler_key": "surface_provider_configuration_defect",
+            "can_write": false,
+            "affected_fields": [],
+            "write_fields": []
+          },
+          {
+            "strategy_key": "synchronize_temporal_fields",
+            "handler_key": "synchronize_temporal_fields",
+            "can_write": true,
+            "affected_fields": [],
+            "write_fields": []
+          }
+        ],
+        "bindings": [
+          {
+            "issue_code": "EDGE_CASES_REQUIRED",
+            "strategy_key": "derive_edge_cases"
+          }
+        ]
+      },
+      "expectedCanonicalJson": "{\"bindings\":[{\"issue_code\":\"EDGE_CASES_REQUIRED\",\"strategy_key\":\"derive_edge_cases\"}],\"issues\":[{\"code\":\"EDGE_CASES_REQUIRED\",\"repairable\":true}],\"strategies\":[{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"block_exact_duplicate\",\"strategy_key\":\"block_exact_duplicate\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"bounded_retry_backoff\",\"strategy_key\":\"bounded_retry_backoff\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"derive_edge_cases\",\"strategy_key\":\"derive_edge_cases\",\"write_fields\":[\"edge_cases\"]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"derive_evaluation_period\",\"strategy_key\":\"derive_evaluation_period\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"derive_or_escalate_temporal_contract\",\"strategy_key\":\"derive_or_escalate_temporal_contract\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"derive_public_criteria\",\"strategy_key\":\"derive_public_criteria\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"derive_resolution_deadline\",\"strategy_key\":\"derive_resolution_deadline\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"infer_canonical_subject\",\"strategy_key\":\"infer_canonical_subject\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"infer_category\",\"strategy_key\":\"infer_category\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"infer_metric_contract\",\"strategy_key\":\"infer_metric_contract\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"infer_or_escalate_subject\",\"strategy_key\":\"infer_or_escalate_subject\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"isolate_and_retry_batch\",\"strategy_key\":\"isolate_and_retry_batch\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"normalize_binary_options\",\"strategy_key\":\"normalize_binary_options\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"normalize_iana_timezone\",\"strategy_key\":\"normalize_iana_timezone\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"preserve_effective_review_and_retry\",\"strategy_key\":\"preserve_effective_review_and_retry\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"preserve_last_known_good\",\"strategy_key\":\"preserve_last_known_good\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"quarantine_terminal_fact\",\"strategy_key\":\"quarantine_terminal_fact\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"quarantine_unresolvable_contract\",\"strategy_key\":\"quarantine_unresolvable_contract\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"reanalyze_current_revision\",\"strategy_key\":\"reanalyze_current_revision\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"rebuild_binary_question\",\"strategy_key\":\"rebuild_binary_question\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"rebuild_or_escalate_contract\",\"strategy_key\":\"rebuild_or_escalate_contract\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"rebuild_or_escalate_criteria\",\"strategy_key\":\"rebuild_or_escalate_criteria\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"rebuild_resolution_criteria\",\"strategy_key\":\"rebuild_resolution_criteria\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"refresh_deterministic_eligibility\",\"strategy_key\":\"refresh_deterministic_eligibility\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"refresh_factual_dossier\",\"strategy_key\":\"refresh_factual_dossier\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"refresh_normalized_candidate\",\"strategy_key\":\"refresh_normalized_candidate\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"reload_authoritative_version\",\"strategy_key\":\"reload_authoritative_version\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"request_specific_contract_decision\",\"strategy_key\":\"request_specific_contract_decision\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"request_specific_editorial_decision\",\"strategy_key\":\"request_specific_editorial_decision\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"request_specific_source_decision\",\"strategy_key\":\"request_specific_source_decision\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"research_corroboration\",\"strategy_key\":\"research_corroboration\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"research_registered_primary\",\"strategy_key\":\"research_registered_primary\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"research_registered_sources\",\"strategy_key\":\"research_registered_sources\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"retry_after_backoff\",\"strategy_key\":\"retry_after_backoff\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"retry_semantic_review\",\"strategy_key\":\"retry_semantic_review\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"suppress_when_causal_root_exists\",\"strategy_key\":\"suppress_when_causal_root_exists\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"surface_invalid_repair_strategy\",\"strategy_key\":\"surface_invalid_repair_strategy\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"surface_missing_repair_strategy\",\"strategy_key\":\"surface_missing_repair_strategy\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":false,\"handler_key\":\"surface_provider_configuration_defect\",\"strategy_key\":\"surface_provider_configuration_defect\",\"write_fields\":[]},{\"affected_fields\":[],\"can_write\":true,\"handler_key\":\"synchronize_temporal_fields\",\"strategy_key\":\"synchronize_temporal_fields\",\"write_fields\":[]}],\"version\":\"atinara-agent-registry-v2.1.0\"}",
+      "expectedSha256": "1c48ef29a82ee66fc25c3e2372f655fc58e094f95a56a164d4519ecc1f4b188e"
+    },
+    {
+      "id": "agent-runtime-v2.progress",
+      "domain": "agent-runtime-v2",
+      "input": {
+        "tool": "load_authoritative_origin",
+        "actionKey": "load_authoritative_origin",
+        "round": 1
+      },
+      "expectedCanonicalJson": "{\"actionKey\":\"load_authoritative_origin\",\"round\":1,\"tool\":\"load_authoritative_origin\"}",
+      "expectedSha256": "5d0f35b19d6b4501d85632ec5f0365f922c4f216a7865f73913189df25353837"
+    },
+    {
+      "id": "agent-runtime-v2.replan",
+      "domain": "agent-runtime-v2",
+      "input": {
+        "tool": "load_authoritative_origin",
+        "state": {
+          "round": 1
+        },
+        "replans": 0
+      },
+      "expectedCanonicalJson": "{\"replans\":0,\"state\":{\"round\":1},\"tool\":\"load_authoritative_origin\"}",
+      "expectedSha256": "889067bc3624b279375341c91ad39f2a50c7a791828363c659c5b637a5dabf85"
+    }
+  ],
+  "goldenCases": [
+    {
+      "id": "integer-unicode-key-order",
+      "input": {
+        "0": "zero",
+        "1": "one",
+        "2": "two",
+        "10": "ten",
+        "4294967294": "max-index",
+        "4294967295": "not-index",
+        "__proto__": "data",
+        "constructor": "ctor",
+        "prototype": "proto",
+        "😀": "emoji",
+        "á": "composed",
+        "á": "decomposed",
+        "aa": "longer",
+        "a": "prefix"
+      },
+      "expectedCanonicalJson": "{\"0\":\"zero\",\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\",\"4294967294\":\"max-index\",\"4294967295\":\"not-index\",\"__proto__\":\"data\",\"a\":\"prefix\",\"aa\":\"longer\",\"á\":\"decomposed\",\"constructor\":\"ctor\",\"prototype\":\"proto\",\"á\":\"composed\",\"😀\":\"emoji\"}",
+      "expectedSha256": "14141cffbafc63c88d3468cf5e5fcfc139597f0ac4b2f7b28a8951c0e35ede8e"
+    },
+    {
+      "id": "ordinary-special-data-keys",
+      "input": {
+        "toJSON": "valor",
+        "prototype": "p",
+        "constructor": "c",
+        "__proto__": "dato"
+      },
+      "expectedCanonicalJson": "{\"__proto__\":\"dato\",\"constructor\":\"c\",\"prototype\":\"p\",\"toJSON\":\"valor\"}",
+      "expectedSha256": "5c2ea9163cd8a72b987590a6cb447fa728c46291e5967975f756b84d66d8e9a3"
+    },
+    {
+      "id": "ecmascript-string-escapes-and-controls",
+      "input": {
+        "value": "\b\f\n\r\t\u0000\"\\/"
+      },
+      "expectedCanonicalJson": "{\"value\":\"\\b\\f\\n\\r\\t\\u0000\\\"\\\\/\"}",
+      "expectedSha256": "2aaf75b125d161630edf7c7bd8edd6ca186dc537dd1bb5d5093641c0a28eb3eb"
+    },
+    {
+      "id": "non-bmp-key-and-value",
+      "input": {
+        "𐀀": "😀",
+        "😀": "𐀀"
+      },
+      "expectedCanonicalJson": "{\"𐀀\":\"😀\",\"😀\":\"𐀀\"}",
+      "expectedSha256": "74891508ff11135f259dbcd7cb3d3062238238bed8e971903fa36a78a94e13e8"
+    },
+    {
+      "id": "composed-unicode",
+      "input": {
+        "value": "á"
+      },
+      "expectedCanonicalJson": "{\"value\":\"á\"}",
+      "expectedSha256": "f20a712d9156f78c5708b32f2243cd5202d3814aa132afc4dd477880cddcdd4b"
+    },
+    {
+      "id": "decomposed-unicode",
+      "input": {
+        "value": "á"
+      },
+      "expectedCanonicalJson": "{\"value\":\"á\"}",
+      "expectedSha256": "c3092f2128e4284aa92bae9ca95e7543e1c1aa888d84c9beb37a1a8982b93990"
+    },
+    {
+      "id": "insertion-order-one",
+      "input": {
+        "z": 1,
+        "aa": 2,
+        "a": 3
+      },
+      "expectedCanonicalJson": "{\"a\":3,\"aa\":2,\"z\":1}",
+      "expectedSha256": "0d6754d1f211cf847151e086600c8c7850c6bca9e79ac2d8d7a0aae80d79e802"
+    },
+    {
+      "id": "insertion-order-two",
+      "input": {
+        "a": 3,
+        "z": 1,
+        "aa": 2
+      },
+      "expectedCanonicalJson": "{\"a\":3,\"aa\":2,\"z\":1}",
+      "expectedSha256": "0d6754d1f211cf847151e086600c8c7850c6bca9e79ac2d8d7a0aae80d79e802"
+    },
+    {
+      "id": "ecmascript-number-representation",
+      "input": [
+        0,
+        1e+21,
+        1e-7,
+        9007199254740991
+      ],
+      "expectedCanonicalJson": "[0,1e+21,1e-7,9007199254740991]",
+      "expectedSha256": "db3b11c54e7f805ab0386788b0274beef1f25ca505e89b25a7c871c7ab86198e"
+    },
+    {
+      "id": "arrays-preserve-order",
+      "input": [
+        "10",
+        "2",
+        {
+          "b": 2,
+          "a": 1
+        }
+      ],
+      "expectedCanonicalJson": "[\"10\",\"2\",{\"a\":1,\"b\":2}]",
+      "expectedSha256": "5736877f60b9da0936b26de4f17b472a5eec2fff3614a4d9f63b75168bfce7ac"
+    }
+  ]
+}
+

@@ -21,6 +21,7 @@ Comandos:
 $env:ATINARA_EXTERNAL_AI_DISABLED='1'
 npm ci --ignore-scripts
 npm run test:syntax
+npm run test:canonicalization
 npm run test:unit
 npm run test:monitoring-config
 npm run test:edge
@@ -31,6 +32,17 @@ git diff --check
 ```
 
 Las pruebas SQL transaccionales aceptan `--execute` solo contra una base local desechable configurada expresamente mediante `ATINARA_TEST_DATABASE_URL`. `--v2-only` limita la ejecución a las tres suites nuevas cuando se valida sobre un baseline mínimo; sin esa opción se ejecutan también las regresiones v7/v8 sobre un stack local completo. `migration list` requiere un stack local o proyecto enlazado y no forma parte de la comprobación offline por defecto. Nunca apuntar esas operaciones a producción.
+
+## Canonicalización compartida
+
+La canonicalización que comparten Gateway, Runtime V2 y Registry V2 usa el contrato `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"`. `npm run test:canonicalization` ejecuta por separado los runners Node y Deno contra el mismo fixture literal y `npm run validate` incluye esta puerta. Deben coincidir exactamente las cadenas y SHA-256 de ambos runtimes, incluido el orden UTF-16 de claves enteras y Unicode. La versión no se agrega al contenido hasheado ni a datos persistidos; cualquier incompatibilidad futura exige v2.
+
+Antes de aceptar una modificación de este contrato:
+
+1. demostrar que los 13 casos reales conservan sus cadenas y huellas;
+2. comprobar profundidad 19, 20 y 21 y los errores exactos de valores inválidos;
+3. ejecutar `npm run validate`, `npm run test:edge` con red externa desactivada y `npm run benchmark:offline` con `externalNetworkCalls=0`;
+4. detener el cambio si varía cualquier huella válida existente, sin migración, backfill ni compatibilidad silenciosa dentro de v1.
 
 ## Orden de migraciones
 

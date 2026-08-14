@@ -20,6 +20,8 @@ export const AI_DATA_CLASSES = Object.freeze([
   "prohibited",
 ]);
 
+export const ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1";
+
 const PRODUCT_REQUEST_KEYS = new Set(["taskType", "contractVersion", "policyVersion", "input"]);
 const CALLER_FORBIDDEN_KEYS = new Set([
   "inputFingerprint",
@@ -85,20 +87,125 @@ export function assertAiExecutionContext(value, now = Date.now()) {
   return Object.freeze({ invocationId, agentRunId, absoluteDeadlineAt, signal });
 }
 
-function canonicalizeValue(value, depth = 0) {
-  if (depth > 20) throw aiError(AI_ERROR_CODES.INPUT_TOO_LARGE, { httpStatus: 413 });
-  if (value === null || typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw aiError(AI_ERROR_CODES.INVALID_REQUEST, { httpStatus: 400 });
-    return Object.is(value, -0) ? 0 : value;
+function invalidCanonicalJson() {
+  return aiError(AI_ERROR_CODES.INVALID_REQUEST, { httpStatus: 400 });
+}
+
+function assertWellFormedUnicode(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const nextCodeUnit = value.charCodeAt(index + 1);
+      if (!(nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff)) throw invalidCanonicalJson();
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      throw invalidCanonicalJson();
+    }
   }
-  if (Array.isArray(value)) return value.map((item) => canonicalizeValue(item, depth + 1));
-  if (!isRecord(value)) throw aiError(AI_ERROR_CODES.INVALID_REQUEST, { httpStatus: 400 });
-  return Object.fromEntries(Object.keys(value).sort((left, right) => left.localeCompare(right)).map((key) => [key, canonicalizeValue(value[key], depth + 1)]));
+}
+
+function compareUtf16CodeUnits(left, right) {
+  const commonLength = Math.min(left.length, right.length);
+  for (let index = 0; index < commonLength; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
+
+function serializeCanonicalArray(value, depth, ancestors) {
+  if (Object.getPrototypeOf(value) !== Array.prototype) throw invalidCanonicalJson();
+  if (ancestors.has(value)) throw invalidCanonicalJson();
+
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key === "symbol")) throw invalidCanonicalJson();
+
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    !lengthDescriptor
+    || !Object.hasOwn(lengthDescriptor, "value")
+    || lengthDescriptor.value !== value.length
+    || lengthDescriptor.enumerable
+  ) {
+    throw invalidCanonicalJson();
+  }
+
+  const elementKeys = ownKeys.filter((key) => key !== "length");
+  if (elementKeys.length !== value.length) throw invalidCanonicalJson();
+
+  const elementDescriptors = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const key = String(index);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) {
+      throw invalidCanonicalJson();
+    }
+    elementDescriptors.push(descriptor);
+  }
+
+  for (const key of elementKeys) {
+    const index = Number(key);
+    if (!Number.isInteger(index) || index < 0 || index >= value.length || String(index) !== key) {
+      throw invalidCanonicalJson();
+    }
+  }
+
+  ancestors.add(value);
+  try {
+    return `[${elementDescriptors
+      .map((descriptor) => serializeCanonicalValue(descriptor.value, depth + 1, ancestors))
+      .join(",")}]`;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function serializeCanonicalObject(value, depth, ancestors) {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw invalidCanonicalJson();
+  if (ancestors.has(value)) throw invalidCanonicalJson();
+
+  const entries = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === "symbol") throw invalidCanonicalJson();
+    assertWellFormedUnicode(key);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, "value")) {
+      throw invalidCanonicalJson();
+    }
+    entries.push([key, descriptor.value]);
+  }
+  entries.sort(([left], [right]) => compareUtf16CodeUnits(left, right));
+
+  ancestors.add(value);
+  try {
+    return `{${entries
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${serializeCanonicalValue(entryValue, depth + 1, ancestors)}`)
+      .join(",")}}`;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function serializeCanonicalValue(value, depth, ancestors) {
+  if (depth > 20) throw aiError(AI_ERROR_CODES.INPUT_TOO_LARGE, { httpStatus: 413 });
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") {
+    assertWellFormedUnicode(value);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw invalidCanonicalJson();
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return serializeCanonicalArray(value, depth, ancestors);
+  if (typeof value !== "object") throw invalidCanonicalJson();
+  return serializeCanonicalObject(value, depth, ancestors);
 }
 
 export function canonicalJson(value) {
-  return JSON.stringify(canonicalizeValue(value));
+  return serializeCanonicalValue(value, 0, new WeakSet());
 }
 
 export async function sha256Hex(value) {

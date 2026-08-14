@@ -42,6 +42,31 @@ Orden de ejecución:
 8. Calcular `outputFingerprint`.
 9. Persistir telemetría sin cambiar una respuesta de dominio válida si falla la observabilidad.
 
+## Atinara Canonical JSON v1
+
+La canonicalización compartida por AI Gateway, Agent Runtime V2 y Registry V2 declara:
+
+```text
+ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"
+```
+
+La versión identifica el contrato y sus fixtures, pero no se incorpora al contenido hasheado ni se persiste en este paquete: hacerlo cambiaría las huellas existentes. Cualquier cambio futuro incompatible exige un contrato `atinara-canonical-json-v2`, con transición explícita; no se admite cambiar v1 en silencio.
+
+Atinara Canonical JSON v1 es un subconjunto explícito de JSON compatible con los principios de RFC 8785:
+
+- ordena recursivamente las claves por unidades de código UTF-16 mediante un comparador binario explícito, sin locale;
+- conserva el orden de los arrays y exige índices propios, densos y enumerables de `0` a `length - 1`;
+- no normaliza Unicode, por lo que las formas compuesta y descompuesta permanecen distintas;
+- usa la serialización ECMAScript de `JSON.stringify` solo para strings, claves y números;
+- serializa directamente a string, sin reconstruir objetos con `Object.fromEntries`;
+- admite objetos con prototipo `Object.prototype` o `null` y claves de datos ordinarias como `toJSON`, `__proto__`, `constructor` y `prototype`;
+- no ejecuta `toJSON` ni getters y rechaza accessors, funciones, symbols, `BigInt`, prototipos personalizados, propiedades propias no enumerables, arrays dispersos o con claves adicionales, ciclos y lone surrogates;
+- conserva el límite de profundidad: más de 20 niveles devuelve `AI_INPUT_TOO_LARGE` con HTTP 413; los valores inválidos devuelven `AI_INVALID_REQUEST` con HTTP 400.
+
+El contrato genérico `sha256Hex(string)` no cambia. La validación de Unicode bien formado pertenece a `canonicalJson` y a sus claves y valores.
+
+Este paquete se aplica “sin alterar las cadenas ni huellas de los valores productivos válidos cubiertos por los contratos V2.1 actuales; los valores no JSON o previamente ambiguos se rechazan conforme al contrato v1”. El corpus compartido fija cinco inputs saneados, cinco outputs validados, un snapshot de Registry V2 y los payloads de progreso y replan de Runtime V2, además de los casos de ordenación y rechazo.
+
 ## Tareas y paridad Gemini
 
 | Tarea | Contrato | Modelo de paridad | Reserva final |

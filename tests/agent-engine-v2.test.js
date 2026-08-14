@@ -6,16 +6,22 @@ const { before, test } = require("node:test");
 
 const root = join(__dirname, "..");
 const migration = readFileSync(join(root, "supabase/migrations/20260812141515_add_agent_engine_v2_v1.sql"), "utf8");
+const canonicalJsonFixture = JSON.parse(readFileSync(
+  join(root, "tests/fixtures/atinara-canonical-json-v1.json"),
+  "utf8",
+));
 let registries;
 let tools;
 let runtime;
 let persistence;
+let contracts;
 
 before(async () => {
   registries = await import(pathToFileURL(join(root, "supabase/functions/_shared/atinara-agent-registries-v2.mjs")).href);
   tools = await import(pathToFileURL(join(root, "supabase/functions/_shared/atinara-agent-tools-v2.mjs")).href);
   runtime = await import(pathToFileURL(join(root, "supabase/functions/_shared/atinara-agent-runtime-v2.mjs")).href);
   persistence = await import(pathToFileURL(join(root, "supabase/functions/_shared/ai/persistence.mjs")).href);
+  contracts = await import(pathToFileURL(join(root, "supabase/functions/_shared/ai/contracts.mjs")).href);
 });
 
 function registrySnapshot() {
@@ -48,6 +54,49 @@ function executionContext() {
     signal: new AbortController().signal,
   };
 }
+
+function domainCanonicalCase(id) {
+  return canonicalJsonFixture.domainCompatibilityCases.find((testCase) => testCase.id === id);
+}
+
+test("Canonical JSON v1 cubre la huella real del Registry v2", async () => {
+  const registryCase = domainCanonicalCase("registry-v2.snapshot");
+  const { version, issues, strategies, bindings } = registryCase.input;
+  const snapshot = { issues, strategies, bindings };
+  assert.equal(version, registries.ATINARA_AGENT_REGISTRY_VERSION);
+  assert.deepEqual(snapshot, registrySnapshot());
+  assert.equal(contracts.canonicalJson(registryCase.input), registryCase.expectedCanonicalJson);
+  assert.equal(await registries.agentRegistryHash(snapshot), registryCase.expectedSha256);
+});
+
+test("Canonical JSON v1 cubre progreso y replan del Runtime v2", async () => {
+  const progressCase = domainCanonicalCase("agent-runtime-v2.progress");
+  const progressRun = runtime.createAtinaraAgentRunV2({
+    agentType: "market_editor_agent",
+    handlers: handlersFor("market_editor_agent"),
+    registryHash: "a".repeat(64),
+    snapshotFingerprint: "b".repeat(64),
+    executionContext: executionContext(),
+  });
+  await progressRun.dispatch("load_authoritative_origin");
+  assert.equal(progressRun.snapshot().tools[0].progress_fingerprint, progressCase.expectedSha256);
+
+  const replanCase = domainCanonicalCase("agent-runtime-v2.replan");
+  assert.equal(contracts.canonicalJson(replanCase.input), replanCase.expectedCanonicalJson);
+  assert.equal(await contracts.sha256Hex(replanCase.expectedCanonicalJson), replanCase.expectedSha256);
+  const executeRun = runtime.createAtinaraAgentRunV2({
+    agentType: "market_editor_agent",
+    handlers: handlersFor("market_editor_agent"),
+    registryHash: "c".repeat(64),
+    snapshotFingerprint: "d".repeat(64),
+    executionContext: executionContext(),
+  });
+  const execution = await executeRun.execute({ round: 1 });
+  assert.equal(
+    execution.tools[0].progress_fingerprint,
+    await contracts.sha256Hex(replanCase.expectedSha256),
+  );
+});
 
 test("Registry v2 exige correspondencia total SQL, handlers, bindings y allowlist", () => {
   assert.equal(registries.STRATEGY_HANDLER_NAMES.includes("refresh_deterministic_eligibility"), true);
