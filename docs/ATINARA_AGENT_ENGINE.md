@@ -1,8 +1,8 @@
 # Atinara Agent Engine · V2.1 productivo en `legacy_direct`
 
 Estado del documento: protocolo v1, cierre SQL v8–v11 y base V2.1 desplegados y
-verificados en producción. La activación V2.1 se realizó el 13 de agosto de 2026
-sin cambiar secretos, frontend, proveedor ni autoridad de dominio.
+verificados en producción. Canonical JSON v1 se propagó a las cinco Edge el 14
+de agosto de 2026 sin cambiar secretos, frontend, proveedor ni autoridad de dominio.
 
 Agent Engine V2.1 está activo como capa de contratos, runtime y persistencia, pero todas las tareas conservan `legacy_direct`. No están activados `gateway_gemini_parity`, `gateway_routing`, OpenRouter ni NVIDIA NIM. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
 
@@ -20,16 +20,16 @@ Las inferencias ya no viven dentro de las Edge de dominio. Cada Edge invoca el A
 
 ## Corte productivo verificado
 
-- `market-radar` v55 (`verify_jwt=true`, bundle
-  `b2c842c717d265c09abaaaccb5eed0d013b2ab8be262a9d2e5d15d672531b861`).
-- `market-expert` v22 (`verify_jwt=true`, bundle
-  `9b5b8bf1f547cad8638598aa2a081c1de7e0c08efbc4032df5c574bff1b5a6e8`).
-- `market-draft-fixer` v19 (`verify_jwt=true`, bundle
-  `1e6b006b31601bdfb884c7266133d64dd2879e3e9142b0dccda059c68a0fa9a4`).
-- `validate-market-draft` v27 (`verify_jwt=true`, bundle
-  `494afb960213898ef9db1c2d4aab788c8d744d0c3d81037311412c3f727f1b2d`).
-- `analyze-market-resolution` v15 (`verify_jwt=true`, bundle
-  `9d065ad553ea8dd1c5903fe6e3aff1610ad03d11c982c4fa21c6fc364b78f235`).
+- `market-radar` v56 (`verify_jwt=true`, bundle
+  `177f2e63c69bc684c2abfbbf75934b233b78bb10c066ce9a0235746dba41e869`).
+- `market-expert` v23 (`verify_jwt=true`, bundle
+  `fbdc1b6f0abaf1cbb76979e1827f8e8991f2bbdf02a652911618e16b1277979c`).
+- `market-draft-fixer` v20 (`verify_jwt=true`, bundle
+  `1156dda735d87083e9ac201b0823695bf4f2a732fec74d3fc71bfa9b761b6403`).
+- `validate-market-draft` v28 (`verify_jwt=true`, bundle
+  `f6a0e11746850e55d7bd24fc37f6f617e46421f3d8be8b19f32a5c2dbb98a8d9`).
+- `analyze-market-resolution` v16 (`verify_jwt=true`, bundle
+  `d78fd05f920340b2e98d00941258362acaefc35e67471de4d4adec7fd45222eb`).
 - Migraciones remotas no repetibles `20260811230350` (v8),
   `20260811231921` (v9), `20260811232315` (v10) y `20260811232708` (v11).
 - Migraciones V2.1 remotas no repetibles `20260813163839` (RLS Radar),

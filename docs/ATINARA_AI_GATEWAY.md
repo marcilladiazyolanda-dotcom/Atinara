@@ -1,6 +1,6 @@
 # Atinara AI Gateway V2.1
 
-Estado: implementado, verificado y desplegado en producción el 13 de agosto de 2026 con las cinco tareas en `legacy_direct`. Gemini sigue siendo el único transporte activo mediante el adaptador de compatibilidad centralizado; `gateway_gemini_parity`, `gateway_routing`, OpenRouter y NVIDIA NIM permanecen sin activar.
+Estado: implementado, verificado y desplegado en producción. Las cinco tareas permanecen en `legacy_direct`; Canonical JSON v1 se propagó a sus bundles el 14 de agosto de 2026. Gemini sigue siendo el único transporte activo mediante el adaptador de compatibilidad centralizado; `gateway_gemini_parity`, `gateway_routing`, OpenRouter y NVIDIA NIM permanecen sin activar.
 
 ## Fronteras
 

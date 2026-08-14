@@ -4,9 +4,9 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine V2.1 usa `market-radar` v55,
-> `market-draft-fixer` v19, `validate-market-draft` v27, `market-expert` v22 y
-> `analyze-market-resolution` v15, todas activas con `verify_jwt=true`. Las
+> **Estado vigente:** Atinara Engine V2.1 usa `market-radar` v56,
+> `market-draft-fixer` v20, `validate-market-draft` v28, `market-expert` v23 y
+> `analyze-market-resolution` v16, todas activas con `verify_jwt=true`. Las
 > cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
 > desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
 > v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
@@ -33,9 +33,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - El objetivo es “sin alterar las cadenas ni huellas de los valores productivos válidos cubiertos por los contratos V2.1 actuales; los valores no JSON o previamente ambiguos se rechazan conforme al contrato v1”. No se modifica frontend, README, migraciones, SQL, Edge entrypoints, Auth, modos, flags, presupuestos, proveedores ni datos.
 - Los cuatro workflows asociados al SHA publicado —configuración Codex, benchmark IA offline, calidad y GitHub Pages— terminaron en `success`. SonarQube Cloud analizó el mismo SHA y devolvió Quality Gate `OK`: fiabilidad, seguridad y mantenibilidad A, duplicación nueva `0.8 %` y hotspots revisados `100 %`.
 - El baseline independiente sobre una rama limpia del mismo SHA superó 420/420 pruebas, sintaxis de 107 JavaScript, canonicalización idéntica Node/Deno, TypeScript, cinco suites SQL estáticas, 9/9 Edge Functions, benchmark offline 5/5 con `externalNetworkCalls=0`, auditoría npm sin vulnerabilidades, validador Codex y `git diff --check`.
-- La lectura productiva confirmó Supabase `ACTIVE_HEALTHY`, las migraciones V2.1 `20260813163839`, `20260813163918` y `20260813163959` aplicadas una sola vez, y las cinco Edge activas con JWT obligatorio en Radar v55, Expert v22, Corrector v19, Validator v27 y Resolución v15.
-- Esos cinco bundles desplegados todavía contienen el canonicalizador anterior basado en `localeCompare()` y `Object.fromEntries`; no declaran `ATINARA_CANONICAL_JSON_VERSION`. Por tanto, el contrato v1 está publicado y validado en GitHub, pero su propagación a producción requiere un redeploy posterior, separado y expresamente autorizado de las cinco Edge. No se ejecutó ese redeploy ni se cambiaron modos, flags, presupuestos, proveedores, secretos o datos.
-- La auditoría no usó SQL remoto. El catálogo estático desplegado conserva OpenRouter y NVIDIA NIM con `enabled: false`, pero los valores actuales de modos, flags y presupuestos persistidos no se vuelven a afirmar como lectura directa del 14 de agosto hasta disponer de autorización para una consulta remota estrictamente de solo lectura.
+- La lectura productiva confirmó Supabase `ACTIVE_HEALTHY` y las migraciones V2.1 `20260813163839`, `20260813163918` y `20260813163959` aplicadas una sola vez. Antes del redeploy, dos consultas SQL exclusivamente `SELECT` confirmaron las cinco tareas en `legacy_direct`, rutas nulas, flags OpenRouter/NVIDIA NIM apagados y los quince límites diarios en cero.
+- Con autorización expresa se redesplegaron secuencialmente Radar v56 (`177f2e63c69bc684c2abfbbf75934b233b78bb10c066ce9a0235746dba41e869`), Expert v23 (`fbdc1b6f0abaf1cbb76979e1827f8e8991f2bbdf02a652911618e16b1277979c`), Corrector v20 (`1156dda735d87083e9ac201b0823695bf4f2a732fec74d3fc71bfa9b761b6403`), Validator v28 (`f6a0e11746850e55d7bd24fc37f6f617e46421f3d8be8b19f32a5c2dbb98a8d9`) y Resolución v16 (`d78fd05f920340b2e98d00941258362acaefc35e67471de4d4adec7fd45222eb`). Todas permanecen `ACTIVE` con `verify_jwt=true`.
+- La verificación independiente posterior leyó los cinco bundles completos: todos declaran `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"`, ninguno conserva `localeCompare()` u `Object.fromEntries`, y los cuatro catálogos de inferencia mantienen OpenRouter y NVIDIA NIM con `enabled: false`. El redeploy no cambió SQL, modos, flags, presupuestos, secretos, datos ni autoridad humana; tampoco ejecutó smoke Gemini, shadow, canary o routing.
 
 ### Activación productiva controlada de V2.1 en `legacy_direct` · 13 de agosto de 2026
 

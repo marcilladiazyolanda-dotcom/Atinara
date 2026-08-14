@@ -2,7 +2,7 @@
 
 Este runbook separa la implementación local de cualquier activación. No autoriza push, despliegue, migraciones remotas, cambios de secretos, flags, benchmark live, canary ni publicación de mercados.
 
-Estado productivo verificado el 13 de agosto de 2026: las tres migraciones V2.1
+Estado productivo verificado el 14 de agosto de 2026: las tres migraciones V2.1
 están aplicadas una sola vez y las cinco Edge están activas en `legacy_direct`.
 OpenRouter, NVIDIA NIM, `gateway_gemini_parity` y `gateway_routing` siguen
 apagados. Cualquier paso posterior requiere una autorización nueva y expresa.
@@ -37,7 +37,7 @@ Las pruebas SQL transaccionales aceptan `--execute` solo contra una base local d
 
 La canonicalización que comparten Gateway, Runtime V2 y Registry V2 usa el contrato `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"`. `npm run test:canonicalization` ejecuta por separado los runners Node y Deno contra el mismo fixture literal y `npm run validate` incluye esta puerta. Deben coincidir exactamente las cadenas y SHA-256 de ambos runtimes, incluido el orden UTF-16 de claves enteras y Unicode. La versión no se agrega al contenido hasheado ni a datos persistidos; cualquier incompatibilidad futura exige v2.
 
-Estado verificado el 14 de agosto de 2026: el contrato v1 está publicado en `origin/main` `bcebd8ea62c5212aebfb0b7ba35f0b63c35129b9`, con CI y Quality Gate verdes. Los cinco bundles productivos conservan todavía la implementación anterior basada en `localeCompare()` y `Object.fromEntries`; publicar el código no los actualiza. Su propagación exige un redeploy separado y expresamente autorizado de Radar, Expert, Corrector, Validator y Resolución, conservando JWT obligatorio y sin cambiar modos, flags, presupuestos ni proveedores en la misma operación.
+Estado verificado el 14 de agosto de 2026: el contrato v1 está publicado en `origin/main` `bcebd8ea62c5212aebfb0b7ba35f0b63c35129b9`, con CI y Quality Gate verdes, y propagado a Radar v56, Expert v23, Corrector v20, Validator v28 y Resolución v16. Los cinco bundles están `ACTIVE`, conservan `verify_jwt=true`, declaran la versión v1 y ya no contienen `localeCompare()` ni `Object.fromEntries`. Dos `SELECT` previos confirmaron todas las tareas en `legacy_direct`, rutas nulas, flags experimentales apagados y límites diarios en cero; el redeploy no cambió esos valores ni ejecutó inferencias.
 
 Antes de aceptar una modificación de este contrato:
 
