@@ -6,8 +6,7 @@
 
 Este documento registra dependencias reales. No autoriza una migración remota. Las consultas de producción fueron exclusivamente de lectura y no se leyeron valores de secretos.
 
-> **Adenda local · 15 de agosto de 2026:** sobre `origin/main =
-> 87cab0819555f4c74aa6fb9546a926fc021e435d`, la migración pendiente
+> **Adenda productiva · 15 de agosto de 2026:** la migración
 > `20260815165805_fix_radar_family_option_horizon_v1.sql` conserva firmas y
 > grants, pero corrige dos proyecciones internas de
 > `list_market_radar_candidates_v2`: identidad categórica
@@ -16,8 +15,18 @@ Este documento registra dependencias reales. No autoriza una migración remota. 
 > Atinara o proveedor, y los fines ya vencidos se excluyen. Los triggers de
 > borrador y mercado preservan la identidad v4 del origen Radar para mantener
 > el bloqueo exacto cross-provider; un `market_id` exacto prevalece y dos
-> intenciones publicables con el mismo slug fallan cerradas. No está
-> aplicada en producción mientras el paquete local no se haya revisado y subido.
+> intenciones publicables con el mismo slug fallan cerradas. Ya fue aplicada
+> una sola vez en producción y verificada mediante un refresh Radar sin Gemini;
+> no necesitó redeploy de Edge ni backfill y no debe repetirse.
+>
+> **Adenda local de continuidad · 15 de agosto de 2026:** sobre
+> `origin/main = f7b5afc2b8f123a39f2da5b94331fbb7dcafd4cb`,
+> `20260815172317_fix_radar_expert_save_wrapper_v1.sql` corrige el enlace entre
+> el wrapper experto y la implementación Radar preservada. El primer guardado
+> continúa exigiendo revisión y elegibilidad exactas; solo el replay ya
+> preparado, con UUID, payload, ejecución, contrato, fuentes y binding
+> idénticos, devuelve el expediente existente sin escribir. El paquete es local
+> y no autoriza aplicar la migración hasta que Yol lo suba y se verifique GitHub.
 
 ## Estado material verificado
 
@@ -38,8 +47,8 @@ Los grants de tabla y las políticas RLS son controles distintos. Aunque `anon`,
 | checks | `public.bind_market_radar_draft_eligibility_v2(uuid,uuid,bigint,text,bigint,bigint,uuid,uuid)` | `postgres`, definer, `search_path=''` | `service_role` | liga publicación a check vigente | se conserva sin cambios | liga versión, huella, revisión y decisión exactas | check ajeno/caducado, actor distinto o replay incompatible fallan |
 | checks | `public.list_market_radar_candidates_v2(text,text,text,text,text,text,integer,integer)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | catálogo privado del Radar | misma firma; la migración local usa la frontera predictiva canónica | una administradora lee solo candidatas elegibles vigentes dentro del horizonte familiar/evaluado | invitada o cuenta no administradora no recibe datos |
 | checks | `public.get_market_intelligence_origin(text,text)` | `postgres`, definer, `search_path=''`; admin salvo service | `authenticated`, `service_role` | carga origen para Editor | misma lectura, después instrumentada por runtime v2 | origen válido devuelve expediente y puerta | identidad no autorizada o origen inexistente falla cerrado |
-| checks | `public.save_market_draft_from_radar(uuid,uuid,bigint,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador privado desde Radar | permanece como writer autoritativo | candidata/check/revisión exactos crean o actualizan una versión | cuenta no admin, check obsoleto o versión movida no escriben |
-| checks | `public.save_market_draft_from_radar_intelligence(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador + binding de Editor | permanece como writer autoritativo | paquete experto compatible materializa una versión privada | paquete stale, check incompatible o cuenta no admin fallan |
+| checks | `public.save_market_draft_from_radar(uuid,uuid,bigint,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador privado desde Radar | permanece como writer autoritativo | candidata/check/revisión exactos crean una versión; retry exacto de una candidata ya preparada es no-op | cuenta no admin, check obsoleto, versión movida o UUID/payload distinto no escriben |
+| checks | `public.save_market_draft_from_radar_intelligence(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador + binding de Editor | enlaza el helper interno con `save_market_draft_from_radar_without_authoritative_fact_gate_v1` | paquete experto compatible materializa una versión privada; replay exacto conserva un solo binding | paquete stale, contrato/fuentes/binding distintos, check incompatible o cuenta no admin fallan y revierten |
 | checks | `private.assert_market_radar_candidate_eligible_v1(uuid,bigint)` | `postgres`, definer, `search_path=''` | solo owner | helper interno de guardado | se reutiliza | devuelve candidata únicamente con check vigente exacto | ningún rol API puede ejecutarla directamente |
 | checks | `private.assert_market_radar_draft_eligibility_v1(private.market_drafts,timestamptz)` | `postgres`, definer, `search_path=''` | solo owner | puerta interna de publicación | se reutiliza | acepta binding exacto y no caducado | ningún rol API puede ejecutarla; mismatch bloquea publicación |
 
@@ -48,7 +57,7 @@ Los grants de tabla y las políticas RLS son controles distintos. Aunque `anon`,
 | Interfaz | JavaScript | Edge | Shared | RPC | Tabla | Tests de regresión |
 |---|---|---|---|---|---|---|
 | Radar administrativo en `admin-markets.html` | `admin-markets.js` | `supabase/functions/market-radar/index.ts` | `_shared/market-radar.mjs` y runtime v1/v2 | `upsert_market_radar_batch_with_eligibility_v1`, `list_market_radar_candidates_v2`, `apply_market_radar_prepare_eligibility_v1`, `record_market_radar_eligibility_attempt_v1` | checks, attempts, `external_market_candidates` | `tests/market-radar.test.js`, `tests/market-family-v4.test.js`, `supabase/tests/radar_family_option_horizon_v1_transaction.sql`, `supabase/tests/radar_eligibility_rls_v12_transaction.sql` |
-| Agente Editor en `admin-markets.html` | `admin-agent-engine.js`, `admin-markets.js` | `market-expert/index.ts` | inteligencia compartida y runtimes v1/v2 | `get_market_intelligence_origin`, `save_market_draft_from_radar_intelligence` | checks, drafts, expert runs | `tests/expert-market-cycle-definitive.test.js`, `tests/agent-engine-v2.test.js` |
+| Agente Editor en `admin-markets.html` | `admin-agent-engine.js`, `admin-markets.js` | `market-expert/index.ts` | inteligencia compartida y runtimes v1/v2 | `get_market_intelligence_origin`, `save_market_draft_from_radar_intelligence` | checks, drafts, expert runs | `tests/expert-market-cycle-definitive.test.js`, `tests/agent-engine-v2.test.js`, `tests/radar-expert-save-wrapper.test.js`, `supabase/tests/radar_expert_save_wrapper_v1_transaction.sql` |
 | Confirmación/publicación humana | `admin-markets.js`, `market-draft-fixer.js` | `market-radar/index.ts` solo para revalidar | puerta de elegibilidad | `bind_market_radar_draft_eligibility_v2`, `confirm_market_draft_review`, `publish_market_draft` | checks, bindings, drafts | `tests/agent-engine-confirmation-v8.test.js`, `supabase/tests/agent_engine_confirmation_v8_transaction.sql` |
 
 ## Puerta de migración y rollback v1

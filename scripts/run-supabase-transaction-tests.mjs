@@ -11,6 +11,7 @@ const testRoot = join(root, "supabase", "tests");
 const required = [
   "market_family_v4_transaction.sql",
   "radar_family_option_horizon_v1_transaction.sql",
+  "radar_expert_save_wrapper_v1_transaction.sql",
   "radar_eligibility_v7_transaction.sql",
   "agent_engine_confirmation_v8_transaction.sql",
   "radar_eligibility_rls_v12_transaction.sql",

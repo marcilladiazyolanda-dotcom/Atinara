@@ -23,6 +23,52 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
 
+### Radar verificado y reparación local del guardado experto · 15 de agosto de 2026
+
+- GitHub publicó los ocho archivos revisados de la corrección de
+  identidad/horizonte y `origin/main` avanzó después hasta
+  `f7b5afc2b8f123a39f2da5b94331fbb7dcafd4cb`. El preflight productivo volvió a
+  confirmar cero borradores o mercados categóricos Radar con identidad legacy
+  `deadline:*`. Se aplicó una sola vez
+  `20260815165805_fix_radar_family_option_horizon_v1.sql`; no contiene backfill,
+  no exigió redeploy de Edge y preservó owner, `SECURITY DEFINER`,
+  `search_path`, ACL y datos de dominio.
+- Una única actualización administrativa del Radar, sin Gemini, confirmó que
+  las opciones Kalshi de The Game Awards 2026 entran en su horizonte
+  predictivo, conservan `option:<slug>`, separan hermanas y bloquean solo
+  duplicados exactos cross-provider. Mercados, borradores, predicciones,
+  perfiles, Karma, Prestigio, LMSR y huellas económicas permanecieron
+  invariantes fuera de las escrituras técnicas normales de ese refresh. La
+  incidencia concreta de identidad/horizonte queda cerrada.
+- La Fase 1 continuó con la candidata válida de Half-Life 3
+  `38d6979a-25bd-4767-bbe4-095c6c76e972`. Market Expert completó el run
+  `db6b4335-ed28-4bbd-aa8d-fff7c8cb3dc3`, pero el guardado privado falló de
+  forma cerrada con `RADAR_PREPARATION_REVISION_MISMATCH` /
+  `DRAFT_VERSION_MOVED`. La candidata quedó en revisión 83, sin
+  `prepared_draft_id`, y no se creó ningún borrador; Validator, Corrector,
+  confirmación y publicación no se ejecutaron.
+- La causa es un rebinding histórico entre capas `SECURITY DEFINER`:
+  `save_market_draft_from_radar_intelligence_without_revision_guard` llamaba al
+  nombre público `save_market_draft_from_radar`, que más tarde pasó a ser el
+  wrapper de elegibilidad y volvió a exigir la revisión ya consumida. El mismo
+  wrapper tampoco distinguía el replay exacto después de la transición
+  `available -> prepared`.
+- La rama local `codex/atinara-radar-expert-save-wrapper-fix` parte exactamente
+  de ese `origin/main`. La migración nueva
+  `20260815172317_fix_radar_expert_save_wrapper_v1.sql` enlaza el helper experto
+  con la implementación preservada, mantiene todas las guardas de ejecución,
+  contrato, fuentes y binding, y admite solo un replay preparado exacto. El
+  replay no reescribe procedencia ni ligaduras; una UUID, contrato, fuentes,
+  actor u origen distintos fallan y revierten la transacción.
+- La validación local pasa 461/461 pruebas, sintaxis de 114 archivos,
+  canonicalización idéntica Node/Deno, TypeScript y 9 suites SQL estáticas. En
+  PostgreSQL 17.10 desechable, el stack canónico más la migración nueva ejecutó
+  guardado manual y experto, replay exacto, rechazos incompatibles y controles
+  de ACL dentro de `BEGIN/ROLLBACK`, sin mercado ni mutación económica. El
+  paquete no está desplegado: no hubo SQL remoto, Edge, Gemini adicional,
+  borrador, confirmación, publicación, resolución o liquidación. La continuidad
+  se detiene para que Yol suba el ZIP incremental a GitHub.
+
 ### Smoke sin Gemini y corrección local de identidad/horizonte Radar · 15 de agosto de 2026
 
 - La Fase 0 productiva de Official Opportunity Discovery V2 terminó con una
@@ -67,12 +113,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   cero borradores Radar vinculados a dimensiones categóricas y cero enlaces
   legacy `deadline:*` activos o publicados. La corrección no requiere ni
   autoriza backfill o DML de datos existentes.
-- Este paquete es exclusivamente local. No se aplicó la nueva migración, no se
-  redesplegó Radar y no se repitió el refresh. La Fase 1 permanece detenida antes
-  de Market Expert y antes de cualquier borrador, confirmación o publicación.
-  Tras la validación y el ZIP incremental, Yol debe subirlo a GitHub; solo
-  entonces se verificará `origin/main`, se solicitará/aplicará el cambio
-  productivo acotado y se repetirá una única actualización Radar sin Gemini.
+- Este párrafo describía el corte local del paquete original. Su aplicación y
+  el refresh productivo posterior están verificados en la sección anterior y
+  sustituyen ese estado histórico; la migración no debe repetirse.
 
 ### Reparación local de doble ejecución · Official Opportunity Discovery V2 · 15 de agosto de 2026
 

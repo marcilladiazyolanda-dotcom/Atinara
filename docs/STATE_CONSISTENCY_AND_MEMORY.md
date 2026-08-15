@@ -33,6 +33,25 @@ La referencia exacta `market_id` prevalece; antes de materializar solo cuenta
 una intención `human_confirmed` o `scheduled`, y dos intenciones publicables con
 el mismo slug detienen la proyección en vez de elegir un borrador arbitrario.
 
+### Guardado Radar y replay del expediente experto
+
+Las capas versionadas de guardado no se enlazan mediante un nombre público que
+pueda ser redefinido después. El helper interno de Market Expert llama a
+`save_market_draft_from_radar_without_authoritative_fact_gate_v1`, la
+implementación preservada que corresponde a su posición en el grafo; los
+wrappers públicos siguen siendo las únicas entradas autenticadas y aplican una
+sola vez la revisión y la elegibilidad vigentes.
+
+El primer guardado puede realizar la transición autoritativa
+`available -> prepared` y aumentar `preparation_revision`. Un retry con la misma
+UUID conserva la revisión enviada originalmente solo si la candidata está
+`prepared`, apunta al mismo borrador y el writer inferior demuestra igualdad de
+payload. En la ruta experta también deben coincidir ejecución, origen, contrato,
+fuentes y binding activo. Ese replay devuelve el expediente existente sin
+reescribir procedencia, sin versionar el binding y sin crear auditoría adicional.
+Cualquier diferencia falla con el contrato de revisión movida y revierte todos
+los efectos de la transacción.
+
 ### Contenido y huella
 
 `private.market_draft_canonical_payload` produce el único payload editable canónico. La política `sha256-canonical-v2`:
@@ -132,8 +151,8 @@ El rollback a v1 cambia el modo de transporte o el bundle de una Edge, pero no b
 | Acción | Inicio | Backend autoritativo | Versión / concurrencia | Atomicidad e idempotencia | Doble clic / retry | Auditoría y resultado |
 |---|---|---|---|---|---|---|
 | Guardar manual | `admin-markets.js` | `save_market_draft` | `expected_version`, `FOR UPDATE` | Transacción única; UUID y hash; no-op canónico | UI bloqueada; replay o `DRAFT_VERSION_MOVED` | Snapshot solo material; auditoría de cambio o no-op |
-| Preparar desde Radar | `admin-markets.js` | `save_market_draft_from_radar` | Versión del borrador y lock de candidata | Guarda y reserva candidata en una transacción; misma UUID | Una sola reserva; replay seguro | Procedencia y `RADAR_DRAFT_PREPARED` |
-| Radar + Agente Editor | puente de `admin-markets.html` | `save_market_draft_from_radar_intelligence` | Versión, candidata y ejecución experta | Guardado, procedencia y binding en una transacción | Botón bloqueado; guardado base idempotente | Dictamen y Plan de Resolución vinculados; nunca publica |
+| Preparar desde Radar | `admin-markets.js` | `save_market_draft_from_radar` | Versión del borrador y lock de candidata | Guarda y reserva candidata en una transacción; misma UUID | Una sola reserva; replay exacto no reescribe procedencia | Procedencia y `RADAR_DRAFT_PREPARED` |
+| Radar + Agente Editor | puente de `admin-markets.html` | `save_market_draft_from_radar_intelligence` | Versión, candidata, ejecución experta y binding | Guardado, procedencia y binding en una transacción | Botón bloqueado; replay exige UUID, contrato, fuentes y binding exactos y no escribe | Dictamen y Plan de Resolución vinculados; nunca publica |
 | Descubrir oportunidades oficiales | `admin-markets.js` | Edge `data-observatory` → `begin/finish_official_opportunity_discovery_v2` | UUID, actor, huella e índice único antes de red | Una fila técnica; `FOR UPDATE`; insert o refresh condicional; payload idéntico no-op | Doble submit comparte promesa; retry ambiguo reutiliza UUID; replay no entra en red | `success`, `zero_results`, `partial` o `technical_failure` sin consulta, HTML ni URL fallida |
 | Datos y tendencias | `admin-markets.js` | `save_market_draft_from_intelligence` | Solo creación y ejecución experta válida | Guardado y binding en una transacción; UUID obligatoria | Una sola creación | Origen, contrato, fuentes y feedback persistidos |
 | Aplicar propuesta del Agente Editor | `admin-markets.js` / puente | RPC anteriores y `bind_market_draft_intelligence` | Versión y origen inmutables | Binding repetido compara contrato+fuentes y hace no-op | UI bloqueada; mismatch falla | Plan versionado si cambia |
@@ -166,3 +185,4 @@ El rollback a v1 cambia el modo de transporte o el bundle de una Edge, pero no b
 10. Toda función `security definer` fija `search_path`, comprueba rol y revoca permisos por defecto.
 11. Toda inferencia usa el contrato común; la Edge no elige transporte ni aporta fingerprints.
 12. Toda operación larga comparte un `absoluteDeadlineAt` y reserva tiempo para persistencia y respuesta.
+13. Una capa interna versionada llama a la implementación preservada exacta; nunca reentra por un nombre público redefinible ni repite una guarda ya consumida.

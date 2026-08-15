@@ -72,6 +72,41 @@ Las cinco matrices pasaron juntas en producción dentro de `BEGIN/ROLLBACK` el
 corresponde; el binding de borrador introducido en v8 se valida en
 `agent_engine_confirmation_v8_transaction.sql`.
 
+## Reparación local del guardado Radar + Market Expert
+
+El corte local del 15 de agosto añade
+`20260815172317_fix_radar_expert_save_wrapper_v1.sql`. No cambia una Edge, el
+Gateway, Runtime V2, Registry V2, Gemini, modelos, modos, rutas, flags,
+presupuestos o secretos. Redefine únicamente las tres capas SQL vigentes del
+guardado Radar/Editor y reimpone owner, `SECURITY DEFINER`, `search_path` y ACL.
+
+La capa interna experta llama por nombre a la implementación pre-gate
+preservada. Los wrappers públicos validan la revisión inicial una sola vez y
+solo admiten un replay `prepared` cuando el writer inferior acredita la misma
+UUID y payload. La ruta experta exige además la misma ejecución, origen,
+resolución y fuentes; el replay no modifica procedencia ni versiona bindings.
+
+Antes de aplicar esta migración en otro entorno:
+
+1. confirmar que existen las cinco funciones exactas del preflight y que la
+   implementación interna todavía muestra el rebinding histórico esperado;
+2. ejecutar `tests/radar-expert-save-wrapper.test.js` y
+   `supabase/tests/radar_expert_save_wrapper_v1_transaction.sql` sobre un stack
+   completo desechable;
+3. demostrar primer guardado manual/experto, replay exacto, rechazo de cambio
+   de UUID/contrato/fuentes/actor y una sola fila de draft/binding;
+4. fijar fingerprints de mercados, predicciones, perfiles, Karma, Prestigio y
+   LMSR antes y después; la migración no contiene DML ni backfill;
+5. no redesplegar Edge Functions: el paquete no modifica sus bundles.
+
+La recuperación nunca edita esta migración una vez aplicada. Si el postflight
+falla, la transacción revierte. Si una incompatibilidad aparece después, se
+crea otra migración aditiva que restaure los cuerpos y ACL anteriores exactos;
+no se desactiva elegibilidad, no se borra el binding y no se usa un bypass de
+trigger. El smoke productivo que originó la reparación no creó borrador y no se
+repite hasta verificar el nuevo historial y obtener el alcance productivo
+correspondiente.
+
 ## Promoción futura por función
 
 Cada tarea avanza independientemente:

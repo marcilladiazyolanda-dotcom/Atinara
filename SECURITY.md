@@ -71,6 +71,7 @@ Límites principales:
 - RLS debe permanecer activa en tablas expuestas y las políticas deben aplicar propiedad, rol o capacidad real. `TO authenticated` por sí solo no es autorización suficiente.
 - `user_metadata` y otros campos editables por la usuaria no pueden decidir permisos.
 - Una función `SECURITY DEFINER` requiere justificación, `search_path` seguro, autorización interna, alcance mínimo y permisos `EXECUTE` restringidos.
+- Una capa interna `SECURITY DEFINER` versionada debe invocar la implementación preservada exacta, no un nombre público que otra migración pueda redefinir. Las regresiones verifican el grafo de llamadas y que un replay exacto no repita guardas ni reescriba procedencia o bindings.
 - Las superficies administrativas, de publicación, resolución, purga o mantenimiento no pueden quedar invocables por `anon` ni por usuarios sin capacidad válida.
 - Cambiar o eliminar una cuenta no debe asumirse como revocación inmediata de todos los tokens existentes sin comprobar el contrato de sesión.
 
