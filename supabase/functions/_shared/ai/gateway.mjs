@@ -21,6 +21,7 @@ import { invokeGeminiLegacy } from "./providers/gemini-legacy.mjs";
 import { invokeGemini } from "./providers/gemini.mjs";
 import { invokeOpenRouter } from "./providers/openrouter.mjs";
 import { invokeNvidiaNim } from "./providers/nvidia-nim.mjs";
+import { resolveAiExecutionProfile } from "./execution-profile.mjs";
 
 function environmentValue(name) {
   try {
@@ -163,20 +164,27 @@ export function createAiGateway(options = {}) {
   async function generateStructured(rawRequest, rawContext) {
     const request = assertAiTaskRequest(rawRequest);
     const context = assertAiExecutionContext(rawContext);
-    const policy = resolveTaskPolicy(request.taskType, request.contractVersion, request.policyVersion);
+    const taskPolicy = resolveTaskPolicy(request.taskType, request.contractVersion, request.policyVersion);
     const timeline = { created: Date.now() };
-    const sanitizedInput = sanitizeTaskInput(request.input, policy.inputProjection);
+    const sanitizedInput = sanitizeTaskInput(request.input, taskPolicy.inputProjection);
     timeline.sanitized = Date.now();
     const inputFingerprint = await sha256Hex(canonicalJson(sanitizedInput));
-    assertDeadlineBudget(context, policy.finalizationReserveMs);
-    const runtimeChild = createChildAbort(context, 5_000, policy.finalizationReserveMs);
+    assertDeadlineBudget(context, taskPolicy.finalizationReserveMs);
+    const runtimeChild = createChildAbort(context, 5_000, taskPolicy.finalizationReserveMs);
     let runtimeValue;
     try {
       runtimeValue = await runtimeReader(request.taskType, runtimeChild.signal);
     } finally {
       runtimeChild.cleanup();
     }
-    const runtime = runtimeMode(runtimeValue, policy);
+    const runtime = runtimeMode(runtimeValue, taskPolicy);
+    const execution = resolveAiExecutionProfile({
+      executionProfile: context.executionProfile,
+      taskType: request.taskType,
+      transportMode: runtime.transportMode,
+      policy: taskPolicy,
+    });
+    const policy = execution.policy;
     timeline.routed = Date.now();
     const gatewayWarnings = [];
     let lastError = null;
@@ -289,6 +297,8 @@ export function createAiGateway(options = {}) {
             invocationId: context.invocationId,
             taskType: request.taskType,
             transportMode: runtime.transportMode,
+            executionProfile: execution.executionProfile,
+            providerRequestLimit: execution.providerRequestLimit,
             inputFingerprint,
             outputFingerprint,
             metricsEligible: telemetry.status === "persisted",

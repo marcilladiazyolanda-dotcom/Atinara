@@ -104,6 +104,26 @@ No automatizar rotaciones ni leer valores.
 
 Esta comprobación no bloquea la implementación local. No pedir, mostrar ni escribir valores de secretos.
 
+## Smoke acotado de Validator pendiente de despliegue
+
+El paquete local añade el perfil `single_inference_smoke_v1` para una futura prueba autorizada de `market_draft_validation`. No está desplegado en el estado descrito por este documento. Solo es válido si la tarea continúa en `legacy_direct`, la sesión es administrativa, el borrador y su versión son explícitos, `force_review=true` y `attempt_id` es un UUID nuevo proporcionado por la operadora.
+
+El puente administrativo no tiene botón visible. Tras una autorización productiva separada, se invoca desde la consola de la sesión administrativa ya abierta:
+
+```js
+await window.atinaraMarketAdminBridge.runDraftValidationSingleInferenceSmoke(
+  "UUID_DEL_BORRADOR",
+  VERSION_ENTERA,
+  { attemptId: crypto.randomUUID() },
+);
+```
+
+El perfil permite como máximo una petición Gemini: desactiva retry HTTP, retry de salida inválida y fallback de schema. No altera `requestReview()` ni el perfil `standard`.
+
+Antes de autorizar el smoke se debe fijar por SELECT el borrador, versión, huella, atestación y ausencia de un intento con el mismo UUID. La allowlist de escrituras no puede reducirse a telemetría: las RPC vigentes pueden insertar/finalizar la fila de `private.market_review_attempts`, crear `private.market_review_reports`, registrar `private.market_admin_audit`, actualizar el estado de revisión del mismo `private.market_drafts` y, según el resultado, sustituir o revocar filas de `private.market_effective_reviews`. El smoke no modifica contenido del borrador, no confirma humanamente y no publica. Estas operaciones requieren autorización productiva explícita y separada.
+
+Después se verifican por SELECT el recuento de intentos, proveedor, fingerprints, deadline, clasificación, telemetría y ausencia de cambios de contenido/publicación. Un replay con el mismo `attempt_id` no debe inferir de nuevo. Un smoke no constituye ground truth, paridad ni promoción.
+
 ## Proveedores experimentales
 
 Antes de un smoke live:

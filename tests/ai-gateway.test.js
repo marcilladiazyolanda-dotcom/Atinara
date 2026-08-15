@@ -10,6 +10,7 @@ import {
 } from "../supabase/functions/_shared/ai/contracts.mjs";
 import { createAiGateway } from "../supabase/functions/_shared/ai/gateway.mjs";
 import { AI_ERROR_CODES } from "../supabase/functions/_shared/ai/errors.mjs";
+import { AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 } from "../supabase/functions/_shared/ai/execution-profile.mjs";
 import { AI_TASK_CONTRACTS } from "../supabase/functions/_shared/ai/task-policy.mjs";
 import { classifyMarketRelations } from "../supabase/functions/_shared/market-radar.mjs";
 
@@ -344,7 +345,7 @@ for (const taskType of Object.keys(VALID)) {
 
 test("el caller productivo no puede inyectar ruta, modelo, schema ni fingerprint", async () => {
   const { gateway } = dependencies();
-  for (const forbidden of ["routeHint", "routeId", "model", "schema", "inputFingerprint", "timeoutMs"]) {
+  for (const forbidden of ["routeHint", "routeId", "model", "schema", "inputFingerprint", "timeoutMs", "executionProfile"]) {
     await assert.rejects(
       gateway.generateStructured({ ...productRequest("market_draft_validation"), [forbidden]: "caller-value" }, context()),
       (error) => error.code === AI_ERROR_CODES.INVALID_REQUEST,
@@ -426,8 +427,12 @@ test("la proyección productiva de Market Expert permanece alineada con la allow
   const excludedBlock = projectionBlock.match(/const excluded = new Set\(\[([\s\S]*?)\]\);/)?.[1];
   assert.ok(excludedBlock);
   const excludedKeys = new Set([...excludedBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
-  const projectedKeys = producerKeys.filter((key) => key !== "id" && !key.endsWith("_id") && !excludedKeys.has(key));
+  const projectedKeys = [
+    ...producerKeys.filter((key) => key !== "id" && !key.endsWith("_id") && !excludedKeys.has(key)),
+    "official_source_content_sha256",
+  ];
   assert.ok(projectedKeys.includes("duplicate_matches"));
+  assert.ok(projectedKeys.includes("official_source_content_sha256"));
 
   const { gateway, calls } = dependencies({
     fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
@@ -441,6 +446,26 @@ test("la proyección productiva de Market Expert permanece alineada con la allow
     assert.deepEqual(result.value, VALID.market_expert_reasoning.output);
   }
   assert.equal(calls.fetches.length, projectedBatches.length);
+});
+
+test("Market Expert incorpora solo el digest oficial saneado a la huella", async () => {
+  const fingerprints = [];
+  for (const digest of ["a".repeat(64), "b".repeat(64)]) {
+    const { gateway } = dependencies({
+      fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
+    });
+    const request = productRequest("market_expert_reasoning");
+    request.input.origin = { provider: "official_web", official_source_content_sha256: digest };
+    const result = await gateway.generateStructured(request, context());
+    fingerprints.push(result.metadata.inputFingerprint);
+  }
+  assert.notEqual(fingerprints[0], fingerprints[1]);
+
+  const source = readFileSync(new URL("../supabase/functions/market-expert/index.ts", import.meta.url), "utf8");
+  assert.match(source, /origin\.provider === "official_web" && \/\^\[0-9a-f\]\{64\}\$\//);
+  assert.match(source, /output\.official_source_content_sha256 = officialContentSha256/);
+  assert.match(source, /delete snapshot\.expert_analysis_status/);
+  assert.match(source, /origin\.expert_analysis_status === "completed"/);
 });
 
 test("duplicate_matches conserva su contrato de array", async () => {
@@ -582,6 +607,77 @@ test("Validator conserva el fallback de schema ante INVALID_ARGUMENT", async () 
   const result = await gateway.generateStructured(productRequest("market_draft_validation"), context());
   assert.equal(result.value.result, "approved");
   assert.equal(count, 2);
+});
+
+test("el perfil administrativo del Validator limita el transporte a una petición", async () => {
+  let count = 0;
+  const { gateway } = dependencies({
+    fetchImpl: async () => {
+      count += 1;
+      return response(geminiEnvelope(VALID.market_draft_validation.output));
+    },
+  });
+  const result = await gateway.generateStructured(
+    productRequest("market_draft_validation"),
+    { ...context(), executionProfile: AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 },
+  );
+  assert.equal(count, 1);
+  assert.equal(result.metadata.executionProfile, AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1);
+  assert.equal(result.metadata.providerRequestLimit, 1);
+});
+
+test("el perfil administrativo no reintenta una salida inválida", async () => {
+  let count = 0;
+  const { gateway } = dependencies({
+    fetchImpl: async () => {
+      count += 1;
+      return response(geminiEnvelope({ result: "approved" }));
+    },
+  });
+  await assert.rejects(
+    gateway.generateStructured(
+      productRequest("market_draft_validation"),
+      { ...context(), executionProfile: AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 },
+    ),
+    (error) => error.code === AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID,
+  );
+  assert.equal(count, 1);
+});
+
+test("el perfil administrativo no ejecuta fallback de schema", async () => {
+  let count = 0;
+  const { gateway } = dependencies({
+    fetchImpl: async () => {
+      count += 1;
+      return response({ error: { status: "INVALID_ARGUMENT" } }, 400);
+    },
+  });
+  await assert.rejects(
+    gateway.generateStructured(
+      productRequest("market_draft_validation"),
+      { ...context(), executionProfile: AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 },
+    ),
+    (error) => error.code === AI_ERROR_CODES.PROVIDER_HTTP_ERROR,
+  );
+  assert.equal(count, 1);
+});
+
+test("el perfil administrativo se rechaza fuera de Validator legacy_direct antes del proveedor", async () => {
+  for (const scenario of [
+    { taskType: "market_expert_reasoning", mode: "legacy_direct" },
+    { taskType: "market_draft_validation", mode: "gateway_gemini_parity" },
+  ]) {
+    const { gateway, calls } = dependencies({ mode: scenario.mode });
+    await assert.rejects(
+      gateway.generateStructured(
+        productRequest(scenario.taskType),
+        { ...context(), executionProfile: AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 },
+      ),
+      (error) => error.code === AI_ERROR_CODES.EXECUTION_PROFILE_NOT_ALLOWED,
+    );
+    assert.equal(calls.fetches.length, 0);
+    assert.equal(calls.budgets.length, 0);
+  }
 });
 
 test("los errores del proveedor no transportan su payload entre capas", async () => {

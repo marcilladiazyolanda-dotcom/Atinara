@@ -1,5 +1,6 @@
 export const AI_ERROR_CODES = Object.freeze({
   INVALID_REQUEST: "AI_INVALID_REQUEST",
+  EXECUTION_PROFILE_NOT_ALLOWED: "AI_EXECUTION_PROFILE_NOT_ALLOWED",
   CONTRACT_NOT_SUPPORTED: "AI_CONTRACT_NOT_SUPPORTED",
   POLICY_NOT_SUPPORTED: "AI_POLICY_NOT_SUPPORTED",
   INPUT_FIELD_NOT_ALLOWED: "AI_INPUT_FIELD_NOT_ALLOWED",
@@ -46,6 +47,7 @@ const SAFE_DETAIL_KEYS = new Set([
   "contractVersion",
   "policyVersion",
   "modelCatalogVersion",
+  "executionProfile",
 ]);
 
 function safeDetails(value) {

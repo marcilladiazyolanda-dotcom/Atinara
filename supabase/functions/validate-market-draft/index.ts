@@ -11,6 +11,10 @@ import { createAiGateway } from "../_shared/ai/gateway.mjs";
 import { AI_ERROR_CODES, asAiGatewayError } from "../_shared/ai/errors.mjs";
 import { createAbsoluteExecutionContext, fetchWithinDeadline } from "../_shared/ai/deadline.mjs";
 import { AI_TASK_CONTRACTS } from "../_shared/ai/task-policy.mjs";
+import {
+  AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1,
+  AI_EXECUTION_PROFILE_STANDARD,
+} from "../_shared/ai/execution-profile.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -155,15 +159,27 @@ type ReviewRequest = {
   expectedVersion: number;
   attemptId: string;
   forceReview: boolean;
+  executionProfile: string;
 };
 
 function parseReviewRequest(value: JsonRecord): ReviewRequest | null {
   const draftId = text(value.draft_id, 80);
   const expectedVersion = Number(value.expected_version);
-  const attemptId = text(value.attempt_id, 80) || crypto.randomUUID();
+  const requestedAttemptId = text(value.attempt_id, 80);
+  const attemptId = requestedAttemptId || crypto.randomUUID();
+  const executionProfile = text(value.execution_profile, 80) || AI_EXECUTION_PROFILE_STANDARD;
+  const singleInferenceSmoke = executionProfile === AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1;
   if (!validUuid(draftId) || !validUuid(attemptId)
-      || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) return null;
-  return { draftId, expectedVersion, attemptId, forceReview: value.force_review === true };
+      || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1
+      || ![AI_EXECUTION_PROFILE_STANDARD, AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1].includes(executionProfile)
+      || (singleInferenceSmoke && (!requestedAttemptId || value.force_review !== true))) return null;
+  return {
+    draftId,
+    expectedVersion,
+    attemptId,
+    forceReview: value.force_review === true,
+    executionProfile,
+  };
 }
 
 async function beginDraftReview(
@@ -360,6 +376,7 @@ async function providerReview(
   env: Environment,
   draft: JsonRecord,
   attemptId = env.execution.invocationId,
+  executionProfile = AI_EXECUTION_PROFILE_STANDARD,
 ): Promise<ProviderResult> {
   const gateway = createAiGateway({
     supabaseUrl: env.supabaseUrl,
@@ -373,7 +390,7 @@ async function providerReview(
         draft: semanticDraft(draft),
         primarySourceAttested: hasCurrentPrimarySourceAttestation(draft),
       },
-    }, { ...env.execution, invocationId: attemptId });
+    }, { ...env.execution, invocationId: attemptId, executionProfile });
     const review = normalizeReview(result.value as JsonRecord, draft);
     if (!review) throw new Error(AI_ERROR_CODES.OUTPUT_DOMAIN_INVALID);
     return {
@@ -383,6 +400,8 @@ async function providerReview(
       metadata: {
         gateway_invocation_id: result.metadata.invocationId,
         transport_mode: result.metadata.transportMode,
+        execution_profile: result.metadata.executionProfile,
+        provider_request_limit: result.metadata.providerRequestLimit,
         input_fingerprint: result.metadata.inputFingerprint,
         output_fingerprint: result.metadata.outputFingerprint,
         telemetry_status: result.telemetryStatus,
@@ -397,6 +416,8 @@ async function providerReview(
       technicalCode: gatewayError.code,
       metadata: {
         gateway_invocation_id: attemptId,
+        execution_profile: executionProfile,
+        provider_request_limit: executionProfile === AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 ? 1 : null,
         telemetry_status: gatewayError.telemetryStatus ?? "unknown",
         warnings: gatewayError.warnings ?? [],
         error_code: gatewayError.code,
@@ -520,7 +541,7 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     expected_version_input: reviewRequest.expectedVersion,
   }, { service: true });
   const reviewDraft = { ...draft, _primary_source_attestation: primarySourceAttestation };
-  const outcome = await providerReview(env, reviewDraft, attemptId);
+  const outcome = await providerReview(env, reviewDraft, attemptId, reviewRequest.executionProfile);
   const recorded = await finalizeAutomaticReview(env, attemptId, admin.id, outcome);
   if (!outcome.review) {
     return jsonResponse({

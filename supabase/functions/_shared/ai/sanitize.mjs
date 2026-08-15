@@ -43,7 +43,7 @@ const PUBLIC_JSON_ALLOWED_KEYS = new Set(`
   manual_review_instructions market market_slug market_thesis marketability_reason_codes marketability_status
   maximum_monitor_duration_seconds message metric metric_is_rounded metric_name metric_precision metric_unit
   metric_value milestone_distance milestone_metric milestone_unit milestone_value missing_data_treatment name
-  no_criteria no_option normalizer_version observed_at official_event_url operator opportunity_type origin
+  no_criteria no_option normalizer_version observed_at official_event_url official_source_content_sha256 operator opportunity_type origin
   origin_preparation_revision origin_type output parser_version participation_closed_at patch phase plan_version
   policy_version postponement_treatment precedence precision preparation_revision primary_source primary_source_url
   progress proposal provider provider_adapter_version provider_policy_flags public_criteria published_at

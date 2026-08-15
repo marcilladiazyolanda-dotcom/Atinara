@@ -6498,6 +6498,7 @@ body .admin-status-error {
 
 /* Paso 13.5.2 · Observatorio privado y agentes de mercado. */
 .data-observatory,
+.observatory-official-discovery,
 .observatory-watch-search,
 .observatory-watchlist,
 .observatory-context,
@@ -6550,6 +6551,7 @@ body .admin-status-error {
 }
 
 .observatory-watch-search,
+.observatory-official-discovery,
 .observatory-watchlist,
 .observatory-context,
 .observatory-monitoring {
@@ -6561,6 +6563,7 @@ body .admin-status-error {
 }
 
 .observatory-search-form,
+.observatory-official-form,
 .observatory-filters {
   display: grid;
   grid-template-columns: minmax(150px, 0.5fr) minmax(240px, 1.5fr) auto;
@@ -6571,6 +6574,39 @@ body .admin-status-error {
 .observatory-filters {
   grid-template-columns: repeat(3, minmax(150px, 0.7fr)) minmax(220px, 1.4fr) auto auto;
   margin: 20px 0;
+}
+
+.observatory-official-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(150px, 0.7fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.observatory-official-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.observatory-official-form input,
+.observatory-official-form select {
+  width: 100%;
+  min-width: 0;
+}
+
+.observatory-official-form .field-wide {
+  grid-column: span 2;
+}
+
+.observatory-official-result {
+  display: grid;
+  gap: 4px;
+  margin: 14px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 10px;
+  background: var(--yes-soft);
 }
 
 .observatory-search-form label,
@@ -6753,6 +6789,10 @@ body .admin-status-error {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .observatory-official-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .observatory-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -6766,6 +6806,7 @@ body .admin-status-error {
   }
 
   .observatory-search-form,
+  .observatory-official-form,
   .observatory-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -6781,11 +6822,16 @@ body .admin-status-error {
 
 @media (max-width: 620px) {
   .observatory-search-form,
+  .observatory-official-form,
   .observatory-filters,
   .observatory-signal-card dl,
   .observatory-detail dl,
   .admin-source-evidence dl {
     grid-template-columns: 1fr;
+  }
+
+  .observatory-official-form .field-wide {
+    grid-column: auto;
   }
 
   .observatory-search-results li,
@@ -6800,6 +6846,7 @@ body .admin-status-error {
   }
 
   .observatory-search-form button,
+  .observatory-official-form button,
   .observatory-filters button,
   .observatory-search-results a,
   .observatory-search-results button,

@@ -144,6 +144,8 @@ export async function fetchProviderJson(provider: keyof typeof API_HOST_ALLOWLIS
 
 export function handleEdgeError(error: unknown, fallbackMessage: string): Response {
   const code = publicErrorCode(error);
-  const status = code === "REQUEST_TOO_LARGE" || code === "INVALID_REQUEST" ? 400 : code.includes("AUTH") ? 401 : 503;
+  const invalidOfficialRequest = /^OFFICIAL_DISCOVERY_(?:REQUEST|QUERY|CATEGORY|HORIZON|TIMEZONE)_/.test(code);
+  const status = code === "REQUEST_TOO_LARGE" || code === "INVALID_REQUEST" || invalidOfficialRequest
+    ? 400 : code.includes("AUTH") ? 401 : 503;
   return jsonResponse({ error: code, message: fallbackMessage }, status);
 }

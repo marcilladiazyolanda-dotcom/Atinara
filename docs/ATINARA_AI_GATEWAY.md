@@ -89,6 +89,14 @@ Cada tarea tiene uno de estos modos privados:
 
 No existe un booleano global capaz de apagar todas las tareas. La retirada del código directo de cada Edge no retira la compatibilidad Gemini: vive en `providers/gemini-legacy.mjs` para transición y rollback.
 
+### Perfil administrativo de una sola inferencia
+
+El paquete local pendiente de despliegue añade `single_inference_smoke_v1` exclusivamente para `market_draft_validation` en `legacy_direct`. No es un modo, una ruta ni un proveedor y no cambia la política estándar. La Edge lo transmite dentro del contexto de ejecución, nunca dentro de la petición contractual que una tarea productiva puede controlar.
+
+El perfil fuerza `httpRetries=0`, `invalidOutputRetries=0` y `schemaFallback=false`. Por tanto, una ejecución nueva puede emitir como máximo una petición al proveedor; cualquier timeout, 4xx/5xx, salida inválida o incompatibilidad de schema termina como incidencia técnica sin una segunda inferencia. El Gateway devuelve `executionProfile=single_inference_smoke_v1` y `providerRequestLimit=1` como metadatos seguros. Fuera de Validator + `legacy_direct` falla antes de red y presupuesto con `AI_EXECUTION_PROFILE_NOT_ALLOWED`.
+
+La revisión normal conserva el perfil `standard`, sus reintentos y su fallback vigentes. El perfil de smoke no omite la puerta determinista, la atestación de fuente, idempotencia, versionado, deadline, telemetría ni persistencia autoritativa del resultado. Su presencia local no autoriza un smoke live ni un despliegue.
+
 ## Sanitización y salida estructurada
 
 Atinara usa validadores deterministas específicos por tarea, no un validador JSON Schema general. El schema enviado al proveedor es orientativo; la aceptación local exige, sin coerción ni defaults silenciosos:
@@ -103,6 +111,8 @@ Atinara usa validadores deterministas específicos por tarea, no un validador JS
 El sanitizer aplica vocabulario cerrado en todos los niveles, límites de profundidad, arrays, strings, URLs y bytes. Rechaza identidad, contacto, sesiones, cookies, JWT, secretos, Karma, Prestigio, saldo, posiciones y predicciones privadas. Los IDs internos y el payload crudo de proveedor se eliminan de la proyección editorial.
 
 En `market_expert_reasoning`, `origin.duplicate_matches` es dato ordinario de mercado: se valida siempre como array y admite tanto el array vacío como coincidencias saneadas producidas por la clasificación determinista. `PUBLIC_JSON` es el vocabulario transversal de campos de mercado, pero declarar esta clave no amplía la clase de datos ni las claves admitidas dentro de cada coincidencia. La proyección productiva elimina recursivamente `id` y claves `*_id`; el Gateway sigue rechazando identificadores no proyectados, PII, secretos y cualquier campo anidado fuera del vocabulario cerrado antes de reservar presupuesto o invocar al proveedor.
+
+Para una señal nueva de `official_web`, Market Expert deriva `origin.official_source_content_sha256` únicamente desde el digest hexadecimal validado del snapshot oficial. El HTML y `source_payload_excerpt` no atraviesan el Gateway; `expert_analysis_status` tampoco llega al modelo ni forma parte de la huella. Un digest distinto sí produce una huella de análisis distinta, y el paquete editorial exige además que el estado autoritativo continúe `completed`. El campo solo aparece en el proveedor V1 nuevo, por lo que no modifica las huellas de entradas V2.1 productivas anteriores.
 
 Data classes:
 
@@ -144,6 +154,7 @@ El fallback entre modelos se admite solo por timeout, 429, red, 5xx, respuesta i
 | `AI_DEADLINE_EXCEEDED` | No queda tiempo preservando finalización. |
 | `AI_PROVIDER_RESPONSE_TOO_LARGE` | La respuesta excede el máximo de bytes. |
 | `AI_OUTPUT_CONTRACT_INVALID` | La estructura local no coincide. |
+| `AI_EXECUTION_PROFILE_NOT_ALLOWED` | El perfil administrativo no corresponde a Validator en `legacy_direct`. |
 | `AI_OUTPUT_DOMAIN_INVALID` | La estructura es válida, pero contradice el dominio. |
 | `AI_OUTPUT_POLICY_INVALID` | La salida intenta exceder su autoridad. |
 | `AI_TELEMETRY_WRITE_FAILED` | El resultado se conserva con observabilidad incompleta. |

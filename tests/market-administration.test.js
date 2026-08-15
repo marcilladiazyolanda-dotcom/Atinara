@@ -289,6 +289,17 @@ test("Paso 13.5.2 · validate-market-draft usa Gateway Gemini vigente y un solo 
   assert.doesNotMatch(validator, /console\.(?:log|error)\([^\n]*(?:authorization|geminiKey|secretKey)/i);
 });
 
+test("el smoke administrativo del Validator exige intento explícito y no cambia la revisión normal", () => {
+  assert.match(validator, /AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1/);
+  assert.match(validator, /singleInferenceSmoke && \(!requestedAttemptId \|\| value\.force_review !== true\)/);
+  assert.match(validator, /providerReview\(env, reviewDraft, attemptId, reviewRequest\.executionProfile\)/);
+  assert.match(adminUi, /runDraftValidationSingleInferenceSmoke/);
+  assert.match(adminUi, /execution_profile: "single_inference_smoke_v1"/);
+  assert.match(adminUi, /force_review: true/);
+  assert.match(adminUi, /async function requestReview\(\)[\s\S]*?force_review: state\.selected\?\.latest_attempt\?\.classification === "technical"/);
+  assert.doesNotMatch(adminHtml, /single_inference_smoke_v1|smoke Gemini/i);
+});
+
 test("Paso 13.5.2 · el Corrector separa incidencias técnicas y corrige contenido real", () => {
   assert.match(fixerUi, /latestAttemptClassification === "technical"/);
   assert.match(fixer, /AUTONOMOUS_REPAIR_MAX_ROUNDS/);

@@ -267,7 +267,7 @@ export function normalizePrimarySourceRegistry(values) {
     || left.canonical_domain.localeCompare(right.canonical_domain));
 }
 
-export function primarySourceRegistryEntry(value, registry, category = null) {
+export function primarySourceRegistryEntry(value, registry, category = /** @type {string | null} */ (null)) {
   const url = safePublicUrl(value);
   if (!url) return null;
   const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");

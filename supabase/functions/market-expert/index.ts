@@ -509,6 +509,7 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     "marketability_reason_codes", "resolution_readiness", "suggested_question", "suggested_yes_criteria",
     "suggested_no_criteria", "suggested_edge_cases", "suggested_resolution_contract", "provider_policy_flags",
     "watch_entity_id", "recent_context", "official_event_url", "content_criterion", "viable_horizons_days",
+    "expert_analysis_status",
   ];
   const output: JsonRecord = {};
   for (const key of allowed) {
@@ -523,10 +524,21 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
   for (const key of textFields) {
     if (typeof output[key] === "string") output[key] = inspectPromptInjection(output[key]).safe_text;
   }
+  const sourcePayload = origin.source_payload_excerpt && typeof origin.source_payload_excerpt === "object"
+    && !Array.isArray(origin.source_payload_excerpt) ? origin.source_payload_excerpt as JsonRecord : {};
+  const officialContentSha256 = text(sourcePayload.content_sha256, 64).toLowerCase();
+  if (origin.provider === "official_web" && /^[0-9a-f]{64}$/.test(officialContentSha256)) {
+    output.official_source_content_sha256 = officialContentSha256;
+  }
   return output;
 }
 
 function analysisOriginSnapshot(origin: JsonRecord, originType: string): JsonRecord {
+  if (originType === "observatory_signal") {
+    const snapshot = { ...origin };
+    delete snapshot.expert_analysis_status;
+    return snapshot;
+  }
   if (originType !== "radar_candidate") return origin;
   const snapshot = { ...origin };
   // Son datos de lease/caché, no hechos del mercado ni del contrato. Excluirlos
@@ -1156,7 +1168,7 @@ function modelSafeOrigin(origin: JsonRecord): JsonRecord {
   const excluded = new Set([
     "id", "external_id", "external_event_id", "external_market_id", "entity_id",
     "parent_entity_id", "watch_entity_id", "current_eligibility_check_id",
-    "provider_payload", "recent_context", "provider_policy_flags",
+    "provider_payload", "recent_context", "provider_policy_flags", "expert_analysis_status",
   ]);
   const stripIdentifiers = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stripIdentifiers);
@@ -1895,6 +1907,7 @@ async function getDraftPackage(
   const runIsCurrent = run.analysis_fingerprint === currentAnalysisFingerprint
     && run.policy_version === MARKET_INTELLIGENCE_POLICY_VERSION
     && run.schema_version === MARKET_EXPERT_SCHEMA_VERSION
+    && (originType !== "observatory_signal" || origin.expert_analysis_status === "completed")
     && revisionMatches;
   if (!runIsCurrent) {
     return jsonResponse({

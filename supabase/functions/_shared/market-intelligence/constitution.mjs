@@ -8,6 +8,7 @@ export const PROVIDER_ADAPTER_VERSIONS = Object.freeze({
   twitch: "atinara-twitch-helix-v1",
   youtube: "atinara-youtube-data-v1",
   tavily: "atinara-tavily-context-v1",
+  official_web: "atinara-official-opportunity-discovery-v1",
 });
 
 export const CONTEXT_PROVIDER_ADAPTER_VERSION = "atinara-context-provider-v1";

@@ -64,7 +64,14 @@
       marketability: "",
       expertStatus: "",
       query: "",
-      errors: []
+      errors: [],
+      officialDiscovery: {
+        query: "",
+        category: "Eventos",
+        horizonDays: 180,
+        timezone: "Europe/Madrid",
+        result: null
+      }
     }
   };
 
@@ -136,7 +143,8 @@
     youtube: "YouTube",
     "market-expert": "Agente Editor",
     "source-monitor": "Monitor de fuentes",
-    "tavily-context": "Contexto oficial"
+    "tavily-context": "Contexto oficial",
+    official_web: "Web oficial registrada"
   };
 
   function escapeHtml(value) {
@@ -1100,6 +1108,24 @@
     </section>`;
   }
 
+  function observatoryOfficialDiscoveryMarkup() {
+    const discovery = state.observatory.officialDiscovery;
+    const result = discovery.result;
+    const resultMarkup = result ? `<p class="observatory-official-result" role="status"><strong>${escapeHtml(result.saved || 0)} oportunidad(es) guardada(s) como señales privadas.</strong><span>${escapeHtml(result.inspected_documents || 0)} páginas oficiales inspeccionadas · ${escapeHtml(result.structured_candidates || 0)} candidatos estructurados · ${escapeHtml(result.rejected_candidates || 0)} descartados. ${result.partial ? "La consulta terminó con incidencias parciales." : "La consulta terminó sin incidencias de transporte."}</span></p>` : "";
+    return `<section class="observatory-official-discovery" aria-labelledby="observatory-official-title">
+      <div class="admin-section-heading"><div><p class="eyebrow">Official Opportunity Discovery V1</p><h3 id="observatory-official-title">Descubrir acontecimientos oficiales</h3></div><p>Busca solo en dominios primarios activos del registro. Twitch, YouTube o X participan únicamente si su fuente oficial está registrada y publica una fecha futura estructurada.</p></div>
+      <form id="observatory-official-discovery-form" class="observatory-official-form">
+        <label class="field-wide"><span>Acontecimiento, producto u organización</span><input type="search" name="query" minlength="3" maxlength="200" value="${valueAttribute(discovery.query)}" placeholder="Ej.: Nintendo Direct, The Game Awards" required></label>
+        <label><span>Categoría</span><select name="category">${RADAR_CATEGORIES.map((category) => `<option value="${valueAttribute(category)}"${discovery.category === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("")}</select></label>
+        <label><span>Horizonte</span><select name="horizon_days">${[30, 90, 180, 365].map((days) => `<option value="${days}"${Number(discovery.horizonDays) === days ? " selected" : ""}>${days} días</option>`).join("")}</select></label>
+        <label><span>Zona horaria IANA</span><input name="timezone" maxlength="100" value="${valueAttribute(discovery.timezone)}" placeholder="Europe/Madrid" required></label>
+        <button class="primary-button" type="submit"${disabled()}>${state.busy ? "Buscando…" : "Buscar oportunidades oficiales"}</button>
+      </form>
+      <p class="admin-gate-rule">Esta acción no invoca un modelo de IA, no crea borradores y no guarda mercados. Después podrás revisar la señal, pedir el análisis del Agente Editor y aplicar manualmente su propuesta al formulario.</p>
+      ${resultMarkup}
+    </section>`;
+  }
+
   function observatoryWatchlistMarkup() {
     const entities = Array.isArray(state.observatory.dashboard.entities) ? state.observatory.dashboard.entities : [];
     const cards = entities.length ? entities.map((entity) => `<article class="observatory-watch-card">
@@ -1113,7 +1139,7 @@
 
   function observatoryFiltersMarkup() {
     return `<form id="observatory-filters" class="observatory-filters">
-      <label><span>Proveedor</span><select name="provider"><option value="all">Todos</option>${["igdb", "twitch", "youtube"].map((provider) => `<option value="${provider}"${state.observatory.provider === provider ? " selected" : ""}>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[provider])}</option>`).join("")}</select></label>
+      <label><span>Proveedor</span><select name="provider"><option value="all">Todos</option>${["official_web", "igdb", "twitch", "youtube"].map((provider) => `<option value="${provider}"${state.observatory.provider === provider ? " selected" : ""}>${escapeHtml(OBSERVATORY_PROVIDER_LABELS[provider])}</option>`).join("")}</select></label>
       <label><span>Aptitud</span><select name="marketability"><option value="">Todas</option>${["pending", "useful", "needs_review", "insufficient_history", "policy_blocked", "rejected"].map((status) => `<option value="${status}"${state.observatory.marketability === status ? " selected" : ""}>${escapeHtml(observatoryStatusLabel(status))}</option>`).join("")}</select></label>
       <label><span>Análisis experto</span><select name="expertStatus"><option value="">Todos</option>${["not_requested", "pending", "completed", "failed", "stale"].map((status) => `<option value="${status}"${state.observatory.expertStatus === status ? " selected" : ""}>${escapeHtml(observatoryExpertLabel(status))}</option>`).join("")}</select></label>
       <label class="field-wide"><span>Buscar</span><input type="search" name="query" value="${valueAttribute(state.observatory.query)}" placeholder="Entidad, señal o categoría"></label>
@@ -1131,18 +1157,22 @@
   }
 
   function observatorySignalCard(signal) {
-    const metric = signal.metric_value === null || signal.metric_value === undefined
+    const officialOpportunity = signal.provider === "official_web";
+    const metric = officialOpportunity
+      ? displayDate(signal.time_window_end)
+      : signal.metric_value === null || signal.metric_value === undefined
       ? "Dato no disponible"
       : `${displayNumber(signal.metric_value)}${signal.metric_unit ? ` ${escapeHtml(signal.metric_unit)}` : ""}`;
+    const analysisBlocked = officialOpportunity && signal.marketability_status === "duplicate";
     return `<article class="observatory-signal-card" data-marketability="${escapeHtml(signal.marketability_status)}">
       <header><div><span class="radar-provider-badge">${escapeHtml(OBSERVATORY_PROVIDER_LABELS[signal.provider] || signal.provider)}</span><span>${escapeHtml(signal.atinara_category || signal.signal_type)}</span></div><time>${escapeHtml(displayDate(signal.observed_at))}</time></header>
       <h3>${escapeHtml(signal.title)}</h3>
-      <dl><div><dt>Dato observado</dt><dd>${metric}</dd></div><div><dt>Aptitud</dt><dd>${escapeHtml(observatoryStatusLabel(signal.marketability_status))}</dd></div><div><dt>Resolución</dt><dd>${escapeHtml(signal.resolution_readiness || "Pendiente")}</dd></div><div><dt>Agente Editor</dt><dd>${escapeHtml(observatoryExpertLabel(signal.expert_analysis_status))}</dd></div></dl>
+      <dl><div><dt>${officialOpportunity ? "Corte propuesto" : "Dato observado"}</dt><dd>${escapeHtml(metric)}</dd></div><div><dt>Aptitud</dt><dd>${escapeHtml(observatoryStatusLabel(signal.marketability_status))}</dd></div><div><dt>Resolución</dt><dd>${escapeHtml(signal.resolution_readiness || "Pendiente")}</dd></div><div><dt>Agente Editor</dt><dd>${escapeHtml(observatoryExpertLabel(signal.expert_analysis_status))}</dd></div></dl>
       <p class="observatory-factual"><strong>Hecho observado:</strong> ${escapeHtml(signal.factual_basis || "La fuente no aporta todavía una descripción factual suficiente.")}</p>
       ${signal.inference_summary ? `<p class="observatory-inference"><strong>Inferencia editorial:</strong> ${escapeHtml(signal.inference_summary)}</p>` : ""}
       <footer>${externalLink(signal.canonical_url, "Abrir origen")}
         <button class="secondary-button" type="button" data-observatory-details="${escapeHtml(signal.id)}">Ver análisis</button>
-        <button class="primary-button" type="button" data-observatory-analyze="${escapeHtml(signal.id)}">${signal.expert_analysis_status === "completed" ? "Reanalizar" : "Analizar"}</button>
+        <button class="primary-button" type="button" data-observatory-analyze="${escapeHtml(signal.id)}"${analysisBlocked ? " disabled" : ""}>${analysisBlocked ? "Duplicada" : signal.expert_analysis_status === "completed" ? "Reanalizar" : "Analizar"}</button>
         <button class="secondary-button" type="button" data-observatory-dismiss="${escapeHtml(signal.id)}">Descartar</button>
       </footer>
     </article>`;
@@ -1197,9 +1227,9 @@
     );
     const cards = signals.length ? `<div class="observatory-signal-grid">${signals.map(observatorySignalCard).join("")}</div>` : `<div class="admin-empty-state"><strong>No hay señales con estos filtros</strong><span>Configura una fuente o actualiza las seguidas. Atinara no inventa datos para llenar el estado.</span></div>`;
     return `<section class="data-observatory" aria-labelledby="data-observatory-title">
-      <header class="radar-heading"><div><p class="eyebrow">Administración · inteligencia de fuentes</p><h2 id="data-observatory-title">Observatorio de datos</h2><p>Analiza señales de IGDB, Twitch y YouTube y conviértelas en borradores verificables.</p></div><span class="radar-cache-badge">Privado · sin publicación automática</span></header>
+      <header class="radar-heading"><div><p class="eyebrow">Administración · inteligencia de fuentes</p><h2 id="data-observatory-title">Observatorio de datos</h2><p>Descubre acontecimientos en fuentes oficiales registradas y analiza señales de IGDB, Twitch y YouTube antes de llevarlas al editor.</p></div><span class="radar-cache-badge">Privado · sin publicación automática</span></header>
       <aside class="admin-fail-closed-notice"><strong>Las métricas externas no son resultados.</strong><span>Un dato ausente no equivale a cero o No. Toda propuesta conserva revisión, contrato y confirmación humanas.</span></aside>
-      ${observatoryProviderMarkup()}${observatorySearchMarkup()}${observatoryWatchlistMarkup()}${observatoryFiltersMarkup()}
+      ${observatoryProviderMarkup()}${observatoryOfficialDiscoveryMarkup()}${observatorySearchMarkup()}${observatoryWatchlistMarkup()}${observatoryFiltersMarkup()}
       <div class="radar-results-heading"><h3>${escapeHtml(signals.length)} señales</h3><p>Solo datos reales de proveedores configurados; cada fallo es parcial.</p></div>
       ${cards}${observatoryContextMarkup()}${observatoryMonitoringMarkup()}${observatoryDetailMarkup(state.observatory.selected)}
     </section>`;
@@ -1516,6 +1546,27 @@
       renderWorkspace();
       focusActionStatus();
     }
+  }
+
+  async function runDraftValidationSingleInferenceSmoke(draftId, expectedVersion, options = {}) {
+    const attemptId = String(options.attemptId || "").trim();
+    const validUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    if (!state.auth?.isAdmin) throw new Error("ADMIN_REQUIRED");
+    if (!validUuid(String(draftId || "")) || !Number.isSafeInteger(Number(expectedVersion))
+      || Number(expectedVersion) < 1 || !validUuid(attemptId)) {
+      throw new Error("INVALID_SINGLE_INFERENCE_SMOKE_REQUEST");
+    }
+    const { data, error } = await client.functions.invoke("validate-market-draft", {
+      body: {
+        draft_id: String(draftId),
+        expected_version: Number(expectedVersion),
+        attempt_id: attemptId,
+        force_review: true,
+        execution_profile: "single_inference_smoke_v1"
+      }
+    });
+    if (error) throw error;
+    return data;
   }
 
   async function ensureRadarDraftEligibility(draft) {
@@ -1956,6 +2007,41 @@
     }
   }
 
+  async function discoverOfficialOpportunities(form) {
+    const data = new FormData(form);
+    const discovery = state.observatory.officialDiscovery;
+    discovery.query = String(data.get("query") || "").trim();
+    discovery.category = String(data.get("category") || "Eventos").trim();
+    discovery.horizonDays = Number(data.get("horizon_days")) || 180;
+    discovery.timezone = String(data.get("timezone") || "Europe/Madrid").trim();
+    state.busy = true;
+    setNotice("Buscando fechas futuras estructuradas únicamente en fuentes oficiales registradas. No se invoca ningún modelo.", "info");
+    renderWorkspace();
+    try {
+      const result = await invokeObservatory("discover-official-opportunities", {
+        query: discovery.query,
+        category: discovery.category,
+        horizon_days: discovery.horizonDays,
+        timezone: discovery.timezone,
+        max_results: 5
+      });
+      discovery.result = result;
+      state.observatory.dashboard = result.dashboard || state.observatory.dashboard;
+      const saved = Number(result.saved) || 0;
+      setNotice(saved
+        ? `${saved} oportunidad(es) oficial(es) guardada(s) como señales privadas. Revisa cada contrato antes de solicitar el análisis del Agente Editor.`
+        : "No se encontró una oportunidad futura estructurada que superase las puertas deterministas. No se ha fabricado ninguna propuesta.",
+      result.partial ? "warning" : saved ? "success" : "info");
+    } catch (error) {
+      discovery.result = null;
+      setNotice(helpers.getFriendlyError(error, "No se pudo completar el descubrimiento oficial. No se creó ningún borrador ni mercado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector("#observatory-official-title")?.scrollIntoView({ block: "nearest" });
+    }
+  }
+
   async function loadTwitchTopGames() {
     state.busy = true;
     state.observatory.searchProvider = "twitch";
@@ -2378,6 +2464,10 @@
       searchObservatory(event.target);
       return;
     }
+    if (event.target.id === "observatory-official-discovery-form") {
+      discoverOfficialOpportunities(event.target);
+      return;
+    }
     if (event.target.id === "observatory-filters") {
       const data = new FormData(event.target);
       ["provider", "marketability", "expertStatus", "query"].forEach((name) => {
@@ -2451,6 +2541,7 @@
   window.atinaraMarketAdminBridge = Object.freeze({
     prepareRadarCandidate,
     refreshRadarExpertAnalysis,
+    runDraftValidationSingleInferenceSmoke,
   });
 
   async function applyAuth(auth) {

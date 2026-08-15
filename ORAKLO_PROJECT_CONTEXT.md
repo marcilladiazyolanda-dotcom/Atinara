@@ -1,6 +1,6 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 14 de agosto de 2026.
+Última actualización del contexto: 15 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
@@ -22,6 +22,17 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > técnica reintentable. Las tres migraciones V2.1 quedaron aplicadas una sola
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
+
+### Paquete local · Validator single-inference smoke + Official Opportunity Discovery V1 · 15 de agosto de 2026
+
+- La rama local `codex/official-opportunity-discovery-v1` parte exactamente de `origin/main = c1b6d41885aca2a2758ac1fc5c11e190c237a9fe`. Este paquete no está desplegado y no ejecutó SQL remoto, Gemini live, commit, push, PR, publicación, confirmación, resolución o liquidación.
+- AI Gateway incorpora el perfil interno `single_inference_smoke_v1`, permitido solo para `market_draft_validation` en `legacy_direct`. Desactiva retry HTTP, retry de salida inválida y fallback de schema, con límite declarado de una petición de proveedor. La revisión normal sigue en `standard`; no cambian modos, rutas, modelos, flags o presupuestos.
+- `validate-market-draft` exige para ese perfil una sesión administrativa vigente, borrador/versión explícitos, `force_review=true` y un `attempt_id` UUID proporcionado por la operadora. El puente está disponible solo para una invocación manual desde la consola y no añade un botón productivo. Cualquier smoke live y sus escrituras de revisión requieren una autorización separada.
+- Official Opportunity Discovery V1 añade a Datos y tendencias una búsqueda manual de acontecimientos futuros sobre dominios primarios activos del registro. Reutiliza Tavily solo como índice limitado de URLs; descarga y valida cada página oficial, extrae exclusivamente JSON-LD futuro, construye un contrato binario completo y clasifica duplicados contra mercados y borradores.
+- El hardening local consume cada página con límite incremental de 600 kB y timeout activo, limita a 128 nodos JSON-LD por documento, exige autoridades registrales distintas para la corroboración y falla cerrado si no puede comprobar mercados y borradores. Los cambios de evidencia/contrato/duplicados dejan el análisis previo `stale`, y el autofill valida de nuevo el paquete y su huella sin ejecutar otra inferencia.
+- La migración nueva `20260814232218_add_official_opportunity_discovery_v1.sql` amplía el proveedor de señales con `official_web` y crea una RPC service-only. Esa RPC solo puede escribir `private.data_observatory_signals` y `private.data_provider_runs`; no crea borradores ni toca mercados. La consulta y el HTML crudo no se persisten.
+- La interfaz mantiene acciones separadas: descubrir señal, revisión humana, análisis opcional del Agente Editor, aplicación al autofill existente y guardado manual. Twitch, YouTube, X u otra fuente solo entran en V1 si su dominio oficial está registrado y ofrece un acontecimiento futuro estructurado; no se aceptan rumores ni tendencias como fuentes vinculantes.
+- Contrato, seguridad, operación, despliegue futuro y rollback están documentados en `docs/ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_V1.md`. El siguiente paso permitido por este paquete es únicamente validación local y entrega ZIP; migración, Edge, frontend y cualquier smoke live quedan sujetos a autorización posterior.
 
 ### Publicación y verificación de Atinara Canonical JSON v1 · 14 de agosto de 2026
 

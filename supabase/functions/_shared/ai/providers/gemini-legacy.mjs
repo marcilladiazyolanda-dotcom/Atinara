@@ -145,7 +145,8 @@ async function executeSpec(options, spec) {
       return { ...(await sendRequest({ ...options, spec, body, attempt })), schemaFallback };
     } catch (error) {
       const ai = asAiGatewayError(error);
-      if (!schemaFallback && spec.schemaFallbackBody && ai.details.httpStatus === 400 && error?.schemaInvalidArgument === true) {
+      if (options.policy.schemaFallback !== false && !schemaFallback && spec.schemaFallbackBody
+        && ai.details.httpStatus === 400 && error?.schemaInvalidArgument === true) {
         schemaFallback = true;
         body = spec.schemaFallbackBody;
         attempt -= 1;

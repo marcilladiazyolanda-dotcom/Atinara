@@ -1,4 +1,5 @@
 import { AI_ERROR_CODES, aiError } from "./errors.mjs";
+import { parseAiExecutionProfile } from "./execution-profile.mjs";
 
 export const AI_TASK_TYPES = Object.freeze([
   "radar_candidate_enrichment",
@@ -41,6 +42,7 @@ const CALLER_FORBIDDEN_KEYS = new Set([
   "budget",
   "lifecycle",
   "dataClass",
+  "executionProfile",
 ]);
 
 function isRecord(value) {
@@ -78,13 +80,14 @@ export function assertAiExecutionContext(value, now = Date.now()) {
   const agentRunId = value.agentRunId == null ? null : cleanToken(value.agentRunId, 120);
   const absoluteDeadlineAt = Number(value.absoluteDeadlineAt);
   const signal = value.signal;
+  const executionProfile = parseAiExecutionProfile(value.executionProfile);
   if (!invocationId || !Number.isFinite(absoluteDeadlineAt) || absoluteDeadlineAt <= now) {
     throw aiError(AI_ERROR_CODES.DEADLINE_EXCEEDED, { httpStatus: 504, retryable: true });
   }
   if (!signal || typeof signal !== "object" || typeof signal.aborted !== "boolean") {
     throw aiError(AI_ERROR_CODES.INVALID_REQUEST, { httpStatus: 400, details: { phase: "execution_context" } });
   }
-  return Object.freeze({ invocationId, agentRunId, absoluteDeadlineAt, signal });
+  return Object.freeze({ invocationId, agentRunId, absoluteDeadlineAt, signal, executionProfile });
 }
 
 function invalidCanonicalJson() {

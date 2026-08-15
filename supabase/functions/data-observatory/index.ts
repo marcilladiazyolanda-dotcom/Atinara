@@ -12,6 +12,18 @@ import {
   youtubeProposalPolicy,
 } from "../_shared/market-intelligence/index.mjs";
 import {
+  ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
+  buildOfficialOpportunitySignals,
+  normalizeOfficialOpportunityRequest,
+  readBoundedUtf8Response,
+} from "../_shared/market-intelligence/official-opportunity-discovery.mjs";
+import {
+  normalizePrimarySourceRegistry,
+  primarySourceRegistryEntry,
+  safePublicUrl,
+} from "../_shared/market-draft-repair.mjs";
+import { sha256Hex } from "../_shared/ai/contracts.mjs";
+import {
   authenticateAdminOrService,
   corsHeaders,
   fetchProviderJson,
@@ -27,6 +39,9 @@ const MAX_RESULTS = 100;
 const IGDB_ROOT = "https://api.igdb.com/v4";
 const TWITCH_ROOT = "https://api.twitch.tv/helix";
 const YOUTUBE_ROOT = "https://www.googleapis.com/youtube/v3";
+const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
+const OFFICIAL_PAGE_MAX_BYTES = 600_000;
+const OFFICIAL_PAGE_TIMEOUT_MS = 10_000;
 
 let twitchTokenCache: { token: string; expiresAt: number } | null = null;
 
@@ -105,7 +120,165 @@ function providerStatusPayload() {
     { provider: "market-expert", configured: true, status: "managed_by_ai_gateway", provider_availability: "server_side_not_disclosed", policy_version: MARKET_INTELLIGENCE_POLICY_VERSION },
     { provider: "source-monitor", configured: true, status: "scheduler_disabled", contract_schema_version: SOURCE_CONTRACT_SCHEMA_VERSION },
     { provider: "tavily-context", configured: config.tavilyConfigured, status: config.tavilyConfigured ? "configured_limited" : "not_configured" },
+    { provider: "official_web", configured: config.tavilyConfigured, status: config.tavilyConfigured ? "configured_limited" : "not_configured", adapter_version: ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION, source_scope: "registered_primary_only" },
   ];
+}
+
+function normalizedCategory(value: unknown): string {
+  return text(value, 100).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function registryForCategory(registry: JsonRecord[], category: string): JsonRecord[] {
+  const requested = normalizedCategory(category);
+  return normalizePrimarySourceRegistry(registry).filter((entry) => (
+    entry.categories.length === 0 || entry.categories.includes(requested)
+  ));
+}
+
+async function searchRegisteredOfficialPages(request: ReturnType<typeof normalizeOfficialOpportunityRequest>, registry: JsonRecord[]) {
+  const apiKey = Deno.env.get("TAVILY_API_KEY") ?? "";
+  if (!apiKey) throw new Error("TAVILY_NOT_CONFIGURED");
+  const allowedRegistry = registryForCategory(registry, request.category);
+  const includeDomains = [...new Set(allowedRegistry.map((entry) => entry.canonical_domain))].slice(0, 20);
+  if (!includeDomains.length) throw new Error("OFFICIAL_DISCOVERY_REGISTRY_EMPTY");
+  const horizonAt = new Date(Date.now() + request.horizonDays * 86_400_000).toISOString().slice(0, 10);
+  const query = `${request.query} fecha calendario lanzamiento evento oficial antes de ${horizonAt}`.slice(0, 500);
+  const response = await fetchProviderJson("tavily", TAVILY_SEARCH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      include_domains: includeDomains,
+      max_results: Math.min(request.maxResults * 2, 8),
+      search_depth: "advanced",
+      include_answer: false,
+      include_raw_content: false,
+      include_images: false,
+    }),
+  }, { timeoutMs: 15_000, retries: 0, maxBytes: 500_000 });
+  const urls = [] as string[];
+  for (const result of records((response.data as JsonRecord).results)) {
+    const url = safePublicUrl(result.url);
+    if (!url || !primarySourceRegistryEntry(url, allowedRegistry, request.category) || urls.includes(url)) continue;
+    urls.push(url);
+    if (urls.length >= 8) break;
+  }
+  return { urls, rate: response.rate, queryFingerprint: await sha256Hex(query) };
+}
+
+async function fetchRegisteredOfficialPage(urlInput: string, registry: JsonRecord[], category: string) {
+  let current = safePublicUrl(urlInput);
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    if (!current || !primarySourceRegistryEntry(current, registry, category)) {
+      throw new Error("OFFICIAL_SOURCE_NOT_REGISTERED");
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OFFICIAL_PAGE_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(current, {
+        method: "GET",
+        headers: { Accept: "text/html,application/xhtml+xml;q=0.9" },
+        redirect: "manual",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      if (error instanceof DOMException && error.name === "AbortError") throw new Error("OFFICIAL_SOURCE_TIMEOUT");
+      throw new Error("OFFICIAL_SOURCE_NETWORK_ERROR");
+    }
+    try {
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        if (!location || redirects === 3) throw new Error("OFFICIAL_SOURCE_REDIRECT_INVALID");
+        await response.body?.cancel().catch(() => undefined);
+        current = safePublicUrl(new URL(location, current).toString());
+        continue;
+      }
+      if (!response.ok) throw new Error(`OFFICIAL_SOURCE_HTTP_${response.status}`);
+      const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+      if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+        throw new Error("OFFICIAL_SOURCE_CONTENT_TYPE_INVALID");
+      }
+      const html = await readBoundedUtf8Response(response, OFFICIAL_PAGE_MAX_BYTES);
+      return { url: current, html, contentSha256: await sha256Hex(html) };
+    } catch (error) {
+      await response.body?.cancel().catch(() => undefined);
+      if (error instanceof DOMException && error.name === "AbortError") throw new Error("OFFICIAL_SOURCE_TIMEOUT");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw new Error("OFFICIAL_SOURCE_REDIRECT_INVALID");
+}
+
+async function loadExistingDefinitions(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, authorization: string) {
+  const definitions = await rpc(environment, "get_admin_market_family_definitions", {}, { authorization }).catch(() => null);
+  if (!Array.isArray(definitions)) throw new Error("OFFICIAL_DISCOVERY_DUPLICATE_CHECK_UNAVAILABLE");
+  return records(definitions);
+}
+
+async function discoverOfficialOpportunities(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, authorization: string, body: JsonRecord) {
+  const request = normalizeOfficialOpportunityRequest(body);
+  const registryValue = await rpc(environment, "list_market_authoritative_source_registry_admin_v1", {}, { authorization });
+  const registry = records(registryValue);
+  const allowedRegistry = registryForCategory(registry, request.category);
+  if (!allowedRegistry.length) throw new Error("OFFICIAL_DISCOVERY_REGISTRY_EMPTY");
+  const search = await searchRegisteredOfficialPages(request, allowedRegistry);
+  const documents = [] as JsonRecord[];
+  const errors = [] as JsonRecord[];
+  for (const url of search.urls) {
+    try {
+      documents.push(await fetchRegisteredOfficialPage(url, allowedRegistry, request.category));
+    } catch (error) {
+      errors.push({
+        source_url: url,
+        error_code: error instanceof Error ? error.message.slice(0, 100) : "OFFICIAL_SOURCE_UNAVAILABLE",
+      });
+    }
+  }
+  const existingDefinitions = await loadExistingDefinitions(environment, authorization);
+  const discovery = await buildOfficialOpportunitySignals({
+    documents,
+    registry: allowedRegistry,
+    request,
+    existingDefinitions,
+    now: new Date(),
+  });
+  const saved = await rpc(environment, "save_official_opportunity_discovery_v1", {
+    signals_input: discovery.signals,
+    run_input: {
+      action: "discover_official_opportunities",
+      status: errors.length ? "partial" : "available",
+      quota_state: {
+        query_fingerprint: search.queryFingerprint,
+        search_results: search.urls.length,
+        inspected_documents: discovery.inspectedDocuments,
+        structured_candidates: discovery.structuredCandidates,
+        provider_rate: search.rate,
+      },
+      trigger_type: "manual",
+    },
+  }, { service: true }) as JsonRecord;
+  const dashboard = await rpc(environment, "get_data_observatory_dashboard", { filters_input: { limit: 100 } }, { authorization });
+  return jsonResponse({
+    ok: true,
+    version: discovery.version,
+    saved: Number(saved.saved) || 0,
+    inspected_documents: discovery.inspectedDocuments,
+    structured_candidates: discovery.structuredCandidates,
+    rejected_candidates: discovery.rejections.length,
+    partial: errors.length > 0,
+    errors,
+    dashboard,
+    creates_draft: false,
+    invokes_model: false,
+    publishes: false,
+  });
 }
 
 async function searchProvider(provider: string, query: string) {
@@ -247,20 +420,23 @@ async function invokeExpert(environment: NonNullable<ReturnType<typeof getSupaba
   return data as JsonRecord;
 }
 
-function proposalPrefill(detail: JsonRecord) {
+function proposalPrefill(detail: JsonRecord, draftPackage: JsonRecord) {
   const signal = detail.signal as JsonRecord || {};
-  const analysis = detail.expert_analysis as JsonRecord || {};
-  const verdict = analysis.result_json as JsonRecord || {};
-  const proposal = verdict.proposal as JsonRecord || {};
-  const contract = verdict.resolution_contract as JsonRecord || signal.suggested_resolution_contract as JsonRecord || {};
+  const verdict = draftPackage.verdict as JsonRecord || {};
+  const proposal = draftPackage.fields as JsonRecord || verdict.proposal as JsonRecord || {};
+  const contract = draftPackage.contract as JsonRecord || verdict.resolution_contract as JsonRecord || signal.suggested_resolution_contract as JsonRecord || {};
+  const packageOrigin = draftPackage.origin as JsonRecord || {};
+  const run = draftPackage.run as JsonRecord || {};
   const sources = records(contract.sources);
   return {
-    origin: { type: "observatory_signal", id: signal.id, expert_run_id: analysis.id || signal.expert_run_id },
+    origin: { type: "observatory_signal", id: packageOrigin.id || signal.id, expert_run_id: run.id },
     fields: {
       market_slug: text(proposal.market_slug, 120),
       question: text(proposal.question || signal.suggested_question, 500),
       subject: text(proposal.subject || signal.title, 300),
       category: text(proposal.category || signal.atinara_category, 100),
+      yes_option: text(proposal.yes_option || "Sí", 80),
+      no_option: text(proposal.no_option || "No", 80),
       evaluation_period_label: text(proposal.evaluation_period_label, 1000),
       evaluation_ends_at: proposal.evaluation_ends_at || contract.evaluation_at || contract.window_end || "",
       timezone: text(contract.timezone || "Europe/Madrid", 100),
@@ -268,7 +444,13 @@ function proposalPrefill(detail: JsonRecord) {
       yes_criteria: text(proposal.yes_criteria || signal.suggested_yes_criteria, 4000),
       no_criteria: text(proposal.no_criteria || signal.suggested_no_criteria, 4000),
       edge_cases: text(proposal.edge_cases || signal.suggested_edge_cases, 4000),
+      delay_treatment: text(proposal.delay_treatment, 4000),
+      cancellation_treatment: text(proposal.cancellation_treatment, 4000),
+      leak_treatment: text(proposal.leak_treatment, 4000),
+      rename_treatment: text(proposal.rename_treatment, 4000),
+      assumptions: text(proposal.assumptions, 4000),
       public_criteria: text(proposal.public_criteria, 4000),
+      description: text(proposal.description || signal.description, 4000),
       primary_source_url: text(sources.find((source) => source.role === "PRIMARY_RESOLUTION")?.url || signal.canonical_url, 2048),
       alternative_sources: sources.filter((source) => source.role !== "PRIMARY_RESOLUTION").map((source) => text(source.url, 2048)).filter(Boolean).join("\n"),
     },
@@ -301,6 +483,7 @@ async function handleAction(environment: NonNullable<ReturnType<typeof getSupaba
     return jsonResponse({ ok: true, result });
   }
   if (action === "discover") return runDiscovery(environment, authorization, body);
+  if (action === "discover-official-opportunities") return discoverOfficialOpportunities(environment, authorization, body);
   if (action === "details") {
     const detail = await rpc(environment, "get_data_observatory_signal", { signal_id_input: text(body.signal_id, 80) }, { authorization });
     return jsonResponse({ ok: true, detail });
@@ -330,9 +513,25 @@ async function handleAction(environment: NonNullable<ReturnType<typeof getSupaba
     return jsonResponse({ ok: true, enabled: true, processed, creates_draft: false, publishes: false, resolves: false });
   }
   if (action === "prepare-draft") {
-    const detail = await rpc(environment, "get_data_observatory_signal", { signal_id_input: text(body.signal_id, 80) }, { authorization }) as JsonRecord;
-    const prefill = proposalPrefill(detail);
-    if (!prefill.origin.expert_run_id) throw new Error("MARKET_EXPERT_ANALYSIS_REQUIRED");
+    const signalId = text(body.signal_id, 80);
+    const packageResponse = await invokeExpert(environment, authorization, "get-draft-package", {
+      origin_type: "observatory_signal",
+      origin_id: signalId,
+    });
+    const draftPackage = packageResponse.package && typeof packageResponse.package === "object"
+      ? packageResponse.package as JsonRecord : {};
+    const packageRun = draftPackage.run && typeof draftPackage.run === "object" ? draftPackage.run as JsonRecord : {};
+    if (draftPackage.available !== true || !packageRun.id) {
+      throw new Error(packageResponse.stale === true ? "MARKET_EXPERT_ANALYSIS_STALE" : "MARKET_EXPERT_ANALYSIS_REQUIRED");
+    }
+    const detail = await rpc(environment, "get_data_observatory_signal", { signal_id_input: signalId }, { authorization }) as JsonRecord;
+    const signal = detail.signal && typeof detail.signal === "object" ? detail.signal as JsonRecord : {};
+    const analysis = detail.expert_analysis && typeof detail.expert_analysis === "object" ? detail.expert_analysis as JsonRecord : {};
+    if (signal.expert_analysis_status !== "completed" || analysis.id !== packageRun.id
+      || analysis.analysis_fingerprint !== packageRun.analysis_fingerprint) {
+      throw new Error("MARKET_EXPERT_ANALYSIS_STALE");
+    }
+    const prefill = proposalPrefill(detail, draftPackage);
     return jsonResponse({ ok: true, prefill, message: "La propuesta solo pre-rellena el formulario; no guarda, aprueba, programa ni publica." });
   }
   if (action === "dismiss-signal") {
