@@ -8,6 +8,56 @@ El Radar sigue usando sus proveedores públicos y fuentes de investigación desd
 
 Los apartados que describen lotes y datos enviados a Gemini son registro histórico de la activación original y no describen el flujo operativo V2.1.
 
+## Corrección local de identidad categórica y horizonte · 15 de agosto de 2026
+
+Durante un ciclo real sin Gemini, la Edge clasificó correctamente las opciones
+de The Game Awards 2026 como hijos `option:<slug>`, pero el trigger SQL v4
+priorizó la frontera temporal y las reescribió con una misma clave
+`deadline:*`. La lista administrativa, además, usó el cierre técnico del
+proveedor para el filtro de 365 días y ocultó opciones cuyo acontecimiento sí
+estaba dentro del horizonte.
+
+La migración aditiva
+`20260815165805_fix_radar_family_option_horizon_v1.sql` hace autoritativa la
+misma regla en ambas capas:
+
+- una opción estructurada no genérica identifica al hijo de familias
+  `outcome`, `participant` o `platform`;
+- el slug de esa opción usa el mismo plegado NFD sin locale en Edge y SQL;
+  etiquetas genéricas (`Yes`, `Sí`, `No`, etc.) o sin slug no crean un hijo
+  `option:` vacío;
+- la frontera temporal se conserva como orden y contexto, no como identidad de
+  esa opción;
+- el horizonte y el orden de cierre usan primero `family_sort_at`/evaluación,
+  después el cierre propio de Atinara y solo al final el cierre técnico del
+  proveedor;
+- una frontera inferior `gt/gte` marca el comienzo y no el fin: en ese caso el
+  horizonte usa el cierre evaluado/Atinara/proveedor; las fronteras finales ya
+  vencidas no se vuelven a proponer;
+- el trigger solo reutiliza la identidad anterior si coincide con la proyección
+  recibida de la Edge, permitiendo que un refresh normal repare filas antiguas
+  sin un backfill masivo;
+- un borrador ligado a Radar conserva la identidad familiar autoritativa de su
+  candidata, y el mercado materializado conserva la del borrador. Así una
+  opción equivalente de otro proveedor sigue bloqueada mientras una opción
+  hermana permanece visible, incluso si la candidata de origen caduca. La
+  proyección prioriza el `market_id` ya materializado, ignora borradores
+  cancelados que reutilicen el slug y falla cerrada si dos intenciones todavía
+  publicables comparten ese mismo slug.
+
+El cambio no añade inferencias, no modifica el contrato de proveedores ni
+autoriza preparación, guardado, confirmación o publicación. En el corte local
+`origin/main = 87cab0819555f4c74aa6fb9546a926fc021e435d` aún no está aplicado
+en producción.
+
+Rollback: si la migración ya estuviera aplicada, nunca se edita ni se marca
+como revertida. La recuperación exige una migración posterior, aditiva y
+revisada que restaure los cuerpos y grants anteriores de las funciones. Ese
+rollback reabriría deliberadamente el defecto de identidad/horizonte, por lo
+que debe acompañarse de la suspensión del refresh Radar y de una nueva
+corrección antes de reanudarlo; no existe rollback de datos porque este paquete
+no hace backfill ni DML de dominio.
+
 Fecha de preparación: 4 de agosto de 2026. Activación y corrección operativa: 5 de agosto de 2026.
 
 Estado: **activado y aceptado técnicamente**. El catálogo ampliado de 24–36 mercados no se implementa en esta entrega. El Radar permanece privado y no creó borradores ni modificó datos públicos durante la aceptación.

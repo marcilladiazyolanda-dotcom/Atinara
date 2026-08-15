@@ -4,6 +4,35 @@ Este documento fija el contrato autoritativo de Gestión de mercados desde el Pa
 
 ## Invariantes
 
+### Identidad y horizonte de candidatas Radar
+
+La identidad familiar de una candidata es un único contrato compartido entre
+`_shared/market-radar.mjs` y Postgres. Para dimensiones categóricas
+`outcome`, `participant` y `platform`, una etiqueta afirmativa estructurada
+no genérica produce `option:<slug>` incluso cuando la proposición incluye una
+fecha. La frontera temporal permanece en `family_sort_at` y en
+`family_semantics.temporal_boundary`; nunca sustituye a la opción como
+`family_child_key`.
+
+El trigger de candidatas solo reutiliza una identidad previa si `family_key`,
+`family_child_key` y `family_version` coinciden con la proyección entrante.
+Una actualización normal puede así corregir una identidad SQL histórica
+divergente, mientras una segunda escritura factual idéntica conserva la ruta
+rápida. La RPC administrativa filtra y ordena horizontes mediante
+`market_radar_candidate_horizon_at_v1`: frontera familiar superior/exacta o
+evaluación, `atinara_closes_at` y, como último recurso, cierre técnico del
+proveedor. Una frontera inferior `gt/gte` es el inicio y no el fin; no desplaza
+el cierre efectivo. La lista excluye finales ya vencidos.
+
+Cuando `radar_candidate_id` vincula un borrador, su identidad familiar v4 se
+proyecta desde la candidata autoritativa en vez de reinterpretar la opción a
+partir de texto editorial incompleto. Al materializar, el mercado hereda la
+identidad del borrador. La cadena conserva el bloqueo exacto cross-provider sin
+convertir una opción hermana en duplicado y sin conceder publicación automática.
+La referencia exacta `market_id` prevalece; antes de materializar solo cuenta
+una intención `human_confirmed` o `scheduled`, y dos intenciones publicables con
+el mismo slug detienen la proyección en vez de elegir un borrador arbitrario.
+
 ### Contenido y huella
 
 `private.market_draft_canonical_payload` produce el único payload editable canónico. La política `sha256-canonical-v2`:

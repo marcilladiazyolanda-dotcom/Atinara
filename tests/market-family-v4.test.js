@@ -7,8 +7,18 @@ const { before, test } = require("node:test");
 const root = join(__dirname, "..");
 const radarPath = join(root, "supabase/functions/_shared/market-radar.mjs");
 const migrationPath = join(root, "supabase/migrations/20260809150000_complete_family_identity_v4_cutover.sql");
+const optionHorizonMigrationPath = join(
+  root,
+  "supabase/migrations/20260815165805_fix_radar_family_option_horizon_v1.sql",
+);
 const sqlTestPath = join(root, "supabase/tests/market_family_v4_transaction.sql");
+const optionHorizonSqlTestPath = join(
+  root,
+  "supabase/tests/radar_family_option_horizon_v1_transaction.sql",
+);
 const migration = readFileSync(migrationPath, "utf8");
+const optionHorizonMigration = readFileSync(optionHorizonMigrationPath, "utf8");
+const optionHorizonSqlTest = readFileSync(optionHorizonSqlTestPath, "utf8");
 let radar;
 
 before(async () => {
@@ -82,6 +92,52 @@ test("v4 conserva lanzamiento agosto/noviembre como hijos distintos", () => {
   assert.notEqual(relations.family.family_child_key, radar.deriveMarketFamily(august).family_child_key);
   assert.deepEqual(relations.duplicates, []);
   assert.equal(relations.siblings[0].relationship, "sibling");
+});
+
+test("v4 usa la opción estructurada como identidad aunque exista una frontera temporal", () => {
+  const nominees = ["Half-Life 3", "Saros", "Slay the Spire 2"].map((name, index) => definition(
+    "2026 Game of the Year?",
+    {
+      id: `tga-${index}`,
+      external_id: `kalshi:KXGAMEAWARDS-2026-${index}`,
+      source_title: "The Game Awards: 2026 Game of the Year",
+      source_resolution_rules: `Resolves Yes if ${name} wins 2026 Game of the Year before the end of 2026.`,
+      event_group_key: "kalshi:KXGAMEAWARDS-2026",
+      source_close_at: "2027-12-31T15:00:00.000Z",
+      provider_payload: { yes_sub_title: name, no_sub_title: name },
+    },
+  ));
+  const families = nominees.map((candidate) => radar.deriveMarketFamily(candidate));
+
+  assert.equal(new Set(families.map((family) => family.family_key)).size, 1);
+  assert.deepEqual(
+    families.map((family) => family.family_child_key),
+    ["option:half-life-3", "option:saros", "option:slay-the-spire-2"],
+  );
+  assert.ok(families.every((family) => family.family_sort_at === "2027-01-01T00:00:00.000Z"));
+  assert.equal(radar.classifyMarketRelations(nominees[1], [nominees[0]]).duplicates.length, 0);
+  assert.equal(radar.classifyMarketRelations(nominees[1], [nominees[0]]).siblings.length, 1);
+});
+
+test("v4 mantiene el mismo slug Unicode y rechaza etiquetas afirmativas genéricas", () => {
+  const candidate = (label) => definition("2026 Game of the Year?", {
+    id: `tga-unicode-${label}`,
+    external_id: `kalshi:KXGAMEAWARDS-UNICODE-${label}`,
+    source_title: "The Game Awards: 2026 Game of the Year",
+    source_resolution_rules: "Resolves Yes if the named option wins before the end of 2026.",
+    event_group_key: "kalshi:KXGAMEAWARDS-UNICODE",
+    provider_payload: { yes_sub_title: label, no_sub_title: label },
+  });
+
+  assert.equal(radar.deriveMarketFamily(candidate("Pokémon")).family_child_key, "option:pokemon");
+  assert.equal(radar.deriveMarketFamily(candidate("Poke\u0301mon")).family_child_key, "option:pokemon");
+  assert.equal(radar.deriveMarketFamily(candidate("İstanbul")).family_child_key, "option:istanbul");
+  for (const genericLabel of ["Yes!", "Sí!", "---"]) {
+    assert.equal(
+      radar.deriveMarketFamily(candidate(genericLabel)).family_child_key,
+      "deadline:lt:2027-01-01T00:00:00.000Z:year",
+    );
+  }
 });
 
 test("v4 generaliza acrónimo y sufijo sin un registro hardcodeado", () => {
@@ -295,4 +351,74 @@ test("la migración v4 es autoritativa, transaccional e inerte para la economía
   assert.match(sqlTest, /14:00 UTC/);
   assert.match(sqlTest, /deadline:lt:2027-07-01T14:00:00\.000Z:minute/);
   assert.match(sqlTest, /rollback;\s*$/);
+});
+
+test("la migración aditiva alinea Postgres con la Edge y usa el horizonte predictivo", () => {
+  const legacyTemporal = migration.indexOf("elsif temporal_child is not null then");
+  const legacyOption = migration.indexOf(
+    "and dimension_value in ('outcome', 'participant', 'platform') then",
+    legacyTemporal,
+  );
+  const fixedOption = optionHorizonMigration.indexOf(
+    "and dimension_value in ('outcome', 'participant', 'platform') then",
+  );
+  const fixedTemporal = optionHorizonMigration.indexOf("elsif temporal_child is not null then");
+
+  assert.ok(legacyTemporal >= 0 && legacyOption > legacyTemporal);
+  assert.ok(fixedOption >= 0 && fixedTemporal > fixedOption);
+  assert.match(optionHorizonMigration, /^--[^]*?\nbegin;/);
+  assert.match(optionHorizonMigration, /'option:half-life-3'/);
+  assert.match(optionHorizonMigration, /'2027-01-01T00:00:00\.000Z'/);
+  assert.match(optionHorizonMigration, /market_family_option_slug_v1/);
+  assert.match(optionHorizonMigration, /normalize\(value, NFD\)/);
+  assert.match(
+    optionHorizonMigration,
+    /translate\([\s\S]*?'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'/,
+  );
+  assert.match(optionHorizonMigration, /market_family_origin_projection_v1/);
+  assert.match(
+    optionHorizonMigration,
+    /origin_value := private\.market_family_origin_projection_v1\(\s*new\.radar_candidate_id, null/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /origin_value := private\.market_family_origin_projection_v1\(null, new\.id\)/,
+  );
+  assert.match(optionHorizonMigration, /market_radar_candidate_horizon_at_v1/);
+  assert.match(
+    optionHorizonMigration,
+    /old\.family_child_key is not distinct from[\s\S]*?new\.normalized_payload ->> 'family_child_key'/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /select coalesce\(\s*case[\s\S]*?else candidate_input\.family_sort_at[\s\S]*?end,[\s\S]*?'atinara_closes_at'[\s\S]*?'source_close_at'/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /cross join lateral \([\s\S]*?private\.market_radar_candidate_horizon_at_v1\(candidate\) as horizon_at/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /horizon\.horizon_at > checked_at_value[\s\S]*?horizon\.horizon_at <= checked_at_value \+ case horizon_filter/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /case when order_key = 'closing' then horizon\.horizon_at/,
+  );
+  assert.match(
+    optionHorizonMigration,
+    /canonical_operator}'[\s\S]*?in \('gt', 'gte'\) then null/,
+  );
+  assert.match(optionHorizonSqlTest, /public\.list_market_radar_candidates_v2\(/);
+  assert.match(optionHorizonSqlTest, /'closing', '365d'/);
+  assert.match(optionHorizonSqlTest, /TEST_RADAR_PAST_BOUNDARY_LISTED/);
+  assert.match(optionHorizonSqlTest, /TEST_RADAR_LEGACY_IDENTITY_FIXTURE_NOT_MATERIALIZED/);
+  assert.match(optionHorizonSqlTest, /TEST_RADAR_CROSS_PROVIDER_DRAFT_GATE_FAILED/);
+  assert.match(optionHorizonSqlTest, /set local role authenticated/);
+  assert.match(optionHorizonSqlTest, /TEST_RADAR_PRIVATE_FUNCTION_EXECUTE_EXPOSED/);
+  assert.doesNotMatch(
+    optionHorizonMigration,
+    /(?:insert|update|delete)\s+(?:into\s+|from\s+)?(?:public\.(?:markets|predictions|profiles)|private\.market_drafts)/i,
+  );
+  assert.match(optionHorizonMigration, /commit;\s*$/);
 });

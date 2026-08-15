@@ -23,6 +23,57 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
 
+### Smoke sin Gemini y corrección local de identidad/horizonte Radar · 15 de agosto de 2026
+
+- La Fase 0 productiva de Official Opportunity Discovery V2 terminó con una
+  sola intención manual y cero inferencias: run
+  `e03cf486-e2d8-4435-934c-0d9a6986441d`, request
+  `0318e4fb-7263-4a05-858c-4d697b1cb80b`, estado `partial`, ocho resultados
+  de índice, cinco documentos oficiales inspeccionados, cero candidatas
+  estructuradas y cero señales persistidas. Los únicos códigos fueron dos
+  `OFFICIAL_SOURCE_NOT_REGISTERED` y un
+  `OFFICIAL_SOURCE_RESPONSE_TOO_LARGE`. Consulta y HTML no se persistieron;
+  no cambió ningún mercado, borrador, predicción, perfil, expediente experto,
+  binding ni dato económico.
+- Al iniciar el ciclo real Radar sin Gemini, una actualización administrativa
+  dejó once opciones Kalshi de The Game Awards 2026 elegibles, pero la lista
+  devolvió cero. La causa no era disponibilidad: la Edge derivaba
+  `option:half-life-3`, `option:saros`, etc., mientras el trigger Postgres
+  volvía a calcular todos esos hijos como la misma frontera
+  `deadline:lt:2027-01-01T00:00:00.000Z:year`. Además, la RPC de lista
+  aplicaba el horizonte al cierre técnico de Kalshi
+  (`2027-12-31T15:00:00Z`) en vez de a la frontera predictiva de la familia
+  (`2027-01-01T00:00:00Z`).
+- La corrección local parte de `origin/main =
+  87cab0819555f4c74aa6fb9546a926fc021e435d` en
+  `codex/radar-family-option-horizon-fix`. La migración aditiva
+  `20260815165805_fix_radar_family_option_horizon_v1.sql` alinea la prioridad
+  de Postgres con la Edge: en `outcome`, `participant` y `platform`, una
+  opción estructurada identifica al hijo y la fecha solo ordena/acota la
+  familia. El trigger conserva su optimización únicamente cuando la proyección
+  entrante coincide; por eso la siguiente actualización normal repara
+  identidades históricas incorrectas sin backfill.
+- `list_market_radar_candidates_v2` usa ahora una proyección privada común:
+  una frontera familiar superior/exacta y las fechas de evaluación preceden a
+  `atinara_closes_at` y al cierre técnico del proveedor. `gt/gte` marca un
+  inicio, por lo que usa el fin evaluado/Atinara/proveedor; un fin ya vencido
+  se excluye. La ordenación por cierre usa esa misma proyección. La identidad
+  categórica se conserva además en candidata → borrador → mercado para que el
+  gate exacto cross-provider no pierda una opción ya preparada; `market_id`
+  prevalece y una colisión entre dos borradores aún publicables con el mismo
+  slug falla cerrada. No se alteran preguntas, políticas, IA,
+  proveedores, modos, rutas, presupuestos, secretos ni autoridad humana.
+- Un `SELECT` de compatibilidad previo al despliegue confirmó en producción
+  cero borradores Radar vinculados a dimensiones categóricas y cero enlaces
+  legacy `deadline:*` activos o publicados. La corrección no requiere ni
+  autoriza backfill o DML de datos existentes.
+- Este paquete es exclusivamente local. No se aplicó la nueva migración, no se
+  redesplegó Radar y no se repitió el refresh. La Fase 1 permanece detenida antes
+  de Market Expert y antes de cualquier borrador, confirmación o publicación.
+  Tras la validación y el ZIP incremental, Yol debe subirlo a GitHub; solo
+  entonces se verificará `origin/main`, se solicitará/aplicará el cambio
+  productivo acotado y se repetirá una única actualización Radar sin Gemini.
+
 ### Reparación local de doble ejecución · Official Opportunity Discovery V2 · 15 de agosto de 2026
 
 - Base limpia verificada: rama `codex/official-discovery-idempotency-v1`, `HEAD = origin/main = f38ae2dc4d30eae99bcfbca3ef1cd535a588e690`. El paquete es exclusivamente local: no ejecutó SQL remoto, deploy, Gemini, commit, push, publicación, confirmación, resolución o liquidación.

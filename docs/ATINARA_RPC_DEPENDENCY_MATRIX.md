@@ -6,6 +6,19 @@
 
 Este documento registra dependencias reales. No autoriza una migración remota. Las consultas de producción fueron exclusivamente de lectura y no se leyeron valores de secretos.
 
+> **Adenda local · 15 de agosto de 2026:** sobre `origin/main =
+> 87cab0819555f4c74aa6fb9546a926fc021e435d`, la migración pendiente
+> `20260815165805_fix_radar_family_option_horizon_v1.sql` conserva firmas y
+> grants, pero corrige dos proyecciones internas de
+> `list_market_radar_candidates_v2`: identidad categórica
+> `option:<slug>` y horizonte basado primero en `family_sort_at` solo cuando
+> representa una frontera superior/exacta. `gt/gte` usa el fin evaluado,
+> Atinara o proveedor, y los fines ya vencidos se excluyen. Los triggers de
+> borrador y mercado preservan la identidad v4 del origen Radar para mantener
+> el bloqueo exacto cross-provider; un `market_id` exacto prevalece y dos
+> intenciones publicables con el mismo slug fallan cerradas. No está
+> aplicada en producción mientras el paquete local no se haya revisado y subido.
+
 ## Estado material verificado
 
 | Tabla | Owner | RLS | FORCE RLS | ACL material | Policies | Escritura válida |
@@ -23,7 +36,7 @@ Los grants de tabla y las políticas RLS son controles distintos. Aunque `anon`,
 | checks | `public.apply_market_radar_prepare_eligibility_v1(uuid,bigint,text,timestamptz,jsonb,jsonb,boolean)` | `postgres`, definer, `search_path=''` | `service_role` | `market-radar` revalida antes de preparar | mismo wrapper y contrato | revalidación válida crea check y, si procede, reserva candidata | rol no service, revisión obsoleta o hash incompatible fallan sin mutar |
 | attempts | `public.record_market_radar_eligibility_attempt_v1(uuid,bigint,text,uuid,text,text,boolean)` | `postgres`, definer, `search_path=''` | `service_role` | registra fallo técnico append-only | mismo wrapper y contrato | fallo técnico compatible conserva estado y crea un intento | rol no service o replay incompatible fallan; no altera el check vigente |
 | checks | `public.bind_market_radar_draft_eligibility_v2(uuid,uuid,bigint,text,bigint,bigint,uuid,uuid)` | `postgres`, definer, `search_path=''` | `service_role` | liga publicación a check vigente | se conserva sin cambios | liga versión, huella, revisión y decisión exactas | check ajeno/caducado, actor distinto o replay incompatible fallan |
-| checks | `public.list_market_radar_candidates_v2(text,text,text,text,text,text,integer,integer)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | catálogo privado del Radar | se conserva sin cambios | una administradora lee solo candidatas elegibles vigentes | invitada o cuenta no administradora no recibe datos |
+| checks | `public.list_market_radar_candidates_v2(text,text,text,text,text,text,integer,integer)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | catálogo privado del Radar | misma firma; la migración local usa la frontera predictiva canónica | una administradora lee solo candidatas elegibles vigentes dentro del horizonte familiar/evaluado | invitada o cuenta no administradora no recibe datos |
 | checks | `public.get_market_intelligence_origin(text,text)` | `postgres`, definer, `search_path=''`; admin salvo service | `authenticated`, `service_role` | carga origen para Editor | misma lectura, después instrumentada por runtime v2 | origen válido devuelve expediente y puerta | identidad no autorizada o origen inexistente falla cerrado |
 | checks | `public.save_market_draft_from_radar(uuid,uuid,bigint,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador privado desde Radar | permanece como writer autoritativo | candidata/check/revisión exactos crean o actualizan una versión | cuenta no admin, check obsoleto o versión movida no escriben |
 | checks | `public.save_market_draft_from_radar_intelligence(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)` | `postgres`, definer, `search_path=''`; exige admin | `authenticated` | guarda borrador + binding de Editor | permanece como writer autoritativo | paquete experto compatible materializa una versión privada | paquete stale, check incompatible o cuenta no admin fallan |
@@ -34,7 +47,7 @@ Los grants de tabla y las políticas RLS son controles distintos. Aunque `anon`,
 
 | Interfaz | JavaScript | Edge | Shared | RPC | Tabla | Tests de regresión |
 |---|---|---|---|---|---|---|
-| Radar administrativo en `admin-markets.html` | `admin-markets.js` | `supabase/functions/market-radar/index.ts` | `_shared/market-radar.mjs` y runtime v1/v2 | `upsert_market_radar_batch_with_eligibility_v1`, `apply_market_radar_prepare_eligibility_v1`, `record_market_radar_eligibility_attempt_v1` | checks, attempts, `external_market_candidates` | `tests/market-radar.test.js`, `tests/agent-engine-confirmation-v8.test.js`, `supabase/tests/radar_eligibility_rls_v12_transaction.sql` |
+| Radar administrativo en `admin-markets.html` | `admin-markets.js` | `supabase/functions/market-radar/index.ts` | `_shared/market-radar.mjs` y runtime v1/v2 | `upsert_market_radar_batch_with_eligibility_v1`, `list_market_radar_candidates_v2`, `apply_market_radar_prepare_eligibility_v1`, `record_market_radar_eligibility_attempt_v1` | checks, attempts, `external_market_candidates` | `tests/market-radar.test.js`, `tests/market-family-v4.test.js`, `supabase/tests/radar_family_option_horizon_v1_transaction.sql`, `supabase/tests/radar_eligibility_rls_v12_transaction.sql` |
 | Agente Editor en `admin-markets.html` | `admin-agent-engine.js`, `admin-markets.js` | `market-expert/index.ts` | inteligencia compartida y runtimes v1/v2 | `get_market_intelligence_origin`, `save_market_draft_from_radar_intelligence` | checks, drafts, expert runs | `tests/expert-market-cycle-definitive.test.js`, `tests/agent-engine-v2.test.js` |
 | Confirmación/publicación humana | `admin-markets.js`, `market-draft-fixer.js` | `market-radar/index.ts` solo para revalidar | puerta de elegibilidad | `bind_market_radar_draft_eligibility_v2`, `confirm_market_draft_review`, `publish_market_draft` | checks, bindings, drafts | `tests/agent-engine-confirmation-v8.test.js`, `supabase/tests/agent_engine_confirmation_v8_transaction.sql` |
 
