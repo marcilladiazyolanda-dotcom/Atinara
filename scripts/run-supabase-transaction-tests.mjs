@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  assertLocalPostgresTestConnection,
+  localPostgresChildEnvironment,
+} from "./local-postgres-test-guard.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const testRoot = join(root, "supabase", "tests");
@@ -10,10 +14,19 @@ const required = [
   "radar_eligibility_rls_v12_transaction.sql",
   "ai_gateway_budget_telemetry_transaction.sql",
   "agent_engine_v2_transaction.sql",
+  "official_opportunity_idempotency_v2_transaction.sql",
 ];
 const execute = process.argv.includes("--execute");
 const v2Only = process.argv.includes("--v2-only");
-const executable = v2Only ? required.slice(-3) : required;
+const officialOnly = process.argv.includes("--official-only");
+if (v2Only && officialOnly) throw new Error("SQL_TRANSACTION_SCOPE_CONFLICT");
+const v2Required = [
+  "radar_eligibility_rls_v12_transaction.sql",
+  "ai_gateway_budget_telemetry_transaction.sql",
+  "agent_engine_v2_transaction.sql",
+];
+const officialRequired = ["official_opportunity_idempotency_v2_transaction.sql"];
+const executable = officialOnly ? officialRequired : v2Only ? v2Required : required;
 
 for (const name of required) {
   const file = join(testRoot, name);
@@ -33,11 +46,13 @@ if (!execute) {
 
 const databaseUrl = process.env.ATINARA_TEST_DATABASE_URL || "";
 if (!/^postgres(?:ql)?:\/\//i.test(databaseUrl)) throw new Error("ATINARA_TEST_DATABASE_URL_REQUIRED");
+assertLocalPostgresTestConnection(databaseUrl);
+const postgresEnvironment = localPostgresChildEnvironment();
 const psql = process.env.PSQL_BIN || (process.platform === "win32" ? "psql.exe" : "psql");
 for (const name of executable) {
   const result = spawnSync(psql, [databaseUrl, "--no-psqlrc", "--set=ON_ERROR_STOP=1", `--file=${join(testRoot, name)}`], {
     cwd: root,
-    env: process.env,
+    env: postgresEnvironment,
     encoding: "utf8",
     stdio: "pipe",
   });

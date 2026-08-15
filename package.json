@@ -12,6 +12,8 @@
     "test:canonicalization": "npm run test:canonicalization:node && npm run test:canonicalization:deno",
     "test:edge": "node scripts/check-edge-functions.mjs",
     "test:sql:static": "node scripts/run-supabase-transaction-tests.mjs",
+    "test:sql:official:transaction": "node scripts/run-supabase-transaction-tests.mjs --execute --official-only",
+    "test:sql:official-concurrency": "node scripts/check-official-opportunity-concurrency.mjs",
     "test:monitoring-config": "tsc --project tsconfig.json",
     "benchmark:offline": "node scripts/run-ai-benchmark.mjs",
     "validate": "npm run test:syntax && npm run test:canonicalization && npm run test:unit && npm run test:monitoring-config && npm run test:sql:static",

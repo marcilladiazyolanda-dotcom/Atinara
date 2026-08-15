@@ -9,12 +9,17 @@ import {
   normalizeTwitchStream,
   normalizeYouTubeChannel,
   normalizeYouTubeVideo,
+  publicErrorCode,
   youtubeProposalPolicy,
 } from "../_shared/market-intelligence/index.mjs";
 import {
   ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
   buildOfficialOpportunitySignals,
   normalizeOfficialOpportunityRequest,
+  officialOpportunityErrorCode,
+  officialOpportunityOutcome,
+  officialOpportunityRequestFingerprint,
+  officialOpportunityRunInput,
   readBoundedUtf8Response,
 } from "../_shared/market-intelligence/official-opportunity-discovery.mjs";
 import {
@@ -222,63 +227,166 @@ async function loadExistingDefinitions(environment: NonNullable<ReturnType<typeo
   return records(definitions);
 }
 
-async function discoverOfficialOpportunities(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, authorization: string, body: JsonRecord) {
-  const request = normalizeOfficialOpportunityRequest(body);
-  const registryValue = await rpc(environment, "list_market_authoritative_source_registry_admin_v1", {}, { authorization });
-  const registry = records(registryValue);
-  const allowedRegistry = registryForCategory(registry, request.category);
-  if (!allowedRegistry.length) throw new Error("OFFICIAL_DISCOVERY_REGISTRY_EMPTY");
-  const search = await searchRegisteredOfficialPages(request, allowedRegistry);
-  const documents = [] as JsonRecord[];
-  const errors = [] as JsonRecord[];
-  for (const url of search.urls) {
-    try {
-      documents.push(await fetchRegisteredOfficialPage(url, allowedRegistry, request.category));
-    } catch (error) {
-      errors.push({
-        source_url: url,
-        error_code: error instanceof Error ? error.message.slice(0, 100) : "OFFICIAL_SOURCE_UNAVAILABLE",
-      });
-    }
-  }
-  const existingDefinitions = await loadExistingDefinitions(environment, authorization);
-  const discovery = await buildOfficialOpportunitySignals({
-    documents,
-    registry: allowedRegistry,
-    request,
-    existingDefinitions,
-    now: new Date(),
-  });
-  const saved = await rpc(environment, "save_official_opportunity_discovery_v1", {
-    signals_input: discovery.signals,
-    run_input: {
-      action: "discover_official_opportunities",
-      status: errors.length ? "partial" : "available",
-      quota_state: {
-        query_fingerprint: search.queryFingerprint,
-        search_results: search.urls.length,
-        inspected_documents: discovery.inspectedDocuments,
-        structured_candidates: discovery.structuredCandidates,
-        provider_rate: search.rate,
-      },
-      trigger_type: "manual",
-    },
-  }, { service: true }) as JsonRecord;
-  const dashboard = await rpc(environment, "get_data_observatory_dashboard", { filters_input: { limit: 100 } }, { authorization });
+function countOfficialError(target: JsonRecord, error: unknown): void {
+  if (totalOfficialErrors(target) >= 8) return;
+  const code = officialOpportunityErrorCode(error);
+  target[code] = (Number(target[code]) || 0) + 1;
+}
+
+function totalOfficialErrors(target: JsonRecord): number {
+  return Object.values(target).reduce<number>((sum, value) => sum + (Number(value) || 0), 0);
+}
+
+async function officialDiscoveryResponse(
+  environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>,
+  authorization: string,
+  requestId: string,
+  record: JsonRecord,
+  replayed: boolean,
+) {
+  const summary = record.result_summary && typeof record.result_summary === "object"
+    ? record.result_summary as JsonRecord : {};
+  const outcome = text(summary.outcome || record.outcome, 40) || "technical_failure";
+  const dashboard = await rpc(
+    environment,
+    "get_data_observatory_dashboard",
+    { filters_input: { limit: 100 } },
+    { authorization },
+  ).catch(() => null);
   return jsonResponse({
-    ok: true,
-    version: discovery.version,
-    saved: Number(saved.saved) || 0,
-    inspected_documents: discovery.inspectedDocuments,
-    structured_candidates: discovery.structuredCandidates,
-    rejected_candidates: discovery.rejections.length,
-    partial: errors.length > 0,
-    errors,
+    ok: outcome !== "technical_failure",
+    version: ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
+    request_id: requestId,
+    provider_run_id: record.provider_run_id || null,
+    replayed,
+    outcome,
+    saved: Number(summary.saved) || 0,
+    inspected_documents: Number(summary.inspected_documents) || 0,
+    structured_candidates: Number(summary.structured_candidates) || 0,
+    rejected_candidates: Number(summary.rejected_candidates) || 0,
+    search_results: Number(summary.search_results) || 0,
+    source_error_count: Number(summary.source_error_count) || 0,
+    source_error_codes: summary.source_error_codes || {},
+    duplicate_signals: Number(summary.duplicate_signals) || 0,
+    error_code: text(summary.error_code, 100) || null,
+    partial: outcome === "partial",
     dashboard,
     creates_draft: false,
     invokes_model: false,
     publishes: false,
   });
+}
+
+async function discoverOfficialOpportunities(
+  environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>,
+  authorization: string,
+  adminId: string,
+  body: JsonRecord,
+) {
+  const request = normalizeOfficialOpportunityRequest(body);
+  const requestFingerprint = await officialOpportunityRequestFingerprint(request);
+  const claim = await rpc(environment, "begin_official_opportunity_discovery_v2", {
+    request_id_input: request.requestId,
+    request_fingerprint_input: requestFingerprint,
+    requested_by_input: adminId,
+  }, { service: true, safeErrorPrefix: "OFFICIAL_DISCOVERY_" }) as JsonRecord;
+  if (claim.state === "in_progress") {
+    return jsonResponse({
+      ok: true,
+      version: ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
+      request_id: request.requestId,
+      provider_run_id: claim.provider_run_id || null,
+      outcome: "in_progress",
+      replayed: true,
+      retryable: true,
+      creates_draft: false,
+      invokes_model: false,
+      publishes: false,
+    }, 202);
+  }
+  if (claim.state === "terminal") {
+    return officialDiscoveryResponse(environment, authorization, request.requestId, claim, true);
+  }
+  if (claim.state !== "started") throw new Error("OFFICIAL_DISCOVERY_REQUEST_STATE_INVALID");
+
+  let search: Awaited<ReturnType<typeof searchRegisteredOfficialPages>> | null = null;
+  let inspectedDocuments = 0;
+  let structuredCandidates = 0;
+  let rejectedCandidates = 0;
+  const sourceErrorCodes: JsonRecord = {};
+  try {
+    const registryValue = await rpc(environment, "list_market_authoritative_source_registry_admin_v1", {}, { authorization });
+    const registry = records(registryValue);
+    const allowedRegistry = registryForCategory(registry, request.category);
+    if (!allowedRegistry.length) throw new Error("OFFICIAL_DISCOVERY_REGISTRY_EMPTY");
+    search = await searchRegisteredOfficialPages(request, allowedRegistry);
+    const documents = [] as JsonRecord[];
+    for (const url of search.urls) {
+      try {
+        documents.push(await fetchRegisteredOfficialPage(url, allowedRegistry, request.category));
+      } catch (error) {
+        countOfficialError(sourceErrorCodes, error);
+      }
+    }
+    const existingDefinitions = await loadExistingDefinitions(environment, authorization);
+    const discovery = await buildOfficialOpportunitySignals({
+      documents,
+      registry: allowedRegistry,
+      request,
+      existingDefinitions,
+      now: new Date(),
+    });
+    inspectedDocuments = discovery.inspectedDocuments;
+    structuredCandidates = discovery.structuredCandidates;
+    rejectedCandidates = discovery.rejections.length;
+    const sourceErrorCount = totalOfficialErrors(sourceErrorCodes);
+    const requestedOutcome = officialOpportunityOutcome({
+      saved: discovery.signals.length,
+      sourceErrorCount,
+    });
+    const completed = await rpc(environment, "finish_official_opportunity_discovery_v2", {
+      request_id_input: request.requestId,
+      request_fingerprint_input: requestFingerprint,
+      requested_by_input: adminId,
+      signals_input: discovery.signals,
+      run_input: officialOpportunityRunInput({
+        outcome: requestedOutcome,
+        errorCode: null,
+        queryFingerprint: search.queryFingerprint,
+        searchResults: search.urls.length,
+        inspectedDocuments,
+        structuredCandidates,
+        rejectedCandidates,
+        sourceErrorCount,
+        sourceErrorCodes,
+        providerRate: search.rate,
+      }),
+    }, { service: true, safeErrorPrefix: "OFFICIAL_DISCOVERY_" }) as JsonRecord;
+    return officialDiscoveryResponse(environment, authorization, request.requestId, completed, completed.replayed === true);
+  } catch (error) {
+    const errorCode = officialOpportunityErrorCode(error);
+    countOfficialError(sourceErrorCodes, error);
+    const sourceErrorCount = totalOfficialErrors(sourceErrorCodes);
+    const completed = await rpc(environment, "finish_official_opportunity_discovery_v2", {
+      request_id_input: request.requestId,
+      request_fingerprint_input: requestFingerprint,
+      requested_by_input: adminId,
+      signals_input: [],
+      run_input: officialOpportunityRunInput({
+        outcome: "technical_failure",
+        errorCode,
+        queryFingerprint: search?.queryFingerprint || null,
+        searchResults: search?.urls.length || 0,
+        inspectedDocuments,
+        structuredCandidates,
+        rejectedCandidates,
+        sourceErrorCount,
+        sourceErrorCodes,
+        providerRate: search?.rate,
+      }),
+    }, { service: true, safeErrorPrefix: "OFFICIAL_DISCOVERY_" }) as JsonRecord;
+    return officialDiscoveryResponse(environment, authorization, request.requestId, completed, completed.replayed === true);
+  }
 }
 
 async function searchProvider(provider: string, query: string) {
@@ -460,7 +568,7 @@ function proposalPrefill(detail: JsonRecord, draftPackage: JsonRecord) {
   };
 }
 
-async function handleAction(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, authorization: string, body: JsonRecord) {
+async function handleAction(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, authorization: string, adminId: string, body: JsonRecord) {
   const action = text(body.action, 80);
   if (action === "provider-status") return jsonResponse({ ok: true, providers: providerStatusPayload(), policy_version: MARKET_INTELLIGENCE_POLICY_VERSION });
   if (action === "dashboard" || action === "list-watchlist") {
@@ -483,7 +591,7 @@ async function handleAction(environment: NonNullable<ReturnType<typeof getSupaba
     return jsonResponse({ ok: true, result });
   }
   if (action === "discover") return runDiscovery(environment, authorization, body);
-  if (action === "discover-official-opportunities") return discoverOfficialOpportunities(environment, authorization, body);
+  if (action === "discover-official-opportunities") return discoverOfficialOpportunities(environment, authorization, adminId, body);
   if (action === "details") {
     const detail = await rpc(environment, "get_data_observatory_signal", { signal_id_input: text(body.signal_id, 80) }, { authorization });
     return jsonResponse({ ok: true, detail });
@@ -551,9 +659,9 @@ Deno.serve(async (req) => {
     const body = await readJsonBody(req);
     const auth = await authenticateAdminOrService(environment, authorization, body.action === "run-context-discovery-due");
     if (auth instanceof Response) return auth;
-    return await handleAction(environment, authorization, body);
+    return await handleAction(environment, authorization, auth.adminId, body);
   } catch (error) {
-    console.error("Data observatory request failed", JSON.stringify({ code: error instanceof Error ? error.message.slice(0, 100) : "UNKNOWN" }));
+    console.error("Data observatory request failed", JSON.stringify({ code: publicErrorCode(error) }));
     return handleEdgeError(error, "No se ha podido completar esta operación. Los demás proveedores y la creación manual siguen disponibles.");
   }
 });

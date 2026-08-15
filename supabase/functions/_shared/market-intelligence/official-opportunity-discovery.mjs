@@ -27,6 +27,8 @@ export const OFFICIAL_OPPORTUNITY_HORIZONS = Object.freeze([30, 90, 180, 365]);
 const MAX_DOCUMENTS = 8;
 export const OFFICIAL_OPPORTUNITY_MAX_STRUCTURED_NODES_PER_DOCUMENT = 128;
 const MIN_LEAD_TIME_MS = 48 * 60 * 60 * 1_000;
+const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_ERROR_CODE_PATTERN = /^(?:OFFICIAL|PROVIDER|TAVILY)_[A-Z0-9_]{2,92}$/;
 const SENSITIVE_QUERY = /(?:\b(?:api[_-]?key|authorization|bearer|password|secret|service[_-]?role|token)\b|\beyJ[a-zA-Z0-9_-]{12,}\.[a-zA-Z0-9_-]{8,}\.|\b(?:sk|sb_secret)_[a-zA-Z0-9_-]{12,}\b|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i;
 const STOP_WORDS = new Set([
   "antes", "despues", "desde", "evento", "eventos", "fecha", "fechas", "futuro", "futuros",
@@ -115,6 +117,17 @@ export async function readBoundedUtf8Response(response, maxBytes) {
 
 export function normalizeOfficialOpportunityRequest(value) {
   if (!isRecord(value)) throw new Error("OFFICIAL_DISCOVERY_REQUEST_INVALID");
+  const allowedKeys = new Set([
+    "action", "request_id", "requestId", "query", "category",
+    "horizon_days", "horizonDays", "timezone", "max_results", "maxResults",
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
+    throw new Error("OFFICIAL_DISCOVERY_REQUEST_FIELD_INVALID");
+  }
+  const requestId = cleanText(value.request_id ?? value.requestId, 80).toLowerCase();
+  if (!REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error("OFFICIAL_DISCOVERY_REQUEST_ID_REQUIRED");
+  }
   const inspected = inspectPromptInjection(value.query);
   const query = inspected.safe_text.slice(0, 200);
   if (query.length < 3) throw new Error("OFFICIAL_DISCOVERY_QUERY_REQUIRED");
@@ -130,7 +143,89 @@ export function normalizeOfficialOpportunityRequest(value) {
   }
   const timezone = assertTimezone(cleanText(value.timezone, 100) || "Europe/Madrid");
   const maxResults = Math.min(Math.max(Number(value.max_results ?? value.maxResults) || 5, 1), MAX_DOCUMENTS);
-  return Object.freeze({ query, category, horizonDays, timezone, maxResults });
+  return Object.freeze({ requestId, query, category, horizonDays, timezone, maxResults });
+}
+
+export async function officialOpportunityRequestFingerprint(request) {
+  if (!isRecord(request) || !REQUEST_ID_PATTERN.test(cleanText(request.requestId, 80))) {
+    throw new Error("OFFICIAL_DISCOVERY_REQUEST_ID_REQUIRED");
+  }
+  return sha256Hex(canonicalJson({
+    version: ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
+    query: cleanText(request.query, 200),
+    category: cleanText(request.category, 100),
+    horizon_days: Number(request.horizonDays),
+    timezone: cleanText(request.timezone, 100),
+    max_results: Number(request.maxResults),
+  }));
+}
+
+export function officialOpportunityErrorCode(error) {
+  const code = error instanceof Error ? error.message : String(error || "");
+  return SAFE_ERROR_CODE_PATTERN.test(code) ? code : "OFFICIAL_SOURCE_UNAVAILABLE";
+}
+
+export function sanitizeOfficialProviderRate(value) {
+  const rate = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const numericHeader = (candidate) => {
+    const normalized = typeof candidate === "string"
+      ? candidate.trim()
+      : Number.isSafeInteger(candidate) && candidate >= 0
+      ? String(candidate)
+      : "";
+    return /^[0-9]{1,20}$/.test(normalized) ? normalized : null;
+  };
+  return {
+    limit: numericHeader(rate.limit),
+    remaining: numericHeader(rate.remaining),
+    reset: numericHeader(rate.reset),
+  };
+}
+
+/**
+ * @param {{
+ *   outcome?: string,
+ *   errorCode?: string | null,
+ *   queryFingerprint?: string | null,
+ *   searchResults?: number,
+ *   inspectedDocuments?: number,
+ *   structuredCandidates?: number,
+ *   rejectedCandidates?: number,
+ *   sourceErrorCount?: number,
+ *   sourceErrorCodes?: Record<string, unknown>,
+ *   providerRate?: unknown,
+ * }} [options]
+ */
+export function officialOpportunityRunInput({
+  outcome,
+  errorCode = null,
+  queryFingerprint = null,
+  searchResults = 0,
+  inspectedDocuments = 0,
+  structuredCandidates = 0,
+  rejectedCandidates = 0,
+  sourceErrorCount = 0,
+  sourceErrorCodes = {},
+  providerRate = {},
+} = {}) {
+  return {
+    outcome,
+    error_code: errorCode,
+    query_fingerprint: queryFingerprint,
+    search_results: searchResults,
+    inspected_documents: inspectedDocuments,
+    structured_candidates: structuredCandidates,
+    rejected_candidates: rejectedCandidates,
+    source_error_count: sourceErrorCount,
+    source_error_codes: sourceErrorCodes,
+    provider_rate: sanitizeOfficialProviderRate(providerRate),
+  };
+}
+
+export function officialOpportunityOutcome({ saved = 0, sourceErrorCount = 0, technicalFailure = false } = {}) {
+  if (technicalFailure) return "technical_failure";
+  if (Number(sourceErrorCount) > 0) return "partial";
+  return Number(saved) > 0 ? "success" : "zero_results";
 }
 
 function zonedDateTimeIso(year, month, day, hour, minute, second, timezone) {

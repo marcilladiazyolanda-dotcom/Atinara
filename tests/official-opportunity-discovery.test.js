@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
+
+import {
+  assertLocalPostgresTestConnection,
+  localPostgresChildEnvironment,
+} from "../scripts/local-postgres-test-guard.mjs";
+import { readJsonBody } from "../supabase/functions/_shared/market-intelligence/edge-runtime.ts";
 
 import {
   ATINARA_OFFICIAL_OPPORTUNITY_DISCOVERY_VERSION,
@@ -8,17 +15,28 @@ import {
   buildOfficialOpportunitySignals,
   extractStructuredOfficialOpportunities,
   normalizeOfficialOpportunityRequest,
+  officialOpportunityErrorCode,
+  officialOpportunityOutcome,
+  officialOpportunityRequestFingerprint,
+  officialOpportunityRunInput,
   readBoundedUtf8Response,
+  sanitizeOfficialProviderRate,
 } from "../supabase/functions/_shared/market-intelligence/official-opportunity-discovery.mjs";
 
 const primaryHtml = readFileSync(new URL("./fixtures/market-intelligence/official-event-primary.html", import.meta.url), "utf8");
 const alternativeHtml = readFileSync(new URL("./fixtures/market-intelligence/official-event-alternative.html", import.meta.url), "utf8");
 const releaseHtml = readFileSync(new URL("./fixtures/market-intelligence/official-release-date.html", import.meta.url), "utf8");
 const observatoryEdge = readFileSync(new URL("../supabase/functions/data-observatory/index.ts", import.meta.url), "utf8");
+const observatoryRuntime = readFileSync(new URL("../supabase/functions/_shared/market-intelligence/edge-runtime.ts", import.meta.url), "utf8");
 const observatoryUi = readFileSync(new URL("../admin-markets.js", import.meta.url), "utf8");
 const observatoryHtml = readFileSync(new URL("../admin-markets.html", import.meta.url), "utf8");
+const requestCoordinatorSource = readFileSync(new URL("../official-opportunity-request.js", import.meta.url), "utf8");
 const discoveryMigration = readFileSync(new URL(
   "../supabase/migrations/20260814232218_add_official_opportunity_discovery_v1.sql",
+  import.meta.url,
+), "utf8");
+const idempotencyMigration = readFileSync(new URL(
+  "../supabase/migrations/20260815115516_harden_official_opportunity_discovery_idempotency_v2.sql",
   import.meta.url,
 ), "utf8");
 const NOW = new Date("2026-08-15T08:00:00.000Z");
@@ -50,6 +68,7 @@ const registry = Object.freeze([
 
 function request(overrides = {}) {
   return normalizeOfficialOpportunityRequest({
+    request_id: "123e4567-e89b-42d3-a456-426614174000",
     query: "Aurora Games Showcase",
     category: "Eventos",
     horizon_days: 180,
@@ -79,6 +98,7 @@ test("Official Opportunity V1 construye un contrato binario completo desde dos f
   assert.equal(signal.suggested_resolution_contract.sources[1].role, "CORROBORATION");
   assert.equal(signal.suggested_resolution_contract.capture_strategy, "manual_official_source");
   assert.equal(signal.suggested_resolution_contract.aggregation, "exact_state");
+  assert.equal(signal.suggested_resolution_contract.precision, "instant");
   assert.match(signal.suggested_question, /^¿Comenzará oficialmente Aurora Games Showcase 2026/);
   assert.match(signal.suggested_yes_criteria, /comenzó efectivamente/);
   assert.match(signal.suggested_no_criteria, /aplazado más allá del corte/);
@@ -133,6 +153,36 @@ test("una fecha de lanzamiento sin hora conserva día y zona IANA", async () => 
   assert.equal(result.signals[0].suggested_resolution_contract.precision, "day");
   assert.equal(result.signals[0].suggested_resolution_contract.timezone, "Europe/Madrid");
   assert.equal(result.signals[0].time_window_end, "2026-12-05T22:59:59.000Z");
+});
+
+test("el productor y la autoridad SQL comparten exactamente las precisiones V1", async () => {
+  const instantResult = await buildOfficialOpportunitySignals({
+    documents: documents(),
+    registry,
+    request: request(),
+    now: NOW,
+  });
+  const dayResult = await buildOfficialOpportunitySignals({
+    documents: [
+      { url: "https://official-one.example/products/boreal", html: releaseHtml },
+      { url: "https://official-two.example/releases/boreal", html: releaseHtml },
+    ],
+    registry,
+    request: request({ query: "Proyecto Boreal", category: "Lanzamientos" }),
+    now: NOW,
+  });
+  const sqlPrecisions = [...idempotencyMigration
+    .match(/contract_value ->> 'precision' not in \(([^)]+)\)/)[1]
+    .matchAll(/'([^']+)'/g)]
+    .map((match) => match[1])
+    .sort();
+  const producedPrecisions = [
+    instantResult.signals[0].suggested_resolution_contract.precision,
+    dayResult.signals[0].suggested_resolution_contract.precision,
+  ].sort();
+
+  assert.deepEqual(producedPrecisions, ["day", "instant"]);
+  assert.deepEqual(sqlPrecisions, producedPrecisions);
 });
 
 test("una sola fuente queda en revisión y nunca se presenta como contrato completo", async () => {
@@ -299,6 +349,225 @@ test("la petición rechaza secretos, instrucciones, categorías, horizontes y zo
   }
 });
 
+test("la intención exige UUID, rechaza campos desconocidos y su huella excluye el identificador", async () => {
+  assert.throws(() => normalizeOfficialOpportunityRequest({
+    query: "Aurora Games Showcase",
+    category: "Eventos",
+    horizon_days: 180,
+    timezone: "Europe/Madrid",
+  }), /OFFICIAL_DISCOVERY_REQUEST_ID_REQUIRED/);
+  assert.throws(() => request({ request_id: "not-a-uuid" }), /OFFICIAL_DISCOVERY_REQUEST_ID_REQUIRED/);
+  assert.throws(() => request({ untrusted_field: "value" }), /OFFICIAL_DISCOVERY_REQUEST_FIELD_INVALID/);
+  const left = request({ request_id: "123e4567-e89b-42d3-a456-426614174000" });
+  const right = request({ request_id: "123e4567-e89b-42d3-a456-426614174001" });
+  assert.equal(await officialOpportunityRequestFingerprint(left), await officialOpportunityRequestFingerprint(right));
+});
+
+test("los resultados técnicos distinguen éxito, cero, parcial y fallo estable", () => {
+  assert.equal(officialOpportunityOutcome({ saved: 1 }), "success");
+  assert.equal(officialOpportunityOutcome({ saved: 0 }), "zero_results");
+  assert.equal(officialOpportunityOutcome({ saved: 1, sourceErrorCount: 1 }), "partial");
+  assert.equal(officialOpportunityOutcome({ saved: 0, technicalFailure: true }), "technical_failure");
+  assert.equal(officialOpportunityErrorCode(new Error("OFFICIAL_SOURCE_TIMEOUT")), "OFFICIAL_SOURCE_TIMEOUT");
+  assert.equal(officialOpportunityErrorCode(new Error("https://secret.example/path")), "OFFICIAL_SOURCE_UNAVAILABLE");
+});
+
+test("las cabeceras de cuota solo persisten enteros acotados", () => {
+  assert.deepEqual(sanitizeOfficialProviderRate({
+    limit: "100",
+    remaining: 99,
+    reset: "1723723200",
+    ignored: "https://secret.example/query?q=private",
+  }), { limit: "100", remaining: "99", reset: "1723723200" });
+  assert.deepEqual(sanitizeOfficialProviderRate({
+    limit: "https://secret.example/query?q=private",
+    remaining: "<html>token</html>",
+    reset: "sb_secret_abcdefghijklmnop",
+  }), { limit: null, remaining: null, reset: null });
+  assert.deepEqual(sanitizeOfficialProviderRate({ limit: "1".repeat(21), remaining: -1, reset: 1.5 }), {
+    limit: null,
+    remaining: null,
+    reset: null,
+  });
+});
+
+test("el payload productivo de finalización coincide exactamente con la allowlist SQL", () => {
+  const expectedKeys = [
+    "outcome", "error_code", "query_fingerprint", "search_results",
+    "inspected_documents", "structured_candidates", "rejected_candidates",
+    "source_error_count", "source_error_codes", "provider_rate",
+  ];
+  const normal = officialOpportunityRunInput({
+    outcome: "success",
+    queryFingerprint: "e".repeat(64),
+    searchResults: 2,
+    inspectedDocuments: 2,
+    structuredCandidates: 1,
+    rejectedCandidates: 0,
+    sourceErrorCount: 0,
+    sourceErrorCodes: {},
+    providerRate: { limit: "100", remaining: "99", reset: "60" },
+  });
+  const technical = officialOpportunityRunInput({
+    outcome: "technical_failure",
+    errorCode: "OFFICIAL_SOURCE_TIMEOUT",
+    sourceErrorCount: 1,
+    sourceErrorCodes: { OFFICIAL_SOURCE_TIMEOUT: 1 },
+    providerRate: { limit: "https://private.example", remaining: "99" },
+  });
+  const sqlRequiredKeys = [...idempotencyMigration
+    .match(/not \(run_input \?& array\[([\s\S]*?)\]::text\[\]\)/)[1]
+    .matchAll(/'([^']+)'/g)]
+    .map((match) => match[1]);
+
+  assert.deepEqual(Object.keys(normal), expectedKeys);
+  assert.deepEqual(sqlRequiredKeys, expectedKeys);
+  assert.equal(normal.error_code, null);
+  assert.equal(technical.error_code, "OFFICIAL_SOURCE_TIMEOUT");
+  assert.deepEqual(technical.provider_rate, { limit: null, remaining: "99", reset: null });
+  assert.equal((observatoryEdge.match(/run_input: officialOpportunityRunInput\(/g) || []).length, 2);
+  assert.doesNotMatch(observatoryEdge, /run_input:\s*\{\s*outcome:\s*requestedOutcome/);
+});
+
+test("los runners PostgreSQL no pueden redirigirse fuera de localhost", () => {
+  for (const url of [
+    "postgresql://tester@localhost:55432/atinara_test",
+    "postgresql://tester@127.0.0.1:55432/atinara_test?sslmode=disable",
+    "postgresql://tester@[::1]:55432/atinara_test",
+  ]) {
+    assert.doesNotThrow(() => assertLocalPostgresTestConnection(url, {}));
+  }
+  for (const url of [
+    "postgresql://tester@database.example:5432/atinara_test",
+    "postgresql://tester@localhost:55432/atinara_test?hostaddr=203.0.113.8",
+    "postgresql://tester@localhost:55432/atinara_test?host=database.example",
+    "postgresql://tester@localhost:55432/atinara_test?service=production",
+    "postgresql://tester@localhost:55432/atinara_test#unexpected",
+  ]) {
+    assert.throws(() => assertLocalPostgresTestConnection(url, {}), /ATINARA_TEST_/);
+  }
+  assert.throws(() => assertLocalPostgresTestConnection(
+    "postgresql://tester@localhost:55432/atinara_test",
+    { PGHOSTADDR: "203.0.113.8" },
+  ), /ATINARA_TEST_DATABASE_ROUTING_ENV_FORBIDDEN/);
+
+  const childEnvironment = localPostgresChildEnvironment({
+    PATH: "test-path",
+    PGPASSWORD: "local-password",
+    PGHOST: "database.example",
+    PGHOSTADDR: "203.0.113.8",
+    PGSERVICE: "production",
+  });
+  assert.equal(childEnvironment.PATH, "test-path");
+  assert.equal(childEnvironment.PGPASSWORD, "local-password");
+  assert.equal(childEnvironment.PGHOST, undefined);
+  assert.equal(childEnvironment.PGHOSTADDR, undefined);
+  assert.equal(childEnvironment.PGSERVICE, undefined);
+  assert.equal(childEnvironment.PGAPPNAME, "atinara-local-transaction-tests");
+});
+
+test("el body JSON se limita por bytes y nunca filtra el fragmento inválido", async () => {
+  const secretFragment = "sb_secret_never_log_this_value";
+  await assert.rejects(
+    () => readJsonBody(new Request("https://local.test", { method: "POST", body: secretFragment })),
+    (error) => error?.message === "INVALID_REQUEST" && !error.message.includes(secretFragment),
+  );
+
+  let cancelled = false;
+  const oversized = new Request("https://local.test", {
+    method: "POST",
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"query":"áááááááá"}'));
+      },
+      cancel() { cancelled = true; },
+    }),
+    duplex: "half",
+  });
+  await assert.rejects(() => readJsonBody(oversized, 12), /REQUEST_TOO_LARGE/);
+  assert.equal(cancelled, true);
+  assert.doesNotMatch(observatoryEdge, /error\.message\.slice/);
+  assert.match(observatoryEdge, /publicErrorCode\(error\)/);
+});
+
+test("la Edge acota a ocho los códigos de fuente y separa el error terminal", () => {
+  assert.match(observatoryEdge, /if \(totalOfficialErrors\(target\) >= 8\) return/);
+  assert.match(observatoryEdge, /error_code: text\(summary\.error_code, 100\) \|\| null/);
+});
+
+test("el coordinador colapsa doble submit y reutiliza UUID tras transporte ambiguo o in_progress", async () => {
+  const context = {};
+  vm.runInNewContext(requestCoordinatorSource, context);
+  const ids = [
+    "123e4567-e89b-42d3-a456-426614174010",
+    "123e4567-e89b-42d3-a456-426614174011",
+    "123e4567-e89b-42d3-a456-426614174012",
+    "123e4567-e89b-42d3-a456-426614174013",
+    "123e4567-e89b-42d3-a456-426614174014",
+  ];
+  const coordinator = context.atinaraOfficialOpportunityRequests.createCoordinator({
+    createRequestId: () => ids.shift(),
+  });
+  const payload = { query: "Aurora", category: "Eventos", horizon_days: 180, timezone: "Europe/Madrid", max_results: 5 };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  let firstId = "";
+  const first = coordinator.run(payload, async (body) => {
+    calls += 1;
+    firstId = body.request_id;
+    await gate;
+    return { outcome: "success" };
+  });
+  const duplicate = coordinator.run({ ...payload }, () => {
+    throw new Error("DOUBLE_SUBMIT_EXECUTED");
+  });
+  assert.equal(first, duplicate);
+  assert.equal(coordinator.snapshot().active, true);
+  release();
+  await first;
+  assert.equal(calls, 1);
+
+  let failedId = "";
+  await assert.rejects(() => coordinator.run(payload, (body) => {
+    failedId = body.request_id;
+    throw new Error("AMBIGUOUS_TRANSPORT_FAILURE");
+  }), /AMBIGUOUS_TRANSPORT_FAILURE/);
+  let retriedId = "";
+  await coordinator.run(payload, (body) => {
+    retriedId = body.request_id;
+    return { outcome: "zero_results" };
+  });
+  assert.equal(failedId, retriedId);
+  assert.notEqual(firstId, failedId);
+
+  let newIntentId = "";
+  await coordinator.run(payload, (body) => {
+    newIntentId = body.request_id;
+    return { outcome: "zero_results" };
+  });
+  assert.notEqual(newIntentId, retriedId);
+
+  let inProgressId = "";
+  await coordinator.run(payload, (body) => {
+    inProgressId = body.request_id;
+    return { outcome: "in_progress" };
+  });
+  let polledId = "";
+  await coordinator.run(payload, (body) => {
+    polledId = body.request_id;
+    return { outcome: "zero_results" };
+  });
+  assert.equal(polledId, inProgressId);
+
+  let afterTerminalId = "";
+  await coordinator.run(payload, (body) => {
+    afterTerminalId = body.request_id;
+    return { outcome: "zero_results" };
+  });
+  assert.notEqual(afterTerminalId, inProgressId);
+});
+
 test("la Edge limita búsqueda y lectura a fuentes primarias registradas", () => {
   assert.match(observatoryEdge, /list_market_authoritative_source_registry_admin_v1/);
   assert.match(observatoryEdge, /include_domains: includeDomains/);
@@ -310,7 +579,8 @@ test("la Edge limita búsqueda y lectura a fuentes primarias registradas", () =>
   assert.match(observatoryEdge, /OFFICIAL_DISCOVERY_DUPLICATE_CHECK_UNAVAILABLE/);
   assert.doesNotMatch(observatoryEdge, /get_admin_market_catalog|list_admin_market_drafts/);
   assert.match(observatoryEdge, /include_raw_content: false/);
-  assert.match(observatoryEdge, /query_fingerprint: search\.queryFingerprint/);
+  assert.match(observatoryEdge, /queryFingerprint: search\.queryFingerprint/);
+  assert.doesNotMatch(observatoryEdge, /source_url:\s*url/);
   assert.doesNotMatch(observatoryEdge, /quota_state:\s*\{[^}]*\bquery\s*:/s);
 });
 
@@ -318,7 +588,13 @@ test("el descubrimiento persiste solo señales y no encadena Gemini ni un borrad
   const start = observatoryEdge.indexOf("async function discoverOfficialOpportunities");
   const end = observatoryEdge.indexOf("async function searchProvider", start);
   const discoveryBody = observatoryEdge.slice(start, end);
-  assert.match(discoveryBody, /save_official_opportunity_discovery_v1/);
+  const claimPosition = discoveryBody.indexOf("begin_official_opportunity_discovery_v2");
+  const searchPosition = discoveryBody.indexOf("searchRegisteredOfficialPages");
+  assert.equal(claimPosition >= 0 && claimPosition < searchPosition, true);
+  assert.match(discoveryBody, /finish_official_opportunity_discovery_v2/);
+  assert.match(discoveryBody, /safeErrorPrefix: "OFFICIAL_DISCOVERY_"/);
+  assert.match(observatoryRuntime, /remoteCode\.startsWith\(options\.safeErrorPrefix\)/);
+  assert.doesNotMatch(discoveryBody, /save_official_opportunity_discovery_v1/);
   assert.match(discoveryBody, /creates_draft: false/);
   assert.match(discoveryBody, /invokes_model: false/);
   assert.match(discoveryBody, /publishes: false/);
@@ -330,6 +606,21 @@ test("el descubrimiento persiste solo señales y no encadena Gemini ni un borrad
   assert.doesNotMatch(discoveryMigration, /(?:insert into|update|delete from)\s+public\.markets\b/i);
   assert.match(discoveryMigration, /to service_role;/);
   assert.match(discoveryMigration, /from public, anon, authenticated, service_role/);
+
+  assert.match(idempotencyMigration, /data_provider_runs_official_request_v2_uidx/);
+  assert.match(idempotencyMigration, /begin_official_opportunity_discovery_v2/);
+  assert.match(idempotencyMigration, /finish_official_opportunity_discovery_v2/);
+  assert.match(idempotencyMigration, /for update;/i);
+  assert.match(idempotencyMigration, /lease_expires_at <= clock_timestamp\(\)/i);
+  assert.doesNotMatch(idempotencyMigration, /lease_expires_at <= now\(\)/i);
+  assert.match(idempotencyMigration, /on conflict \(provider, source_fingerprint\) do update set/i);
+  assert.match(idempotencyMigration, /expert_analysis_status = case/i);
+  assert.match(idempotencyMigration, /then 'stale'/i);
+  assert.match(idempotencyMigration, /where \([\s\S]*?\) is distinct from \(/i);
+  assert.doesNotMatch(idempotencyMigration, /(?:insert into|update|delete from)\s+(?:private\.)?market_drafts\b/i);
+  assert.doesNotMatch(idempotencyMigration, /(?:insert into|update|delete from)\s+public\.markets\b/i);
+  assert.match(idempotencyMigration, /OFFICIAL_DISCOVERY_REQUEST_REUSED/);
+  assert.match(idempotencyMigration, /'success', 'partial', 'zero_results', 'technical_failure'/);
 });
 
 test("Datos y tendencias conserva análisis, autofill y guardado como acciones humanas separadas", () => {
@@ -351,6 +642,7 @@ test("Datos y tendencias conserva análisis, autofill y guardado como acciones h
   ]) {
     assert.match(observatoryEdge, new RegExp(`${field}: text\\(proposal\\.${field}`));
   }
-  assert.match(observatoryHtml, /admin-markets\.js\?v=20260815-official-opportunity-v1/);
-  assert.match(observatoryHtml, /styles\.css\?v=20260815-official-opportunity-v1/);
+  assert.match(observatoryHtml, /official-opportunity-request\.js\?v=20260815-official-idempotency-v2/);
+  assert.match(observatoryHtml, /admin-markets\.js\?v=20260815-official-idempotency-v2/);
+  assert.match(observatoryHtml, /styles\.css\?v=20260815-official-idempotency-v2/);
 });

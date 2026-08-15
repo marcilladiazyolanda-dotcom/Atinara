@@ -44,7 +44,7 @@ function restHeaders(key: string, authorization?: string): Record<string, string
   return headers;
 }
 
-export async function rpc(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, name: string, args: JsonRecord, options: { authorization?: string; service?: boolean } = {}): Promise<unknown> {
+export async function rpc(environment: NonNullable<ReturnType<typeof getSupabaseEnvironment>>, name: string, args: JsonRecord, options: { authorization?: string; service?: boolean; safeErrorPrefix?: string } = {}): Promise<unknown> {
   const key = options.service ? environment.secretKey : environment.publishableKey;
   const response = await fetch(`${environment.supabaseUrl}/rest/v1/rpc/${name}`, {
     method: "POST",
@@ -54,6 +54,12 @@ export async function rpc(environment: NonNullable<ReturnType<typeof getSupabase
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.error("Market intelligence RPC failed", JSON.stringify({ name, status: response.status }));
+    const remoteCode = typeof payload?.message === "string" ? payload.message.trim() : "";
+    if (options.safeErrorPrefix
+      && remoteCode.startsWith(options.safeErrorPrefix)
+      && /^[A-Z][A-Z0-9_]{2,99}$/.test(remoteCode)) {
+      throw new Error(remoteCode);
+    }
     throw new Error(`RPC_${response.status}`);
   }
   return payload;
@@ -95,11 +101,45 @@ export async function authenticateAdminOrService(environment: NonNullable<Return
 }
 
 export async function readJsonBody(req: Request, maxBytes = 12_288): Promise<JsonRecord> {
-  const length = Number(req.headers.get("content-length") || 0);
+  const lengthHeader = req.headers.get("content-length") ?? "";
+  if (lengthHeader && !/^[0-9]+$/.test(lengthHeader)) throw new Error("INVALID_REQUEST");
+  const length = Number(lengthHeader || 0);
   if (length > maxBytes) throw new Error("REQUEST_TOO_LARGE");
-  const text = await req.text();
-  if (text.length > maxBytes) throw new Error("REQUEST_TOO_LARGE");
-  const parsed = text ? JSON.parse(text) : {};
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  if (req.body) {
+    const reader = req.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("REQUEST_TOO_LARGE");
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "REQUEST_TOO_LARGE") throw error;
+      throw new Error("INVALID_REQUEST");
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let parsed: unknown;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error("INVALID_REQUEST");
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("INVALID_REQUEST");
   return parsed as JsonRecord;
 }

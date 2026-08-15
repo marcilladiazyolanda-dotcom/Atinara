@@ -8,6 +8,7 @@
   const client = window.orakloSupabase;
   const helpers = window.atinaraMarketAdmin;
   if (!root || !helpers) return;
+  const officialRequestCoordinator = window.atinaraOfficialOpportunityRequests?.createCoordinator?.() || null;
 
   const state = {
     auth: null,
@@ -70,6 +71,7 @@
         category: "Eventos",
         horizonDays: 180,
         timezone: "Europe/Madrid",
+        inFlight: false,
         result: null
       }
     }
@@ -1111,16 +1113,18 @@
   function observatoryOfficialDiscoveryMarkup() {
     const discovery = state.observatory.officialDiscovery;
     const result = discovery.result;
-    const resultMarkup = result ? `<p class="observatory-official-result" role="status"><strong>${escapeHtml(result.saved || 0)} oportunidad(es) guardada(s) como señales privadas.</strong><span>${escapeHtml(result.inspected_documents || 0)} páginas oficiales inspeccionadas · ${escapeHtml(result.structured_candidates || 0)} candidatos estructurados · ${escapeHtml(result.rejected_candidates || 0)} descartados. ${result.partial ? "La consulta terminó con incidencias parciales." : "La consulta terminó sin incidencias de transporte."}</span></p>` : "";
+    const discoveryBusy = discovery.inFlight === true;
+    const resultMarkup = result ? `<p class="observatory-official-result" role="status"><strong>${escapeHtml(result.saved || 0)} oportunidad(es) guardada(s) como señales privadas.</strong><span>${escapeHtml(result.inspected_documents || 0)} páginas oficiales inspeccionadas · ${escapeHtml(result.structured_candidates || 0)} candidatos estructurados · ${escapeHtml(result.rejected_candidates || 0)} descartados. ${result.outcome === "partial" ? "La consulta terminó con incidencias parciales." : result.outcome === "technical_failure" ? "La consulta terminó con un fallo técnico seguro." : result.outcome === "zero_results" ? "La consulta terminó sin resultados válidos nuevos." : "La consulta terminó sin incidencias de transporte."}</span></p>` : "";
     return `<section class="observatory-official-discovery" aria-labelledby="observatory-official-title">
       <div class="admin-section-heading"><div><p class="eyebrow">Official Opportunity Discovery V1</p><h3 id="observatory-official-title">Descubrir acontecimientos oficiales</h3></div><p>Busca solo en dominios primarios activos del registro. Twitch, YouTube o X participan únicamente si su fuente oficial está registrada y publica una fecha futura estructurada.</p></div>
-      <form id="observatory-official-discovery-form" class="observatory-official-form">
+      <form id="observatory-official-discovery-form" class="observatory-official-form" aria-busy="${discoveryBusy ? "true" : "false"}">
         <label class="field-wide"><span>Acontecimiento, producto u organización</span><input type="search" name="query" minlength="3" maxlength="200" value="${valueAttribute(discovery.query)}" placeholder="Ej.: Nintendo Direct, The Game Awards" required></label>
         <label><span>Categoría</span><select name="category">${RADAR_CATEGORIES.map((category) => `<option value="${valueAttribute(category)}"${discovery.category === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("")}</select></label>
         <label><span>Horizonte</span><select name="horizon_days">${[30, 90, 180, 365].map((days) => `<option value="${days}"${Number(discovery.horizonDays) === days ? " selected" : ""}>${days} días</option>`).join("")}</select></label>
         <label><span>Zona horaria IANA</span><input name="timezone" maxlength="100" value="${valueAttribute(discovery.timezone)}" placeholder="Europe/Madrid" required></label>
-        <button class="primary-button" type="submit"${disabled()}>${state.busy ? "Buscando…" : "Buscar oportunidades oficiales"}</button>
+        <button class="primary-button" type="submit"${state.busy || discoveryBusy ? " disabled" : ""}>${discoveryBusy ? "Buscando…" : "Buscar oportunidades oficiales"}</button>
       </form>
+      <p class="admin-status-message" role="status" aria-live="polite">${discoveryBusy ? "La búsqueda oficial está en curso. Esta intención no puede enviarse dos veces." : "Listo para una nueva búsqueda manual."}</p>
       <p class="admin-gate-rule">Esta acción no invoca un modelo de IA, no crea borradores y no guarda mercados. Después podrás revisar la señal, pedir el análisis del Agente Editor y aplicar manualmente su propuesta al formulario.</p>
       ${resultMarkup}
     </section>`;
@@ -2008,34 +2012,48 @@
   }
 
   async function discoverOfficialOpportunities(form) {
+    if (!officialRequestCoordinator) {
+      setNotice("La protección de idempotencia no está disponible. Recarga la página antes de buscar.", "error");
+      return;
+    }
     const data = new FormData(form);
     const discovery = state.observatory.officialDiscovery;
     discovery.query = String(data.get("query") || "").trim();
     discovery.category = String(data.get("category") || "Eventos").trim();
     discovery.horizonDays = Number(data.get("horizon_days")) || 180;
     discovery.timezone = String(data.get("timezone") || "Europe/Madrid").trim();
-    state.busy = true;
-    setNotice("Buscando fechas futuras estructuradas únicamente en fuentes oficiales registradas. No se invoca ningún modelo.", "info");
-    renderWorkspace();
     try {
-      const result = await invokeObservatory("discover-official-opportunities", {
+      const result = await officialRequestCoordinator.run({
         query: discovery.query,
         category: discovery.category,
         horizon_days: discovery.horizonDays,
         timezone: discovery.timezone,
         max_results: 5
+      }, async (requestPayload) => {
+        discovery.inFlight = true;
+        state.busy = true;
+        setNotice("Buscando fechas futuras estructuradas únicamente en fuentes oficiales registradas. No se invoca ningún modelo.", "info");
+        renderWorkspace();
+        return invokeObservatory("discover-official-opportunities", requestPayload);
       });
+      if (result.outcome === "in_progress") {
+        setNotice("Esta misma búsqueda ya está en curso. No se ha iniciado una segunda consulta externa.", "info");
+        return;
+      }
       discovery.result = result;
       state.observatory.dashboard = result.dashboard || state.observatory.dashboard;
       const saved = Number(result.saved) || 0;
-      setNotice(saved
+      setNotice(result.outcome === "technical_failure"
+        ? "La búsqueda terminó con un fallo técnico controlado. No se creó ningún borrador ni mercado; puedes iniciar una nueva búsqueda manual."
+        : saved
         ? `${saved} oportunidad(es) oficial(es) guardada(s) como señales privadas. Revisa cada contrato antes de solicitar el análisis del Agente Editor.`
         : "No se encontró una oportunidad futura estructurada que superase las puertas deterministas. No se ha fabricado ninguna propuesta.",
-      result.partial ? "warning" : saved ? "success" : "info");
+      result.outcome === "partial" || result.outcome === "technical_failure" ? "warning" : saved ? "success" : "info");
     } catch (error) {
       discovery.result = null;
       setNotice(helpers.getFriendlyError(error, "No se pudo completar el descubrimiento oficial. No se creó ningún borrador ni mercado."), "error");
     } finally {
+      discovery.inFlight = false;
       state.busy = false;
       renderWorkspace();
       document.querySelector("#observatory-official-title")?.scrollIntoView({ block: "nearest" });
