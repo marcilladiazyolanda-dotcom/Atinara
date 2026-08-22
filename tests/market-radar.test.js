@@ -1135,6 +1135,84 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
 });
 
+test("la respuesta discovery proyecta expedientes ligeros y limita por padres completos", () => {
+  const resolutionUrl = "https://www.thegameawards.com/nominees/game-of-the-year";
+  const candidates = Array.from({ length: 24 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    provider: "kalshi",
+    external_id: `kxgameawards-2026-${index}`,
+    external_event_id: `kxgameawards-parent-${Math.floor(index / 4)}`,
+    event_group_key: `kalshi:kxgameawards-parent-${Math.floor(index / 4)}`,
+    family_key: `atinara:v4:tga-${Math.floor(index / 4)}:outcome`,
+    family_child_key: `option:game-${index}`,
+    family_child_label: `Game ${index}`,
+    source_title: `The Game Awards 2026 ${"x".repeat(900)}`,
+    source_question: `¿Ganará Game ${index} el premio?`,
+    source_close_at: "2027-12-31T15:00:00Z",
+    source_probability_yes: null,
+    atinara_category: "Reviews/Premios",
+    atinara_group_title: `The Game Awards · Familia ${Math.floor(index / 4)}`,
+    quality_score: 90 - index,
+    parent_rank: Math.floor(index / 4) + 1,
+    state: "available",
+    normalizer_version: "atinara-radar-v2",
+    verification_status: "verified_open",
+    eligibility_status: "eligible",
+    eligibility_policy_version: "atinara-prediction-policy-v5",
+    eligibility_checked_at: "2026-08-22T17:00:00Z",
+    eligibility_expires_at: "2026-08-23T17:00:00Z",
+    current_eligibility_check_id: index + 1,
+    atinara_resolution_source_url: resolutionUrl,
+    resolution_source_evidence: [{
+      url: resolutionUrl,
+      source_type: "official",
+      retrieval_status: "verified_content",
+      evidence_basis: "retrieved_content",
+      claim_status: "direct",
+      direct_claim: true,
+      supports: "z".repeat(20_000),
+    }],
+    provider_payload: { raw: "p".repeat(30_000) },
+    source_agent_execution: { raw: "a".repeat(20_000) },
+    duplicate_matches: [],
+  }));
+  const groups = radar.groupCandidates(candidates);
+  const projected = radar.projectRadarDiscoveryView({
+    groups,
+    candidates,
+    rejected: { total: 0, counts: {}, items: [] },
+    providers: [],
+    page: { parent_count: groups.length, parent_offset: 0, parent_limit: 60, next_parent_offset: null },
+  });
+
+  assert.equal(projected.candidate_count, candidates.length);
+  assert.equal(projected.candidates[0].id, candidates[0].id);
+  assert.equal(projected.candidates[0].provider_payload, undefined);
+  assert.equal(projected.groups[0].candidates.length, 4);
+  assert.equal(projected.groups[0].candidates[0].source_probability_yes, null);
+  assert.equal(projected.groups[0].candidates[0].resolution_source_proven, true);
+  assert.equal(projected.groups[0].candidates[0].resolution_source_evidence.length, 1);
+  assert.equal(projected.groups[0].candidates[0].resolution_source_evidence[0].supports, undefined);
+  assert.equal("provider_payload" in projected.groups[0].candidates[0], false);
+  assert.equal("source_agent_execution" in projected.groups[0].candidates[0], false);
+  assert.equal("top_candidates" in projected.groups[0], false);
+
+  const constrained = radar.constrainRadarDiscoveryPayload({
+    ok: true,
+    ...projected,
+    diagnostic_padding: "d".repeat(45_000),
+  }, 64_000);
+  assert.equal(constrained.fits, true);
+  assert.ok(constrained.omitted_parent_count > 0);
+  assert.ok(constrained.bytes <= 64_000);
+  assert.ok(constrained.payload.groups.every((group) => group.candidates.length === 4));
+  assert.equal(
+    constrained.payload.page.next_parent_offset,
+    constrained.payload.groups.length,
+  );
+  assert.equal(constrained.payload.candidate_count, constrained.payload.groups.length * 4);
+});
+
 test("una candidata preparada admite una comprobación de elegibilidad tipada y conserva español UTF-8", () => {
   assert.match(edge, /\["available", "needs_review", "prepared"\]\.includes\(state\)/);
   assert.match(edge, /phase: "eligibility_check"/);
@@ -1179,6 +1257,10 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /MAX_PROVIDER_PAGES = 3/);
   assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 240/);
   assert.match(edge, /MAX_VISIBLE_GROUPS = 60/);
+  assert.match(edge, /RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES/);
+  assert.match(edge, /projectRadarDiscoveryView/);
+  assert.match(edge, /constrainRadarDiscoveryPayload/);
+  assert.match(edge, /RADAR_RESPONSE_BUDGET_EXCEEDED/);
   assert.match(edge, /MAX_AI_ENRICHMENT_GROUPS = 30/);
   assert.match(edge, /MAX_AI_ENRICHMENT_CANDIDATES = 180/);
   assert.match(edge, /AI_ENRICHMENT_BATCH_SIZE = 9/);

@@ -2826,6 +2826,279 @@ export function groupCandidates(candidates = []) {
   }).sort((a, b) => b.quality_score - a.quality_score);
 }
 
+export const RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES = 1_500_000;
+
+const RADAR_LIST_TEXT_FIELDS = Object.freeze({
+  id: 80,
+  provider: 40,
+  external_id: 220,
+  external_event_id: 220,
+  external_event_slug: 400,
+  external_event_url: 2_000,
+  external_market_id: 220,
+  external_market_slug: 400,
+  external_market_url: 2_000,
+  external_url: 2_000,
+  event_group_key: 240,
+  family_key: 240,
+  family_title: 300,
+  family_type: 80,
+  family_child_key: 240,
+  family_child_label: 300,
+  family_version: 100,
+  family_sort_at: 100,
+  source_title: 700,
+  source_question: 700,
+  source_category: 120,
+  source_close_at: 100,
+  source_status: 80,
+  source_result: 120,
+  source_resolution_url: 2_000,
+  atinara_category: 120,
+  atinara_group_title: 700,
+  atinara_question: 700,
+  atinara_resolution_source_url: 2_000,
+  state: 80,
+  normalizer_version: 100,
+  quality_status: 80,
+  verification_status: 80,
+  verification_reason_code: 100,
+  verification_reason: 1_000,
+  verified_at: 100,
+  verification_expires_at: 100,
+  eligibility_status: 80,
+  eligibility_reason_code: 100,
+  eligibility_reason: 1_000,
+  eligibility_policy_version: 100,
+  eligibility_checked_at: 100,
+  eligibility_expires_at: 100,
+  domain_reason_code: 100,
+  display_reason_code: 100,
+  display_reason: 1_000,
+  prepared_draft_id: 80,
+  provider_refresh_checked_at: 100,
+  provider_refresh_state: 80,
+});
+
+const RADAR_LIST_NUMBER_FIELDS = Object.freeze([
+  "source_probability",
+  "source_probability_yes",
+  "quality_score",
+  "parent_rank",
+  "preparation_revision",
+  "current_eligibility_check_id",
+]);
+
+const RADAR_LIST_BOOLEAN_FIELDS = Object.freeze([
+  "is_stale",
+  "eligibility_state_preserved",
+]);
+
+function projectRadarListEvidenceLink(value) {
+  if (!isRecord(value)) return null;
+  const url = cleanText(value.url, 2_000);
+  if (!safePublicUrl(url)) return null;
+  return {
+    url,
+    title: cleanText(value.title, 240) || null,
+    role: cleanText(value.role, 100) || null,
+  };
+}
+
+function radarListResolutionSourceProof(candidate) {
+  const sourceUrl = safePublicUrl(
+    candidate?.atinara_resolution_source_url ?? candidate?.source_resolution_url,
+  );
+  if (!sourceUrl) return null;
+  const evidence = [
+    ...(Array.isArray(candidate?.resolution_source_evidence) ? candidate.resolution_source_evidence : []),
+    ...(Array.isArray(candidate?.eligibility_evidence) ? candidate.eligibility_evidence : []),
+    ...(Array.isArray(candidate?.verification_evidence) ? candidate.verification_evidence : []),
+  ];
+  const proof = evidence.find((item) => isRecord(item)
+    && safePublicUrl(item.url) === sourceUrl
+    && cleanText(item.source_type, 80) === "official"
+    && cleanText(item.retrieval_status, 80) === "verified_content"
+    && cleanText(item.evidence_basis, 80) === "retrieved_content"
+    && cleanText(item.claim_status, 40) === "direct"
+    && item.direct_claim === true);
+  if (!isRecord(proof)) return null;
+  return {
+    url: sourceUrl,
+    source_type: "official",
+    retrieval_status: "verified_content",
+    evidence_basis: "retrieved_content",
+    claim_status: "direct",
+    direct_claim: true,
+  };
+}
+
+function projectRadarListDuplicate(value) {
+  if (!isRecord(value)) return null;
+  return {
+    id: cleanText(value.id ?? value.market_id ?? value.draft_id, 80) || null,
+    question: cleanText(value.question, 700) || null,
+    relationship: cleanText(value.relationship, 80) || null,
+    blocking: value.blocking !== false,
+  };
+}
+
+function projectRadarListWorkflowIssue(value) {
+  if (!isRecord(value)) return null;
+  return {
+    issue_id: cleanText(value.issue_id, 80) || null,
+    issue_code: cleanText(value.issue_code, 100) || null,
+    blocking_scope: cleanText(value.blocking_scope, 40) || null,
+    repairability: cleanText(value.repairability, 80) || null,
+    status: cleanText(value.status, 40) || "open",
+    owner_stage: cleanText(value.owner_stage, 80) || null,
+    next_action: cleanText(value.next_action, 100) || null,
+    retryable: value.retryable === true,
+  };
+}
+
+export function projectRadarListCandidate(candidate = {}, options = {}) {
+  if (!isRecord(candidate)) return {};
+  const projected = {};
+  for (const [field, limit] of Object.entries(RADAR_LIST_TEXT_FIELDS)) {
+    if (!Object.hasOwn(candidate, field)) continue;
+    projected[field] = candidate[field] === null ? null : cleanText(candidate[field], limit);
+  }
+  for (const field of RADAR_LIST_NUMBER_FIELDS) {
+    if (!Object.hasOwn(candidate, field)) continue;
+    projected[field] = nullableFiniteNumber(candidate[field]);
+  }
+  for (const field of RADAR_LIST_BOOLEAN_FIELDS) {
+    if (!Object.hasOwn(candidate, field)) continue;
+    projected[field] = candidate[field] === true;
+  }
+  const resolutionSourceProof = radarListResolutionSourceProof(candidate);
+  projected.resolution_source_proven = Boolean(resolutionSourceProof);
+  projected.resolution_source_evidence = resolutionSourceProof ? [resolutionSourceProof] : [];
+  projected.duplicate_matches = (Array.isArray(candidate.duplicate_matches)
+    ? candidate.duplicate_matches : [])
+    .map(projectRadarListDuplicate).filter(Boolean).slice(0, 20);
+  projected.workflow_issues = (Array.isArray(candidate.workflow_issues)
+    ? candidate.workflow_issues : [])
+    .map(projectRadarListWorkflowIssue).filter(Boolean).slice(0, 40);
+  projected.hard_reject_reasons = (Array.isArray(candidate.hard_reject_reasons)
+    ? candidate.hard_reject_reasons : [])
+    .map((value) => cleanText(value, 100)).filter(Boolean).slice(0, 20);
+  if (options.rejection === true) {
+    projected.verification_evidence = (Array.isArray(candidate.verification_evidence)
+      ? candidate.verification_evidence : [])
+      .map(projectRadarListEvidenceLink).filter(Boolean).slice(0, 2);
+  }
+  return projected;
+}
+
+function projectRadarListGroup(group) {
+  if (!isRecord(group)) return null;
+  const candidates = (Array.isArray(group.candidates) ? group.candidates : [])
+    .filter(isRecord).map((candidate) => projectRadarListCandidate(candidate));
+  if (!candidates.length) return null;
+  return {
+    event_group_key: cleanText(group.event_group_key, 240),
+    provider: cleanText(group.provider, 40),
+    external_event_id: cleanText(group.external_event_id, 220) || null,
+    external_event_slug: cleanText(group.external_event_slug, 400) || null,
+    external_event_url: safePublicUrl(group.external_event_url),
+    title: cleanText(group.title, 700) || "Evento externo",
+    category: cleanText(group.category, 120) || "Industria",
+    verification_status: cleanText(group.verification_status, 80) || "needs_review",
+    quality_score: nullableFiniteNumber(group.quality_score) ?? 0,
+    child_count: candidates.length,
+    candidates,
+  };
+}
+
+function projectRadarRejectionSummary(value) {
+  const summary = isRecord(value) ? value : {};
+  const items = (Array.isArray(summary.items) ? summary.items : [])
+    .filter(isRecord).map((candidate) => projectRadarListCandidate(candidate, { rejection: true }));
+  const counts = {};
+  if (isRecord(summary.counts)) {
+    for (const [code, count] of Object.entries(summary.counts)) {
+      if (!/^[A-Z][A-Z0-9_]{2,99}$/.test(code)) continue;
+      const numeric = nullableFiniteNumber(count);
+      if (numeric !== null && numeric >= 0) counts[code] = Math.floor(numeric);
+    }
+  }
+  return {
+    total: Math.max(items.length, Math.floor(nullableFiniteNumber(summary.total) ?? 0)),
+    counts,
+    items,
+  };
+}
+
+function radarCandidateFlatProjection(groups) {
+  return groups.flatMap((group) => group.candidates)
+    .filter((candidate) => cleanText(candidate.id, 80));
+}
+
+export function projectRadarDiscoveryView(view = {}) {
+  const source = isRecord(view) ? view : {};
+  const groups = (Array.isArray(source.groups) ? source.groups : [])
+    .map(projectRadarListGroup).filter(Boolean);
+  const candidates = radarCandidateFlatProjection(groups);
+  const page = isRecord(source.page) ? source.page : {};
+  return {
+    groups,
+    candidates,
+    candidate_count: candidates.length,
+    rejected: projectRadarRejectionSummary(source.rejected),
+    providers: Array.isArray(source.providers) ? source.providers.filter(isRecord) : [],
+    page: {
+      parent_count: Math.max(groups.length, Math.floor(nullableFiniteNumber(page.parent_count) ?? 0)),
+      parent_offset: Math.max(0, Math.floor(nullableFiniteNumber(page.parent_offset) ?? 0)),
+      parent_limit: Math.max(1, Math.floor(nullableFiniteNumber(page.parent_limit) ?? Math.max(groups.length, 1))),
+      next_parent_offset: nullableFiniteNumber(page.next_parent_offset),
+    },
+  };
+}
+
+function radarDiscoveryPayloadBytes(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+export function constrainRadarDiscoveryPayload(
+  payload,
+  maxBytes = RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
+) {
+  if (!isRecord(payload) || !Array.isArray(payload.groups)) {
+    return { fits: false, bytes: 0, payload: {} };
+  }
+  const budget = Math.max(64_000, Math.floor(nullableFiniteNumber(maxBytes) ?? 0));
+  const originalGroups = payload.groups.filter(isRecord);
+  let groups = originalGroups;
+  let candidate = { ...payload };
+  let bytes = radarDiscoveryPayloadBytes(candidate);
+  while (bytes > budget && groups.length > 1) {
+    groups = groups.slice(0, -1);
+    const candidates = radarCandidateFlatProjection(groups);
+    const parentOffset = Math.max(0, Math.floor(nullableFiniteNumber(payload.page?.parent_offset) ?? 0));
+    candidate = {
+      ...payload,
+      groups,
+      candidates,
+      candidate_count: candidates.length,
+      response_budget_limited: true,
+      page: {
+        ...(isRecord(payload.page) ? payload.page : {}),
+        parent_limit: groups.length,
+        next_parent_offset: parentOffset + groups.length,
+      },
+    };
+    bytes = radarDiscoveryPayloadBytes(candidate);
+  }
+  return {
+    fits: bytes <= budget,
+    bytes,
+    payload: candidate,
+    omitted_parent_count: originalGroups.length - groups.length,
+  };
+}
+
 export function buildAiCandidateBatches(candidates = [], options = {}) {
   const maxGroups = Math.max(1, Math.floor(safeNumber(options.maxGroups) ?? 20));
   const maxCandidates = Math.max(1, Math.floor(safeNumber(options.maxCandidates) ?? 126));

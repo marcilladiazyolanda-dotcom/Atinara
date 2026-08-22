@@ -5,18 +5,19 @@
 ## Estado de esta evidencia
 
 Este documento separa la candidata local, el despliegue y la demostración
-productiva. El paquete V6 parte de `origin/main`
-`1ca7f79d87486cb29bc25dc29be9b2a2ce38ae5e` y ha superado las puertas locales,
-pero todavía no se ha publicado en GitHub ni desplegado. Por tanto, el veredicto
-actual es:
+productiva. El paquete V6 y su corrección Sonar ya están en `origin/main`
+`0fa29d440e6cb63bf11aeb9c8b226fc8c0200942`; CI/Pages/Sonar están verdes,
+las dos migraciones y las seis Edge afectadas están desplegadas. El smoke se
+detuvo antes del refresh por una regresión de tamaño de respuesta cuya corrección
+diferencial todavía debe subir Yol. Por tanto, el veredicto actual es:
 
-**13.5.2 NO APTO PARA CIERRE · pendiente de postflight y E2E productivo.**
+**13.5.2 NO APTO PARA CIERRE · pendiente de checkpoint Radar y E2E productivo.**
 
 Este estado no es un rechazo de la implementación. Impide presentar pruebas
 locales como evidencia de producción. Solo podrá cambiar a `APTO PARA CIERRE`
-después de CI/Sonar, migraciones, bundles, frontend, smokes y un recorrido real
-hasta `review_approved`. La confirmación humana se detiene para Yol; ninguna IA
-puede realizarla.
+después de publicar el checkpoint, redesplegar Radar, completar los smokes y un
+recorrido real hasta `review_approved`. La confirmación humana se detiene para
+Yol; ninguna IA puede realizarla.
 
 ## Causas raíz cerradas localmente
 
@@ -38,6 +39,10 @@ puede realizarla.
 10. La publicación programada no renovaba ni comparaba la evidencia primaria al
    vencer la atestación del Validator; una aprobación legacy sin baseline podía
    quedar además en un bucle de recuperación sin owner ejecutable.
+11. La paginación por padre devolvía cada expediente hijo completo tanto en la
+    lista plana como dentro del grupo, incluía payloads internos y añadía cien
+    rechazos completos. El corpus real alcanzó 5.832.218 bytes y la Edge devolvió
+    500 antes incluso de iniciar un refresh.
 
 Las correcciones son reglas generales, no excepciones por título, proveedor o
 fixture. Registry V2.1 no se usa como ledger y conserva versión y huella.
@@ -127,6 +132,28 @@ temporalmente inaccesible o respuesta inválida nunca entra en esos estados.
 | Codex | 10 skills, 4 subagentes, 25 reglas, 50 ejemplos. |
 | Whitespace | `git diff --check` limpio. |
 
+## Checkpoint productivo posterior al despliegue
+
+- Migraciones remotas: `20260822164140` y `20260822164309`, una sola vez, sin
+  backfill ni filas iniciales en los ledgers V6.
+- Edge activas y JWT: Observatory v5, Corrector v21, Expert v26, Radar v57,
+  Scheduler v6 y Validator v30; blobs remotos idénticos a `0fa29d4`.
+- El frontend de Pages coincide byte a byte con el mismo SHA.
+- Registry V2.1, cinco transportes `legacy_direct`, rutas nulas, flags apagados,
+  quince presupuestos cero, Karma 2932 y Prestigio 40 permanecen invariantes.
+- La cola de notificaciones PostgREST se recuperó sin reinicio mediante
+  `select pg_notification_queue_usage()`; el cron V6 acumula ciclos 200 `OK`
+  con cero borradores programados y cero publicaciones.
+- No se pulsó «Actualizar fuentes». La única interacción fue lectura y filtros;
+  mercados, borradores, predicciones, perfiles, LMSR e histórico no cambiaron.
+- Checkpoint local `codex/atinara-v6-radar-response-budget`: allowlist de salida,
+  prueba oficial HTTPS mínima, payloads internos excluidos y budget de 1.500.000
+  bytes con corte solo entre padres. Sobre producción pasa de 5.832.218 a
+  1.106.186 bytes sin omitir ninguno de los 7 padres, 108 hijos o 81 rechazos.
+- Verificación del checkpoint: 491 unitarias, sintaxis 126, TypeScript, Edge 9/9,
+  SQL estático 17, navegador 11 casos en 390/768/1366, benchmark offline 5/5,
+  canonicalización Node/Deno idéntica y Codex Security sin hallazgos.
+
 Las pruebas de navegador local demuestran la interfaz y sus contratos con
 dobles controlados, no una integración productiva. Cubren: anomalía temporal que llega a borrador y
 Corrector; criterios incoherentes reparables; elegibilidad caducada sin Gemini;
@@ -164,17 +191,16 @@ autoridad y no publica.
 
 ## Puertas productivas pendientes
 
-1. Subida manual del ZIP y verificación de `origin/main` exacto.
-2. CI y Quality Gate de Sonar sobre el mismo SHA.
-3. Aplicar únicamente `20260820163014` y `20260820174316`.
-4. Verificar owner, `SECURITY DEFINER`, `search_path`, ACL, RLS, ausencia de
-   backfill y preservación del Registry V2.1.
-5. Desplegar solo frontend y Edge afectadas, con JWT y configuración actuales.
-6. Ejecutar smokes Radar, handoff de issue, Editor, borrador, Validator,
-   Corrector y publicación recuperable.
-7. Recorrer un mercado real hasta `review_approved` y detenerse para revisión y
+1. Subida manual del ZIP diferencial de presupuesto Radar y verificación exacta
+   del nuevo `origin/main`, CI y Quality Gate.
+2. Redesplegar únicamente `market-radar`, conservar `verify_jwt=true` y comprobar
+   que la vista por defecto queda bajo budget sin cortar familias.
+3. Ejecutar el único refresh Radar autorizado sin Gemini y completar smokes de
+   intención, replay, proveedores, opciones, issue ledger y temporalidad.
+4. Continuar Editor, borrador, Validator, Corrector y publicación recuperable.
+5. Recorrer un mercado real hasta `review_approved` y detenerse para revisión y
    confirmación humana de Yol.
-8. Tras esa confirmación, revalidar y publicar exactamente una vez.
+6. Tras esa confirmación, revalidar y publicar exactamente una vez.
 
 Datos y tendencias solo continúa automáticamente después de un veredicto
 productivo `13.5.2 APTO PARA CIERRE`; reutilizará el mismo contrato de issues,

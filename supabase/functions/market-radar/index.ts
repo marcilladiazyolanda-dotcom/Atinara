@@ -4,6 +4,7 @@ import {
   RADAR_CANDIDATE_PROVIDERS,
   RADAR_CATEGORIES,
   RADAR_ENRICHMENT_CAPABILITIES,
+  RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
   RADAR_ELIGIBILITY_POLICY_VERSION,
   RADAR_FACT_POLICY_VERSION,
   RADAR_NORMALIZER_VERSION,
@@ -21,6 +22,7 @@ import {
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
+  constrainRadarDiscoveryPayload,
   detectOfficialCoverEventResolution,
   detectOfficialCoverSelectionHold,
   deriveDeterministicUnresolvedProof,
@@ -44,6 +46,7 @@ import {
   officialSelectionEditionCoverage,
   providerResolutionSourceUrls,
   providerResultLabel,
+  projectRadarDiscoveryView,
   projectRadarDomainReview,
   publicProviderError,
   radarDomainFingerprintV1,
@@ -133,6 +136,30 @@ function jsonResponse(body: JsonRecord, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+function radarDiscoveryResponse(body: JsonRecord): Response {
+  const constrained = constrainRadarDiscoveryPayload({
+    ...body,
+    response_budget_bytes: RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
+    response_payload_bytes: RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
+  });
+  if (!constrained.fits) {
+    return jsonResponse({
+      error: "RADAR_RESPONSE_BUDGET_EXCEEDED",
+      message: "La página completa supera el límite seguro. Acota los filtros o abre la siguiente página de eventos.",
+      state_preserved: true,
+      retryable: true,
+      next_action: "narrow_radar_filters",
+      refresh_request_id: cleanText(body.refresh_request_id, 80) || null,
+      response_payload_bytes: constrained.bytes,
+      response_budget_bytes: RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
+    }, 503);
+  }
+  return jsonResponse({
+    ...constrained.payload,
+    response_payload_bytes: constrained.bytes,
   });
 }
 
@@ -2702,10 +2729,13 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     const enrichmentCapabilities = current.providers
       .filter((provider) => RADAR_ENRICHMENT_CAPABILITIES.includes(cleanText(provider.provider, 40)))
       .map((provider) => ({ ...provider, role: "source_enrichment", affects_catalog_health: false }));
-    return jsonResponse({
-      ok: true,
+    const responseView = projectRadarDiscoveryView({
       ...current,
       providers: candidateProviders,
+    });
+    return radarDiscoveryResponse({
+      ok: true,
+      ...responseView,
       candidate_providers: candidateProviders,
       enrichment_capabilities: enrichmentCapabilities,
       provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
@@ -3270,9 +3300,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       role: "source_enrichment",
       affects_catalog_health: false,
     }));
-  return jsonResponse({
+  const responseView = projectRadarDiscoveryView(view);
+  return radarDiscoveryResponse({
     ok: true,
-    ...view,
+    ...responseView,
     filters,
     cache_key: cacheKey,
     cached: false,

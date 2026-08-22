@@ -1,11 +1,11 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 20 de agosto de 2026.
+Última actualización del contexto: 22 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado antes del paquete V6:** Atinara Engine V2.1 usa `market-radar` v56,
-> `market-draft-fixer` v20, `validate-market-draft` v29, `market-expert` v25 y
+> **Estado productivo verificado tras desplegar V6 y antes de su refresh:** Atinara Engine V2.1 usa `market-radar` v57,
+> `market-draft-fixer` v21, `validate-market-draft` v30, `market-expert` v26 y
 > `analyze-market-resolution` v16, todas activas con `verify_jwt=true`. Las
 > cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
 > desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
@@ -15,21 +15,58 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > Los schedulers opcionales del Observatorio y del monitor siguen apagados. El
 > corte preservó exactamente mercados publicados, predicciones, Karma,
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
-> hito confirma, publica, predice, resuelve o liquida por sí sola. El smoke
-> autenticado de Editor y varios refrescos controlados del Radar se completaron
-> sin confirmar ni publicar. Marvel sigue `approved` en v9. El refresh v54 dejó
-> Polymarket y Kalshi disponibles y aisló la caída de Tavily como degradación
-> técnica reintentable. Las tres migraciones V2.1 quedaron aplicadas una sola
+> hito confirma, publica, predice, resuelve o liquida por sí sola. Las migraciones
+> V6 constan una sola vez como `20260822164140` y `20260822164309`; sus tablas
+> nacieron vacías, sin backfill. El cron V6 está recuperado y responde 200 sin
+> borradores programados. El refresh productivo de Radar todavía no se ha
+> ejecutado: el smoke previo detectó una respuesta discovery sobredimensionada
+> y quedó detenido antes de cualquier escritura. Las tres migraciones V2.1 quedaron aplicadas una sola
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
 
+### Despliegue V6 y checkpoint de presupuesto Radar · 22 de agosto de 2026
+
+- GitHub `origin/main = 0fa29d440e6cb63bf11aeb9c8b226fc8c0200942` contiene el
+  paquete V6 y su corrección Sonar exactos. Actions, Pages y Quality Gate quedaron
+  verdes, con cero bugs nuevos de fiabilidad.
+- Producción registró exclusivamente
+  `20260822164140 · harden_radar_provider_resumability_v1` y
+  `20260822164309 · add_market_workflow_orchestration_v1`. El postflight confirmó
+  owner `postgres`, `SECURITY DEFINER`, `search_path=''`, ACL cerradas, RLS forzada,
+  constraints e índices; las once tablas V6 nacieron vacías y los campos añadidos
+  a 6 borradores, 5 reviews y 303 candidatas permanecieron nulos. Registry V2.1
+  conserva hash `eb8f345009d419b57c2a44ea6ae4a07adf0348c5bc96c2d9495a902a9f9abee3`.
+- Se desplegaron solo `data-observatory` v5, `market-draft-fixer` v21,
+  `market-expert` v26, `market-radar` v57, `publish-scheduled-markets` v6 y
+  `validate-market-draft` v30. Todos los bundles están `ACTIVE`, conservan
+  `verify_jwt=true` y sus archivos remotos coinciden con el SHA canónico.
+- El DDL hizo visible un problema conocido de la cola de notificaciones de
+  PostgREST. La reparación no disruptiva `select pg_notification_queue_usage()`
+  restauró la caché; el cron pasó de 503 a ciclos 200 `OK`, siempre con cero
+  publicaciones. No fue necesario reiniciar ni pausar el proyecto.
+- El smoke autenticado se detuvo antes de «Actualizar fuentes»: la consulta
+  discovery por defecto serializaba 108 hijas dos veces (`candidates`, `groups`),
+  81 rechazos y payloads internos, alcanzando 5.832.218 bytes y devolviendo 500.
+  Una consulta estrecha de The Game Awards sí devolvió 2 padres y 39 hijas, lo
+  que confirmó la causa raíz sin consumir el refresh autorizado.
+- La worktree `codex/atinara-v6-radar-response-budget`, basada en `0fa29d4`,
+  prepara una proyección allowlist y un presupuesto de 1.500.000 bytes que solo
+  recorta padres completos. En el corpus productivo real conserva los 7 padres,
+  108 hijas y 81 rechazos y reduce la respuesta a 1.106.186 bytes; elimina
+  `provider_payload`, trazas y evidencia extensa, pero conserva una prueba HTTPS
+  mínima, identidad, duplicados, issues, elegibilidad y `null != zero`.
+- La corrección pasa 491 unitarias, sintaxis de 126 JavaScript, TypeScript,
+  Edge 9/9, SQL estático 17, navegador 11 casos/3 viewports, canonicalización
+  Node/Deno, benchmark offline 5/5 y un scan Codex Security completo con cero
+  hallazgos. Queda pendiente la subida manual del ZIP diferencial, verificación
+  de CI/Sonar, redeploy exclusivo de `market-radar` y reanudación del smoke.
+
 ### Cierre sistémico local V6 de Radar y ciclo de mercado · 22 de agosto de 2026
 
-- La rama local `codex/atinara-v6-systemic-closure` parte exactamente de
-  `origin/main = 1ca7f79d87486cb29bc25dc29be9b2a2ce38ae5e`. Este corte es una
-  candidata local de despliegue: no se ha aplicado aún en producción, no ha
-  ejecutado Gemini live y no ha confirmado, publicado, resuelto ni liquidado
-  ningún mercado.
+- La rama histórica `codex/atinara-v6-systemic-closure` partió exactamente de
+  `origin/main = 1ca7f79d87486cb29bc25dc29be9b2a2ce38ae5e`. Su entrega ya está
+  canónica y desplegada conforme al checkpoint anterior; no ha ejecutado Gemini
+  live ni ha confirmado, publicado, resuelto o liquidado ningún mercado.
 - La causa de los timeouts del Radar era estructural: el writer llamado
   «batch» recorría cada fila, reentraba en otro writer completo, actualizaba el
   snapshot del proveedor por candidata y no conservaba intención, cursor ni
@@ -83,10 +120,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   `externalNetworkCalls=0`; auditoría npm sin vulnerabilidades, validador Codex
   y `git diff --check` verdes. Esta evidencia de navegador no demuestra la
   integración Browser→Edge→Postgres ni producción.
-- `13.5.2` todavía no puede declararse apto para cierre: faltan subida manual a
-  GitHub, CI/Sonar, aplicación exclusiva de las dos migraciones, despliegue de
-  las Edge y frontend afectados, smokes productivos y el E2E hasta
-  `review_approved`. La confirmación humana y la publicación única siguen
+- `13.5.2` todavía no puede declararse apto para cierre: falta subir y desplegar
+  el checkpoint de presupuesto Radar, completar los smokes productivos y el E2E
+  hasta `review_approved`. La confirmación humana y la publicación única siguen
   requiriendo la pausa y autorización previstas.
 
 ### Radar verificado y reparación local del guardado experto · 15 de agosto de 2026
