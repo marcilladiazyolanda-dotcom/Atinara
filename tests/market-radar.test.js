@@ -1258,6 +1258,7 @@ test("los límites, timeout y refresco siguen acotados sin Cron", () => {
   assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 240/);
   assert.match(edge, /MAX_VISIBLE_GROUPS = 60/);
   assert.match(edge, /RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES/);
+  assert.equal(radar.RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES, 900_000);
   assert.match(edge, /projectRadarDiscoveryView/);
   assert.match(edge, /constrainRadarDiscoveryPayload/);
   assert.match(edge, /RADAR_RESPONSE_BUDGET_EXCEEDED/);

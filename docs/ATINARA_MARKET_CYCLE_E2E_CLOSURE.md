@@ -146,13 +146,17 @@ temporalmente inaccesible o respuesta inválida nunca entra en esos estados.
   con cero borradores programados y cero publicaciones.
 - No se pulsó «Actualizar fuentes». La única interacción fue lectura y filtros;
   mercados, borradores, predicciones, perfiles, LMSR e histórico no cambiaron.
-- Checkpoint local `codex/atinara-v6-radar-response-budget`: allowlist de salida,
-  prueba oficial HTTPS mínima, payloads internos excluidos y budget de 1.500.000
-  bytes con corte solo entre padres. Sobre producción pasa de 5.832.218 a
-  1.106.186 bytes sin omitir ninguno de los 7 padres, 108 hijos o 81 rechazos.
-- Verificación del checkpoint: 491 unitarias, sintaxis 126, TypeScript, Edge 9/9,
-  SQL estático 17, navegador 11 casos en 390/768/1366, benchmark offline 5/5,
-  canonicalización Node/Deno idéntica y Codex Security sin hallazgos.
+- `market-radar` v58 desplegó la allowlist canónica de `d11a08b`. La consulta
+  acotada respondió 200 con 510.180 bytes, pero el listado completo todavía
+  alcanzó 1.119.506 bytes y terminó en 500 aunque sus tres RPC respondieron 200.
+- Checkpoint local `codex/atinara-v6-radar-response-verify`: presupuesto de
+  900.000 bytes con corte exclusivo entre padres. Sobre el corpus productivo
+  entrega 5 padres, 52 hijos y 81 rechazos en 736.373 bytes; conserva familias
+  completas y pagina los 2 padres restantes con `next_parent_offset=5`.
+- Verificación del ajuste: 491 unitarias, sintaxis 126, TypeScript, Edge 9/9,
+  SQL estático 17, navegador 11 casos en 390/768/1366 con cero red externa,
+  benchmark offline 5/5, canonicalización Node/Deno idéntica y scan diferencial
+  Codex Security `e6c29c7e` con cobertura completa y cero hallazgos.
 
 Las pruebas de navegador local demuestran la interfaz y sus contratos con
 dobles controlados, no una integración productiva. Cubren: anomalía temporal que llega a borrador y

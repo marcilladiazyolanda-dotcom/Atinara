@@ -2826,7 +2826,7 @@ export function groupCandidates(candidates = []) {
   }).sort((a, b) => b.quality_score - a.quality_score);
 }
 
-export const RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES = 1_500_000;
+export const RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES = 900_000;
 
 const RADAR_LIST_TEXT_FIELDS = Object.freeze({
   id: 80,

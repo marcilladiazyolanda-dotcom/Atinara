@@ -49,17 +49,22 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   81 rechazos y payloads internos, alcanzando 5.832.218 bytes y devolviendo 500.
   Una consulta estrecha de The Game Awards sí devolvió 2 padres y 39 hijas, lo
   que confirmó la causa raíz sin consumir el refresh autorizado.
-- La worktree `codex/atinara-v6-radar-response-budget`, basada en `0fa29d4`,
-  prepara una proyección allowlist y un presupuesto de 1.500.000 bytes que solo
-  recorta padres completos. En el corpus productivo real conserva los 7 padres,
-  108 hijas y 81 rechazos y reduce la respuesta a 1.106.186 bytes; elimina
-  `provider_payload`, trazas y evidencia extensa, pero conserva una prueba HTTPS
-  mínima, identidad, duplicados, issues, elegibilidad y `null != zero`.
-- La corrección pasa 491 unitarias, sintaxis de 126 JavaScript, TypeScript,
-  Edge 9/9, SQL estático 17, navegador 11 casos/3 viewports, canonicalización
-  Node/Deno, benchmark offline 5/5 y un scan Codex Security completo con cero
-  hallazgos. Queda pendiente la subida manual del ZIP diferencial, verificación
-  de CI/Sonar, redeploy exclusivo de `market-radar` y reanudación del smoke.
+- La proyección allowlist se integró en `d11a08b` y se desplegó exclusivamente
+  como `market-radar` v58. La vista acotada respondió 200 con 510.180 bytes,
+  pero la vista canónica completa aún materializaba 1.119.506 bytes y el runtime
+  devolvía 500 antes de entregar el JSON. Las tres RPC de lectura seguían sanas:
+  108 hijas, 81 rechazos y 43 estados de proveedor.
+- La worktree `codex/atinara-v6-radar-response-verify`, basada en `d11a08b`,
+  reduce el presupuesto operativo a 900.000 bytes. La proyección conserva
+  familias completas y en el corpus productivo entrega 5 padres, 52 hijas y los
+  81 rechazos en 736.373 bytes; los 2 padres restantes quedan accesibles mediante
+  `next_parent_offset=5`. No elimina una hija aislada ni mezcla familias.
+- El ajuste de 900.000 bytes pasa 491 unitarias, sintaxis de 126 JavaScript,
+  TypeScript, Edge 9/9, SQL estático 17, navegador 11 casos/3 viewports y cero
+  red externa, canonicalización Node/Deno con SHA idéntico y benchmark offline
+  5/5. El scan diferencial Codex Security `e6c29c7e` cerró con cobertura completa
+  y cero hallazgos. Queda pendiente la subida manual del nuevo ZIP diferencial,
+  CI/Sonar, redeploy exclusivo de `market-radar` y reanudación del smoke.
 
 ### Cierre sistémico local V6 de Radar y ciclo de mercado · 22 de agosto de 2026
 
