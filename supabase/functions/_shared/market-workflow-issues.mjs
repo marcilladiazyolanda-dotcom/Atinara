@@ -41,6 +41,12 @@ function safeArray(value, maxItems) {
   return Array.isArray(value) ? value.slice(0, maxItems) : [];
 }
 
+function compareUtf16Binary(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function assertIssueEnum(value, allowed, code) {
   if (!allowed.has(value)) throw new TypeError(code);
   return value;
@@ -126,8 +132,8 @@ export async function createMarketWorkflowIssue(input, {
 
 export function validateMarketWorkflowIssue(issue) {
   if (!issue || typeof issue !== "object" || Array.isArray(issue)) throw new TypeError("MARKET_ISSUE_INVALID");
-  const keys = Object.keys(issue).sort();
-  if (JSON.stringify(keys) !== JSON.stringify([...ISSUE_KEYS].sort())) throw new TypeError("MARKET_ISSUE_KEYS_INVALID");
+  const keys = Object.keys(issue).sort(compareUtf16Binary);
+  if (JSON.stringify(keys) !== JSON.stringify([...ISSUE_KEYS].sort(compareUtf16Binary))) throw new TypeError("MARKET_ISSUE_KEYS_INVALID");
   assertUuid(issue.issue_id);
   if (!/^[A-Z][A-Z0-9_]{2,99}$/.test(issue.issue_code)) throw new TypeError("MARKET_ISSUE_CODE_INVALID");
   assertIssueEnum(issue.detected_by, OWNER_STAGES, "MARKET_ISSUE_DETECTOR_INVALID");

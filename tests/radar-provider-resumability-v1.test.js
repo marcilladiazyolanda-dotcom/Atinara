@@ -182,6 +182,10 @@ test("contrato de incidencias V6 es completo, estable y no altera Registry V2.1"
   assert.equal(first.schema_version, "atinara-market-issue-v1");
   assert.equal(first.blocking_scope, "none");
   assert.equal(issues.validateMarketWorkflowIssue(first), true);
+  assert.throws(
+    () => issues.validateMarketWorkflowIssue({ extra_field: true, ...first }),
+    /MARKET_ISSUE_KEYS_INVALID/,
+  );
   assert.doesNotMatch(read("supabase/functions/_shared/atinara-agent-registries-v2.mjs"), /atinara-market-issue-v1/);
   await assert.rejects(
     issues.createMarketWorkflowIssue({ ...input, repairability: "terminal" }, options),
