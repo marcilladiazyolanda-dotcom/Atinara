@@ -1,10 +1,9 @@
 import { PROVIDER_ADAPTER_VERSIONS } from "./constitution.mjs";
+import { nullableFiniteNumber } from "../nullable-number.mjs";
 
 function text(value, max = 500) { return String(value ?? "").trim().slice(0, max); }
 function number(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return nullableFiniteNumber(value);
 }
 function iso(value) { const date = value ? new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value) : null; return date && Number.isFinite(date.getTime()) ? date.toISOString() : null; }
 

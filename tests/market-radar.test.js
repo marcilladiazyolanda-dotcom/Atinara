@@ -997,9 +997,11 @@ test("Tavily se consulta una vez por evento padre y el contrato IA dormido queda
 });
 
 test("los descartes deterministas no consumen el enriquecedor y Kalshi reconcilia resultados", () => {
-  assert.match(edge, /evaluateProviderEligibility\(candidate, now\)/);
+  assert.match(edge, /evaluateProviderEligibility\(classifiedCandidate, now\)/);
+  assert.match(edge, /projectRadarDomainReview\(candidate, humanReview\)/);
+  assert.equal(typeof radar.projectRadarDomainReview, "function");
   assert.match(edge, /const scanCandidates = candidates\.filter\(\(candidate\) => candidate\.eligibility_status === "eligible"\)/);
-  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(classifiedCandidate, providerDecision, now\)/);
   assert.match(edge, /MAX_REJECTED_OUTCOME_RECONCILIATIONS = 16/);
   assert.match(edge, /historical\/markets/);
   assert.match(edge, /reconcileRejectedKalshiOutcomes/);
@@ -1008,14 +1010,15 @@ test("los descartes deterministas no consumen el enriquecedor y Kalshi reconcili
 
 test("la caché solo conserva decisiones de elegibilidad vigentes", () => {
   assert.match(edge, /function hasCurrentEligibility/);
-  assert.match(edge, /filter\(\(candidate\) => hasCurrentEligibility\(candidate, checkedAt\)\)/);
+  assert.match(edge, /filter\(\(candidate\) => filters\.quality !== "fit" \|\| hasCurrentEligibility\(candidate, checkedAt\)\)/);
+  assert.match(edge, /list_market_radar_candidates_v3/);
   assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
-  assert.match(edge, /upsert_market_radar_batch_with_eligibility_v1/);
+  assert.match(edge, /stage_market_radar_refresh_batch_v1/);
 });
 
 test("la vista solo expone candidatas evaluadas con la política predictiva vigente", () => {
   assert.match(edge, /filter\(\(candidate\) => cleanText\(candidate\.eligibility_policy_version, 80\) === RADAR_ELIGIBILITY_POLICY_VERSION\)/);
-  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(classifiedCandidate, providerDecision, now\)/);
   assert.doesNotMatch(edge, /canApplyPredictivePolicyOverride/);
 });
 
@@ -1126,7 +1129,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260815-official-idempotency-v2/);
+  assert.match(adminHtml, /v=20260820-v6-market-cycle1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

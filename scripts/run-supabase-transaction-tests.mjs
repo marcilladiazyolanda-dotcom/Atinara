@@ -12,6 +12,14 @@ const required = [
   "market_family_v4_transaction.sql",
   "radar_family_option_horizon_v1_transaction.sql",
   "radar_expert_save_wrapper_v1_transaction.sql",
+  "radar_provider_resumability_v1_transaction.sql",
+  "radar_provider_resumability_v1_load_transaction.sql",
+  "market_workflow_orchestration_v1_transaction.sql",
+  "radar_refresh_timeout_transaction.sql",
+  "expert_market_cycle_v2_transaction.sql",
+  "radar_retryable_status_v10_transaction.sql",
+  "radar_source_authority_v9_transaction.sql",
+  "radar_technical_hold_projection_v11_transaction.sql",
   "radar_eligibility_v7_transaction.sql",
   "agent_engine_confirmation_v8_transaction.sql",
   "radar_eligibility_rls_v12_transaction.sql",
@@ -22,14 +30,32 @@ const required = [
 const execute = process.argv.includes("--execute");
 const v2Only = process.argv.includes("--v2-only");
 const officialOnly = process.argv.includes("--official-only");
-if (v2Only && officialOnly) throw new Error("SQL_TRANSACTION_SCOPE_CONFLICT");
+const radarResilienceOnly = process.argv.includes("--radar-resilience-only");
+const workflowOnly = process.argv.includes("--workflow-only");
+if ([v2Only, officialOnly, radarResilienceOnly, workflowOnly].filter(Boolean).length > 1) {
+  throw new Error("SQL_TRANSACTION_SCOPE_CONFLICT");
+}
 const v2Required = [
   "radar_eligibility_rls_v12_transaction.sql",
   "ai_gateway_budget_telemetry_transaction.sql",
   "agent_engine_v2_transaction.sql",
 ];
 const officialRequired = ["official_opportunity_idempotency_v2_transaction.sql"];
-const executable = officialOnly ? officialRequired : v2Only ? v2Required : required;
+const radarResilienceRequired = [
+  "radar_provider_resumability_v1_transaction.sql",
+  "radar_provider_resumability_v1_load_transaction.sql",
+  "radar_refresh_timeout_transaction.sql",
+  "expert_market_cycle_v2_transaction.sql",
+  "radar_retryable_status_v10_transaction.sql",
+  "radar_source_authority_v9_transaction.sql",
+  "radar_technical_hold_projection_v11_transaction.sql",
+];
+const workflowRequired = ["market_workflow_orchestration_v1_transaction.sql"];
+const executable = workflowOnly ? workflowRequired
+  : officialOnly ? officialRequired
+  : v2Only ? v2Required
+    : radarResilienceOnly ? radarResilienceRequired
+      : required;
 
 for (const name of required) {
   const file = join(testRoot, name);

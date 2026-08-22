@@ -117,6 +117,13 @@ class DraftFixerRpcError extends Error {
   }
 }
 
+class RepairWorkflowCompletionError extends Error {
+  constructor() {
+    super("REPAIR_WORKFLOW_COMPLETION_FAILED");
+    this.name = "RepairWorkflowCompletionError";
+  }
+}
+
 async function rpc(
   env: Environment,
   name: string,
@@ -608,6 +615,102 @@ function minimalSemanticContext(context: JsonRecord): JsonRecord {
   };
 }
 
+const WORKFLOW_TO_REGISTRY_ISSUE = Object.freeze({
+  TEMPORAL_SOURCE_SEMANTICS_MISMATCH: "TEMPORAL_INCOHERENCE",
+  TEMPORAL_AUTHORITATIVE_DATE_REQUIRED: "TEMPORAL_INCOHERENCE",
+  ESSENTIAL_TEXT_NOT_SPANISH: "INVALID_QUESTION",
+  CHILD_IDENTITY_MISMATCH: "INVALID_QUESTION",
+  CANONICAL_STATEMENT_REQUIRED: "INVALID_QUESTION",
+  SOURCE_METRIC_UNSUPPORTED: "INVALID_METRIC",
+  AGGREGATION_UNSUPPORTED: "INVALID_METRIC",
+  METRIC_CONTRACT_INCOMPLETE: "INVALID_METRIC",
+  MONITOR_INTERVAL_UNSAFE: "INVALID_METRIC",
+  TIMEZONE_REQUIRED: "INVALID_TIMEZONE",
+  TEMPORAL_END_REQUIRED: "TEMPORAL_INCOHERENCE",
+  RADAR_RESOLUTION_SOURCE_REQUIRED: "MISSING_RESOLUTION_SOURCE",
+  SOURCE_ROLE_REQUIRED: "MISSING_RESOLUTION_SOURCE",
+  INVALID_OR_UNVERIFIED_SOURCE: "MISSING_RESOLUTION_SOURCE",
+  SOURCE_PRECEDENCE_INVALID: "UNRESOLVABLE_CONTRACT",
+  SOURCE_FALLBACK_CONDITION_REQUIRED: "MISSING_RESOLUTION_SOURCE",
+  RESOLUTION_PRIMARY_SOURCE_REQUIRED: "MISSING_RESOLUTION_SOURCE",
+  RESOLUTION_PRIMARY_SOURCE_MULTIPLE: "UNRESOLVABLE_CONTRACT",
+  SOURCE_RETENTION_INCOMPATIBLE: "UNRESOLVABLE_CONTRACT",
+});
+
+async function loadDraftWorkflowIssues(
+  env: Environment,
+  draftId: string,
+  expectedVersion: number,
+): Promise<JsonRecord[]> {
+  const raw = await serviceRpc(env, "get_market_workflow_issues_v1", {
+    subject_type_input: "market_draft",
+    subject_key_input: draftId,
+    subject_version_input: String(expectedVersion),
+  });
+  return (Array.isArray(raw as unknown) ? raw as unknown as JsonRecord[] : [])
+    .filter(isRecord)
+    .filter((issue) => !["resolved", "superseded"].includes(cleanText(issue.status, 40)));
+}
+
+function correctorWorkflowIssues(issues: JsonRecord[]): JsonRecord[] {
+  return issues.filter((issue) => cleanText(issue.owner_stage,40)==="corrector"
+    && ["auto_repairable","human_editable","waiting_authoritative_source"]
+      .includes(cleanText(issue.repairability,40)));
+}
+
+function contextWithWorkflowIssues(context: JsonRecord, workflowIssues: JsonRecord[]): JsonRecord {
+  const mappedCodes = workflowIssues.map((issue) => {
+    const code = cleanText(issue.issue_code, 100);
+    return WORKFLOW_TO_REGISTRY_ISSUE[code as keyof typeof WORKFLOW_TO_REGISTRY_ISSUE] || code;
+  }).filter((code) => VALIDATOR_CONTENT_ISSUE_CODE_SET.has(code));
+  const existingCodes = Array.isArray(context.issue_codes) ? context.issue_codes : [];
+  return {
+    ...context,
+    workflow_issues: workflowIssues,
+    workflow_issue_ids: workflowIssues.map((issue) => cleanText(issue.issue_id, 80)).filter(Boolean),
+    issue_codes: [...new Set([...existingCodes.map((value) => cleanText(value, 100)), ...mappedCodes])],
+    repairable_issue_codes: [...new Set([
+      ...(Array.isArray(context.repairable_issue_codes)
+        ? context.repairable_issue_codes.map((value) => cleanText(value, 100)) : []),
+      ...mappedCodes.filter((code) => REPAIRABLE_ISSUE_CODE_SET.has(code)),
+    ])],
+    repair_applicable: context.repair_applicable === true
+      || mappedCodes.some((code) => REPAIRABLE_ISSUE_CODE_SET.has(code)),
+  };
+}
+
+async function transitionWorkflowIssues(
+  env: Environment,
+  issues: JsonRecord[],
+  newStatus: "in_progress" | "waiting" | "resolved",
+  nextAction: string,
+  resolutionMethod: string | null = null,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  for (const issue of issues) {
+    const expectedStatus = cleanText(issue.status, 40) || "open";
+    if (["resolved", "superseded"].includes(expectedStatus) || expectedStatus === newStatus) continue;
+    try {
+      await serviceRpc(env, "transition_market_workflow_issue_v1", {
+        issue_id_input: cleanText(issue.issue_id, 80),
+        expected_status_input: expectedStatus,
+        new_status_input: newStatus,
+        owner_stage_input: newStatus === "resolved" ? "validator" : "corrector",
+        next_action_input: nextAction,
+        resolution_method_input: resolutionMethod,
+        evidence_refs_input: [],
+      });
+    } catch (error) {
+      console.warn("workflow issue transition", JSON.stringify({
+        code: safeErrorCode(error),
+        target_status: newStatus,
+      }));
+      warnings.push("MARKET_WORKFLOW_TRANSITION_INCOMPLETE");
+    }
+  }
+  return [...new Set(warnings)];
+}
+
 async function semanticEdit(
   env: Environment,
   context: JsonRecord,
@@ -1044,6 +1147,8 @@ async function executeRepairAndRevalidate(
   let expectedVersion = Number(body.expected_version);
   const agent = body.__agent as CorrectorAgentV2;
   const registry = body.__registry as JsonRecord;
+  const requestedIssueIds = Array.isArray(body.issue_ids)
+    ? [...new Set(body.issue_ids.map((value) => cleanText(value, 80)).filter(Boolean))] : [];
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(draftId) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
     return jsonResponse({ error: "INVALID_REPAIR_REQUEST", message: "El identificador o la versión no son válidos." }, 400);
   }
@@ -1056,6 +1161,7 @@ async function executeRepairAndRevalidate(
   let lastReview: JsonRecord = {};
   let archetype = "generic_binary_event";
   const workflowRequestKey = cleanText(body.attempt_id, 80) || crypto.randomUUID();
+  const workflowAttemptId = cleanText(body.__workflow_attempt_id, 80);
   const repairRequestIds = await Promise.all(Array.from(
     { length: AUTONOMOUS_REPAIR_MAX_ROUNDS },
     (_, index) => deterministicRequestUuid(workflowRequestKey, `repair:${index + 1}`),
@@ -1099,7 +1205,15 @@ async function executeRepairAndRevalidate(
   // Nunca se compila una reparación desde un rechazo de otra política o
   // esquema. Primero se obtiene una revisión v3 sobre la versión exacta; solo
   // sus incidencias compatibles pueden alimentar el plan de corrección.
-  const initialContext = await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization);
+  const initialContext = contextWithWorkflowIssues(
+    await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization),
+    correctorWorkflowIssues(await loadDraftWorkflowIssues(env, draftId, expectedVersion)),
+  );
+  const authoritativeIssueIds = (initialContext.workflow_issue_ids as string[] | undefined) ?? [];
+  if (
+    requestedIssueIds.length !== authoritativeIssueIds.length
+    || requestedIssueIds.some((issueId) => !authoritativeIssueIds.includes(issueId))
+  ) throw new Error("WORKFLOW_ISSUE_SET_MOVED");
   const initialDraft = isRecord(initialContext.draft) ? initialContext.draft : null;
   if (!initialDraft) throw new Error("DRAFT_NOT_FOUND");
   if (Number(initialDraft.content_version) !== expectedVersion) throw new Error("DRAFT_VERSION_MOVED");
@@ -1139,7 +1253,7 @@ async function executeRepairAndRevalidate(
         resolves: false,
       }, 503);
     }
-    if (compatibleReview.status === "approved") {
+    if (["approved", "review_approved"].includes(cleanText(compatibleReview.status, 80))) {
       return jsonResponse({
         ok: true,
         repair_applied: false,
@@ -1171,7 +1285,10 @@ async function executeRepairAndRevalidate(
 
   for (let round = 1; round <= AUTONOMOUS_REPAIR_MAX_ROUNDS; round += 1) {
     if (Date.now() >= sourceValidationDeadlineAt || sourceValidationSignal.aborted) return budgetResponse();
-    const context = await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization);
+    const context = contextWithWorkflowIssues(
+      await rpc(env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization),
+      correctorWorkflowIssues(await loadDraftWorkflowIssues(env, draftId, expectedVersion)),
+    );
     const draft = isRecord(context.draft) ? context.draft : null;
     if (!draft) throw new Error("DRAFT_NOT_FOUND");
     if (Number(draft.content_version) !== expectedVersion) throw new Error("DRAFT_VERSION_MOVED");
@@ -1348,7 +1465,7 @@ async function executeRepairAndRevalidate(
         repair_temporal_contract: deterministic.temporal_contract,
       }, repaired, sources, archetype);
       const applied = await dispatchCorrectorTool(agent, "persist_single_version", () =>
-        rpc(env, "apply_market_draft_expert_repair_v2", {
+        rpc(env, "apply_market_draft_expert_repair_with_checkpoint_v1", {
           draft_id_input: draftId,
           expected_version_input: expectedVersion,
           draft_input: { ...repaired, _idempotency_key: repairRequestIds[round - 1] },
@@ -1372,6 +1489,12 @@ async function executeRepairAndRevalidate(
             registry_hash: registry.hash,
             strategy_keys: writeStrategy.strategyKeys,
           },
+          workflow_attempt_id_input: workflowAttemptId,
+          repair_round_input: round,
+          repair_request_id_input: repairRequestIds[round - 1],
+          review_attempt_id_input: reviewAttemptIds[round - 1],
+          workflow_issue_ids_input: Array.isArray(context.workflow_issue_ids)
+            ? context.workflow_issue_ids : [],
         }, authorization), {
           round,
           strategyKey: writeStrategy.strategyKey,
@@ -1401,6 +1524,27 @@ async function executeRepairAndRevalidate(
       );
       changed.forEach((field) => allChanged.add(field));
       deterministic.explanations.forEach((item: JsonRecord) => allExplanations.push(item));
+    }
+
+    if (!changed.length) {
+      await rpc(env, "checkpoint_market_draft_repair_noop_v1", {
+        workflow_attempt_id_input: workflowAttemptId,
+        draft_id_input: draftId,
+        expected_version_input: expectedVersion,
+        repair_round_input: round,
+        repair_request_id_input: repairRequestIds[round - 1],
+        review_attempt_id_input: reviewAttemptIds[round - 1],
+        workflow_issue_ids_input: Array.isArray(context.workflow_issue_ids)
+          ? context.workflow_issue_ids : [],
+      }, authorization);
+    }
+
+    try {
+      await serviceRpc(env,"prepare_market_draft_repair_revalidation_v1",{
+        attempt_id_input:workflowAttemptId,repair_round_input:round,
+      });
+    } catch {
+      throw new RepairWorkflowCompletionError();
     }
 
     lastReview = await revalidate(env, authorization, draftId, expectedVersion, reviewAttemptIds[round - 1]);
@@ -1512,6 +1656,12 @@ async function repairAndRevalidate(
   const draftId = cleanText(body.draft_id, 100);
   const expectedVersion = Number(body.expected_version);
   const requestKey = cleanText(body.attempt_id, 80) || crypto.randomUUID();
+  if (body.issue_ids !== undefined && (
+    !Array.isArray(body.issue_ids) || body.issue_ids.length>40
+    || body.issue_ids.some((value) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanText(value, 80)))
+  )) {
+    return jsonResponse({ error: "INVALID_REPAIR_ISSUES", message: "Las incidencias seleccionadas no son válidas." }, 400);
+  }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey)) {
     return jsonResponse({
       error: "INVALID_REPAIR_REQUEST",
@@ -1525,13 +1675,190 @@ async function repairAndRevalidate(
       resolves: false,
     }, 400);
   }
+  const requestedIssueIds = Array.isArray(body.issue_ids)
+    ? [...new Set(body.issue_ids.map((value) => cleanText(value, 80)).filter(Boolean))] : [];
+  let publicationEvidenceReplayRequiresRepair = false;
+  if (requestedIssueIds.length) {
+    const replayContext = await rpc(
+      env,"get_market_draft_expert_repair_context",{draft_id_input:draftId},authorization,
+    );
+    const replayDraft = isRecord(replayContext.draft) ? replayContext.draft : null;
+    if (replayDraft && Number(replayDraft.content_version) === expectedVersion
+      && /^[a-f0-9]{64}$/.test(cleanText(replayDraft.content_fingerprint,80))) {
+      const replayed = await serviceRpc(
+        env,"get_market_draft_publication_evidence_revalidation_replay_v1",{
+          draft_id_input:draftId,expected_version_input:expectedVersion,
+          expected_fingerprint_input:cleanText(replayDraft.content_fingerprint,80),
+          issue_ids_input:requestedIssueIds,request_id_input:requestKey,
+          actor_id_input:cleanText(body.__actor_id,80),
+        },
+      );
+      if (replayed.replayed === true && replayed.status !== "repair_required") return jsonResponse({
+        ...replayed,
+        message:replayed.status === "validation_required"
+          ? "La falta de baseline ya se registró. El expediente espera una nueva validación y confirmación humanas."
+          : "La evidencia ya se había revalidado y la autoridad humana sigue vigente.",
+      },replayed.status === "validation_required" ? 409 : 200);
+      publicationEvidenceReplayRequiresRepair = replayed.replayed === true
+        && replayed.status === "repair_required";
+    }
+  }
+  const preflightWorkflowIssues = await loadDraftWorkflowIssues(env, draftId, expectedVersion);
+  if (preflightWorkflowIssues.some((issue) => cleanText(issue.repairability, 40)==="terminal"
+    || cleanText(issue.blocking_scope, 40)==="terminal")) {
+    return jsonResponse({
+      ok:false,error:"DRAFT_TERMINAL_NOT_REPAIRABLE",
+      message:"El expediente contiene una incidencia terminal y se conserva para archivo; el Corrector no modificó el borrador.",
+      failure_phase:"preflight",retryable:false,state_preserved:true,draft_private:true,
+      publishes:false,confirms:false,resolves:false,
+    },409);
+  }
+  const publicationEvidenceIssues = correctorWorkflowIssues(preflightWorkflowIssues).filter((issue) =>
+    cleanText(issue.blocking_scope, 40) === "publication"
+      && cleanText(issue.next_action, 100) === "revalidate_temporal_evidence");
+  const publicationEvidenceIds = publicationEvidenceIssues
+    .map((issue) => cleanText(issue.issue_id, 80)).filter(Boolean);
+  const publicationEvidenceOnly = publicationEvidenceIds.length > 0
+    && publicationEvidenceIds.length === correctorWorkflowIssues(preflightWorkflowIssues).length
+    && requestedIssueIds.length === publicationEvidenceIds.length
+    && requestedIssueIds.every((issueId) => publicationEvidenceIds.includes(issueId));
+  if (publicationEvidenceIds.length > 0 && !publicationEvidenceOnly) {
+    return jsonResponse({
+      ok:false,error:"MARKET_WORKFLOW_EVIDENCE_REVALIDATION_SCOPE_MOVED",
+      message:"Las incidencias de publicación cambiaron. Recarga el expediente antes de revalidar; la confirmación se conserva.",
+      authority_preserved:true,state_preserved:true,retryable:true,draft_private:true,
+      publishes:false,confirms:false,resolves:false,
+    },409);
+  }
+  if (publicationEvidenceOnly && !publicationEvidenceReplayRequiresRepair) {
+    let publicationRepairReopened = false;
+    const evidenceContext = await rpc(
+      env, "get_market_draft_expert_repair_context", { draft_id_input: draftId }, authorization,
+    );
+    const evidenceDraft = isRecord(evidenceContext.draft) ? evidenceContext.draft : null;
+    if (evidenceDraft && cleanText(evidenceDraft.workflow_status, 40) === "human_confirmed"
+      && Number(evidenceDraft.content_version) === expectedVersion
+      && /^[a-f0-9]{64}$/.test(cleanText(evidenceDraft.content_fingerprint, 80))) {
+      const replayArgs = {
+        draft_id_input:draftId,expected_version_input:expectedVersion,
+        expected_fingerprint_input:cleanText(evidenceDraft.content_fingerprint,80),
+        issue_ids_input:publicationEvidenceIds,primary_source_check_id_input:null,
+        request_id_input:requestKey,actor_id_input:cleanText(body.__actor_id,80),
+      };
+      try {
+        const replayed = await serviceRpc(env,"revalidate_market_draft_publication_evidence_v1",replayArgs);
+        if (replayed.idempotency_replay === true) return jsonResponse({
+          ...replayed,
+          message:replayed.status === "validation_required"
+            ? "La falta de baseline ya se registró. El expediente espera una nueva validación y confirmación humanas."
+            : replayed.authority_preserved === true
+            ? "La evidencia ya se había revalidado y la autoridad humana sigue vigente."
+            : "El cambio de evidencia ya estaba registrado; el borrador continúa en la ruta de corrección.",
+        },replayed.status === "validation_required" ? 409 : 200);
+      } catch (error) {
+        if (!(error instanceof DraftFixerRpcError)
+          || error.message !== "PRIMARY_SOURCE_CHECK_REQUIRED") throw error;
+      }
+      const evidenceDeadlineAt = Math.min(env.execution.absoluteDeadlineAt, Date.now() + SOURCE_VALIDATION_BUDGET_MS);
+      const primaryDiscovery = await discoverOfficialPrimary(
+        env, evidenceContext, evidenceDeadlineAt, env.execution.signal,
+      );
+      if (primaryDiscovery.warnings.length && !primaryDiscovery.source) {
+        return jsonResponse({
+          ok:false,error:primaryDiscovery.warnings[0],classification:"technical",
+          message:"La fuente no pudo revalidarse. La aprobación y la confirmación humanas siguen vigentes.",
+          authority_preserved:true,state_preserved:true,retryable:true,draft_private:true,
+          publishes:false,confirms:false,resolves:false,
+        },503);
+      }
+      const currentPrimaryUrl = safePublicUrl(
+        isRecord(evidenceDraft.primary_source) ? evidenceDraft.primary_source.url : null,
+      );
+      const discoveredPrimaryUrl = safePublicUrl(primaryDiscovery.source?.url);
+      if (primaryDiscovery.checkSnapshot && currentPrimaryUrl && discoveredPrimaryUrl) {
+        const primarySourceCheckId = await recordPrimarySourceCheck(
+          env,draftId,expectedVersion,primaryDiscovery.checkSnapshot,
+        );
+        try {
+          const preserved = await serviceRpc(env,"revalidate_market_draft_publication_evidence_v1",{
+            ...replayArgs,primary_source_check_id_input:primarySourceCheckId,
+          });
+          if (preserved.status === "validation_required") return jsonResponse({
+            ...preserved,
+            message:"La aprobación legacy no tenía una atestación comparable. El borrador vuelve al Validator con la fuente actual verificada y deberá confirmarse de nuevo antes de publicar.",
+          },409);
+          if (preserved.status !== "repair_required") return jsonResponse({
+            ...preserved,
+            message:"La evidencia oficial sigue siendo equivalente. Se conservan la aprobación y la confirmación humanas.",
+          });
+          publicationRepairReopened = true;
+        } catch (error) {
+          if (error instanceof DraftFixerRpcError
+            && error.message === "PUBLICATION_EVIDENCE_BASELINE_MISSING") {
+            return jsonResponse({
+              ok:false,error:error.message,
+              message:"No existe una atestación histórica suficiente para comparar la fuente. La confirmación se conserva y hace falta revisión humana.",
+              authority_preserved:true,state_preserved:true,retryable:false,draft_private:true,
+              publishes:false,confirms:false,resolves:false,
+            },409);
+          }
+          throw error;
+        }
+      } else {
+        return jsonResponse({
+          ok:false,error:"AUTHORITATIVE_SOURCE_REVALIDATION_PENDING",
+          message:"La evidencia oficial aún no permite demostrar si el contrato cambió. La aprobación y la confirmación humanas siguen vigentes.",
+          authority_preserved:true,state_preserved:true,retryable:true,draft_private:true,
+          publishes:false,confirms:false,resolves:false,
+        },409);
+      }
+    }
+    if (!publicationRepairReopened) {
+      return jsonResponse({
+        ok:false,error:"PUBLICATION_EVIDENCE_REVALIDATION_REQUIRED",
+        message:"La incidencia exige revalidar la evidencia antes de abrir una corrección. La autoridad humana se conserva.",
+        authority_preserved:true,state_preserved:true,retryable:true,draft_private:true,
+        publishes:false,confirms:false,resolves:false,
+      },409);
+    }
+  }
 
-  const beginning = await rpc(env, "begin_market_draft_repair_attempt_v1", {
+  const beginning = await rpc(env, "begin_market_draft_repair_workflow_v1", {
     draft_id_input: draftId,
     expected_version_input: expectedVersion,
     request_key_input: requestKey,
   }, authorization);
   const attemptId = cleanText(beginning.attempt_id, 80);
+  if (beginning.status === "completion_required" && attemptId) {
+    let reconciled: JsonRecord;
+    try {
+      await serviceRpc(env,"prepare_market_draft_repair_revalidation_v1",{
+        attempt_id_input:attemptId,repair_round_input:Number(beginning.repair_round),
+      });
+      reconciled = await serviceRpc(env, "reconcile_market_draft_repair_workflow_v1", {
+        attempt_id_input: attemptId,
+      });
+    } catch {
+      return jsonResponse({
+        ok:false,error:"REPAIR_WORKFLOW_COMPLETION_FAILED",
+        message:"El checkpoint sigue guardado, pero su reconciliación aún no pudo terminar.",
+        attempt_id:attemptId,retryable:true,state_preserved:true,draft_private:true,
+        publishes:false,confirms:false,resolves:false,
+      },503);
+    }
+    if (reconciled.status === "completion_review_pending") {
+      await revalidate(
+        env,authorization,draftId,Number(beginning.resulting_version),
+        cleanText(beginning.review_attempt_id,80),
+      );
+      reconciled = await serviceRpc(env, "reconcile_market_draft_repair_workflow_v1", {
+        attempt_id_input: attemptId,
+      });
+    }
+    const replayStatus = Number(reconciled.http_status)
+      || (reconciled.status === "completion_review_pending" ? 202 : 200);
+    return jsonResponse({ ...reconciled,attempt_id: attemptId,state_preserved: true },replayStatus);
+  }
   if (beginning.idempotency_replay === true) {
     const replayStatus = Number(beginning.http_status) || (beginning.status === "already_in_progress" ? 202 : 200);
     return jsonResponse({ ...beginning, attempt_id: attemptId, state_preserved: beginning.state_preserved !== false }, replayStatus);
@@ -1542,6 +1869,9 @@ async function repairAndRevalidate(
     draftId,
     expectedVersion,
     attemptId || requestKey,
+  );
+  const trackedWorkflowIssues = correctorWorkflowIssues(
+    await loadDraftWorkflowIssues(env, draftId, expectedVersion),
   );
 
   const complete = async (payloadValue: JsonRecord, httpStatus: number): Promise<Response> => {
@@ -1579,6 +1909,14 @@ async function repairAndRevalidate(
     const agentTelemetry = isRecord(payloadValue.agent_execution)
       ? await persistCorrectorAgentExecution(env, payloadValue.agent_execution)
       : { status: "not_attempted", warnings: [] as string[] };
+    const waitingForSource = /SOURCE|TEMPORAL|EVIDENCE/.test(errorCode)
+      || payloadValue.waiting_authoritative_source === true;
+    const workflowStatus = succeeded ? "repair_applied"
+      : waitingForSource ? "repair_waiting_source"
+        : retryable ? "repair_failed_technical" : "repair_human_decision_required";
+    const workflowNextAction = succeeded ? "request_market_validation"
+      : waitingForSource ? "retry_authoritative_source_research"
+        : retryable ? "retry_draft_repair" : "edit_draft_manually";
     const responsePayload = {
       ...payloadValue,
       attempt_id: attemptId,
@@ -1596,26 +1934,59 @@ async function repairAndRevalidate(
       publishes: false,
       confirms: false,
       resolves: false,
+      repair_status: workflowStatus,
+      owner_stage: succeeded ? "validator" : "corrector",
+      next_action: workflowNextAction,
+      workflow_issue_ids: trackedWorkflowIssues.map((issue) => cleanText(issue.issue_id, 80)).filter(Boolean),
     };
-    const recorded = await serviceRpc(env, "complete_market_draft_repair_attempt_v1", {
-      attempt_id_input: attemptId,
-      status_input: status,
-      phase_input: phase,
-      classification_input: classification,
-      retryable_input: retryable,
-      error_code_input: errorCode || null,
-      patch_fingerprint_input: patchFingerprint || null,
-      resulting_version_input: Number(payloadValue.new_version) || expectedVersion,
-      resulting_fingerprint_input: resultingFingerprint || null,
-      response_payload_input: responsePayload,
-    });
+    let recorded: JsonRecord;
+    try {
+      recorded = await serviceRpc(env, "complete_market_draft_repair_workflow_v1", {
+        attempt_id_input: attemptId,
+        status_input: status,
+        phase_input: phase,
+        classification_input: classification,
+        retryable_input: retryable,
+        error_code_input: errorCode || null,
+        patch_fingerprint_input: patchFingerprint || null,
+        resulting_version_input: Number(payloadValue.new_version) || expectedVersion,
+        resulting_fingerprint_input: resultingFingerprint || null,
+        response_payload_input: responsePayload,
+        draft_id_input: draftId,
+        repair_status_input: workflowStatus,
+        owner_stage_input: succeeded ? "validator" : "corrector",
+        next_action_input: workflowNextAction,
+        workflow_issue_status_input: succeeded ? "resolved" : "waiting",
+        resolution_method_input: succeeded ? "authorized_repair_applied" : null,
+      });
+    } catch {
+      throw new RepairWorkflowCompletionError();
+    }
     return jsonResponse(recorded, httpStatus);
   };
+
+  const claimWarnings = await transitionWorkflowIssues(
+    env,
+    trackedWorkflowIssues,
+    "in_progress",
+    "run_authorized_repair_strategy",
+  );
+  if (claimWarnings.length) {
+    return complete({
+      ok: false,
+      error: "MARKET_WORKFLOW_TRANSITION_FAILED",
+      classification: "technical",
+      retryable: true,
+      message: "No se pudo reclamar de forma autoritativa la incidencia. El borrador continúa privado y puede reintentarse.",
+      warnings: claimWarnings,
+    }, 409);
+  }
 
   try {
     const response = await executeRepairAndRevalidate(env, authorization, {
       ...body,
       attempt_id: requestKey,
+      __workflow_attempt_id: attemptId,
       __agent: agent,
       __registry: registry,
     });
@@ -1628,6 +1999,21 @@ async function repairAndRevalidate(
       agent_execution: agent.complete(agentStatus, cleanText(payload.error, 100) || null),
     }, response.status);
   } catch (error) {
+    if (error instanceof RepairWorkflowCompletionError) {
+      return jsonResponse({
+        ok: false,
+        error: "REPAIR_WORKFLOW_COMPLETION_FAILED",
+        message: "La finalización técnica no quedó confirmada. El intento conserva su identidad y puede reanudarse sin repetir una finalización parcial.",
+        attempt_id: attemptId,
+        failure_phase: "complete",
+        retryable: true,
+        state_preserved: true,
+        draft_private: true,
+        publishes: false,
+        confirms: false,
+        resolves: false,
+      }, 503);
+    }
     const code = safeErrorCode(error);
     const retryable = /TIMEOUT|RATE_LIMIT|HTTP_5|NETWORK|BUDGET/.test(code);
     const conflict = /VERSION|CONFLICT|AMBIGUOUS/.test(code);
@@ -1677,7 +2063,7 @@ Deno.serve(async (request: Request) => {
     if (!isRecord(body) || cleanText(body.action, 80) !== "repair-and-revalidate") {
       return jsonResponse({ error: "DRAFT_FIXER_ACTION_INVALID", message: "La acción solicitada no existe." }, 400);
     }
-    return await repairAndRevalidate(env, authorization, body);
+    return await repairAndRevalidate(env, authorization, { ...body, __actor_id: authenticated.id });
   } catch (error) {
     const code = safeErrorCode(error);
     const upstreamStatus = error instanceof DraftFixerRpcError ? error.status : 0;

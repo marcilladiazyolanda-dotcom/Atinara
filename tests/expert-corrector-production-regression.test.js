@@ -138,7 +138,7 @@ test("Corrector experto · un review v2 obsoleto nunca guía la reparación v3",
   assert.equal(fixture.latest_review.policy_version, "atinara-market-review-policy-v2");
   assert.deepEqual(repair.repairIssuePlan(fixture).codes, []);
 
-  const preflightStart = fixerEdge.indexOf("const initialContext = await rpc");
+  const preflightStart = fixerEdge.indexOf("const initialContext = contextWithWorkflowIssues");
   const repairLoopStart = fixerEdge.indexOf(
     "for (let round = 1; round <= AUTONOMOUS_REPAIR_MAX_ROUNDS; round += 1)",
   );

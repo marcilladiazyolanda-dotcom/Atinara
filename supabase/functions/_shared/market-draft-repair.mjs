@@ -82,7 +82,7 @@ export function enforceReviewIssueEvidence(resultValue, issuesValue) {
 }
 
 export const REPAIRABLE_ISSUE_CODES = Object.freeze([
-  ...VALIDATOR_CONTENT_ISSUE_CODES,
+  ...VALIDATOR_CONTENT_ISSUE_CODES.filter((code) => code !== "AUTOMATIC_REVIEW_INCONCLUSIVE"),
   "QUESTION_REQUIRED",
   "QUESTION_AMBIGUOUS_TERM",
   "SUBJECT_REQUIRED",
@@ -110,8 +110,8 @@ export const REPAIR_ARCHETYPE_CAPABILITIES = Object.freeze(Object.fromEntries(
   })]),
 ));
 
-export const REPAIR_ISSUE_CAPABILITIES = Object.freeze(Object.fromEntries(
-  REPAIRABLE_ISSUE_CODES.map((code) => [code, Object.freeze({
+export const REPAIR_ISSUE_CAPABILITIES = Object.freeze({
+  ...Object.fromEntries(REPAIRABLE_ISSUE_CODES.map((code) => [code, Object.freeze({
     severity: "blocking",
     repairability: "auto_repair",
     disposition: ["AMBIGUOUS_SUBJECT", "CONTRADICTORY_CRITERIA", "UNRESOLVABLE_CONTRACT"].includes(code)
@@ -121,8 +121,15 @@ export const REPAIR_ISSUE_CAPABILITIES = Object.freeze(Object.fromEntries(
         : "deterministic_repair_or_specific_escalation",
     invariants: ["preserve_contract_meaning", "preserve_private_state", "never_confirm_or_publish"],
     expected_result: "new_version_then_compatible_review",
-  })]),
-));
+  })])),
+  AUTOMATIC_REVIEW_INCONCLUSIVE: Object.freeze({
+    severity: "warning",
+    repairability: "validator_retry_only",
+    disposition: "retry_validator_or_human_review",
+    invariants: ["preserve_contract_meaning", "preserve_private_state", "never_confirm_or_publish"],
+    expected_result: "new_validator_attempt_without_draft_write",
+  }),
+});
 
 export function repairIssuePlan(context) {
   const issues = Array.isArray(context?.repairable_content_issues)
@@ -131,7 +138,8 @@ export function repairIssuePlan(context) {
   const codes = [...new Set(issues
     .map((issue) => cleanText(issue.code, 100).toUpperCase())
     .filter(Boolean))].sort((left, right) => left.localeCompare(right));
-  const unsupported = codes.filter((code) => !REPAIR_ISSUE_CAPABILITIES[code]);
+  const repairableCodes = new Set(REPAIRABLE_ISSUE_CODES);
+  const unsupported = codes.filter((code) => !repairableCodes.has(code));
   return {
     codes,
     unsupported,

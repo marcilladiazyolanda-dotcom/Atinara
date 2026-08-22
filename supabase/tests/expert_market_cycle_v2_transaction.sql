@@ -1,4 +1,4 @@
--- Ejecutar después de 20260811100833_harden_repair_evidence_and_idempotency_v3.sql.
+-- Ejecutar después de V6; las primitivas históricas solo permanecen internas.
 -- Todo el ejercicio se revierte: no publica, confirma, modifica mercados ni economía.
 begin;
 
@@ -38,7 +38,9 @@ begin
   end if;
 
   if has_function_privilege('anon', 'public.begin_market_draft_repair_attempt_v1(uuid,bigint,uuid)', 'execute')
-     or not has_function_privilege('authenticated', 'public.begin_market_draft_repair_attempt_v1(uuid,bigint,uuid)', 'execute')
+     or has_function_privilege('authenticated', 'public.begin_market_draft_repair_attempt_v1(uuid,bigint,uuid)', 'execute')
+     or has_function_privilege('anon', 'public.begin_market_draft_repair_workflow_v1(uuid,bigint,uuid)', 'execute')
+     or not has_function_privilege('authenticated', 'public.begin_market_draft_repair_workflow_v1(uuid,bigint,uuid)', 'execute')
      or has_function_privilege('authenticated', 'public.get_market_draft_primary_source_attestation_v1(uuid,bigint)', 'execute')
      or not has_function_privilege('service_role', 'public.get_market_draft_primary_source_attestation_v1(uuid,bigint)', 'execute')
      or has_function_privilege('authenticated', 'public.get_market_draft_bound_context_attestation_v1(uuid,bigint)', 'execute')
@@ -137,10 +139,10 @@ begin
       raise exception 'REPAIR_CONTEXT_NOT_AUTHORITATIVE';
     end if;
 
-    first_attempt := public.begin_market_draft_repair_attempt_v1(
+    first_attempt := public.begin_market_draft_repair_workflow_v1(
       draft_row.id, draft_row.content_version, attempt_key
     );
-    replay_attempt := public.begin_market_draft_repair_attempt_v1(
+    replay_attempt := public.begin_market_draft_repair_workflow_v1(
       draft_row.id, draft_row.content_version, attempt_key
     );
     if first_attempt ->> 'status' <> 'started'
@@ -151,7 +153,7 @@ begin
     end if;
 
     begin
-      perform public.begin_market_draft_repair_attempt_v1(
+      perform public.begin_market_draft_repair_workflow_v1(
         draft_row.id, draft_row.content_version + 1, gen_random_uuid()
       );
       raise exception 'STALE_REPAIR_VERSION_ACCEPTED';
@@ -201,7 +203,7 @@ begin
       jsonb_build_object('role', 'authenticated', 'sub', admin_id_value)::text,
       true
     );
-    moved_version_replay := public.begin_market_draft_repair_attempt_v1(
+    moved_version_replay := public.begin_market_draft_repair_workflow_v1(
       draft_row.id, draft_row.content_version, attempt_key
     );
     if completed_attempt ->> 'status' is distinct from 'no_op'

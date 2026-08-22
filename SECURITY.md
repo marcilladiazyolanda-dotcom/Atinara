@@ -100,6 +100,9 @@ Límites principales:
 - Cambiar contenido material, versión, huella, revisión, candidata o check de elegibilidad invalida cualquier atestación incompatible.
 - Las revisiones no se reutilizan por similitud textual. La reutilización exige equivalencia canónica, versión compatible y huella válida.
 - Un estado técnico no puede persistirse como hecho terminal ni reemplazar el último estado válido sin una marca honesta de degradación.
+- Una incidencia reparable no puede bloquear el acceso al agente que debe resolverla. Cada estado no terminal conserva `owner_stage`, `blocking_scope` y `next_action`; solo `terminal` impide crear un borrador privado.
+- Las fechas técnicas del proveedor se conservan con campo y semántica originales. Ningún fallback desde un cierre de negociación o expiración concede autoridad sobre evaluación, cierre o resolución de Atinara.
+- La ausencia de probabilidad o métrica permanece ausente. `null`, vacío o dato inválido no pueden mostrarse ni persistirse como cero, `0 %`, `50 %` u otro valor inventado.
 
 ### 5.5 Agent Engine V2.1 y AI Gateway
 
@@ -116,6 +119,9 @@ Límites principales:
 - Las huellas de Gateway, Runtime V2 y Registry V2 usan canonicalización versionada: `ATINARA_CANONICAL_JSON_VERSION = "atinara-canonical-json-v1"`. La versión no se incorpora al contenido hasheado ni a datos persistidos; v1 conserva las huellas productivas válidas y cualquier cambio incompatible exige v2, transición explícita y pruebas cruzadas Node/Deno.
 - Un perfil de smoke de una sola inferencia debe ser administrativo, específico de tarea y transporte, inyectable solo como contexto interno y fail-closed antes de red; no puede cambiar el comportamiento estándar, reintentar, ejecutar fallback de schema ni eludir versión, atestación, idempotencia, deadline, telemetría o autoridad humana.
 - Official Opportunity Discovery solo descarga HTTPS desde fuentes primarias activas del registro, revalida dominio y categoría tras cada redirect, limita tiempo, bytes en streaming y nodos estructurados, y trata el HTML como dato no confiable sin persistir consulta o contenido crudo. El body de entrada también se limita por bytes antes de materializarse; JSON inválido y logs se reducen a códigos estables. La comprobación de duplicados falla cerrada, una fuente alternativa exige otra identidad registral y el autofill rechaza análisis obsoletos. Antes de cualquier red debe reclamar en Postgres una UUID ligada a actor y huella; doble submit y retry reproducen la misma fila/resultado y retornan antes de tocar señales. Otra intención solo puede refrescar una señal con un payload estrictamente tipado y materialmente distinto, preservando rechazos humanos e invalidando análisis obsoletos. Solo se persisten contadores, códigos y cuotas numéricas saneadas. Sus RPC service-only solo pueden escribir señales/runs técnicos; análisis, autofill y guardado continúan separados y humanos.
+- Un refresh Radar reclama una intención autoritativa antes de red y persiste manifest, lotes, cursor, lease y finalización. El replay exacto no duplica checks, cuarentenas, históricos o snapshots; un lote fallido queda reanudable y una lease vencida no autoriza una finalización tardía.
+- Los circuitos de proveedor se separan por capacidad. Tavily es enriquecimiento y no puede degradar la salud de catálogo de Polymarket o Kalshi. Un último resultado válido solo se conserva mientras su propia elegibilidad siga vigente y nunca se presenta como un fetch nuevo.
+- El ledger de incidencias V6 es append-only y distinto del Registry V2.1. Una misma `issue_id` puede enlazarse a varios artefactos, pero sus transiciones son CAS/eventos y no otorgan aprobación, confirmación o publicación.
 
 ### 5.6 Datos y privacidad
 

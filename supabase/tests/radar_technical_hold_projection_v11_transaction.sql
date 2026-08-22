@@ -14,10 +14,8 @@ begin
   ) then
     raise exception 'RADAR_TECHNICAL_HOLD_PROJECTED_AS_REJECTION';
   end if;
-  if position(
-       $$elsif new.eligibility_status = 'technical_hold'$$
-       in pg_get_functiondef('private.enforce_market_radar_eligibility_v1()'::regprocedure)
-     ) = 0 then
+  if pg_get_functiondef('private.enforce_market_radar_eligibility_v1()'::regprocedure)
+       !~ $$elsif\s+new[.]eligibility_status\s*=\s*'technical_hold'$$ then
     raise exception 'RADAR_TECHNICAL_HOLD_TRIGGER_BRANCH_MISSING';
   end if;
 end;

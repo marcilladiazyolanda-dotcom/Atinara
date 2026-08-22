@@ -1446,6 +1446,7 @@ test("Corrector adversarial · la matriz de capacidades B2B nunca promete una re
     "deterministic_repair_or_specific_escalation",
     "research_then_repair_or_specific_escalation",
     "repair_or_specific_escalation",
+    "retry_validator_or_human_review",
   ]);
   for (const [code, capability] of Object.entries(repair.REPAIR_ISSUE_CAPABILITIES)) {
     assert.ok(allowed.has(capability.disposition), `${code}: ${capability.disposition}`);
@@ -1467,6 +1468,18 @@ test("Corrector adversarial · la matriz de capacidades B2B nunca promete una re
   for (const code of ["AMBIGUOUS_SUBJECT", "CONTRADICTORY_CRITERIA", "UNRESOLVABLE_CONTRACT"]) {
     assert.equal(repair.REPAIR_ISSUE_CAPABILITIES[code].disposition, "repair_or_specific_escalation");
   }
+  assert.deepEqual(
+    {
+      disposition: repair.REPAIR_ISSUE_CAPABILITIES.AUTOMATIC_REVIEW_INCONCLUSIVE.disposition,
+      repairability: repair.REPAIR_ISSUE_CAPABILITIES.AUTOMATIC_REVIEW_INCONCLUSIVE.repairability,
+      expected_result: repair.REPAIR_ISSUE_CAPABILITIES.AUTOMATIC_REVIEW_INCONCLUSIVE.expected_result,
+    },
+    {
+      disposition: "retry_validator_or_human_review",
+      repairability: "validator_retry_only",
+      expected_result: "new_validator_attempt_without_draft_write",
+    },
+  );
 
   const withoutPeriod = {
     draft: {

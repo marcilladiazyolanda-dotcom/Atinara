@@ -14,8 +14,16 @@ const cycleV2Migration = readFileSync(
   join(root, "supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql"),
   "utf8",
 );
+const resumabilityMigration = readFileSync(
+  join(root, "supabase/migrations/20260820163014_harden_radar_provider_resumability_v1.sql"),
+  "utf8",
+);
 const sqlTest = readFileSync(
   join(root, "supabase/tests/radar_refresh_timeout_transaction.sql"),
+  "utf8",
+);
+const resumabilitySqlTest = readFileSync(
+  join(root, "supabase/tests/radar_provider_resumability_v1_transaction.sql"),
   "utf8",
 );
 
@@ -39,15 +47,16 @@ test("la segunda escritura factual reutiliza la identidad familiar si sus entrad
   assert.match(migration, /update of normalized_payload, duplicate_matches, family_key, family_child_key, external_event_id/);
 });
 
-test("cada proveedor se persiste en lotes pequeños y finaliza con un total exacto", () => {
+test("cada proveedor usa una intención durable, lotes reanudables y una sola finalización", () => {
   assert.match(edge, /RADAR_PERSISTENCE_BATCH_SIZE = 24/);
-  assert.match(edge, /for \(let offset = 0; offset < candidates\.length; offset \+= RADAR_PERSISTENCE_BATCH_SIZE\)/);
-  assert.match(edge, /candidates\.slice\(offset, offset \+ RADAR_PERSISTENCE_BATCH_SIZE\)/);
-  assert.match(edge, /upsert_market_radar_batch_with_fact_checks_v1/);
-  assert.match(edge, /finalize_market_radar_provider_refresh_v2/);
-  assert.match(edge, /const providerCandidateCount = Math\.max\(persistedCount, successfulProviderCandidateCount\)/);
-  assert.match(edge, /"available", providerCandidateCount/);
-  assert.match(edge, /persistedCount > 0 \? "partial_error" : "unavailable"/);
+  assert.match(edge, /begin_market_radar_refresh_v2/);
+  assert.match(edge, /stage_market_radar_refresh_batch_v1/);
+  assert.match(edge, /seal_market_radar_refresh_v1/);
+  assert.match(edge, /process_market_radar_refresh_batch_v1/);
+  assert.match(edge, /split_market_radar_refresh_batch_v1/);
+  assert.match(edge, /finalize_market_radar_refresh_v3/);
+  assert.match(resumabilityMigration, /unique \(request_id, provider, capability, batch_ordinal, split_path\)/);
+  assert.match(resumabilityMigration, /market_radar_provider_history_refresh_uidx/);
   assert.match(cycleV2Migration, /result_count_input > 240/);
   assert.match(cycleV2Migration, /grant execute on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*to service_role/);
   assert.match(cycleV2Migration, /revoke all on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*from public, anon, authenticated, service_role/);
@@ -56,7 +65,10 @@ test("cada proveedor se persiste en lotes pequeños y finaliza con un total exac
 test("un fallo de escritura queda aislado al proveedor y no derriba todo el Radar", () => {
   assert.match(edge, /databaseCode === "57014"/);
   assert.match(edge, /RADAR_PERSISTENCE_TIMEOUT/);
-  assert.match(edge, /for \(const provider of discoveredByProvider\.keys\(\)\) \{[\s\S]*try \{[\s\S]*errors\.push\(failure\)/);
+  assert.match(edge, /candidateProviderErrors\.push/);
+  assert.match(edge, /defer_market_radar_refresh_v1/);
+  assert.match(edge, /eligibility_state_preserved:\s*true/);
+  assert.match(resumabilityMigration, /on conflict \(refresh_request_id,provider,refresh_batch_id,refresh_item_ordinal\)/);
   assert.match(shared, /RADAR_PERSISTENCE_TIMEOUT:[\s\S]*Los demás proveedores y los lotes ya validados siguen disponibles/);
   assert.match(shared, /RADAR_PERSISTENCE_FAILED:[\s\S]*Los demás proveedores y los lotes ya validados siguen disponibles/);
 });
@@ -72,4 +84,9 @@ test("la corrección es transaccional, mantiene privilegios mínimos y no toca l
   assert.match(sqlTest, /^--[^]*?\nbegin;/);
   assert.match(sqlTest, /set local statement_timeout = '8s'/);
   assert.match(sqlTest, /rollback;\s*$/);
+  assert.match(resumabilityMigration, /^--[^]*?\nbegin;/);
+  assert.match(resumabilityMigration, /force row level security/);
+  assert.match(resumabilityMigration, /commit;\s*$/);
+  assert.match(resumabilitySqlTest, /^--[^]*?\nbegin;/);
+  assert.match(resumabilitySqlTest, /rollback;\s*$/);
 });

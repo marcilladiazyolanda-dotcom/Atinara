@@ -1,11 +1,11 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 15 de agosto de 2026.
+Última actualización del contexto: 20 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado vigente:** Atinara Engine V2.1 usa `market-radar` v56,
-> `market-draft-fixer` v20, `validate-market-draft` v28, `market-expert` v23 y
+> **Estado productivo verificado antes del paquete V6:** Atinara Engine V2.1 usa `market-radar` v56,
+> `market-draft-fixer` v20, `validate-market-draft` v29, `market-expert` v25 y
 > `analyze-market-resolution` v16, todas activas con `verify_jwt=true`. Las
 > cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
 > desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
@@ -22,6 +22,72 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > técnica reintentable. Las tres migraciones V2.1 quedaron aplicadas una sola
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
+
+### Cierre sistémico local V6 de Radar y ciclo de mercado · 22 de agosto de 2026
+
+- La rama local `codex/atinara-v6-systemic-closure` parte exactamente de
+  `origin/main = 1ca7f79d87486cb29bc25dc29be9b2a2ce38ae5e`. Este corte es una
+  candidata local de despliegue: no se ha aplicado aún en producción, no ha
+  ejecutado Gemini live y no ha confirmado, publicado, resuelto ni liquidado
+  ningún mercado.
+- La causa de los timeouts del Radar era estructural: el writer llamado
+  «batch» recorría cada fila, reentraba en otro writer completo, actualizaba el
+  snapshot del proveedor por candidata y no conservaba intención, cursor ni
+  lease durable. La migración nueva
+  `20260820163014_harden_radar_provider_resumability_v1.sql` añade intención,
+  lotes reanudables, manifest, lease, circuito por capacidad, cuarentena única,
+  eventos append-only y finalización idempotente. Tavily queda como capacidad
+  de enriquecimiento y no degrada la salud de Polymarket o Kalshi.
+- Radar, Editor, Validator, Corrector y la puerta de publicación comparten ahora
+  un contrato versionado de incidencias. Una misma `issue_id` viaja entre
+  sujetos mediante enlaces append-only; cada incidencia declara responsable,
+  reparabilidad, alcance de bloqueo y siguiente acción. Un problema reparable
+  permite formulario y borrador privado, pero no aprobación ni publicación.
+  Una condición terminal se detiene en Radar y no expone Editor, Gemini o
+  creación de borrador.
+- `atinara-temporal-contract-v1` conserva por separado todas las fechas crudas
+  del proveedor y su semántica. El cierre técnico nunca se convierte por
+  fallback en fecha de evaluación de Atinara; sin evidencia oficial, las fechas
+  canónicas permanecen nulas y se crea una incidencia dirigida. No se inventa
+  `Europe/Madrid` en un borrador incompleto. La ausencia numérica tampoco se
+  convierte en cero ni en `0 %`.
+- La identidad y el dominio se calculan mediante reglas generales: las opciones
+  categóricas conservan `option:<slug>`, los placeholders permanecen separados,
+  la paginación corta por evento padre y una señal gaming negativa solo domina
+  cuando no existe evidencia positiva tipada del mismo campo. No se añadieron
+  títulos concretos a producción.
+- La migración aditiva
+  `20260820174316_add_market_workflow_orchestration_v1.sql` incorpora ledger de
+  incidencias, enlaces, snapshots temporales, intentos de publicación, estados
+  de artefacto y wrappers de recuperación. Registry V2.1, su versión y su hash
+  permanecen sin cambios. RLS está forzada, no existen grants directos de API y
+  los writers estrechos vuelven a comprobar actor, versión, huella y autoridad.
+- La publicación programada revalida la fuente registrada sin Gemini antes del
+  efecto. Evidencia equivalente permite un segundo pase idempotente; un cambio
+  material reabre Corrector; una aprobación legacy sin baseline vuelve al
+  Validator sin backfill; un fallo técnico conserva autoridad. Un `force_review`
+  compatible conserva confirmación solo con un evento auditado de carry-forward.
+- El hardening final liga también la revalidación just-in-time de Radar a la
+  huella de dominio actual y hace autoritativa únicamente la check PRIMARY más
+  reciente. Las inserciones de checks se serializan contra el borrador y un
+  retry técnico de publicación reclama/resuelve solo su incidencia exacta; no
+  borra otros blockers ni debilita la confirmación humana.
+- Evidencia local actual: 490/490 unitarias; sintaxis de 126 JavaScript;
+  canonicalización idéntica Node/Deno; TypeScript; 17 suites SQL estáticas;
+  58 archivos de migración, de los que se aplicaron 57 desde cero en PostgreSQL
+  17 omitiendo únicamente la reconciliación material histórica
+  `20260809145000`; 17/17 suites SQL reales con `ROLLBACK`; carga Radar de 240
+  filas; carreras reales de Radar, Official Opportunity y publicación con una
+  sola intención/efecto; Edge 9/9; once casos de UI local con Auth/RPC/Edge
+  simulados en 390/768/1366 px; benchmark offline 5/5 con
+  `externalNetworkCalls=0`; auditoría npm sin vulnerabilidades, validador Codex
+  y `git diff --check` verdes. Esta evidencia de navegador no demuestra la
+  integración Browser→Edge→Postgres ni producción.
+- `13.5.2` todavía no puede declararse apto para cierre: faltan subida manual a
+  GitHub, CI/Sonar, aplicación exclusiva de las dos migraciones, despliegue de
+  las Edge y frontend afectados, smokes productivos y el E2E hasta
+  `review_approved`. La confirmación humana y la publicación única siguen
+  requiriendo la pausa y autorización previstas.
 
 ### Radar verificado y reparación local del guardado experto · 15 de agosto de 2026
 

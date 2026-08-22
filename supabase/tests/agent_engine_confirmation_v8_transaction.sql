@@ -1,5 +1,5 @@
 -- Matriz transaccional del Agent Engine v8. Ejecutar después de la migración
--- 20260811221546 y conservar siempre ROLLBACK.
+-- 20260811221546 + V6 y conservar siempre ROLLBACK.
 
 begin;
 
@@ -65,9 +65,13 @@ begin
     raise exception 'TEST_AGENT_ENGINE_SERVICE_RPC_ACL_INVALID';
   end if;
   if has_function_privilege('anon', 'public.confirm_market_draft_review(uuid,bigint)', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.confirm_market_draft_review(uuid,bigint)', 'EXECUTE')
+     or has_function_privilege('authenticated', 'public.confirm_market_draft_review(uuid,bigint)', 'EXECUTE')
+     or has_function_privilege('anon', 'public.confirm_market_draft_review_v2(uuid,bigint)', 'EXECUTE')
+     or not has_function_privilege('authenticated', 'public.confirm_market_draft_review_v2(uuid,bigint)', 'EXECUTE')
      or has_function_privilege('anon', 'public.publish_market_draft(uuid,bigint,timestamp with time zone)', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.publish_market_draft(uuid,bigint,timestamp with time zone)', 'EXECUTE') then
+     or has_function_privilege('authenticated', 'public.publish_market_draft(uuid,bigint,timestamp with time zone)', 'EXECUTE')
+     or has_function_privilege('anon', 'public.publish_market_draft_v2(uuid,bigint,timestamp with time zone,uuid)', 'EXECUTE')
+     or not has_function_privilege('authenticated', 'public.publish_market_draft_v2(uuid,bigint,timestamp with time zone,uuid)', 'EXECUTE') then
     raise exception 'TEST_AGENT_ENGINE_ADMIN_RPC_ACL_INVALID';
   end if;
 

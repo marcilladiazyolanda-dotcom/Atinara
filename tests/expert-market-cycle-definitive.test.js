@@ -94,7 +94,8 @@ test("Editor · candidata abierta pero incompleta puede materializar un borrador
 });
 
 test("Editor · un bloqueo terminal nunca habilita materialización ni publicación", () => {
-  assert.match(editorEdge, /const terminalRoots = rawHardBlocks\.filter/);
+  assert.match(editorEdge, /const terminalRoots = uniqueStrings\(\[/);
+  assert.match(editorEdge, /blocking_scope, 40\) === "terminal"/);
   assert.match(editorEdge, /let hardBlocks = terminalRoots\.length \? terminalRoots/);
   assert.match(editorEdge, /can_publish:\s*false/);
   assert.match(migration, /can_materialize_private_repair_draft/);

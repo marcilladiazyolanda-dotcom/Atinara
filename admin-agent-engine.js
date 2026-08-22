@@ -44,6 +44,9 @@
       not_resolvable: "No resoluble"
     },
     gate: {
+      proposal_ready: "Propuesta lista",
+      proposal_ready_with_issues: "Propuesta privada con incidencias",
+      candidate_terminal: "Candidata terminal",
       validated: "Propuesta validada",
       warning: "Apta con advertencias",
       repairable: "Reparación automática disponible",
@@ -55,6 +58,10 @@
     TEMPORAL_END_REQUIRED: "Falta la fecha final de evaluación.",
     TEMPORAL_WINDOW_ALREADY_ENDED: "La ventana temporal ya terminó.",
     TEMPORAL_INCOHERENCE: "Las fechas del contrato son incompatibles.",
+    TEMPORAL_AUTHORITATIVE_DATE_REQUIRED: "Falta una fecha oficial demostrada; puede guardarse un borrador privado, pero no aprobarse.",
+    TEMPORAL_SOURCE_SEMANTICS_MISMATCH: "La fecha técnica del proveedor no demuestra la fecha canónica de Atinara.",
+    ESSENTIAL_TEXT_NOT_SPANISH: "La pregunta y los criterios esenciales deben quedar en español antes de aprobar.",
+    GAMING_DOMAIN_REVIEW_REQUIRED: "La pertenencia al dominio gaming necesita revisión determinista.",
     RESOLUTION_PRIMARY_SOURCE_REQUIRED: "Falta una fuente primaria de resolución.",
     RESOLUTION_PRIMARY_SOURCE_MULTIPLE: "Hay más de una fuente marcada como primaria.",
     SOURCE_PRECEDENCE_INVALID: "El orden de precedencia de las fuentes no es válido.",
@@ -77,6 +84,38 @@
     RADAR_NORMALIZER_OUTDATED: "La candidata debe actualizarse con la versión actual del normalizador.",
     RADAR_ELIGIBILITY_POLICY_OUTDATED: "La candidata debe revisarse con la política de elegibilidad actual.",
     RADAR_RESOLUTION_SOURCE_REQUIRED: "Falta una fuente de resolución verificable para esta candidata."
+  };
+  const sourceRoleLabels = {
+    DISCOVERY_SIGNAL: "Señal de descubrimiento",
+    PROBABILITY_SIGNAL: "Señal de probabilidad",
+    CONTEXT_SOURCE: "Fuente de contexto",
+    PRIMARY_RESOLUTION: "Fuente primaria de resolución",
+    FALLBACK_RESOLUTION: "Fuente alternativa de resolución",
+    CORROBORATION: "Fuente de corroboración",
+    PROHIBITED_FOR_RESOLUTION: "No válida para resolver",
+  };
+  const workflowOwnerLabels = {
+    radar: "Radar",
+    editor: "Agente Editor",
+    validator: "Validator",
+    corrector: "Corrector",
+    human_review: "Revisión humana",
+    publication_gate: "Puerta de publicación",
+    provider: "Proveedor",
+    internal_platform: "Plataforma interna",
+  };
+  const workflowActionLabels = {
+    resolve_temporal_contract: "Investigar y normalizar la fecha",
+    repair_temporal_or_source_contract: "Buscar evidencia y corregir el contrato",
+    repair_child_identity: "Alinear la identidad de la opción",
+    repair_essential_spanish_text: "Corregir el contrato esencial en español",
+    repair_draft_issues: "Abrir el Corrector",
+    request_market_validation: "Solicitar una nueva validación",
+    retry_market_validation: "Reintentar Validator",
+    refresh_draft_eligibility: "Renovar la elegibilidad",
+    review_gaming_domain: "Revisar la pertenencia gaming",
+    recheck_provider_identity: "Volver a comprobar la opción del proveedor",
+    archive_terminal_candidate: "Conservar en la auditoría terminal",
   };
 
   function escapeHtml(value) {
@@ -315,10 +354,18 @@
       failed: "Fallido",
       no_op: "Sin cambios"
     };
+    const toolLabels = {
+      load_authoritative_origin: "Cargar origen autoritativo",
+      run_deterministic_gate: "Aplicar puerta determinista",
+      request_editorial_enrichment: "Preparar análisis editorial",
+      validate_resolution_contract: "Validar el Plan de Resolución",
+      build_private_draft_gate: "Preparar la puerta del borrador privado",
+      persist_editor_run: "Guardar el expediente experto",
+    };
     return `<section class="market-agent-timeline" aria-label="Trazabilidad del Agente Editor">
       <h4>Trazabilidad de herramientas</h4>
       <ol>${tools.map((step) => `<li>
-        <span>${escapeHtml(step.tool || "paso_controlado")}</span>
+        <span>${escapeHtml(toolLabels[step.tool] || "Comprobación controlada")}</span>
         <small>${escapeHtml(statusLabels[step.status] || "Registrado")}${Number.isFinite(Number(step.duration_ms)) ? ` · ${Math.max(0, Number(step.duration_ms))} ms` : ""}</small>
       </li>`).join("")}</ol>
     </section>`;
@@ -394,9 +441,10 @@
     const repairMaterialization = gate.can_save_private_draft !== true
       && gate.can_materialize_private_repair_draft === true;
     const canApply = packageCanApply(pkg, candidateId) && !isApplying;
+    const workflowIssues = Array.isArray(gate.workflow_issues) ? gate.workflow_issues : [];
     const sourceMarkup = sources.length
       ? `<ul class="market-expert-source-list">${sources.map((source) => `<li>
-          <strong>${escapeHtml(source.role || "Fuente")}</strong>
+          <strong>${escapeHtml(sourceRoleLabels[source.role] || "Fuente registrada")}</strong>
           <span>Precedencia ${escapeHtml(source.precedence || "—")}${source.required ? " · obligatoria" : ""}</span>
           ${externalLink(source.url, "Abrir fuente")}
         </li>`).join("")}</ul>`
@@ -408,14 +456,14 @@
           <p class="eyebrow">Expediente experto · sin cadena de pensamiento</p>
           <h3>Agente Editor</h3>
         </div>
-        <span class="market-expert-dossier-status">${escapeHtml(labels.gate[gate.status] || gate.status || "Pendiente")}</span>
+        <span class="market-expert-dossier-status">${escapeHtml(labels.gate[gate.status] || "Estado pendiente")}</span>
       </div>
       <p>${escapeHtml(verdict.summary || "Dictamen estructurado disponible.")}</p>
       <dl class="market-expert-dossier-grid">
-        <div><dt>Decisión</dt><dd>${escapeHtml(labels.decision[verdict.decision] || verdict.decision || "Pendiente")}</dd></div>
-        <div><dt>Integridad</dt><dd>${escapeHtml(labels.integrity[verdict.integrity_status] || verdict.integrity_status || "Pendiente")}</dd></div>
-        <div><dt>Pronosticabilidad</dt><dd>${escapeHtml(labels.forecastability[verdict.forecastability_status] || verdict.forecastability_status || "Pendiente")}</dd></div>
-        <div><dt>Fuentes</dt><dd>${escapeHtml(labels.sources[verdict.source_readiness] || verdict.source_readiness || "Pendiente")}</dd></div>
+        <div><dt>Decisión</dt><dd>${escapeHtml(labels.decision[verdict.decision] || "Pendiente")}</dd></div>
+        <div><dt>Integridad</dt><dd>${escapeHtml(labels.integrity[verdict.integrity_status] || "Pendiente")}</dd></div>
+        <div><dt>Pronosticabilidad</dt><dd>${escapeHtml(labels.forecastability[verdict.forecastability_status] || "Pendiente")}</dd></div>
+        <div><dt>Fuentes</dt><dd>${escapeHtml(labels.sources[verdict.source_readiness] || "Pendiente")}</dd></div>
         <div><dt>Confianza del dictamen</dt><dd>${escapeHtml(verdict.confidence ?? "—")}/100</dd></div>
         <div><dt>Confirmación humana</dt><dd>${verdict.human_review_required === false ? "No" : "Obligatoria"}</dd></div>
       </dl>
@@ -437,8 +485,8 @@
       <div>
         <h4>Plan de Resolución</h4>
         <div class="market-expert-contract-grid">
-          <div><span class="expert-field-label">Estrategia</span><span>${escapeHtml(contract.capture_strategy || "Pendiente")}</span></div>
-          <div><span class="expert-field-label">Proveedor contractual</span><span>${escapeHtml(contract.provider || "Pendiente")}</span></div>
+          <div><span class="expert-field-label">Estrategia</span><span>${escapeHtml({ manual_official_source: "Revisión de fuente oficial", snapshot_at_deadline: "Captura en la fecha límite", poll_during_window: "Seguimiento durante el periodo" }[contract.capture_strategy] || "Pendiente")}</span></div>
+          <div><span class="expert-field-label">Proveedor contractual</span><span>${escapeHtml({ official_web: "Fuente oficial registrada", polymarket: "Polymarket", kalshi: "Kalshi" }[contract.provider] || "Proveedor registrado")}</span></div>
           <div><span class="expert-field-label">Evaluación</span><span>${escapeHtml(displayDate(contract.evaluation_at || contract.window_end))}</span></div>
           <div><span class="expert-field-label">Zona horaria</span><span>${escapeHtml(contract.timezone || "Pendiente")}</span></div>
         </div>
@@ -446,6 +494,10 @@
         ${sourceMarkup}
       </div>
       ${hardBlocks.length ? `<div><h4>Bloqueos</h4>${listMarkup(hardBlocks, "error")}</div>` : ""}
+      ${workflowIssues.length ? `<div><h4>Incidencias que viajarán con el borrador</h4><ul class="market-expert-source-list">${workflowIssues.map((issue) => `<li>
+        <strong>${escapeHtml(reasonLabels[issue.issue_code] || "Incidencia estructurada")}</strong>
+        <span>Responsable: ${escapeHtml(workflowOwnerLabels[issue.owner_stage] || "Revisión administrativa")} · Próxima acción: ${escapeHtml(workflowActionLabels[issue.next_action] || "Revisar el borrador")}</span>
+      </li>`).join("")}</ul></div>` : ""}
       ${warnings.length ? `<div><h4>Advertencias</h4>${listMarkup(warnings, "warning")}</div>` : ""}
       <div class="market-expert-dossier-actions">
         <button class="primary-button" type="button" data-expert-apply="${escapeHtml(candidateId)}"${canApply ? "" : " disabled"}>${isApplying ? "Preparando propuesta…" : "Aplicar propuesta al formulario"}</button>
@@ -455,7 +507,7 @@
           ? repairMaterialization
             ? "Solo pre-rellena. Al guardar se creará un borrador privado en reparación; el Corrector completará lo deducible y volverá a validarlo."
             : "Solo pre-rellena. El borrador se guardará cuando tú pulses Guardar y conservará Radar, dictamen, contrato y fuentes en una única transacción."
-          : "La propuesta no puede pasar al borrador mientras conserve bloqueos o no tenga fecha y fuente primaria."}</small>
+          : "La propuesta solo se detiene aquí ante una condición terminal. Las incidencias reparables pasan al borrador privado con responsable y siguiente acción."}</small>
       </div>`;
   }
 
@@ -538,7 +590,7 @@
 
   function applyPackageToForm(form, pkg, preparationRevision) {
     const fields = pkg.fields || {};
-    const timezone = fields.timezone || pkg.contract?.timezone || "Europe/Madrid";
+    const timezone = fields.timezone || pkg.contract?.timezone || "";
     const mapping = {
       market_slug: fields.market_slug,
       question: fields.question,
@@ -589,7 +641,7 @@
     return status;
   }
 
-  function localDateTimeToIso(value, timeZone = "Europe/Madrid") {
+  function localDateTimeToIso(value, timeZone = "") {
     const raw = String(value || "").trim();
     if (!raw) return "";
     if (/Z$|[+-]\d{2}:?\d{2}$/.test(raw)) {
@@ -612,7 +664,7 @@
     plainFields.forEach((field) => { payload[field] = String(data.get(field) || "").trim(); });
     payload.yes_option = payload.yes_option || "Sí";
     payload.no_option = payload.no_option || "No";
-    payload.timezone = payload.timezone || "Europe/Madrid";
+    payload.timezone = payload.timezone || "";
     payload.evaluation_ends_at = localDateTimeToIso(payload.evaluation_ends_at, payload.timezone);
     payload.resolution_deadline = localDateTimeToIso(payload.resolution_deadline, payload.timezone);
     const primaryUrl = String(data.get("primary_source_url") || "").trim();
@@ -683,7 +735,7 @@
       evaluation_at: payload.evaluation_ends_at || null,
       window_end: payload.evaluation_ends_at || null,
       resolution_deadline: payload.resolution_deadline || null,
-      timezone: payload.timezone || "Europe/Madrid",
+      timezone: payload.timezone || null,
       official_event_url: primaryUrl || pkg.contract?.official_event_url || null,
       canonical_url: primaryUrl || pkg.contract?.canonical_url || null,
       sources
@@ -716,12 +768,18 @@
       }
       const sources = sourcesForDraft(pkg, payload);
       const contract = contractForDraft(pkg, payload, sources);
+      const issueDraft = pkg?.gate?.status === "proposal_ready_with_issues"
+        || (Array.isArray(pkg?.gate?.workflow_issues) && pkg.gate.workflow_issues.length > 0);
       const repairMaterialization = pkg?.gate?.can_save_private_draft !== true
         && pkg?.gate?.can_materialize_private_repair_draft === true;
-      const rpcName = repairMaterialization
-        ? "materialize_market_draft_for_repair_v1"
-        : "save_market_draft_from_radar_intelligence";
-      const rpcPayload = repairMaterialization ? {
+      const rpcName = issueDraft ? "save_market_draft_from_expert_with_issues_v1"
+        : repairMaterialization ? "materialize_market_draft_for_repair_v1"
+          : "save_market_draft_from_radar_intelligence";
+      const rpcPayload = issueDraft ? {
+        candidate_id_input: pkg.origin.id,
+        expert_run_id_input: pkg.run.id,
+        draft_input: payload
+      } : repairMaterialization ? {
         candidate_id_input: pkg.origin.id,
         expected_preparation_revision_input: Number(form.dataset.preparationRevision),
         expert_run_id_input: pkg.run.id,
@@ -750,7 +808,9 @@
       try {
         sessionStorage.setItem(SAVED_NOTICE_KEY, JSON.stringify({
           draft_id: data?.draft?.id || null,
-          message: repairMaterialization
+          message: issueDraft
+            ? "Borrador privado guardado con sus incidencias, responsable y siguiente acción. Aún no puede aprobarse ni publicarse."
+            : repairMaterialization
             ? "Borrador privado creado en estado de reparación. Ya puede intervenir el Corrector Experto."
             : "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
         }));
@@ -804,25 +864,55 @@
             "El expediente no corresponde a la revisión vigente. Analiza de nuevo antes de preparar."
           );
         }
+        const issueFlow = currentPackage?.gate?.status === "proposal_ready_with_issues"
+          || (Array.isArray(currentPackage?.gate?.workflow_issues)
+            && currentPackage.gate.workflow_issues.length > 0);
+        const workflowIssueCodes = new Set(
+          (Array.isArray(currentPackage?.gate?.workflow_issues)
+            ? currentPackage.gate.workflow_issues : [])
+            .map((issue) => String(issue?.issue_code || "").trim()),
+        );
+        const eligibilityRecoveryFlow = issueFlow
+          && ["RADAR_ELIGIBILITY_REQUIRED", "ELIGIBILITY_EXPIRED"]
+            .some((code) => workflowIssueCodes.has(code));
+        let preparationRevision = currentRevision;
+        let pkg = currentPackage;
         const bridge = window.atinaraMarketAdminBridge;
-        if (typeof bridge?.prepareRadarCandidate !== "function" || typeof bridge?.refreshRadarExpertAnalysis !== "function") {
-          throw localTypedError("RADAR_PREPARATION_UNAVAILABLE", "La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
+        if (!issueFlow || eligibilityRecoveryFlow) {
+          if (typeof bridge?.prepareRadarCandidate !== "function" || typeof bridge?.refreshRadarExpertAnalysis !== "function") {
+            throw localTypedError("RADAR_PREPARATION_UNAVAILABLE", "La preparación segura del Radar no está disponible. Recarga la página antes de continuar.");
+          }
+          let recoveryFailedSafely = false;
+          try {
+            setBridgeStatus(eligibilityRecoveryFlow
+              ? "Renovando la elegibilidad antes de aplicar la propuesta…"
+              : "Expediente apto. Radar está reservando una revisión privada…", "warning");
+            const preparation = await bridge.prepareRadarCandidate(candidateId, { throwOnError: true });
+            preparationRevision = preparationRevisionFrom(preparation);
+            if (!preparationRevision) {
+              throw new Error("Radar no devolvió una revisión de preparación válida. La propuesta no se ha aplicado.");
+            }
+            invalidatePackage(candidateId);
+            setBridgeStatus("Radar preparado. Actualizando el dictamen para la revisión reservada…", "warning");
+            await bridge.refreshRadarExpertAnalysis(candidateId, { force: false, preparationRevision });
+            invalidatePackage(candidateId);
+            setBridgeStatus("Análisis actualizado. Cargando el expediente exacto de esta preparación…", "warning");
+            pkg = await loadPackage(candidateId, true);
+          } catch (recoveryError) {
+            if (!eligibilityRecoveryFlow || recoveryError?.retryable !== true
+              || typeof bridge?.openPrivateIssueDraftForm !== "function") throw recoveryError;
+            recoveryFailedSafely = true;
+            setBridgeStatus("La elegibilidad no pudo renovarse por una incidencia técnica. La propuesta privada conserva la incidencia y no recibe autoridad.", "warning");
+            bridge.openPrivateIssueDraftForm(candidateId,currentPackage,currentRevision);
+          }
+          if (recoveryFailedSafely) pkg = currentPackage;
+        } else {
+          if (typeof bridge?.openPrivateIssueDraftForm !== "function") {
+            throw localTypedError("RADAR_PREPARATION_UNAVAILABLE", "El formulario privado recuperable no está disponible. Recarga la página.");
+          }
+          setBridgeStatus("Aplicando la propuesta privada con sus incidencias; no se concede ninguna autoridad.", "warning");
+          bridge.openPrivateIssueDraftForm(candidateId,pkg,preparationRevision);
         }
-        setBridgeStatus("Expediente apto. Radar está reservando una revisión privada…", "warning");
-        const preparation = await bridge.prepareRadarCandidate(candidateId, { throwOnError: true });
-        const preparationRevision = preparationRevisionFrom(preparation);
-        if (!preparationRevision) {
-          throw new Error("Radar no devolvió una revisión de preparación válida. La propuesta no se ha aplicado.");
-        }
-        invalidatePackage(candidateId);
-        setBridgeStatus("Radar preparado. Actualizando el dictamen para la revisión reservada…", "warning");
-        await bridge.refreshRadarExpertAnalysis(candidateId, {
-          force: true,
-          preparationRevision
-        });
-        invalidatePackage(candidateId);
-        setBridgeStatus("Análisis actualizado. Cargando el expediente exacto de esta preparación…", "warning");
-        const pkg = await loadPackage(candidateId, true);
         if (pkg?.origin?.type !== "radar_candidate" || pkg?.origin?.id !== candidateId) {
           throw new Error("El expediente experto no pertenece a la candidata preparada. La propuesta no se ha aplicado.");
         }
@@ -830,7 +920,7 @@
           throw new Error("El expediente experto no corresponde a la revisión actual de Radar. Vuelve a aplicar la propuesta.");
         }
         if (!packageCanApply(pkg, candidateId)) {
-          throw new Error("La propuesta conserva bloqueos o carece de fecha y fuente primaria.");
+          throw new Error("La propuesta no puede avanzar porque existe una condición terminal.");
         }
         const form = await waitForForm();
         rememberPreparedPackage(candidateId, preparationRevision, pkg);

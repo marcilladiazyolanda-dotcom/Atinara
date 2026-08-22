@@ -9,6 +9,13 @@
   const helpers = window.atinaraMarketAdmin;
   if (!root || !helpers) return;
   const officialRequestCoordinator = window.atinaraOfficialOpportunityRequests?.createCoordinator?.() || null;
+  const radarRequestCoordinator = window.atinaraRadarRefreshRequests?.createCoordinator?.() || null;
+  const publicationAttemptIds = new Map();
+  const PUBLICATION_ATTEMPT_KEY_PREFIX = "atinara:market-publication-attempt:v1";
+  const eligibilityRecoveryOperationIds = new Map();
+  const ELIGIBILITY_RECOVERY_KEY_PREFIX = "atinara:radar-eligibility-recovery:v1";
+  const domainReviewOperationIds = new Map();
+  const DOMAIN_REVIEW_KEY_PREFIX = "atinara:radar-domain-review:v1";
 
   const state = {
     auth: null,
@@ -34,6 +41,11 @@
       rejected: { total: 0, counts: {}, items: [] },
       providers: [],
       errors: [],
+      candidateProviders: [],
+      enrichmentCapabilities: [],
+      providerIssues: [],
+      enrichmentIssues: [],
+      refreshInProgress: false,
       qualityNotices: [],
       selected: null,
       expandedGroups: new Set(),
@@ -48,7 +60,9 @@
       horizon: "180d",
       quality: "review",
       order: "recommended",
-      rejectionReason: "current"
+      rejectionReason: "current",
+      parentOffset: 0,
+      page: { parent_count: 0, parent_offset: 0, parent_limit: 60, next_parent_offset: null }
     },
     radarPrefill: null,
     radarLoading: false,
@@ -78,7 +92,7 @@
   };
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
-  const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Ideas gaming" };
+  const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Fuentes oficiales" };
   const RADAR_POLICY_VERSION = "atinara-prediction-policy-v5";
   const RADAR_REASON_LABELS = {
     EVENT_ALREADY_RESOLVED: "Evento ya resuelto",
@@ -96,7 +110,10 @@
     OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "Comprobación oficial temporalmente no disponible",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Selección oficial en comprobación",
     VERIFICATION_REQUIRED: "Comprobación de elegibilidad pendiente",
-    VERIFICATION_EXPIRED: "Comprobación de elegibilidad caducada"
+    VERIFICATION_EXPIRED: "Comprobación de elegibilidad caducada",
+    GAMING_DOMAIN_REVIEW_REQUIRED: "Relación gaming pendiente de revisión",
+    OUTSIDE_GAMING_DOMAIN: "Fuera del dominio gaming",
+    PROVIDER_PLACEHOLDER: "Opción provisional del proveedor"
   };
   const RADAR_REASON_DESCRIPTIONS = {
     EVENT_ALREADY_RESOLVED: "El resultado ya está publicado y ya no constituye una predicción futura.",
@@ -114,7 +131,67 @@
     OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "La consulta de fuentes oficiales no terminó. Es un fallo técnico reintentable y no una prueba de que el evento esté resuelto.",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Atinara ha localizado una selección oficial posiblemente ya publicada. Mantiene oculto el evento mientras completa la comprobación automática.",
     VERIFICATION_REQUIRED: "La comprobación de elegibilidad no ha terminado.",
-    VERIFICATION_EXPIRED: "La elegibilidad ha caducado y debe repetirse antes de preparar el borrador."
+    VERIFICATION_EXPIRED: "La elegibilidad ha caducado y debe repetirse antes de preparar el borrador.",
+    GAMING_DOMAIN_REVIEW_REQUIRED: "La relación con videojuegos es ambigua. Puede revisarse sin tratarla como un rechazo definitivo.",
+    OUTSIDE_GAMING_DOMAIN: "La evidencia disponible demuestra que la proposición no pertenece al catálogo gaming.",
+    PROVIDER_PLACEHOLDER: "El proveedor todavía no identifica una opción concreta. Se conserva para revalidarla, sin enviarla al Editor."
+  };
+  const WORKFLOW_ISSUE_LABELS = {
+    TEMPORAL_AUTHORITATIVE_DATE_REQUIRED: "Falta una fecha oficial demostrada",
+    TEMPORAL_SOURCE_SEMANTICS_MISMATCH: "La fecha del proveedor necesita interpretación",
+    ESSENTIAL_TEXT_NOT_SPANISH: "El contrato esencial debe quedar en español",
+    GAMING_DOMAIN_REVIEW_REQUIRED: "La relación gaming necesita revisión",
+    RADAR_ELIGIBILITY_REQUIRED: "La elegibilidad debe renovarse",
+    RESOLUTION_PRIMARY_SOURCE_REQUIRED: "Falta una fuente primaria oficial",
+    CHILD_IDENTITY_MISMATCH: "La identidad de la opción no coincide en todos los campos",
+  };
+  const WORKFLOW_OWNER_LABELS = {
+    radar: "Radar", editor: "Agente Editor", validator: "Validator",
+    corrector: "Corrector", human_review: "Revisión humana",
+    publication_gate: "Puerta de publicación", provider: "Proveedor",
+    internal_platform: "Plataforma interna",
+  };
+  const WORKFLOW_ACTION_LABELS = {
+    resolve_temporal_contract: "Investigar y normalizar la fecha",
+    repair_temporal_or_source_contract: "Buscar evidencia y corregir el contrato",
+    repair_draft_issues: "Abrir el Corrector",
+    request_market_validation: "Solicitar una nueva validación",
+    retry_market_validation: "Reintentar Validator",
+    refresh_draft_eligibility: "Renovar la elegibilidad",
+    retry_provider_refresh: "Actualizar de nuevo el proveedor",
+    retry_source_enrichment: "Reintentar el enriquecimiento oficial",
+    review_gaming_domain: "Revisar manualmente el ámbito",
+    review_gaming_domain_manually: "Revisar manualmente el ámbito",
+    revalidate_temporal_evidence: "Revalidar la evidencia temporal",
+    edit_draft_manually: "Editar manualmente",
+    confirm_market_draft: "Confirmar humanamente",
+    revalidate_and_publish: "Revalidar y publicar",
+    retry_human_confirmation: "Reintentar la confirmación humana",
+    choose_valid_publication_time: "Elegir una fecha de publicación válida",
+    archive_expired_draft: "Archivar el expediente terminal",
+    reconcile_published_market: "Reconciliar el mercado ya publicado",
+    resolve_market_identity_collision: "Resolver la identidad duplicada",
+    edit_market_slug: "Cambiar el identificador y revalidar la nueva versión",
+    reload_current_draft: "Recargar la versión vigente",
+    review_source_scheduler_configuration: "Revisar la configuración del scheduler de fuentes",
+    review_source_provider_configuration: "Revisar la configuración del proveedor de fuentes",
+    review_source_monitor_configuration: "Revisar el monitor de fuentes",
+    review_source_registry_configuration: "Revisar el registro autoritativo de fuentes",
+    retain_terminal_dossier: "Conservar el expediente terminal archivado",
+  };
+  const EXPERT_DECISION_LABELS = {
+    create: "Crear", create_with_edits: "Crear con ajustes", reject: "Rechazar",
+    stale: "Obsoleta", merge_duplicate: "Duplicado", escalate: "Revisión humana",
+  };
+  const REVIEW_ATTEMPT_LABELS = {
+    approved: "Aprobada", rejected: "Rechazada", provider_timeout: "Proveedor sin respuesta",
+    provider_rate_limited: "Límite temporal", provider_unavailable: "Proveedor no disponible",
+    invalid_response: "Respuesta no válida", internal_error: "Incidencia interna",
+  };
+  const CHANGE_ORIGIN_LABELS = {
+    manual_save: "Edición manual", radar_expert_bridge_save: "Agente Editor",
+    radar_expert_issue_draft_v1: "Propuesta con incidencias", version_restore: "Versión restaurada",
+    autonomous_repair: "Corrector autorizado",
   };
   const RADAR_QUARANTINE_DESCRIPTIONS = {
     INVALID_RADAR_CANDIDATE: "La fila no cumple el contrato normalizado obligatorio del Radar.",
@@ -177,19 +254,29 @@
       : "Fecha no válida";
   }
 
+  function strictDisplayNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().replace(",", ".");
+    if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?$/i.test(normalized)) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function displayNumber(value) {
-    const number = Number(value);
-    return Number.isFinite(number)
+    const number = strictDisplayNumber(value);
+    return number !== null
       ? new Intl.NumberFormat("es-ES", { notation: Math.abs(number) >= 1000000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(number)
       : "No disponible";
   }
 
   function displayProbability(value) {
-    const number = Number(value);
+    const number = strictDisplayNumber(value);
+    if (number === null) return "Sin precio disponible";
     const normalized = number > 1 && number <= 100 ? number / 100 : number;
     return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1
       ? new Intl.NumberFormat("es-ES", { style: "percent", maximumFractionDigits: 1 }).format(normalized)
-      : "No disponible";
+      : "Sin precio disponible";
   }
 
   function externalLink(url, label = "Abrir fuente", variant = "secondary") {
@@ -523,6 +610,8 @@
     const binding = payload?.binding_compatibility || { compatible: true, required: false, reasons: [] };
     const deterministic = Array.isArray(payload?.deterministic_issues) ? payload.deterministic_issues : [];
     const semantic = Array.isArray(latestContentReview?.semantic_issues) ? latestContentReview.semantic_issues : [];
+    const workflowIssues = Array.isArray(draft.workflow_issues)
+      ? draft.workflow_issues.filter((issue) => !["resolved", "superseded"].includes(issue?.status)) : [];
     const issues = [...deterministic, ...semantic];
     const issueItems = issues.map((issue, issueIndex) => {
       const issueField = helpers.formatStructuredText(issue?.field, "Revisión");
@@ -541,6 +630,18 @@
     const issueMarkup = issues.length
       ? `<ol class="admin-validation-reasons">${issueItems}</ol>`
       : '<p class="admin-empty-state">No hay motivos bloqueantes registrados para esta versión.</p>';
+    const workflowIssueMarkup = workflowIssues.length ? `
+      <section class="admin-workflow-issues" aria-label="Incidencias y rutas de continuación">
+        <h4>Incidencias estructuradas</h4>
+        <ol>${workflowIssues.map((issue) => `<li data-workflow-issue-id="${escapeHtml(issue.issue_id)}"
+          data-workflow-owner="${escapeHtml(issue.owner_stage)}"
+          data-workflow-repairability="${escapeHtml(issue.repairability)}"
+          data-workflow-blocking-scope="${escapeHtml(issue.blocking_scope)}">
+          <strong>${escapeHtml(WORKFLOW_ISSUE_LABELS[issue.issue_code] || "Incidencia del contrato")}</strong>
+          <span>Responsable: ${escapeHtml(WORKFLOW_OWNER_LABELS[issue.owner_stage] || "Revisión administrativa")}</span>
+          <span>Siguiente acción: ${escapeHtml(WORKFLOW_ACTION_LABELS[issue.next_action] || "Revisar el borrador")}</span>
+        </li>`).join("")}</ol>
+      </section>` : "";
     const noteItems = Array.isArray(latestContentReview?.editorial_notes)
       ? latestContentReview.editorial_notes
         .map((note) => helpers.formatStructuredText(note))
@@ -572,8 +673,8 @@
       <details class="admin-state-history">
         <summary>Historial recuperable · ${history.length} intentos · ${versions.length} versiones materiales</summary>
         <div class="admin-state-history-grid">
-          <section><h4>Intentos</h4><ol>${history.slice(0, 12).map((attempt) => `<li><strong>${escapeHtml(attempt.status)}</strong><span>v${escapeHtml(attempt.draft_version)} · ${escapeHtml(attempt.classification)} · ${escapeHtml(displayDate(attempt.completed_at || attempt.started_at))}</span></li>`).join("") || "<li>Sin intentos.</li>"}</ol></section>
-          <section><h4>Versiones</h4><ol>${versions.slice(0, 12).map((version) => `<li><strong>v${escapeHtml(version.content_version)}</strong><span>${escapeHtml(version.change_origin)} · <code>${escapeHtml(String(version.content_fingerprint || "").slice(0, 16))}…</code></span></li>`).join("") || "<li>Sin snapshots.</li>"}</ol></section>
+          <section><h4>Intentos</h4><ol>${history.slice(0, 12).map((attempt) => `<li><strong>${escapeHtml(REVIEW_ATTEMPT_LABELS[attempt.status] || "Intento registrado")}</strong><span>v${escapeHtml(attempt.draft_version)} · ${escapeHtml(attempt.classification === "technical" ? "Técnica" : "Contenido")} · ${escapeHtml(displayDate(attempt.completed_at || attempt.started_at))}</span></li>`).join("") || "<li>Sin intentos.</li>"}</ol></section>
+          <section><h4>Versiones</h4><ol>${versions.slice(0, 12).map((version) => `<li><strong>v${escapeHtml(version.content_version)}</strong><span>${escapeHtml(CHANGE_ORIGIN_LABELS[version.change_origin] || "Cambio registrado")} · <code>${escapeHtml(String(version.content_fingerprint || "").slice(0, 16))}…</code></span></li>`).join("") || "<li>Sin snapshots.</li>"}</ol></section>
         </div>
       </details>`;
     const bindingReasons = Array.isArray(binding.reasons) ? binding.reasons : [];
@@ -588,16 +689,34 @@
           ? `Compatible · plan v${escapeHtml(binding.plan_version || "—")} · ${escapeHtml(binding.binding_status || "draft")}`
           : `No compatible · ${escapeHtml(bindingReasonText || "requiere revisión")}`}
       </p>`;
-    const canReview = ["draft_ready", "review_rejected", "review_inconclusive", "review_unavailable"].includes(draft.workflow_status) || technicalAttempt;
+    const locked = ["scheduled", "published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
+    const terminalWorkflow = workflowIssues.some((issue) => issue.blocking_scope === "terminal"
+      || issue.repairability === "terminal");
+    const canReview = !locked && !terminalWorkflow && !["human_confirmed", "scheduled"].includes(draft.workflow_status);
     const canConfirm = Boolean(effective)
       && draft.workflow_status === "review_approved"
       && draft.review_status === "approved"
       && binding.compatible === true;
-    const canPublish = draft.workflow_status === "human_confirmed";
-    const locked = ["published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
+    const terminalPublication = draft.artifact_status === "publication_failed_terminal"
+      || terminalWorkflow;
+    const canPublish = draft.workflow_status === "human_confirmed" && !terminalPublication;
+    const nextActionLabel = WORKFLOW_ACTION_LABELS[draft.workflow_next_action]
+      || (workflowIssues.length ? "Continuar con el agente responsable" : "Editar el borrador");
+    const scheduledActive = draft.workflow_status === "scheduled";
+    const scheduledRecovery = scheduledActive
+      && ["scheduled_retry", "scheduled_blocked_recoverable", "scheduled_failed_terminal"]
+        .includes(draft.publication_schedule_status);
+    const scheduledTerminal = draft.publication_schedule_status === "scheduled_failed_terminal";
+    const scheduledRetryable = draft.publication_schedule_status === "scheduled_retry";
+    const recoveryCandidateId = draft.radar_candidate_id
+      || draft.source_provenance?.origin_candidate_id
+      || draft.source_provenance?.radar_candidate_id;
+    const canRecoverRadarEligibility = draft.intelligence_origin_type === "radar_candidate"
+      && Boolean(recoveryCandidateId)
+      && (!draft.radar_candidate_id || draft.workflow_next_action === "refresh_draft_eligibility");
 
     return `
-      <section class="admin-review-gate" aria-labelledby="admin-review-title" data-latest-attempt-classification="${escapeHtml(latestAttempt?.classification || "none")}">
+      <section class="admin-review-gate" aria-labelledby="admin-review-title" data-latest-attempt-classification="${escapeHtml(latestAttempt?.classification || "none")}" data-workflow-status="${escapeHtml(draft.workflow_status || "")}" data-publication-schedule-status="${escapeHtml(draft.publication_schedule_status || "")}">
         <div class="admin-section-heading">
           <div><p class="eyebrow">Puerta automática obligatoria</p><h3 id="admin-review-title">Revisión y publicación</h3></div>
           ${workflowBadge(draft.workflow_status)}
@@ -612,20 +731,34 @@
         ${technicalMarkup}
         ${bindingMarkup}
         ${issueMarkup}
+        ${workflowIssueMarkup}
         ${notes}
         ${historyMarkup}
         ${gateNoticeMarkup()}
         <div class="admin-gate-actions">
-          <button class="primary-button" type="button" data-request-review data-state-allowed="${canReview && !locked}"${disabled()}${canReview && !locked ? "" : " disabled"}>${technicalAttempt ? "Reintentar revisión" : "Solicitar nueva revisión"}</button>
-          <button class="secondary-button" type="button" data-confirm-review data-state-allowed="${canConfirm}"${disabled()}${canConfirm ? "" : " disabled"}>Confirmar humanamente</button>
+          ${canRecoverRadarEligibility ? `<button class="secondary-button" type="button" data-recover-draft-eligibility="${escapeHtml(recoveryCandidateId)}"${disabled()}>Renovar elegibilidad y continuar</button>` : ""}
+          ${canReview
+            ? `<button class="primary-button" type="button" data-request-review data-state-allowed="true"${disabled()}>${technicalAttempt ? "Reintentar revisión" : "Solicitar nueva revisión"}</button>`
+            : `<span>${locked ? "El expediente está cerrado para edición." : "La revisión se reanudará desde el estado indicado."}</span>`}
+          ${canConfirm
+            ? `<button class="secondary-button" type="button" data-confirm-review data-state-allowed="true"${disabled()}>Confirmar humanamente</button>`
+            : `<a class="secondary-button" href="#admin-market-form">${escapeHtml(nextActionLabel)}</a>`}
         </div>
         <p class="admin-gate-rule">No existe una acción para omitir un rechazo o aceptar el riesgo. Cualquier cambio esencial invalida esta revisión.</p>
-        <fieldset class="admin-publish-controls" data-state-allowed="${canPublish}"${canPublish ? "" : " disabled"}>
+        ${canPublish ? `<fieldset class="admin-publish-controls" data-state-allowed="true">
           <legend>Programación o publicación</legend>
           <label><span>Programar para (opcional)</span><input type="datetime-local" step="0.001" name="scheduled_for" form="admin-market-form"></label>
-          <button class="primary-button" type="button" data-publish-draft data-state-allowed="${canPublish}"${disabled()}>${canPublish ? "Revalidar y publicar" : "Falta confirmación humana"}</button>
+          <button class="primary-button" type="button" data-publish-draft data-state-allowed="true"${disabled()}>Revalidar y publicar</button>
           <p>Supabase volverá a comprobar rol, estado, versión, huella y aprobación vigente.</p>
-        </fieldset>
+        </fieldset>` : scheduledActive ? `<aside class="admin-service-incident" role="status">
+          <strong>${scheduledTerminal ? "La programación terminó en un estado no reintentable." : scheduledRecovery ? "La publicación programada necesita atención." : "Mercado programado y pendiente de ejecución segura."}</strong>
+          <span>${scheduledRecovery ? `${escapeHtml(nextActionLabel)}. ` : ""}Los campos permanecen bloqueados. Cancela la programación antes de editar o de abrir una corrección; la autoridad compatible se conservará cuando el estado lo permita.</span>
+          <div class="admin-gate-actions">${scheduledRetryable ? `<button class="primary-button" type="button" data-retry-scheduled${disabled()}>Reintentar ahora</button>` : ""}<button class="secondary-button" type="button" data-cancel-scheduled${disabled()}>Cancelar programación</button></div>
+        </aside>` : terminalPublication ? `<aside class="admin-service-incident" role="status">
+          <strong>Esta publicación no admite reintento automático.</strong>
+          <span>${escapeHtml(nextActionLabel)}. El mercado no se publicará mientras esta condición siga vigente.</span>
+          <div class="admin-gate-actions"><button class="secondary-button" type="button" data-archive-terminal-draft${disabled()}>Archivar expediente terminal</button></div>
+        </aside>` : `<aside class="admin-service-incident" role="status"><strong>La publicación aún no tiene autoridad.</strong><span>${escapeHtml(nextActionLabel)}. El borrador continúa privado y editable.</span></aside>`}
       </section>`;
   }
 
@@ -634,7 +767,8 @@
     const radarOrigins = payload?.radar_origins || {};
     const radarCandidate = payload?.radar_candidate || null;
     const observatorySignal = payload?.observatory_signal || null;
-    const locked = ["published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
+    const scheduledLocked = draft.workflow_status === "scheduled";
+    const locked = ["scheduled", "published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
     const source = draft.primary_source || {};
     const alternatives = Array.isArray(draft.alternative_sources) ? draft.alternative_sources.map((item) => item?.url || "").filter(Boolean).join("\n") : "";
     const latest = payload?.latest_review || null;
@@ -684,7 +818,9 @@
           </div>
           ${radarCandidate ? `<aside class="radar-prefill-notice"><strong>Pre-rellenado desde ${escapeHtml(RADAR_PROVIDER_LABELS[radarCandidate.provider] || radarCandidate.provider)}.</strong><span>Nada se ha guardado, revisado, aprobado, programado ni publicado. Completa y revisa los campos antes de guardar el borrador privado.</span></aside>` : ""}
           ${observatorySignal ? `<aside class="radar-prefill-notice observatory-prefill-notice"><strong>Propuesta del Observatorio desde ${escapeHtml(OBSERVATORY_PROVIDER_LABELS[observatorySignal.provider] || observatorySignal.provider)}.</strong><span>Los datos observados, la inferencia editorial y las fuentes vinculantes permanecen separados. Nada se ha guardado, aprobado, programado ni publicado.</span></aside>` : ""}
-          ${locked ? '<p class="admin-locked-notice"><strong>Campos esenciales bloqueados:</strong> el mercado ya fue publicado. Utiliza las acciones posteriores seguras.</p>' : ""}
+          ${scheduledLocked
+            ? '<p class="admin-locked-notice"><strong>Campos esenciales bloqueados durante la programación:</strong> cancela primero la programación con la acción segura del expediente para poder editar.</p>'
+            : locked ? '<p class="admin-locked-notice"><strong>Campos esenciales bloqueados:</strong> el mercado ya no admite edición directa. Utiliza las acciones posteriores seguras.</p>' : ""}
           <fieldset${locked ? " disabled" : ""}>
             <legend>Identidad y pregunta</legend>
             <div class="admin-form-grid">
@@ -703,7 +839,7 @@
             <div class="admin-form-grid">
               ${f("evaluation_period_label", "Periodo evaluado", "text", { wide: true, help: "Ejemplo: desde el 1 de septiembre de 2026 00:00 hasta el 30 de septiembre de 2026 23:59 Europe/Madrid." })}
               ${f("evaluation_ends_at", "Final exacto del periodo", "datetime-local", { value: localDateTime(draft.evaluation_ends_at, draft.timezone), required: true, step: "0.001" })}
-              ${f("timezone", "Zona horaria IANA", "text", { value: draft.timezone || "Europe/Madrid", required: true })}
+              ${f("timezone", "Zona horaria IANA", "text", { value: draft.timezone || "", required: true })}
               ${f("resolution_deadline", "Fecha límite de resolución", "datetime-local", { value: localDateTime(draft.resolution_deadline, draft.timezone), required: true, step: "0.001" })}
               <div class="field-derived field-wide"><span>closes_at derivado</span><strong>${escapeHtml(draft.evaluation_ends_at ? displayDate(draft.evaluation_ends_at) : "Se calculará al guardar")}</strong><small>No se introduce una segunda fecha contradictoria.</small></div>
             </div>
@@ -771,13 +907,16 @@
   }
 
   function latestProviderStatus(provider) {
-    return state.radar.providers
+    const source = state.radar.candidateProviders.length
+      ? state.radar.candidateProviders
+      : state.radar.providers;
+    return source
       .filter((item) => item.provider === provider)
       .sort((left, right) => Date.parse(right.fetched_at || 0) - Date.parse(left.fetched_at || 0))[0] || null;
   }
 
   function radarProviderMarkup() {
-    const providers = ["polymarket", "kalshi", "tavily"];
+    const providers = ["polymarket", "kalshi"];
     return `<section class="radar-provider-strip" aria-label="Estado de proveedores">
       ${providers.map((provider) => {
         const status = latestProviderStatus(provider);
@@ -801,6 +940,43 @@
         </article>`;
       }).join("")}
     </section>`;
+  }
+
+  function radarIssueMessage(issue) {
+    const messages = {
+      RADAR_PERSISTENCE_TIMEOUT: "El guardado alcanzó su límite seguro y puede reanudarse sin repetir las filas confirmadas.",
+      RADAR_PERSISTENCE_ISOLATION_DEFERRED: "Quedan lotes pendientes con un cursor seguro para continuar.",
+      RADAR_PERSISTENCE_FAILED: "La persistencia no terminó; el último resultado válido permanece disponible.",
+      PROVIDER_UNAVAILABLE: "La fuente no respondió. Se conserva su último resultado válido.",
+      PROVIDER_RATE_LIMITED: "La fuente ha limitado temporalmente las consultas.",
+      PROVIDER_CIRCUIT_OPEN: "La fuente está en espera hasta el siguiente intento seguro.",
+      SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE: "El registro de fuentes oficiales no estuvo disponible temporalmente.",
+      RADAR_REFRESH_ALREADY_RUNNING: "Ya existe una actualización en curso para esta fuente.",
+    };
+    return messages[issue?.issue_code] || "La actualización conserva el estado anterior y ofrece un reintento seguro.";
+  }
+
+  function radarOperationalSummaryMarkup() {
+    const providerIssues = Array.isArray(state.radar.providerIssues) ? state.radar.providerIssues : [];
+    const enrichmentIssues = Array.isArray(state.radar.enrichmentIssues) ? state.radar.enrichmentIssues : [];
+    const issues = [...providerIssues, ...enrichmentIssues];
+    if (!issues.length) return "";
+    const resumable = issues.some((issue) => issue?.retryable === true);
+    return `<details class="radar-operational-summary">
+      <summary>${escapeHtml(issues.length)} incidencia${issues.length === 1 ? "" : "s"} recuperable${issues.length === 1 ? "" : "s"} · las candidatas válidas siguen disponibles</summary>
+      <div class="radar-operational-detail" role="status">
+        <ul>${issues.map((issue) => {
+          const current = issue?.current_value && typeof issue.current_value === "object" ? issue.current_value : {};
+          const provider = current.provider || issue.provider || "radar";
+          const lastSuccess = current.last_success_at
+            ? ` Último resultado válido: ${escapeHtml(displayDate(current.last_success_at))} · ${escapeHtml(current.last_success_count || 0)} filas.`
+            : "";
+          return `<li><strong>${escapeHtml(RADAR_PROVIDER_LABELS[provider] || "Radar")}</strong><span>${escapeHtml(radarIssueMessage(issue))}${lastSuccess}</span></li>`;
+        }).join("")}</ul>
+        <p>${resumable ? "Pulsa Continuar actualización para reanudar la misma intención; no se repiten lotes terminados." : "La próxima comprobación segura actualizará este estado."}</p>
+        ${enrichmentIssues.length ? "<p>El enriquecimiento de fuentes es auxiliar y no cambia la salud de Polymarket o Kalshi.</p>" : ""}
+      </div>
+    </details>`;
   }
 
   function radarFiltersMarkup() {
@@ -834,19 +1010,40 @@
       </select></label>
       <div class="radar-filter-actions">
         <button class="secondary-button" type="submit"${state.busy || state.radarLoading ? " disabled" : ""}>Aplicar filtros</button>
-        <button class="primary-button" type="button" data-radar-refresh${state.busy || cooldown ? " disabled" : ""}>${state.busy ? "Actualizando…" : cooldown ? `Disponible en ${cooldown} s` : "Actualizar fuentes"}</button>
+        <button class="primary-button" type="button" data-radar-refresh${state.busy || (!state.radar.refreshInProgress && cooldown) ? " disabled" : ""}>${state.busy ? "Actualizando…" : state.radar.refreshInProgress ? "Continuar actualización" : cooldown ? `Disponible en ${cooldown} s` : "Actualizar fuentes"}</button>
       </div>
     </form>`;
   }
 
   function radarCandidateReady(candidate) {
-    return candidate.state === "available"
+    return !radarCandidateIsTerminal(candidate)
+      && !(Array.isArray(candidate?.workflow_issues) && candidate.workflow_issues.some((issue) =>
+        (issue?.blocking_scope === "terminal" || issue?.repairability === "terminal")
+          && !["resolved", "superseded"].includes(String(issue?.status || "open"))))
+      && candidate.state === "available"
       && candidate.verification_status === "verified_open"
       && candidate.eligibility_policy_version === RADAR_POLICY_VERSION
       && radarEligibilityCurrent(candidate)
       && radarResolutionSourceProven(candidate)
       && !candidate.is_stale
       && !radarBlockingDuplicateMatches(candidate).length;
+  }
+
+  function radarCandidateDispositionCode(candidate) {
+    return String(candidate?.eligibility_reason_code || candidate?.domain_reason_code || "");
+  }
+
+  function radarCandidateIsTerminal(candidate) {
+    return [
+      "OUTSIDE_GAMING_DOMAIN", "EVENT_ALREADY_RESOLVED", "EVENT_OUTSIDE_CONTRACT",
+      "DUPLICATE_MARKET", "PROVIDER_NOT_OPEN", "PROVIDER_OPTION_INACTIVE",
+      "PROVIDER_EVENT_NOT_FOUND", "PROVIDER_CHILD_NOT_FOUND"
+    ]
+      .includes(radarCandidateDispositionCode(candidate));
+  }
+
+  function radarCandidateIsPlaceholder(candidate) {
+    return radarCandidateDispositionCode(candidate) === "PROVIDER_PLACEHOLDER";
   }
 
   function radarBlockingDuplicateMatches(candidate) {
@@ -995,6 +1192,24 @@
     const siblings = Array.isArray(candidate.family_matches) ? candidate.family_matches : [];
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
     const currentExpertRun = expertRun(candidate.expert_analysis);
+    const candidateReady = radarCandidateReady(candidate);
+    const terminalCandidate = radarCandidateIsTerminal(candidate);
+    const placeholderCandidate = radarCandidateIsPlaceholder(candidate);
+    const domainReviewRequired = radarCandidateDispositionCode(candidate) === "GAMING_DOMAIN_REVIEW_REQUIRED";
+    const humanDomainReview = candidate.human_domain_review && typeof candidate.human_domain_review === "object"
+      ? candidate.human_domain_review : null;
+    const domainReviewActionable = domainReviewRequired || Boolean(humanDomainReview?.request_id);
+    const domainEvidence = Array.isArray(humanDomainReview?.evidence_refs)
+      ? humanDomainReview.evidence_refs : [];
+    const continuationAction = terminalCandidate
+        ? `<span>Condición terminal auditada: no se enviará al Editor ni se creará un borrador.</span>`
+        : domainReviewRequired
+          ? `<span>La pertenencia temática necesita una decisión humana explícita antes de renovar la elegibilidad.</span>`
+        : placeholderCandidate
+          ? `<button class="secondary-button" type="button" data-radar-refresh>Volver a comprobar el proveedor</button>`
+          : candidateReady
+            ? `<button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}">Preparar borrador</button>`
+            : `<button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}">Renovar elegibilidad y continuar</button>`;
     return `<section class="radar-candidate-detail" role="dialog" aria-modal="false" aria-labelledby="radar-detail-title" tabindex="-1">
       <header><div><p class="eyebrow">Detalle privado de la candidata</p><h2 id="radar-detail-title">${escapeHtml(radarCandidateHeading(candidate))}</h2></div><button class="secondary-button" type="button" data-radar-close-detail>Cerrar</button></header>
       <div class="radar-detail-grid">
@@ -1018,7 +1233,11 @@
         <section><h3>Adaptación propuesta</h3><p><strong>Categoría:</strong> ${escapeHtml(candidate.atinara_category || "Requiere revisión")}</p><p>${escapeHtml(candidate.source_description || "Sin contexto adaptado.")}</p><p><strong>Criterios:</strong> ${escapeHtml(candidate.atinara_resolution_criteria || "Requieren revisión humana.")}</p></section>
         <section><h3>Elegibilidad de la candidata</h3><dl>
           <div><dt>Estado</dt><dd>${escapeHtml(radarVerificationLabel(candidate))}</dd></div>
-          <div><dt>Motivo</dt><dd>${escapeHtml(candidate.eligibility_state_preserved === true ? "La última elegibilidad válida sigue vigente; el enriquecimiento más reciente se reintentará." : candidate.verification_status === "verified_open" ? "Mercado predictivo válido" : radarReasonLabel(candidate.verification_reason_code))}</dd></div>
+          <div><dt>Motivo</dt><dd>${escapeHtml(candidate.eligibility_state_preserved === true
+            ? radarEligibilityCurrent(candidate)
+              ? "La última elegibilidad válida sigue vigente; el enriquecimiento más reciente se reintentará."
+              : "Se conserva el último expediente conocido, pero su elegibilidad ya no está vigente y debe renovarse."
+            : candidate.verification_status === "verified_open" ? "Mercado predictivo válido" : radarReasonLabel(candidate.verification_reason_code))}</dd></div>
           <div><dt>Comprobada</dt><dd>${escapeHtml(displayDate(candidate.eligibility_checked_at || candidate.verified_at))}</dd></div>
           <div><dt>Vigente hasta</dt><dd>${escapeHtml(displayDate(candidate.eligibility_expires_at || candidate.verification_expires_at))}</dd></div>
         </dl><p>${escapeHtml(radarReasonDescription(candidate))}</p></section>
@@ -1030,14 +1249,77 @@
           ${siblings.length ? `<p><strong>Mercados hermanos permitidos:</strong> ${escapeHtml(siblings.length)}. Comparten acontecimiento, pero conservan opción, precio y economía independientes.</p>` : ""}
           ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.relationship || "exact_duplicate")}</strong> · ${escapeHtml(item.question || item.id || "Mercado existente")}</li>`).join("")}</ul>` : "<p>Sin duplicados exactos ni semánticos.</p>"}
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
+          ${humanDomainReview ? `<div class="admin-workflow-note"><strong>Última decisión humana:</strong> ${escapeHtml(humanDomainReview.decision === "out_of_domain" ? "Fuera del ámbito" : "Dentro del ámbito")}<p>${escapeHtml(humanDomainReview.rationale || "Sin explicación disponible.")}</p>${domainEvidence.length ? `<ul>${domainEvidence.map((reference) => `<li>${externalLink(reference.url, reference.role === "DOMAIN_CONTEXT" ? "Abrir evidencia de dominio" : "Abrir fuente revisada")}</li>`).join("")}</ul>` : ""}<small>La corrección crea una nueva atestación y conserva la anterior en el historial.</small></div>` : ""}
+          ${domainReviewActionable ? `<label><span>${humanDomainReview ? "Justificación de la corrección" : "Justificación de dominio"}</span><textarea name="radar_domain_rationale" minlength="20" maxlength="1000" placeholder="Explica qué evidencia permite clasificar esta candidata sin depender de una coincidencia textual."></textarea></label><div class="admin-gate-actions"><button class="primary-button" type="button" data-radar-domain-decision="in_domain">Confirmar dentro del ámbito</button><button class="secondary-button" type="button" data-radar-domain-decision="out_of_domain">Marcar fuera del ámbito</button></div>` : ""}
         </section>
         <section><h3>Agente Editor</h3>${currentExpertRun
-          ? `<p><strong>${escapeHtml(currentExpertRun.result_json?.decision || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
+          ? `<p><strong>${escapeHtml(EXPERT_DECISION_LABELS[currentExpertRun.result_json?.decision] || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
           : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
         <section><h3>Agente de fuentes</h3>${radarAgentExecutionMarkup(candidate)}</section>
       </div>
-      <footer><button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button><button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}"${radarCandidateReady(candidate) ? "" : " disabled"}>Preparar borrador</button></footer>
+      <footer>${terminalCandidate || placeholderCandidate || domainReviewRequired ? "" : `<button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button>`}${continuationAction}</footer>
     </section>`;
+  }
+
+  async function reviewRadarDomain(decision) {
+    const candidate = state.radar.selected;
+    if (!candidate || state.busy || !["in_domain", "out_of_domain"].includes(decision)) return;
+    const rationale = document.querySelector('[name="radar_domain_rationale"]')?.value.trim() || "";
+    if (rationale.length < 20) {
+      setNotice("La revisión de dominio necesita una justificación de al menos 20 caracteres.", "warning");
+      renderWorkspace();
+      document.querySelector('[name="radar_domain_rationale"]')?.focus();
+      return;
+    }
+    if (decision === "out_of_domain" && !window.confirm("Esta decisión bloqueará la candidata como terminal. Confirma que la evidencia enlazada demuestra que queda fuera del ámbito gaming.")) {
+      return;
+    }
+    const supersedesRequestId = candidate.human_domain_review?.request_id || null;
+    const material = `${candidate.preparation_revision}:${candidate.fingerprint}:${decision}:${rationale}`;
+    const storageKey = `${DOMAIN_REVIEW_KEY_PREFIX}:${candidate.id}`;
+    let operationId = domainReviewOperationIds.get(storageKey)?.material === material
+      ? domainReviewOperationIds.get(storageKey).requestId : "";
+    if (!operationId) {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem(storageKey) || "null");
+        if (stored?.material === material && /^[0-9a-f-]{36}$/i.test(stored?.requestId || "")) {
+          operationId = stored.requestId;
+        }
+      } catch { /* La memoria de la pestaña conserva la intención. */ }
+    }
+    if (!operationId) operationId = crypto.randomUUID();
+    const intent = { material, requestId: operationId };
+    domainReviewOperationIds.set(storageKey, intent);
+    try { sessionStorage.setItem(storageKey, JSON.stringify(intent)); } catch { /* Memoria en proceso. */ }
+    state.busy = true;
+    renderWorkspace();
+    try {
+      await invokeRadar("review-domain", {
+        candidate_id: candidate.id,
+        expected_revision: candidate.preparation_revision,
+        expected_fingerprint: candidate.fingerprint,
+        decision,
+        rationale,
+        evidence_refs: [{
+          url: candidate.external_event_url || candidate.external_market_url || "",
+          role: "DOMAIN_CONTEXT"
+        }],
+        operation_id: operationId,
+        supersedes_request_id: supersedesRequestId
+      });
+      domainReviewOperationIds.delete(storageKey);
+      try { sessionStorage.removeItem(storageKey); } catch { /* El resultado ya es autoritativo. */ }
+      await loadRadar(false);
+      setNotice(decision === "in_domain"
+        ? "Revisión de dominio registrada. Renueva ahora la elegibilidad antes de preparar el borrador."
+        : "Revisión de dominio registrada. La candidata permanece fuera del flujo de borradores.", "success");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo registrar la revisión de dominio."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      focusActionStatus();
+    }
   }
 
   function radarMarkup() {
@@ -1045,9 +1327,14 @@
     const cards = groups.length
       ? `<div class="radar-candidate-grid">${groups.map((group, index) => radarGroupMarkup(group, index)).join("")}</div>`
       : `<div class="admin-empty-state radar-empty"><strong>No hay eventos con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
-    const errors = state.radar.errors.length
-      ? `<aside class="radar-partial-error" role="status"><strong>Cobertura degradada temporalmente.</strong><ul>${state.radar.errors.map((providerError) => `<li>${escapeHtml(RADAR_PROVIDER_LABELS[providerError.provider] || providerError.provider)}: ${escapeHtml(providerError["message"] || "La fuente no está disponible temporalmente.")}</li>`).join("")}</ul><span>Se conserva el último resultado válido cuando existe; la creación manual y las demás fuentes siguen disponibles.</span></aside>`
-      : "";
+    const operationalSummary = radarOperationalSummaryMarkup();
+    const page = state.radar.page || {};
+    const previousOffset = Math.max(0, (Number(page.parent_offset) || 0) - (Number(page.parent_limit) || 60));
+    const pageMarkup = (Number(page.parent_offset) > 0 || page.next_parent_offset !== null) ? `<nav class="radar-page-controls" aria-label="Páginas de eventos Radar">
+      ${Number(page.parent_offset) > 0 ? `<button class="secondary-button" type="button" data-radar-page="${previousOffset}">Eventos anteriores</button>` : ""}
+      <span>Mostrando ${escapeHtml(groups.length)} de ${escapeHtml(page.parent_count || groups.length)} eventos completos.</span>
+      ${page.next_parent_offset !== null ? `<button class="secondary-button" type="button" data-radar-page="${escapeHtml(page.next_parent_offset)}">Eventos siguientes</button>` : ""}
+    </nav>` : "";
     const quarantinedRows = state.radar.qualityNotices.flatMap((notice) =>
       (Array.isArray(notice.quarantined) ? notice.quarantined : []).map((item) => ({
         ...item,
@@ -1061,10 +1348,11 @@
       <header class="radar-heading"><div><p class="eyebrow">Administración · descubrimiento privado</p><h2 id="market-radar-title">Radar de mercados</h2><p>Descubre oportunidades gaming reales y prepara el formulario existente. Ninguna candidata se publica ni se aprueba automáticamente.</p></div><span class="radar-cache-badge">${state.radar.requiresEligibilityRefresh ? "Elegibilidad pendiente" : state.radar.cachedAuthoritative ? "Última consulta vigente" : "Fuentes actualizadas"}</span></header>
       ${radarFiltersMarkup()}
       ${radarProviderMarkup()}
-      ${errors}
+      ${operationalSummary}
       ${qualityNotices}
       <div class="radar-results-heading"><h3>${escapeHtml(groups.length)} eventos · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
       ${cards}
+      ${pageMarkup}
       ${radarRejectionsMarkup()}
       ${radarDetailMarkup(state.radar.selected)}
     </section>`;
@@ -1340,7 +1628,7 @@
     state.busy = true;
     renderWorkspace();
     try {
-      state.selected = await rpc("get_admin_market_draft", { draft_id_input: id });
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: id });
       setNotice("Borrador privado cargado.", "success");
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo cargar el borrador."), "error");
@@ -1425,7 +1713,7 @@
       }
       state.radarPrefill = null;
       await loadDrafts();
-      state.selected = await rpc("get_admin_market_draft", { draft_id_input: result.draft.id });
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: result.draft.id });
       const issueCount = Array.isArray(result.deterministic_issues) ? result.deterministic_issues.length : 0;
       const pluralSuffix = issueCount === 1 ? "" : "s";
       const noticeMessage = result.changed === false
@@ -1517,8 +1805,8 @@
         }
       });
       if (error) throw error;
-      state.selected = await rpc("get_admin_market_draft", { draft_id_input: draft.id });
-      const tone = data?.status === "approved" ? "success" : "warning";
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id });
+      const tone = ["approved", "review_approved"].includes(data?.status) ? "success" : "warning";
       const message = helpers.formatStructuredText(data?.message, "Revisión terminada.");
       const listRefreshFailed = await loadDrafts().then(() => false).catch(() => true);
       const finalMessage = listRefreshFailed
@@ -1527,7 +1815,7 @@
       setGateNotice(finalMessage, listRefreshFailed ? "warning" : tone);
       setNotice(finalMessage, listRefreshFailed ? "warning" : tone);
     } catch (error) {
-      const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+      const reconciled = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id }).catch(() => null);
       if (reconciled) state.selected = reconciled;
       const latestAttempt = reconciled?.latest_attempt;
       const finishedDespiteResponseLoss = latestAttempt?.id
@@ -1585,6 +1873,53 @@
     });
   }
 
+  async function recoverDraftRadarEligibility(candidateId) {
+    const draft = state.selected?.draft;
+    if (!draft || state.busy) return;
+    const recoveryKey = `${ELIGIBILITY_RECOVERY_KEY_PREFIX}:${draft.id}:${draft.content_version}`;
+    const recoveryMaterial = `${draft.content_fingerprint || ""}:${candidateId}`;
+    let operationId = eligibilityRecoveryOperationIds.get(recoveryKey)?.material === recoveryMaterial
+      ? eligibilityRecoveryOperationIds.get(recoveryKey).operationId : "";
+    if (!operationId) {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem(recoveryKey) || "null");
+        if (stored?.material === recoveryMaterial
+          && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored?.operationId || "")) {
+          operationId = stored.operationId;
+        }
+      } catch { /* La memoria de la pestaña conserva el retry. */ }
+    }
+    if (!operationId) operationId = crypto.randomUUID();
+    const recoveryIntent = { material: recoveryMaterial,operationId };
+    eligibilityRecoveryOperationIds.set(recoveryKey,recoveryIntent);
+    try { sessionStorage.setItem(recoveryKey,JSON.stringify(recoveryIntent)); } catch { /* La memoria conserva la intención. */ }
+    const clearRecoveryIntent = () => {
+      eligibilityRecoveryOperationIds.delete(recoveryKey);
+      try { sessionStorage.removeItem(recoveryKey); } catch { /* El readback autoritativo ya terminó. */ }
+    };
+    state.busy = true;
+    setGateNotice("Radar está renovando la elegibilidad y enlazando esta versión privada…", "info");
+    renderWorkspace();
+    try {
+      const result = await invokeRadar("recover-draft-eligibility", {
+        candidate_id: candidateId,
+        operation_id: operationId,
+        draft_id: draft.id,
+        draft_version: draft.content_version,
+        draft_fingerprint: draft.content_fingerprint,
+      });
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id });
+      clearRecoveryIntent();
+      setGateNotice(result?.message || "Elegibilidad renovada. Validator ya puede revisar la versión enlazada.", "success");
+    } catch (error) {
+      setGateNotice(helpers.getFriendlyError(error, "No se pudo renovar la elegibilidad. El borrador continúa privado y editable."), "warning");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      focusActionStatus();
+    }
+  }
+
   async function confirmReview() {
     const draft = state.selected?.draft;
     if (!draft || state.busy) return;
@@ -1598,7 +1933,7 @@
     let confirmationRequested = false;
     try {
       confirmationRequested = true;
-      result = await rpc("confirm_market_draft_review", {
+      result = await rpc("confirm_market_draft_review_v2", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version
       });
@@ -1606,7 +1941,7 @@
       requestError = error;
     }
 
-    const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+    const reconciled = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id }).catch(() => null);
     if (reconciled) state.selected = reconciled;
     const persisted = confirmationRequested && (
       confirmationMatchesDraft(reconciled, draft)
@@ -1628,9 +1963,13 @@
         "CONFIRMATION_NOT_PERSISTED",
         "Supabase no devolvió la confirmación humana persistida."
       );
-      const message = helpers.getFriendlyError(error, "No se pudo registrar la confirmación. El mercado continúa privado.");
-      setGateNotice(message, "error");
-      setNotice(message, "error");
+      const owner = WORKFLOW_OWNER_LABELS[result?.owner_stage] || "el agente responsable";
+      const nextAction = WORKFLOW_ACTION_LABELS[result?.next_action] || "revisar el borrador";
+      const message = result?.ok === false
+        ? `La confirmación no se registró y el borrador se conservó. Responsable: ${owner}. Siguiente acción: ${nextAction}.`
+        : helpers.getFriendlyError(error, "No se pudo registrar la confirmación. El mercado continúa privado.");
+      setGateNotice(message, result?.ok === false ? "warning" : "error");
+      setNotice(message, result?.ok === false ? "warning" : "error");
     }
 
     state.busy = false;
@@ -1643,7 +1982,7 @@
     if (!draft || state.busy) return;
     const scheduledValue = document.querySelector('[name="scheduled_for"]')?.value || "";
     const scheduledFor = scheduledValue
-      ? helpers.toIsoOrEmpty(scheduledValue, draft.timezone || "Europe/Madrid")
+      ? helpers.toIsoOrEmpty(scheduledValue, draft.timezone || "")
       : null;
     if (scheduledValue && !scheduledFor) {
       const message = "La fecha programada no es válida en la zona horaria del mercado.";
@@ -1662,19 +2001,41 @@
     let result = null;
     let requestError = null;
     let publicationRequested = false;
+    const publicationKey = `${PUBLICATION_ATTEMPT_KEY_PREFIX}:${draft.id}:${draft.content_version}`;
+    const publicationMaterial = `${draft.content_fingerprint || ""}:${scheduledValue}:${draft.timezone || ""}`;
+    let publicationRequestId = publicationAttemptIds.get(publicationKey)?.material === publicationMaterial
+      ? publicationAttemptIds.get(publicationKey).requestId : "";
+    if (!publicationRequestId) {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem(publicationKey) || "null");
+        if (stored?.material === publicationMaterial
+          && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored?.requestId || "")) {
+          publicationRequestId = stored.requestId;
+        }
+      } catch { /* Se conserva la intención en memoria. */ }
+    }
+    if (!publicationRequestId) publicationRequestId = crypto.randomUUID();
+    const publicationIntent = { material: publicationMaterial, requestId: publicationRequestId };
+    publicationAttemptIds.set(publicationKey, publicationIntent);
+    try { sessionStorage.setItem(publicationKey, JSON.stringify(publicationIntent)); } catch { /* La memoria conserva el retry de esta pestaña. */ }
+    const clearPublicationIntent = () => {
+      publicationAttemptIds.delete(publicationKey);
+      try { sessionStorage.removeItem(publicationKey); } catch { /* El resultado autoritativo ya es terminal. */ }
+    };
     try {
-      await ensureRadarDraftEligibility(draft);
+      await ensureRadarDraftEligibility(draft).catch(() => null);
       publicationRequested = true;
-      result = await rpc("publish_market_draft", {
+      result = await rpc("publish_market_draft_v2", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version,
-        scheduled_for_input: scheduledFor
+        scheduled_for_input: scheduledFor,
+        request_id_input: publicationRequestId
       });
     } catch (error) {
       requestError = error;
     }
 
-    const reconciled = await rpc("get_admin_market_draft", { draft_id_input: draft.id }).catch(() => null);
+    const reconciled = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id }).catch(() => null);
     const authoritativeStatus = publicationRequested && ["scheduled", "published"].includes(result?.status)
       ? result.status
       : publicationRequested && ["scheduled", "published"].includes(reconciled?.draft?.workflow_status)
@@ -1682,6 +2043,7 @@
         : null;
 
     if (authoritativeStatus) {
+      clearPublicationIntent();
       const listRefreshFailed = await loadDrafts({ preserveSelection: false }).then(() => false).catch(() => {
         state.selected = null;
         return true;
@@ -1697,19 +2059,85 @@
           : baseMessage;
       setNotice(message, listRefreshFailed ? "warning" : "success");
     } else {
+      if (result?.ok === false) clearPublicationIntent();
       if (reconciled) state.selected = reconciled;
-      const error = requestError || operationError(
-        "PUBLICATION_NOT_PERSISTED",
-        "Supabase no devolvió un estado final de publicación."
-      );
-      const message = helpers.getFriendlyError(error, "La publicación se bloqueó de forma segura.");
-      setGateNotice(message, "error");
-      setNotice(message, "error");
+      const owner = WORKFLOW_OWNER_LABELS[result?.owner_stage] || "el agente responsable";
+      const nextAction = WORKFLOW_ACTION_LABELS[result?.next_action] || "revisar el borrador";
+      const error = requestError || operationError("PUBLICATION_NOT_PERSISTED", "La publicación continúa bloqueada.");
+      const message = result?.ok === false
+        ? `La publicación se bloqueó sin perder el borrador ni la confirmación compatible. Responsable: ${owner}. Siguiente acción: ${nextAction}.`
+        : helpers.getFriendlyError(error, "La publicación se bloqueó de forma segura.");
+      setGateNotice(message, result?.ok === false ? "warning" : "error");
+      setNotice(message, result?.ok === false ? "warning" : "error");
     }
 
     state.busy = false;
     renderWorkspace();
     focusActionStatus({ preferGate: !authoritativeStatus });
+  }
+
+  async function retryScheduledPublication() {
+    const draft = state.selected?.draft;
+    if (!draft || state.busy) return;
+    state.busy = true;
+    try {
+      await rpc("retry_scheduled_market_publication_v1", { draft_id_input: draft.id });
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id });
+      setGateNotice("El intento programado queda listo para el siguiente ciclo seguro.", "success");
+    } catch (error) {
+      setGateNotice(helpers.getFriendlyError(error, "No se pudo reactivar el intento programado."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      focusActionStatus();
+    }
+  }
+
+  async function cancelScheduledPublication() {
+    const draft = state.selected?.draft;
+    if (!draft || state.busy) return;
+    const terminal = draft.publication_schedule_status === "scheduled_failed_terminal";
+    if (!window.confirm(terminal
+      ? "¿Cancelar la programación terminal y conservar el expediente privado para archivarlo?"
+      : "¿Cancelar la programación y conservar el borrador humanamente confirmado?")) return;
+    state.busy = true;
+    try {
+      const result = await rpc("cancel_scheduled_market_publication_v1", { draft_id_input: draft.id });
+      state.selected = await rpc("get_admin_market_draft_v2", { draft_id_input: draft.id });
+      const workflowStatus = state.selected?.draft?.workflow_status;
+      if (result?.confirmation_preserved === true && workflowStatus === "human_confirmed") {
+        setGateNotice("Programación cancelada. La confirmación compatible se conserva y puedes reprogramar.", "success");
+      } else if (result?.terminal_issue_preserved === true && workflowStatus === "draft_ready") {
+        setGateNotice("Programación cancelada. La incidencia terminal sigue abierta y la confirmación ya no es vigente; conserva o archiva el expediente sin publicarlo.", "warning");
+      } else {
+        throw operationError("SCHEDULED_CANCELLATION_NOT_RECONCILED", "Supabase no confirmó el estado final de la cancelación.");
+      }
+    } catch (error) {
+      setGateNotice(helpers.getFriendlyError(error, "No se pudo cancelar la programación."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      focusActionStatus();
+    }
+  }
+
+  async function archiveTerminalDraft() {
+    const draft=state.selected?.draft;
+    if (!draft||state.busy) return;
+    if (!window.confirm("¿Archivar este borrador terminal sin publicarlo ni eliminar su trazabilidad?")) return;
+    state.busy=true;
+    try {
+      await rpc("archive_terminal_market_draft_v1",{
+        draft_id_input:draft.id,expected_version_input:draft.content_version,
+      });
+      state.selected=await rpc("get_admin_market_draft_v2",{draft_id_input:draft.id});
+      await loadDrafts();
+      setGateNotice("Expediente terminal archivado. No se publicó ni se eliminó ningún dato.","success");
+    } catch(error) {
+      setGateNotice(helpers.getFriendlyError(error,"No se pudo archivar el expediente terminal."),"error");
+    } finally {
+      state.busy=false;renderWorkspace();focusActionStatus();
+    }
   }
 
   function radarRequestPayload(refresh = false) {
@@ -1720,6 +2148,7 @@
       horizon: state.radar.horizon,
       quality: state.radar.quality,
       order: state.radar.order,
+      parent_offset: state.radar.parentOffset,
       refresh
     };
   }
@@ -1753,8 +2182,10 @@
     const button = root.querySelector("[data-radar-refresh]");
     const seconds = Math.max(0, Math.ceil((state.radar.cooldownUntil - Date.now()) / 1000));
     if (button) {
-      button.disabled = state.busy || seconds > 0;
-      button.textContent = state.busy ? "Actualizando…" : seconds > 0 ? `Disponible en ${seconds} s` : "Actualizar fuentes";
+      button.disabled = state.busy || (!state.radar.refreshInProgress && seconds > 0);
+      button.textContent = state.busy ? "Actualizando…"
+        : state.radar.refreshInProgress ? "Continuar actualización"
+          : seconds > 0 ? `Disponible en ${seconds} s` : "Actualizar fuentes";
     }
     if (seconds === 0 && state.radarCooldownTimer !== null) {
       window.clearInterval(state.radarCooldownTimer);
@@ -1777,7 +2208,10 @@
     if (refresh) setNotice("Actualizando fuentes. Los proveedores pueden fallar de forma independiente.", "info");
     renderWorkspace();
     try {
-      const data = await invokeRadar("discover", radarRequestPayload(refresh));
+      const requestPayload = radarRequestPayload(refresh);
+      const data = refresh && radarRequestCoordinator
+        ? await radarRequestCoordinator.run(requestPayload, (payload) => invokeRadar("discover", payload))
+        : await invokeRadar("discover", requestPayload);
       state.radar.candidates = Array.isArray(data.candidates) ? data.candidates : [];
       state.radar.groups = Array.isArray(data.groups) && data.groups.length
         ? data.groups
@@ -1795,14 +2229,31 @@
       }
       state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
       state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
+      state.radar.candidateProviders = Array.isArray(data.candidate_providers)
+        ? data.candidate_providers
+        : state.radar.providers.filter((provider) => provider?.provider !== "tavily");
+      state.radar.enrichmentCapabilities = Array.isArray(data.enrichment_capabilities)
+        ? data.enrichment_capabilities
+        : state.radar.providers.filter((provider) => provider?.provider === "tavily");
+      state.radar.providerIssues = Array.isArray(data.provider_issues)
+        ? data.provider_issues
+        : state.radar.errors.map((error) => error?.issue).filter(Boolean);
+      state.radar.enrichmentIssues = Array.isArray(data.enrichment_issues)
+        ? data.enrichment_issues
+        : state.radar.errors.filter((error) => error?.degrades_provider === false)
+          .map((error) => error?.issue).filter(Boolean);
+      state.radar.refreshInProgress = data.refresh_in_progress === true;
       state.radar.qualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
       state.radar.cached = data.cached === true;
       state.radar.cachedAuthoritative = data.cached_authoritative === true;
       state.radar.requiresEligibilityRefresh = data.requires_eligibility_refresh === true;
+      state.radar.page = data.page && typeof data.page === "object"
+        ? data.page : { parent_count: state.radar.groups.length, parent_offset: state.radar.parentOffset, parent_limit: 60, next_parent_offset: null };
+      state.radar.parentOffset = Math.max(0, Number(state.radar.page.parent_offset) || 0);
       state.radar.loaded = true;
       const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
       const serverCooldownUntil = Date.parse(data.cooldown_until || "");
-      state.radar.cooldownUntil = Number.isFinite(serverCooldownUntil)
+      state.radar.cooldownUntil = state.radar.refreshInProgress ? 0 : Number.isFinite(serverCooldownUntil)
         ? serverCooldownUntil
         : Date.now() + cooldownMs;
       startRadarCooldownTicker();
@@ -1811,8 +2262,10 @@
       const reconciliationCopy = reconciledResults
         ? ` Se corrigieron ${reconciledResults} resultado${reconciledResults === 1 ? "" : "s"} directamente con el proveedor.`
         : "";
-      const radarNotice = (data.partial
-        ? "Radar actualizado con cobertura degradada temporalmente. Las fuentes disponibles siguen utilizables y el último resultado válido se conserva."
+      const radarNotice = (state.radar.refreshInProgress
+        ? "La actualización conserva su progreso. Puedes continuar la misma intención sin repetir lotes terminados."
+        : data.partial
+        ? "Radar actualizado con cobertura parcial. El detalle recuperable queda disponible en el resumen."
         : state.radar.qualityNotices.length
           ? "Radar actualizado. Algunas candidatas quedaron descartadas o en cuarentena sin degradar a sus proveedores."
         : data.cached
@@ -1820,7 +2273,7 @@
             ? "Radar cargado desde el último estado de elegibilidad vigente."
             : "No existe todavía una consulta vigente. Usa Actualizar fuentes cuando termine la espera."
           : "Radar actualizado sin crear ni modificar ningún mercado.") + reconciliationCopy;
-      setNotice(radarNotice, data.partial ? "warning" : "success");
+      setNotice(radarNotice, data.partial || state.radar.refreshInProgress ? "info" : "success");
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo cargar el Radar. La creación manual sigue disponible."), "error");
     } finally {
@@ -1836,7 +2289,9 @@
     try {
       const data = await invokeRadar("details", { candidate_id: candidateId });
       state.radar.selected = data.candidate || null;
-      if (state.radar.selected) {
+      if (state.radar.selected
+        && !radarCandidateIsTerminal(state.radar.selected)
+        && !radarCandidateIsPlaceholder(state.radar.selected)) {
         const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId }).catch(() => null);
         state.radar.selected.expert_analysis = expertRun(expert);
       }
@@ -1921,6 +2376,39 @@
     }
     if (failure && throwOnError) throw failure;
     return result;
+  }
+
+  function openPrivateIssueDraftForm(candidateId, draftPackage, preparationRevision) {
+    const fields = draftPackage?.fields || {};
+    const alternatives = String(fields.alternative_sources || "").split(/\r?\n/)
+      .map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
+    const workflowIssues = Array.isArray(draftPackage?.gate?.workflow_issues)
+      ? draftPackage.gate.workflow_issues : [];
+    state.radarPrefill = {
+      candidateId,
+      preparationRevision,
+      eligibilityCheckId: null,
+      origins: {},
+      expertRunId: draftPackage?.run?.id || null,
+      proposedFields: fields,
+    };
+    state.selected = {
+      draft: {
+        ...fields,id:null,content_version:null,workflow_status:"draft_incomplete",
+        artifact_status:"draft_with_repairable_issues",workflow_issues:workflowIssues,
+        primary_source: fields.primary_source_url ? { url: fields.primary_source_url } : {},
+        alternative_sources: alternatives,
+      },
+      deterministic_issues: workflowIssues.map((issue) => ({
+        code: issue.issue_code,field: issue.affected_fields?.[0] || "market_definition",
+        message: WORKFLOW_ISSUE_LABELS[issue.issue_code] || "Incidencia pendiente de resolver.",
+      })),
+      latest_review:null,audit:[],radar_origins:{},radar_candidate:state.radar.selected,
+    };
+    state.view="drafts";
+    setNotice("Propuesta con incidencias aplicada al formulario privado. Puedes guardarla y enviarla a Validator; no puede aprobarse ni publicarse todavía.","warning");
+    renderWorkspace();
+    return { ok:true,preparation_revision:preparationRevision };
   }
 
   async function dismissRadarCandidate(candidateId) {
@@ -2222,7 +2710,7 @@
     }
   }
 
-  async function refreshRadarExpertAnalysis(candidateId, { force = true, preparationRevision = "" } = {}) {
+  async function refreshRadarExpertAnalysis(candidateId, { force = false, preparationRevision = "" } = {}) {
     const payload = {
       origin_type: "radar_candidate",
       origin_id: candidateId,
@@ -2410,7 +2898,18 @@
     if (target.dataset.requestReview !== undefined) requestReview();
     if (target.dataset.confirmReview !== undefined) confirmReview();
     if (target.dataset.publishDraft !== undefined) publishDraft();
-    if (target.dataset.radarRefresh !== undefined) loadRadar(true);
+    if (target.dataset.retryScheduled !== undefined) retryScheduledPublication();
+    if (target.dataset.cancelScheduled !== undefined) cancelScheduledPublication();
+    if (target.dataset.archiveTerminalDraft !== undefined) archiveTerminalDraft();
+    if (target.dataset.recoverDraftEligibility) recoverDraftRadarEligibility(target.dataset.recoverDraftEligibility);
+    if (target.dataset.radarRefresh !== undefined) {
+      state.radar.parentOffset = 0;
+      loadRadar(true);
+    }
+    if (target.dataset.radarPage !== undefined) {
+      state.radar.parentOffset = Math.max(0, Number(target.dataset.radarPage) || 0);
+      loadRadar(false);
+    }
     if (target.dataset.radarToggleGroup) {
       const groupKey = target.dataset.radarToggleGroup;
       if (state.radar.expandedGroups.has(groupKey)) state.radar.expandedGroups.delete(groupKey);
@@ -2427,6 +2926,7 @@
     }
     if (target.dataset.radarDetails) openRadarDetails(target.dataset.radarDetails);
     if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
+    if (target.dataset.radarDomainDecision) reviewRadarDomain(target.dataset.radarDomainDecision);
     if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);
     if (target.dataset.radarExpert) analyzeRadarCandidate(target.dataset.radarExpert);
     if (target.dataset.radarCloseDetail !== undefined) {
@@ -2475,6 +2975,7 @@
         const value = data.get(name);
         state.radar[name] = typeof value === "string" ? value.trim() : "";
       });
+      state.radar.parentOffset = 0;
       loadRadar(false);
       return;
     }
@@ -2558,8 +3059,10 @@
 
   window.atinaraMarketAdminBridge = Object.freeze({
     prepareRadarCandidate,
+    openPrivateIssueDraftForm,
     refreshRadarExpertAnalysis,
     runDraftValidationSingleInferenceSmoke,
+    publishDraft,
   });
 
   async function applyAuth(auth) {

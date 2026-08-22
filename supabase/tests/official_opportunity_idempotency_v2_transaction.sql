@@ -321,6 +321,43 @@ select jsonb_build_object(
 from private.data_observatory_signals signal
 where signal.provider = 'official_web' and signal.source_fingerprint = repeat('d', 64);
 grant select on official_discovery_v2_signal_fixture to service_role;
+create function pg_temp.official_discovery_v2_signal_updated_at()
+returns timestamptz language sql stable security definer set search_path='' as $$
+  select signal.updated_at from private.data_observatory_signals signal
+  where signal.provider='official_web' and signal.source_fingerprint=repeat('d',64)
+$$;
+grant execute on function pg_temp.official_discovery_v2_signal_updated_at() to service_role;
+create function pg_temp.official_discovery_v2_signal_state()
+returns jsonb language sql stable security definer set search_path='' as $$
+  select jsonb_build_object(
+    'expert_analysis_status',signal.expert_analysis_status,
+    'marketability_status',signal.marketability_status,
+    'hypothesis_status',signal.hypothesis_status,
+    'duplicate_count',jsonb_array_length(signal.duplicate_matches)
+  ) from private.data_observatory_signals signal
+  where signal.provider='official_web' and signal.source_fingerprint=repeat('d',64)
+$$;
+grant execute on function pg_temp.official_discovery_v2_signal_state() to service_role;
+create function pg_temp.dismiss_official_discovery_v2_signal_fixture(actor_id_input uuid)
+returns void language plpgsql volatile security definer set search_path='' as $$
+declare signal_id_value uuid;
+begin
+  update private.data_observatory_signals set
+    analysis_fingerprint=repeat('b',64),expert_analysis_status='completed',
+    marketability_status='rejected',hypothesis_status='rejected'
+  where provider='official_web' and source_fingerprint=repeat('d',64)
+  returning id into signal_id_value;
+  insert into private.market_admin_audit(actor_id,action_code,detail)
+  values(actor_id_input,'OBSERVATORY_SIGNAL_DISMISSED',jsonb_build_object('signal_id',signal_id_value));
+end;
+$$;
+grant execute on function pg_temp.dismiss_official_discovery_v2_signal_fixture(uuid) to service_role;
+create function pg_temp.complete_official_discovery_v2_signal_fixture()
+returns void language sql volatile security definer set search_path='' as $$
+  update private.data_observatory_signals set expert_analysis_status='completed'
+  where provider='official_web' and source_fingerprint=repeat('d',64)
+$$;
+grant execute on function pg_temp.complete_official_discovery_v2_signal_fixture() to service_role;
 
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 set local role service_role;
@@ -777,26 +814,12 @@ begin
      or (result_value #>> '{result_summary,duplicate_signals}')::integer <> 1 then
     raise exception 'TEST_OFFICIAL_IDEMPOTENCY_DUPLICATE_SIGNAL_INVALID:%', result_value;
   end if;
-  if (select updated_at from private.data_observatory_signals
-      where provider = 'official_web' and source_fingerprint = repeat('d', 64))
+  if pg_temp.official_discovery_v2_signal_updated_at()
        is distinct from '2000-01-01T00:00:00Z'::timestamptz then
     raise exception 'TEST_OFFICIAL_IDEMPOTENCY_IDENTICAL_SIGNAL_UPDATED';
   end if;
 
-  update private.data_observatory_signals
-     set analysis_fingerprint = repeat('b', 64),
-         expert_analysis_status = 'completed',
-         marketability_status = 'rejected',
-         hypothesis_status = 'rejected'
-   where provider = 'official_web' and source_fingerprint = repeat('d', 64);
-  insert into private.market_admin_audit(actor_id, action_code, detail)
-  select
-    admin_id,
-    'OBSERVATORY_SIGNAL_DISMISSED',
-    jsonb_build_object('signal_id', signal.id)
-  from private.data_observatory_signals signal
-  where signal.provider = 'official_web'
-    and signal.source_fingerprint = repeat('d', 64);
+  perform pg_temp.dismiss_official_discovery_v2_signal_fixture(admin_id);
   signal_value := jsonb_set(
     signal_value,
     '{duplicate_matches}',
@@ -821,20 +844,14 @@ begin
   );
   if result_value ->> 'outcome' <> 'success'
      or (result_value #>> '{result_summary,saved}')::integer <> 1
-     or (select expert_analysis_status from private.data_observatory_signals
-         where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> 'stale'
-     or (select marketability_status from private.data_observatory_signals
-         where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> 'rejected'
-     or (select hypothesis_status from private.data_observatory_signals
-         where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> 'rejected'
-     or (select jsonb_array_length(duplicate_matches) from private.data_observatory_signals
-         where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> 1 then
+     or pg_temp.official_discovery_v2_signal_state() ->> 'expert_analysis_status' <> 'stale'
+     or pg_temp.official_discovery_v2_signal_state() ->> 'marketability_status' <> 'rejected'
+     or pg_temp.official_discovery_v2_signal_state() ->> 'hypothesis_status' <> 'rejected'
+     or (pg_temp.official_discovery_v2_signal_state() ->> 'duplicate_count')::integer <> 1 then
     raise exception 'TEST_OFFICIAL_IDEMPOTENCY_DUPLICATE_ONLY_REFRESH_INVALID:%', result_value;
   end if;
 
-  update private.data_observatory_signals
-     set expert_analysis_status = 'completed'
-   where provider = 'official_web' and source_fingerprint = repeat('d', 64);
+  perform pg_temp.complete_official_discovery_v2_signal_fixture();
   signal_value := jsonb_set(
     jsonb_set(
       jsonb_set(
@@ -1162,7 +1179,15 @@ begin
          where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> repeat('a', 64)
      or (select jsonb_array_length(duplicate_matches) from private.data_observatory_signals
          where provider = 'official_web' and source_fingerprint = repeat('d', 64)) <> 1 then
-    raise exception 'TEST_OFFICIAL_IDEMPOTENCY_SIGNAL_REFRESH_INVALID';
+    raise exception 'TEST_OFFICIAL_IDEMPOTENCY_SIGNAL_REFRESH_INVALID:%',(
+      select jsonb_build_object(
+        'count',count(*),'expert',max(expert_analysis_status),
+        'marketability',max(marketability_status),'hypothesis',max(hypothesis_status),
+        'sha',max(source_payload_excerpt #>> '{content_sha256}'),
+        'duplicates',max(jsonb_array_length(duplicate_matches))
+      ) from private.data_observatory_signals
+      where provider='official_web' and source_fingerprint=repeat('d',64)
+    );
   end if;
   if exists (
     select 1 from private.data_provider_runs run

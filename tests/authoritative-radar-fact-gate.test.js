@@ -475,7 +475,7 @@ test("descubrimiento, preparación y persistencia usan la puerta atómica de ele
   assert.match(edge, /eligibility_check_input: eligibilityCheck/);
   assert.ok(edge.indexOf("apply_market_radar_prepare_eligibility_v1") < edge.indexOf("if (!applied?.ok)"));
   assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
-  assert.match(edge, /applyDeterministicRadarEligibility\(candidate, providerDecision, now\)/);
+  assert.match(edge, /applyDeterministicRadarEligibility\(classifiedCandidate, providerDecision, now\)/);
   assert.match(edge, /ELIGIBILITY_SCAN_UNAVAILABLE/);
   assert.match(eligibilityMigration, /create table if not exists private\.market_radar_eligibility_checks/);
   assert.match(eligibilityMigration, /RADAR_ELIGIBILITY_APPEND_ONLY/);
@@ -628,7 +628,8 @@ test("la caché conserva solo decisiones de elegibilidad vigentes", () => {
   assert.match(cachedBranch, /requires_eligibility_refresh: !cachedAuthoritative/);
   assert.match(cachedBranch, /current\.candidates\.length > 0 \|\| providerCoverageCurrent/);
   assert.match(edge, /loadRadarView\(environment, authorization, filters, now\)/);
-  assert.match(edge, /Date\.parse\(cleanText\(candidate\.eligibility_checked_at, 100\)\) >= minimumCheckedAt/);
+  assert.match(edge, /filters\.quality !== "fit" \|\| hasCurrentEligibility\(candidate, checkedAt\)/);
+  assert.match(edge, /Date\.parse\(cleanText\(candidate\.fetched_at, 100\)\) >= minimumCheckedAt/);
   assert.match(edge, /get_market_radar_candidate_for_revalidation_v1[\s\S]{0,180}undefined, true/);
 });
 
@@ -678,8 +679,8 @@ test("un borrador Radar confirma en privado y renueva una ligadura exacta antes 
     ? admin.indexOf("async function requestReview", publishStartUi)
     : admin.indexOf("async function loadRadar", publishStartUi));
   assert.doesNotMatch(confirmUi, /ensureRadarDraftEligibility\(draft\)/);
-  assert.match(confirmUi, /rpc\("confirm_market_draft_review"/);
-  assert.ok(publishUi.indexOf("ensureRadarDraftEligibility(draft)") < publishUi.indexOf('rpc("publish_market_draft"'));
+  assert.match(confirmUi, /rpc\("confirm_market_draft_review_v2"/);
+  assert.ok(publishUi.indexOf("ensureRadarDraftEligibility(draft)") < publishUi.indexOf('rpc("publish_market_draft_v2"'));
   assert.match(admin, /confirmationRequested &&/);
   assert.match(admin, /publicationRequested &&/);
   assert.match(admin, /invokeRadar\("check-eligibility", \{[\s\S]*candidate_id: candidateId,[\s\S]*draft_id: draft\.id,[\s\S]*draft_fingerprint: draft\.content_fingerprint/);
@@ -692,7 +693,7 @@ test("un borrador Radar confirma en privado y renueva una ligadura exacta antes 
     draftFixerUi.indexOf("function enhanceBindingMessage"),
   );
   assert.ok(interceptedPublish.indexOf("checkRadarPublicationEligibility(context)")
-    < interceptedPublish.indexOf('client.rpc("publish_market_draft"'));
+    < interceptedPublish.indexOf('client.rpc("publish_market_draft_v2"'));
   assert.match(draftFixerUi, /action: "check-eligibility"[\s\S]*candidate_id: context\.radarCandidateId[\s\S]*draft_id: context\.draftId[\s\S]*draft_fingerprint: context\.draftFingerprint/);
   assert.doesNotMatch(draftFixerUi, /legacy_fact_attestation/);
 });

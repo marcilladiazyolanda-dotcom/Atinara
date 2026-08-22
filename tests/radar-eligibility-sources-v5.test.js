@@ -355,8 +355,9 @@ test("Estado · una caída del enriquecimiento conserva el último expediente v�
   assert.match(radarEdge, /eligibility_state_preserved:\s*true/);
   assert.match(radarEdge, /provider_refresh_state:\s*"source_enrichment_degraded"/);
   assert.match(radarEdge, /persistableCandidates[\s\S]*?RESOLUTION_SOURCE_AUTHORITY_PENDING[\s\S]*?currentCandidatesByIdentity/);
-  assert.match(radarEdge, /persistProviderResult\([\s\S]*?persistableCandidates,[\s\S]*?providerCandidates\.length/);
-  assert.match(radarEdge, /errors\.push\(\{[\s\S]*?SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE/);
+  assert.match(radarEdge, /persistProviderResultV2\([\s\S]*?persistableCandidates/);
+  assert.match(radarEdge, /enrichmentIssues\.push\(issue\)/);
+  assert.match(radarEdge, /partial:\s*candidateProviderErrors\.length > 0/);
   assert.match(radarEdge, /directAuthorityFallbackGroups[\s\S]*?authorityCandidateIds[\s\S]*?incompleteGroupKeys\.delete/);
   assert.match(radarEdge, /MAX_CANONICAL_EVENT_CHILDREN \+ 8/);
   assert.match(adminJs, /Elegible · estado conservado/);
@@ -379,7 +380,7 @@ test("Contrato · la revisión factual operativa queda retirada y la elegibilida
   assert.match(migration, /then 'technical_hold'[\s\S]*?ELIGIBILITY_REFRESH_REQUIRED/);
   assert.match(migration, /candidate\.id, provenance_revision/);
   assert.match(migration, /where code = 'RADAR_FACTUAL_VERIFICATION_REQUIRED'/);
-  assert.match(adminHtml, /20260815-official-idempotency-v2/);
+  assert.match(adminHtml, /20260820-v6-market-cycle1/);
 });
 
 test("Editor · la proyección segura conserva la elegibilidad autoritativa sin incluir leases en la huella", () => {

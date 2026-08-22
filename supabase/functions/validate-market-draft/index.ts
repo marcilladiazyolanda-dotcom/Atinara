@@ -15,6 +15,8 @@ import {
   AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1,
   AI_EXECUTION_PROFILE_STANDARD,
 } from "../_shared/ai/execution-profile.mjs";
+import { createMarketWorkflowIssue } from "../_shared/market-workflow-issues.mjs";
+import { essentialMarketTextNotSpanish } from "../_shared/market-language.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -328,6 +330,53 @@ function semanticDraft(draft: JsonRecord): JsonRecord {
 
 type NormalizedReview = { result: string; issues: JsonRecord[]; notes: string[] };
 
+function essentialSpanishIssue(draft: JsonRecord): JsonRecord | null {
+  const values = [draft.question, draft.yes_criteria, draft.no_criteria, draft.public_criteria]
+    .map((value) => text(value, 4_000));
+  if (!essentialMarketTextNotSpanish(values)) return null;
+  return {
+    code: "INVALID_QUESTION",
+    field: "question",
+    message: "La pregunta y los criterios esenciales deben expresarse en español antes de aprobar el borrador.",
+    workflow_issue_code: "ESSENTIAL_TEXT_NOT_SPANISH",
+  };
+}
+
+async function reviewWorkflowIssues(
+  issues: JsonRecord[],
+  attemptId: string,
+  detectedBy: "validator" | "internal_platform" = "validator",
+): Promise<JsonRecord[]> {
+  return Promise.all(issues.slice(0, 30).map(async (issue) => {
+    const rawCode = text(issue.workflow_issue_code || issue.code, 100).toUpperCase();
+    const sourceIssue = /(?:SOURCE|EVIDENCE)/.test(rawCode);
+    const temporalIssue = /TEMPORAL|TIMEZONE|DATE/.test(rawCode);
+    const technicalIssue = detectedBy === "internal_platform";
+    const inconclusiveIssue = rawCode === "AUTOMATIC_REVIEW_INCONCLUSIVE";
+    const ownerStage = technicalIssue || inconclusiveIssue ? "validator" : "corrector";
+    const issueCode = rawCode === "TEMPORAL_INCOHERENCE"
+      ? "TEMPORAL_SOURCE_SEMANTICS_MISMATCH" : rawCode;
+    return createMarketWorkflowIssue({
+      issueCode,
+      detectedBy,
+      ownerStage,
+      severity: technicalIssue || inconclusiveIssue ? "warning" : "blocking",
+      repairability: technicalIssue || inconclusiveIssue ? "auto_recoverable"
+        : sourceIssue || temporalIssue ? "waiting_authoritative_source" : "human_editable",
+      blockingScope: technicalIssue || inconclusiveIssue ? "none" : "approval",
+      affectedFields: [text(issue.field, 100) || "market_definition"],
+      evidenceRefs: [{ attempt_id: attemptId, validator_version: VALIDATOR_VERSION }],
+      currentValue: { code: text(issue.code, 100), message: text(issue.message, 500) },
+      proposedValue: null,
+      confidence: technicalIssue ? 100 : inconclusiveIssue ? 0 : 90,
+      policyVersion: POLICY_VERSION,
+      retryable: true,
+      nextAction: technicalIssue || inconclusiveIssue ? "retry_market_validation"
+        : sourceIssue || temporalIssue ? "repair_temporal_or_source_contract" : "repair_draft_issues",
+    }) as Promise<JsonRecord>;
+  }));
+}
+
 function normalizeReview(parsed: JsonRecord, draft: JsonRecord = {}): NormalizedReview | null {
   const result = text(parsed?.result, 40).toLowerCase();
   if (!["approved", "rejected"].includes(result)) return null;
@@ -356,6 +405,7 @@ type ProviderResult = {
   technicalStatus: string | null;
   technicalCode: string | null;
   metadata: JsonRecord;
+  workflowIssues?: JsonRecord[];
 };
 
 function gatewayTechnicalStatus(code: string): string {
@@ -433,7 +483,17 @@ async function finalizeAutomaticReview(
   outcome: ProviderResult,
 ): Promise<JsonRecord> {
   const result = outcome.review?.result || outcome.technicalStatus || "internal_error";
-  return rpc(env, "record_market_draft_review_v2", {
+  const sourceIssues = outcome.review?.issues || [{
+    code: outcome.technicalCode || "VALIDATOR_UNAVAILABLE",
+    field: "validation",
+    message: "La revisión técnica no pudo completarse y puede reintentarse.",
+  }];
+  const workflowIssues = outcome.workflowIssues ?? await reviewWorkflowIssues(
+      sourceIssues,
+      attemptId,
+      outcome.review ? "validator" : "internal_platform",
+    );
+  return rpc(env, "record_market_draft_review_with_issues_v1", {
     attempt_id_input: attemptId,
     result_input: result,
     semantic_issues_input: outcome.review?.issues || [],
@@ -441,7 +501,28 @@ async function finalizeAutomaticReview(
     reviewed_by_input: adminId,
     technical_code_input: outcome.technicalCode,
     safe_provider_metadata_input: outcome.metadata,
+    workflow_issues_input: workflowIssues,
   }, { service: true });
+}
+
+async function attachDeterministicReviewIssues(
+  env: Environment,
+  beginning: JsonRecord,
+  reviewRequest: ReviewRequest,
+  blockingReasons: JsonRecord[],
+): Promise<JsonRecord[]> {
+  const attemptId = text(beginning.attempt_id, 80);
+  if (!validUuid(attemptId)) throw new Error("INVALID_BEGIN_REVIEW_RESPONSE");
+  const generated = await reviewWorkflowIssues(blockingReasons, reviewRequest.attemptId);
+  if (!generated.length) return [];
+  const attached = await rpc(env, "attach_market_review_workflow_issues_v1", {
+    draft_id_input: reviewRequest.draftId,
+    draft_version_input: reviewRequest.expectedVersion,
+    review_attempt_id_input: attemptId,
+    issues_input: generated,
+  }, { service: true });
+  return isRecord(attached) && Array.isArray(attached.workflow_issues)
+    ? attached.workflow_issues.filter(isRecord) : generated;
 }
 
 function technicalHttpStatus(status: string): number {
@@ -450,6 +531,13 @@ function technicalHttpStatus(status: string): number {
   if (status === "invalid_response") return 502;
   if (status === "stale") return 409;
   return 503;
+}
+
+function contentReviewStatus(result: string, workflowIssues: JsonRecord[] = []): string {
+  if (result === "approved") return "review_approved";
+  if (workflowIssues.some((issue) => text(issue.repairability, 40) === "terminal"
+    || text(issue.blocking_scope, 40) === "terminal")) return "review_rejected_terminal";
+  return result === "inconclusive" ? "review_inconclusive" : "review_rejected_repairable";
 }
 
 async function validateDraft(request: Request, env: Environment, authorization: string): Promise<Response> {
@@ -472,6 +560,28 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     return jsonResponse({ error: "INVALID_REVIEW_REQUEST", message: "El borrador, la versión o el intento no son válidos." }, 400);
   }
 
+  const preflightWorkflowRaw = await rpc(env, "get_market_workflow_issues_v1", {
+    subject_type_input: "market_draft",
+    subject_key_input: reviewRequest.draftId,
+    subject_version_input: String(reviewRequest.expectedVersion),
+  }, { service: true });
+  const preflightTerminalIssues = Array.isArray(preflightWorkflowRaw)
+    ? preflightWorkflowRaw.filter(isRecord).filter((issue) =>
+      !["resolved", "superseded"].includes(text(issue.status, 40))
+      && (text(issue.repairability, 40) === "terminal"
+        || text(issue.blocking_scope, 40) === "terminal")) : [];
+  if (preflightTerminalIssues.length) {
+    const terminalIssue = preflightTerminalIssues[0];
+    return jsonResponse({
+      ok:false,status:"review_rejected_terminal",classification:"content",
+      workflow_issues:preflightTerminalIssues,
+      workflow_issue_count:preflightTerminalIssues.length,
+      owner_stage:terminalIssue.owner_stage,next_action:terminalIssue.next_action,
+      state_preserved:true,retryable:false,zero_inference:true,
+      message:"El expediente contiene una condición terminal auditada. Validator no inició una inferencia ni una revisión nueva.",
+    },409);
+  }
+
   const beginning = await beginDraftReview(env, authorization, reviewRequest);
 
   const beginStatus = text(beginning.status, 80);
@@ -492,11 +602,27 @@ async function validateDraft(request: Request, env: Environment, authorization: 
           : "La incidencia técnica ya estaba registrada. El borrador continúa listo para reintentar.",
       }, technicalHttpStatus(beginStatus));
     }
+    const replayBlockingReasons = Array.isArray(beginning.blocking_reasons)
+      ? beginning.blocking_reasons.filter(isRecord) : [];
+    const replayAttemptId = text(beginning.attempt_id, 80);
+    const linkedReplayIssues: unknown = validUuid(replayAttemptId)
+      ? await rpc(env, "get_market_workflow_issues_v1", {
+        subject_type_input: "review_attempt",
+        subject_key_input: replayAttemptId,
+        subject_version_input: String(reviewRequest.expectedVersion),
+      }, { service: true }) : [];
+    const authoritativeReplayIssues = Array.isArray(linkedReplayIssues)
+      ? linkedReplayIssues.filter(isRecord).filter((issue) =>
+        !["resolved", "superseded"].includes(text(issue.status, 40))) : [];
+    const replayWorkflowIssues = authoritativeReplayIssues.length || beginStatus !== "rejected"
+      ? authoritativeReplayIssues
+      : await attachDeterministicReviewIssues(env, beginning, reviewRequest, replayBlockingReasons);
     return jsonResponse({
       ok: beginStatus === "approved",
-      status: beginStatus,
+      status: contentReviewStatus(beginStatus, replayWorkflowIssues),
       classification: "content",
-      blocking_reasons: Array.isArray(beginning.blocking_reasons) ? beginning.blocking_reasons : [],
+      blocking_reasons: replayBlockingReasons,
+      workflow_issues: replayWorkflowIssues,
       editorial_notes: Array.isArray(beginning.editorial_notes) ? beginning.editorial_notes : [],
       attempt_id: beginning.attempt_id,
       effective_review_id: beginning.effective_review_id,
@@ -507,12 +633,21 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     });
   }
   if (beginStatus === "rejected") {
+    const blockingReasons = Array.isArray(beginning.blocking_reasons)
+      ? beginning.blocking_reasons.filter(isRecord) : [];
+    const workflowIssues = await attachDeterministicReviewIssues(
+      env, beginning, reviewRequest, blockingReasons,
+    );
     return jsonResponse({
       ok: false,
-      status: "rejected",
+      status: contentReviewStatus("rejected", workflowIssues),
       classification: "content",
-      blocking_reasons: Array.isArray(beginning.blocking_reasons) ? beginning.blocking_reasons : [],
-      message: "La revisión determinista encontró errores reales de contenido.",
+      blocking_reasons: blockingReasons,
+      workflow_issues: workflowIssues,
+      attempt_id: beginning.attempt_id,
+      owner_stage: text(workflowIssues[0]?.owner_stage, 40) || "corrector",
+      next_action: text(workflowIssues[0]?.next_action, 100) || "repair_draft_issues",
+      message: "La revisión determinista bloqueó únicamente la aprobación. El borrador sigue disponible para corregirlo.",
     });
   }
   if (beginStatus === "approved_cached") {
@@ -540,13 +675,109 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     draft_id_input: reviewRequest.draftId,
     expected_version_input: reviewRequest.expectedVersion,
   }, { service: true });
-  const reviewDraft = { ...draft, _primary_source_attestation: primarySourceAttestation };
-  const outcome = await providerReview(env, reviewDraft, attemptId, reviewRequest.executionProfile);
+  const reviewDraft: JsonRecord = { ...draft, _primary_source_attestation: primarySourceAttestation };
+  const rawWorkflowIssues = await rpc(env, "get_market_workflow_issues_v1", {
+    subject_type_input: "market_draft",
+    subject_key_input: reviewRequest.draftId,
+    subject_version_input: String(reviewRequest.expectedVersion),
+  }, { service: true });
+  const activeWorkflowIssues: JsonRecord[] = (Array.isArray(rawWorkflowIssues as unknown)
+    ? rawWorkflowIssues as unknown as JsonRecord[] : []).filter(isRecord).filter((issue: JsonRecord) =>
+      !["resolved", "superseded"].includes(text(issue.status, 40)));
+  const inheritedWorkflowIssues = activeWorkflowIssues.filter((issue) =>
+    ["approval", "terminal"].includes(text(issue.blocking_scope, 40))
+    && !(text(issue.status,40)==="waiting"
+      && text(issue.owner_stage,40)==="validator"
+      && text(issue.next_action,100)==="request_market_validation"));
+  const primarySourceIssue = primarySourceAttestation.verified === true ? null : {
+    code: "INSUFFICIENT_EVIDENCE",
+    workflow_issue_code: "RESOLUTION_PRIMARY_SOURCE_REQUIRED",
+    field: "primary_source",
+    message: "La fuente primaria no conserva una atestación oficial vigente para esta versión.",
+  };
+  const primarySourceWorkflowIssues = primarySourceIssue
+    ? await reviewWorkflowIssues([primarySourceIssue], attemptId, "validator") : [];
+  const inheritedReviewIssues = inheritedWorkflowIssues.map((issue: JsonRecord) => {
+    const issueCode = text(issue.issue_code, 100);
+    const temporal = /TEMPORAL|DATE|TIMEZONE/.test(issueCode);
+    const source = /SOURCE|EVIDENCE/.test(issueCode);
+    return {
+      code: temporal ? "TEMPORAL_INCOHERENCE" : source ? "INSUFFICIENT_EVIDENCE" : "INVALID_QUESTION",
+      field: temporal ? "evaluation_ends_at" : source ? "primary_source" : "question",
+      message: "La incidencia estructurada sigue abierta y debe resolverse antes de aprobar esta versión.",
+    };
+  });
+  const languageIssue = essentialSpanishIssue(reviewDraft);
+  const outcome: ProviderResult = inheritedWorkflowIssues.length ? {
+    review: { result: "rejected", issues: inheritedReviewIssues, notes: [] },
+    technicalStatus: null,
+    technicalCode: null,
+    metadata: { inherited_workflow_gate: true, zero_inference: true },
+    workflowIssues: inheritedWorkflowIssues,
+  } : primarySourceIssue ? {
+    review: { result: "rejected", issues: [primarySourceIssue], notes: [] },
+    technicalStatus: null,
+    technicalCode: null,
+    metadata: { primary_source_attestation_gate: true, zero_inference: true },
+    workflowIssues: primarySourceWorkflowIssues,
+  } : languageIssue ? {
+    review: { result: "rejected", issues: [languageIssue], notes: [] },
+    technicalStatus: null,
+    technicalCode: null,
+    metadata: { deterministic_language_gate: true, zero_inference: true },
+  } : await providerReview(env, reviewDraft, attemptId, reviewRequest.executionProfile);
+  outcome.metadata = {
+    ...outcome.metadata,
+    primary_source_check_id: primarySourceAttestation.verified === true
+      ? text(primarySourceAttestation.check_id, 80) || null : null,
+  };
   const recorded = await finalizeAutomaticReview(env, attemptId, admin.id, outcome);
+  const recordedStatus = text(recorded.status, 80);
+  if (recordedStatus === "stale") {
+    return jsonResponse({
+      ok: false,
+      status: "stale",
+      classification: "technical",
+      technical_code: text(recorded.technical_code, 100) || "REVIEW_VERSION_MOVED",
+      attempt_id: attemptId,
+      state_preserved: true,
+      retryable: true,
+      owner_stage: "validator",
+      next_action: "retry_market_validation",
+      message: text(recorded.message) || "La respuesta pertenecía a una versión anterior y no modificó el borrador actual.",
+    }, 409);
+  }
+  if (recorded.idempotency_replay === true) {
+    const classification = text(recorded.classification, 40)
+      || (["approved", "rejected", "inconclusive"].includes(recordedStatus) ? "content" : "technical");
+    if (classification === "technical") {
+      return jsonResponse({
+        ok: false,
+        status: recordedStatus,
+        classification,
+        technical_code: text(recorded.technical_code, 100) || null,
+        attempt_id: attemptId,
+        idempotency_replay: true,
+        state_preserved: true,
+        retryable: true,
+        message: "El resultado técnico de este intento ya estaba registrado; no se repitió la inferencia.",
+      }, technicalHttpStatus(recordedStatus || "internal_error"));
+    }
+    return jsonResponse({
+      ok: recordedStatus === "approved",
+      status: contentReviewStatus(recordedStatus, Array.isArray(recorded.workflow_issues)
+        ? recorded.workflow_issues.filter(isRecord) : []),
+      classification,
+      attempt_id: attemptId,
+      idempotency_replay: true,
+      state_preserved: true,
+      message: "El resultado de contenido de este intento ya estaba registrado.",
+    });
+  }
   if (!outcome.review) {
     return jsonResponse({
       ok: false,
-      status: outcome.technicalStatus,
+      status: recordedStatus || outcome.technicalStatus,
       classification: "technical",
       technical_code: outcome.technicalCode,
       effective_review_preserved: recorded.effective_review_preserved === true,
@@ -559,12 +790,16 @@ async function validateDraft(request: Request, env: Environment, authorization: 
       warnings: outcome.metadata.warnings ?? [],
       state_preserved: true,
       message: text(recorded.message) || "La incidencia técnica quedó registrada. El mercado continúa privado.",
-    }, technicalHttpStatus(outcome.technicalStatus || "internal_error"));
+    }, technicalHttpStatus(recordedStatus || outcome.technicalStatus || "internal_error"));
   }
 
+  const effectiveReviewResult = ["approved", "rejected", "inconclusive"].includes(recordedStatus)
+    ? recordedStatus : outcome.review.result;
+  const effectiveWorkflowIssues = Array.isArray(recorded.workflow_issues)
+    ? recorded.workflow_issues.filter(isRecord) : (outcome.workflowIssues ?? []);
   return jsonResponse({
-    ok: outcome.review.result === "approved",
-    status: outcome.review.result,
+    ok: effectiveReviewResult === "approved",
+    status: contentReviewStatus(effectiveReviewResult, effectiveWorkflowIssues),
     classification: "content",
     blocking_reasons: outcome.review.issues,
     editorial_notes: outcome.review.notes,
@@ -572,6 +807,9 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     effective_review_id: recorded.effective_review_id,
     telemetry_status: outcome.metadata.telemetry_status ?? "unknown",
     warnings: outcome.metadata.warnings ?? [],
+    owner_stage: recorded.owner_stage ?? (effectiveReviewResult === "approved" ? "human_review" : "corrector"),
+    next_action: recorded.next_action ?? (effectiveReviewResult === "approved" ? "confirm_market_draft" : "repair_draft_issues"),
+    workflow_issue_count: recorded.workflow_issue_count ?? outcome.review.issues.length,
     message: text(recorded.message) || "La revisión de contenido terminó.",
   });
 }

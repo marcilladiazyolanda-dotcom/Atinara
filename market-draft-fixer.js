@@ -101,9 +101,21 @@
   function needsRepair() {
     const gate = document.querySelector(".admin-review-gate");
     if (!gate) return false;
+    if (gate.dataset.workflowStatus === "scheduled") return false;
+    if (gate.querySelector("[data-workflow-repairability='terminal'],[data-workflow-blocking-scope='terminal']")) return false;
+    const allWorkflowIssues = gate.querySelectorAll("[data-workflow-issue-id]");
+    const workflowIssues = gate.querySelectorAll(
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='auto_repairable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='human_editable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='waiting_authoritative_source']",
+    );
+    if (allWorkflowIssues.length > 0) return workflowIssues.length > 0;
     const hasContentIssues = gate.querySelectorAll("[data-content-issue='true']").length > 0;
     const technicalAttempt = gate.dataset.latestAttemptClassification === "technical";
-    return hasContentIssues && (technicalAttempt || /(rejected|rechazad|inconclus|incomplet|contradic|ambigu)/i.test(gate.textContent || ""));
+    return hasContentIssues && !technicalAttempt;
   }
 
   function enhance() {
@@ -111,7 +123,15 @@
     const draft = currentDraft();
     if (!gate || !draft || !needsRepair() || gate.querySelector("[data-expert-repair-panel]")) return;
 
-    const issueCount = gate.querySelectorAll("[data-content-issue='true']").length;
+    const structuredIssues = [...gate.querySelectorAll(
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='auto_repairable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='human_editable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='waiting_authoritative_source']",
+    )];
+    const issueCount = structuredIssues.length || gate.querySelectorAll("[data-content-issue='true']").length;
     const panel = document.createElement("section");
     panel.className = "admin-expert-repair-panel";
     panel.dataset.expertRepairPanel = "true";
@@ -213,6 +233,15 @@
   async function runRepair(button) {
     const draft = currentDraft();
     if (!draft) return;
+    const structuredIssueIds = [...document.querySelectorAll(
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='auto_repairable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='human_editable']," +
+      "[data-workflow-issue-id][data-workflow-owner='corrector']" +
+      "[data-workflow-repairability='waiting_authoritative_source']",
+    )]
+      .map((item) => safeText(item.dataset.workflowIssueId, 80)).filter(Boolean);
     if (!window.confirm("Atinara corregirá únicamente los problemas registrados y ejecutará una nueva revisión. No se publicará ni se confirmará automáticamente. ¿Continuar?")) return;
 
     const status = document.querySelector("[data-expert-repair-status]");
@@ -232,7 +261,8 @@
           action: "repair-and-revalidate",
           draft_id: draft.id,
           expected_version: draft.version,
-          attempt_id: attemptId
+          attempt_id: attemptId,
+          issue_ids: structuredIssueIds
         }
       });
       if (error) throw error;
@@ -349,6 +379,8 @@
   const PUBLICATION_RELOAD_KEY = "atinara:publication-catalog-reload:v1";
   const PUBLICATION_EVENT_KEY = "atinara:market-published-event:v1";
   const PUBLICATION_CHANNEL = "atinara-market-catalog-v1";
+  const PUBLICATION_ATTEMPT_KEY_PREFIX = "atinara:market-publication-attempt:v1";
+  const publicationAttemptIds = new Map();
   let publicationInFlight = false;
   let restoreTimer = null;
 
@@ -452,10 +484,11 @@
     const marketId = safeText(form.elements.market_slug?.value, 140);
     const question = safeText(form.elements.question?.value, 500);
     const scheduledValue = safeText(form.elements.scheduled_for?.value, 100);
+    const timezone = safeText(form.elements.timezone?.value, 100);
     const radarCandidateId = safeText(form.dataset.radarCandidateId, 100);
     const draftFingerprint = safeText(form.dataset.contentFingerprint, 80);
     if (!draftId || !Number.isSafeInteger(version) || version < 1 || !marketId) return null;
-    return { form, draftId, version, marketId, question, scheduledValue, radarCandidateId, draftFingerprint };
+    return { form, draftId, version, marketId, question, scheduledValue, timezone, radarCandidateId, draftFingerprint };
   }
 
   function inlineStatus(fieldset) {
@@ -519,17 +552,50 @@
     return match?.[1] || "La publicación no se completó. Atinara no aplicó cambios parciales y el borrador continúa seguro.";
   }
 
-  function publicationPayload(context) {
+  function publicationAttemptStorageKey(context) {
+    return `${PUBLICATION_ATTEMPT_KEY_PREFIX}:${context.draftId}:${context.version}`;
+  }
+
+  function publicationRequestId(context) {
+    const material = `${context.draftFingerprint}:${context.scheduledValue}:${context.timezone}`;
+    const key = publicationAttemptStorageKey(context);
+    const inMemory = publicationAttemptIds.get(key);
+    if (inMemory?.material === material) return inMemory.requestId;
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (stored?.material === material
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored?.requestId || "")) {
+        publicationAttemptIds.set(key, stored);
+        return stored.requestId;
+      }
+      const requestId = crypto.randomUUID();
+      const intent = { material, requestId };
+      publicationAttemptIds.set(key, intent);
+      sessionStorage.setItem(key, JSON.stringify(intent));
+      return requestId;
+    } catch {
+      const requestId = crypto.randomUUID();
+      publicationAttemptIds.set(key, { material, requestId });
+      return requestId;
+    }
+  }
+
+  function clearPublicationRequest(context) {
+    publicationAttemptIds.delete(publicationAttemptStorageKey(context));
+    try { sessionStorage.removeItem(publicationAttemptStorageKey(context)); } catch { /* El resultado autoritativo ya es terminal. */ }
+  }
+
+  function publicationPayload(context, requestId) {
     let scheduledFor = null;
     if (context.scheduledValue) {
-      const parsed = new Date(context.scheduledValue);
-      if (!Number.isFinite(parsed.getTime())) throw new Error("SCHEDULE_DATE_INVALID");
-      scheduledFor = parsed.toISOString();
+      scheduledFor = window.atinaraMarketAdmin?.toIsoOrEmpty?.(context.scheduledValue, context.timezone || "") || "";
+      if (!scheduledFor) throw new Error("SCHEDULE_DATE_INVALID");
     }
     return {
       draft_id_input: context.draftId,
       expected_version_input: context.version,
-      scheduled_for_input: scheduledFor
+      scheduled_for_input: scheduledFor,
+      request_id_input: requestId
     };
   }
 
@@ -684,9 +750,25 @@
     }
 
     try {
-      await checkRadarPublicationEligibility(context);
-      const { data, error } = await client.rpc("publish_market_draft", publicationPayload(context));
+      await checkRadarPublicationEligibility(context).catch(() => null);
+      const requestId = publicationRequestId(context);
+      const { data, error } = await client.rpc("publish_market_draft_v2", publicationPayload(context, requestId));
       if (error) throw error;
+      clearPublicationRequest(context);
+      if (data?.ok === false) {
+        const ownerLabels = { radar: "Radar", editor: "Agente Editor", validator: "Validator", corrector: "Corrector", publication_gate: "Puerta de publicación", internal_platform: "Plataforma interna" };
+        const actionLabels = { refresh_draft_eligibility: "renovar la elegibilidad", revalidate_temporal_evidence: "revalidar la evidencia temporal", request_market_validation: "solicitar una nueva validación", retry_market_publication: "reintentar la publicación" };
+        const owner = ownerLabels[data.owner_stage] || "el agente responsable";
+        const action = actionLabels[data.next_action] || "revisar el borrador";
+        if (status) {
+          status.dataset.tone = "warning";
+          renderPublicationStatus(status, "Publicación bloqueada y recuperable", `Responsable: ${owner}. Siguiente acción: ${action}. El borrador se conserva.`);
+        }
+        button.disabled = false;
+        button.textContent = previousLabel;
+        if (fieldset) fieldset.removeAttribute("aria-busy");
+        return;
+      }
 
       if (safeText(data?.status, 40) === "scheduled") {
         if (status) {
@@ -749,7 +831,9 @@
     if (!button || button.disabled) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    runPublication(button);
+    const authoritativePublish = window.atinaraMarketAdminBridge?.publishDraft;
+    if (typeof authoritativePublish === "function") authoritativePublish();
+    else runPublication(button);
   }, true);
 
   new MutationObserver(restorePublication).observe(root, { childList: true, subtree: true });

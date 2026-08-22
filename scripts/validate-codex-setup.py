@@ -46,6 +46,11 @@ OBSOLETE_ROOT_COPIES = {
     "radar_eligibility_v7_transaction.sql",
 }
 
+SECRET_SCAN_IGNORED_DIRECTORIES = {
+    ".git",
+    "node_modules",
+}
+
 
 def fail(message: str) -> None:
     raise AssertionError(message)
@@ -167,9 +172,11 @@ def validate_no_secrets() -> None:
         r"(?i)(?:service_role_key|supabase_service_role_key|api_key|auth_token|secret)\s*=\s*['\"][A-Za-z0-9_\-\.]{20,}"
     )
     for path in ROOT.rglob("*"):
+        rel = path.relative_to(ROOT)
+        if any(part in SECRET_SCAN_IGNORED_DIRECTORIES for part in rel.parts):
+            continue
         if not path.is_file():
             continue
-        rel = path.relative_to(ROOT)
         if path.name in forbidden_files or path.name.startswith(".env."):
             fail(f"Archivo de entorno no permitido: {rel}")
         if path.suffix.lower() in {".zip", ".png", ".jpg", ".jpeg", ".gif", ".pdf"}:

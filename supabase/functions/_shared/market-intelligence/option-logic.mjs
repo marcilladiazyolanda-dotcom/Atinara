@@ -6,12 +6,12 @@ export function evaluateValiditySeparately({ structuralIssues = [], probability 
   if (resultKnown) return { integrity_status: "fail", forecastability_status: "already_determined", human_review_required: false };
   if (stale) return { integrity_status: "fail", forecastability_status: "stale", human_review_required: false };
   if (structuralIssues.length) return { integrity_status: "needs_edit", forecastability_status: "unknown", human_review_required: true };
-  const numeric = Number(probability);
-  const forecastability = Number.isFinite(numeric) && numeric <= 0.05
+  const numeric = nullableFiniteNumber(probability);
+  const forecastability = numeric !== null && numeric <= 0.05
     ? "valid_very_unlikely"
-    : Number.isFinite(numeric) && numeric <= 0.2
+    : numeric !== null && numeric <= 0.2
       ? "valid_low_probability"
-      : "forecastable";
+      : numeric === null ? "unknown" : "forecastable";
   return { integrity_status: "pass", forecastability_status: forecastability, human_review_required: false };
 }
 
@@ -21,3 +21,4 @@ export function validateBinaryOptions(options = []) {
   if (!values[0] || !values[1] || values[0] === values[1]) return [{ code: "OPTIONS_OVERLAP", field: "options" }];
   return [];
 }
+import { nullableFiniteNumber } from "../nullable-number.mjs";

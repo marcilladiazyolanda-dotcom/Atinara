@@ -642,7 +642,7 @@ test("Datos y tendencias conserva análisis, autofill y guardado como acciones h
   ]) {
     assert.match(observatoryEdge, new RegExp(`${field}: text\\(proposal\\.${field}`));
   }
-  assert.match(observatoryHtml, /official-opportunity-request\.js\?v=20260815-official-idempotency-v2/);
-  assert.match(observatoryHtml, /admin-markets\.js\?v=20260815-official-idempotency-v2/);
-  assert.match(observatoryHtml, /styles\.css\?v=20260815-official-idempotency-v2/);
+  assert.match(observatoryHtml, /official-opportunity-request\.js\?v=20260820-v6-market-cycle1/);
+  assert.match(observatoryHtml, /admin-markets\.js\?v=20260820-v6-market-cycle1/);
+  assert.match(observatoryHtml, /styles\.css\?v=20260820-v6-market-cycle1/);
 });

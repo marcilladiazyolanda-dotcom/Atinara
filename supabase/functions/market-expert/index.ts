@@ -16,6 +16,10 @@ import { createAbsoluteExecutionContext, createChildAbort, deadlineSleep, fetchW
 import { AI_TASK_CONTRACTS } from "../_shared/ai/task-policy.mjs";
 import { createAiPersistence } from "../_shared/ai/persistence.mjs";
 import { persistAgentTelemetry } from "../_shared/ai/telemetry.mjs";
+import { createMarketWorkflowIssue } from "../_shared/market-workflow-issues.mjs";
+import { essentialMarketTextNotSpanish } from "../_shared/market-language.mjs";
+import { nullableFiniteNumber } from "../_shared/nullable-number.mjs";
+import { isIanaTimezone } from "../_shared/market-temporal-contract.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -98,8 +102,20 @@ const SOURCE_ROLES = new Set([
 const HARD_REASON_CODES = new Set([
   "DETERMINISTIC_GATE_BLOCKED",
   "EVENT_ALREADY_RESOLVED",
+  "EVENT_OUTSIDE_CONTRACT",
+  "OUTSIDE_GAMING_DOMAIN",
+  "PROVIDER_NOT_OPEN",
+  "PROVIDER_OPTION_INACTIVE",
+  "PROVIDER_EVENT_NOT_FOUND",
+  "PROVIDER_CHILD_NOT_FOUND",
   "TEMPORAL_WINDOW_ALREADY_ENDED",
   "TEMPORAL_INCOHERENCE",
+  "TEMPORAL_AUTHORITATIVE_DATE_REQUIRED",
+  "TEMPORAL_SOURCE_SEMANTICS_MISMATCH",
+  "TIMEZONE_REQUIRED",
+  "ESSENTIAL_TEXT_NOT_SPANISH",
+  "GAMING_DOMAIN_REVIEW_REQUIRED",
+  "CHILD_IDENTITY_MISMATCH",
   "DUPLICATE_MARKET",
   "CONFIRMED_DUPLICATE",
   "SOURCE_ALREADY_RESOLVED",
@@ -109,7 +125,10 @@ const HARD_REASON_CODES = new Set([
   "RADAR_NORMALIZER_OUTDATED",
   "RADAR_ELIGIBILITY_POLICY_OUTDATED",
   "RADAR_RESOLUTION_SOURCE_REQUIRED",
+  "PROVIDER_PLACEHOLDER",
   "MARKET_EXPERT_ANALYSIS_STALE",
+  "RESOLUTION_SCHEMA_VERSION_UNKNOWN",
+  "RESOLUTION_POLICY_VERSION_UNKNOWN",
 ]);
 const DERIVED_REASON_CODES = new Set([
   "RADAR_CANDIDATE_NOT_PREPARABLE",
@@ -120,6 +139,12 @@ const DERIVED_REASON_CODES = new Set([
 ]);
 const TERMINAL_REASON_CODES = new Set([
   "EVENT_ALREADY_RESOLVED",
+  "EVENT_OUTSIDE_CONTRACT",
+  "OUTSIDE_GAMING_DOMAIN",
+  "PROVIDER_NOT_OPEN",
+  "PROVIDER_OPTION_INACTIVE",
+  "PROVIDER_EVENT_NOT_FOUND",
+  "PROVIDER_CHILD_NOT_FOUND",
   "TEMPORAL_WINDOW_ALREADY_ENDED",
   "DUPLICATE_MARKET",
   "CONFIRMED_DUPLICATE",
@@ -128,8 +153,121 @@ const TERMINAL_REASON_CODES = new Set([
 ]);
 const REPAIR_MATERIALIZATION_REASON_CODES = new Set([
   "RADAR_RESOLUTION_SOURCE_REQUIRED",
+  "RADAR_ELIGIBILITY_REQUIRED",
+  "RADAR_ELIGIBILITY_POLICY_OUTDATED",
+  "CHILD_IDENTITY_MISMATCH",
   "TEMPORAL_INCOHERENCE",
+  "TEMPORAL_AUTHORITATIVE_DATE_REQUIRED",
+  "TEMPORAL_SOURCE_SEMANTICS_MISMATCH",
+  "TIMEZONE_REQUIRED",
+  "ESSENTIAL_TEXT_NOT_SPANISH",
 ]);
+const MATERIALIZED_REASON_ISSUE_POLICY: Readonly<Record<string, Readonly<JsonRecord>>> = Object.freeze({
+  RADAR_ELIGIBILITY_REQUIRED: Object.freeze({
+    detectedBy: "radar", ownerStage: "radar", repairability: "auto_recoverable",
+    affectedFields: ["eligibility_status", "eligibility_expires_at"], nextAction: "refresh_draft_eligibility",
+  }),
+  RADAR_NORMALIZER_OUTDATED: Object.freeze({
+    detectedBy: "radar", ownerStage: "radar", repairability: "auto_recoverable",
+    affectedFields: ["normalizer_version"], nextAction: "retry_provider_refresh",
+  }),
+  RADAR_ELIGIBILITY_POLICY_OUTDATED: Object.freeze({
+    detectedBy: "radar", ownerStage: "radar", repairability: "auto_recoverable",
+    affectedFields: ["eligibility_policy_version"], nextAction: "refresh_draft_eligibility",
+  }),
+  RADAR_RESOLUTION_SOURCE_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["resolution_contract.sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  GAMING_DOMAIN_REVIEW_REQUIRED: Object.freeze({
+    detectedBy: "radar", ownerStage: "human_review", repairability: "human_editable",
+    affectedFields: ["category", "domain_gate"], nextAction: "review_gaming_domain_manually",
+  }),
+  TEMPORAL_INCOHERENCE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["temporal_contract"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  TEMPORAL_AUTHORITATIVE_DATE_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["temporal_contract", "evaluation_ends_at", "timezone"],
+    nextAction: "repair_temporal_or_source_contract",
+  }),
+  TEMPORAL_SOURCE_SEMANTICS_MISMATCH: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["temporal_contract", "resolution_contract.sources"],
+    nextAction: "repair_temporal_or_source_contract",
+  }),
+  TIMEZONE_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["timezone"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  RESOLUTION_SCHEMA_VERSION_UNKNOWN: Object.freeze({
+    detectedBy: "internal_platform", ownerStage: "internal_platform", repairability: "auto_recoverable",
+    affectedFields: ["contract_schema_version"], blockingScope: "none", nextAction: "retry_market_expert",
+  }),
+  RESOLUTION_POLICY_VERSION_UNKNOWN: Object.freeze({
+    detectedBy: "internal_platform", ownerStage: "internal_platform", repairability: "auto_recoverable",
+    affectedFields: ["policy_version"], blockingScope: "none", nextAction: "retry_market_expert",
+  }),
+  CANONICAL_STATEMENT_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["canonical_statement", "question"], nextAction: "repair_market_contract",
+  }),
+  SOURCE_METRIC_UNSUPPORTED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["capture_strategy", "metric"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  AGGREGATION_UNSUPPORTED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["aggregation"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  TEMPORAL_END_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["window_end", "evaluation_at"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  TEMPORAL_WINDOW_ALREADY_ENDED: Object.freeze({
+    detectedBy: "radar", ownerStage: "radar", repairability: "terminal",
+    affectedFields: ["window_end", "evaluation_at"], blockingScope: "terminal",
+    retryable: false, nextAction: "archive_terminal_candidate",
+  }),
+  SOURCE_ROLE_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  INVALID_OR_UNVERIFIED_SOURCE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  SOURCE_PRECEDENCE_INVALID: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  SOURCE_FALLBACK_CONDITION_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  RESOLUTION_PRIMARY_SOURCE_REQUIRED: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "waiting_authoritative_source",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  RESOLUTION_PRIMARY_SOURCE_MULTIPLE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["sources"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  METRIC_CONTRACT_INCOMPLETE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["metric", "operator", "threshold", "precision"],
+    nextAction: "repair_temporal_or_source_contract",
+  }),
+  MONITOR_INTERVAL_UNSAFE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["sampling_interval_seconds"], nextAction: "repair_temporal_or_source_contract",
+  }),
+  SOURCE_RETENTION_INCOMPATIBLE: Object.freeze({
+    detectedBy: "editor", ownerStage: "corrector", repairability: "human_editable",
+    affectedFields: ["maximum_monitor_duration_seconds"], nextAction: "repair_temporal_or_source_contract",
+  }),
+});
 
 function text(value: unknown, max = 4_000): string {
   return String(value ?? "").trim().slice(0, max);
@@ -448,8 +586,8 @@ function slugify(value: unknown): string {
 }
 
 function normalizeProbability(value: unknown): number | null {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return null;
+  const number = nullableFiniteNumber(value);
+  if (number===null) return null;
   if (number > 1 && number <= 100) return number / 100;
   return number >= 0 && number <= 1 ? number : null;
 }
@@ -485,7 +623,9 @@ function inspectPromptInjection(value: unknown) {
 function safeOrigin(origin: JsonRecord): JsonRecord {
   const allowed = [
     "id", "state", "provider", "warnings", "expires_at", "fetched_at", "external_id", "external_url",
-    "source_title", "source_category", "source_close_at", "source_question", "source_description",
+    "source_title", "source_category", "source_close_at", "source_market_open_at", "source_event_at",
+    "source_event_start_at", "source_event_end_at", "source_settlement_at", "source_series_expiry_at",
+    "source_last_trade_at", "source_question", "source_description",
     "source_probability", "source_probability_yes", "source_resolution_url", "source_resolution_rules",
     "source_resolution_deadline", "source_status", "source_result", "source_volume", "source_volume_total",
     "source_liquidity", "quality_score", "quality_status", "event_group_key", "duplicate_matches",
@@ -496,6 +636,8 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     "normalizer_version", "eligibility_policy_version", "eligibility_status", "eligibility_reason_code",
     "eligibility_reason", "eligibility_evidence", "eligibility_checked_at", "eligibility_expires_at",
     "current_eligibility_check_id", "fingerprint", "preparation_revision",
+    "advancement_gate", "workflow_issues", "temporal_contract", "domain_status",
+    "domain_reason_code", "domain_positive_signals", "domain_negative_signals", "domain_policy_version",
     "verified_at", "cache_expires_at", "quality_updated_at", "family_key", "family_title",
     "family_type", "family_child_key", "family_child_label", "family_relationship", "family_matches",
     "family_version", "family_semantics", "family_source_event_key", "family_sort_at",
@@ -549,6 +691,30 @@ function analysisOriginSnapshot(origin: JsonRecord, originType: string): JsonRec
     "eligibility_checked_at", "eligibility_expires_at", "current_eligibility_check_id",
   ]) {
     delete snapshot[key];
+  }
+  if (Array.isArray(snapshot.workflow_issues)) {
+    snapshot.workflow_issues = records(snapshot.workflow_issues).map((issue) => ({
+      issue_code: text(issue.issue_code, 100),
+      owner_stage: text(issue.owner_stage, 40),
+      blocking_scope: text(issue.blocking_scope, 40),
+      repairability: text(issue.repairability, 40),
+      fingerprint: text(issue.fingerprint, 80),
+      status: text(issue.status, 40),
+      next_action: text(issue.next_action, 100),
+    }));
+  }
+  if (record(snapshot.temporal_contract)) {
+    const temporal = snapshot.temporal_contract as JsonRecord;
+    snapshot.temporal_contract = {
+      version: temporal.version,
+      decision_hash: temporal.decision_hash,
+      canonical_event_at: temporal.canonical_event_at,
+      forecast_closes_at: temporal.forecast_closes_at,
+      evaluation_ends_at: temporal.evaluation_ends_at,
+      resolution_deadline: temporal.resolution_deadline,
+      timezone: temporal.timezone,
+      anomaly_codes: temporal.anomaly_codes,
+    };
   }
   return snapshot;
 }
@@ -728,6 +894,7 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
     ? hypothesis.resolution_path as JsonRecord
     : {};
 
+  const temporal = record(origin.temporal_contract) || {};
   const question = text(
     hypothesis?.proposed_question ||
       origin.atinara_question ||
@@ -738,13 +905,10 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
     500,
   );
   const evaluationAt = text(
-    supplied.evaluation_at ||
-      supplied.window_end ||
-      path.evaluation_at ||
-      origin.atinara_closes_at ||
-      origin.source_close_at ||
-      origin.time_window_end ||
-      origin.event_start_at,
+    supplied.evaluation_at || supplied.window_end || path.evaluation_at ||
+      (originType === "radar_candidate"
+        ? temporal.evaluation_ends_at
+        : origin.time_window_end || origin.event_start_at),
     120,
   ) || null;
   const primaryUrl = getOfficialResolutionUrl(origin);
@@ -774,10 +938,16 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
   };
   const familyOperator = operatorAliases[text(familyThreshold.operator, 20).toLowerCase()]
     || text(familyThreshold.operator, 20);
-  const resolutionDeadline = deriveResolutionDeadline(
-    evaluationAt,
-    [supplied.resolution_deadline, origin.source_resolution_deadline, origin.resolution_deadline],
-    RESOLUTION_DEADLINE_POLICY,
+  const resolutionDeadline = originType === "radar_candidate"
+    ? text(supplied.resolution_deadline || temporal.resolution_deadline, 120) || null
+    : deriveResolutionDeadline(
+        evaluationAt,
+        [supplied.resolution_deadline, origin.source_resolution_deadline, origin.resolution_deadline],
+        RESOLUTION_DEADLINE_POLICY,
+      );
+  const rawTimezone = text(
+    supplied.timezone || (originType === "radar_candidate" ? temporal.timezone : "Europe/Madrid"),
+    100,
   );
 
   const contract: JsonRecord = {
@@ -818,7 +988,7 @@ function contractFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, o
     evaluation_at: evaluationAt,
     resolution_deadline: resolutionDeadline,
     resolution_deadline_policy_version: RESOLUTION_DEADLINE_POLICY.version,
-    timezone: text(supplied.timezone || "Europe/Madrid", 100),
+    timezone: isIanaTimezone(rawTimezone) ? rawTimezone : null,
     finality_delay_seconds: Number(supplied.finality_delay_seconds) || 300,
     capture_strategy: captureStrategy,
     sampling_interval_seconds: Number(supplied.sampling_interval_seconds) ||
@@ -871,7 +1041,7 @@ function validationIssues(contract: JsonRecord, now = new Date()): JsonRecord[] 
   else if (end <= now) issues.push({ code: "TEMPORAL_WINDOW_ALREADY_ENDED", field: "window_end" });
   const start = safeDate(contract.window_start);
   if (start && end && start >= end) issues.push({ code: "TEMPORAL_INCOHERENCE", field: "window_start" });
-  if (!text(contract.timezone, 100).includes("/")) issues.push({ code: "TIMEZONE_REQUIRED", field: "timezone" });
+  if (!isIanaTimezone(contract.timezone)) issues.push({ code: "TIMEZONE_REQUIRED", field: "timezone" });
 
   const sources = records(contract.sources);
   const seenPrecedence = new Set<number>();
@@ -917,7 +1087,7 @@ function proposalFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, c
       origin.source_question,
     500,
   );
-  const subject = text(origin.title || origin.source_title || origin.subtitle, 300);
+  const subject = text(origin.family_child_label || origin.title || origin.source_title || origin.subtitle, 300);
   const primary = records(contract.sources).find((source) => source.role === "PRIMARY_RESOLUTION");
   const alternatives = records(contract.sources)
     .filter((source) => source.role !== "PRIMARY_RESOLUTION")
@@ -939,10 +1109,12 @@ function proposalFromOrigin(origin: JsonRecord, hypothesis: JsonRecord | null, c
     subject,
     category: text(origin.atinara_category || origin.source_category || "Industria", 100),
     evaluation_period_label: evaluationAt
-      ? `Hasta ${new Intl.DateTimeFormat("es-ES", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Madrid" }).format(new Date(evaluationAt))}`
+      ? `Hasta ${new Intl.DateTimeFormat("es-ES", {
+          dateStyle: "long", timeStyle: "short", timeZone: text(contract.timezone, 100) || "UTC",
+        }).format(new Date(evaluationAt))}`
       : "",
     evaluation_ends_at: evaluationAt || null,
-    timezone: text(contract.timezone || "Europe/Madrid", 100),
+    timezone: text(contract.timezone, 100) || null,
     resolution_deadline: text(contract.resolution_deadline, 120) || null,
     yes_criteria: yesCriteria,
     no_criteria: text(
@@ -988,13 +1160,21 @@ function deterministicAssessment(origin: JsonRecord, originType: string) {
   if (origin.marketability_status === "duplicate" || hasBlockingDuplicate(origin.duplicate_matches)) {
     structuralIssues.push("DUPLICATE_MARKET");
   }
+  const eligibilityReason = text(
+    origin.eligibility_reason_code || origin.verification_reason_code || origin.domain_reason_code,
+    100,
+  );
   const resultKnown = origin.marketability_status === "already_resolved"
-    || origin.eligibility_status === "terminal"
-    || origin.verification_reason_code === "EVENT_ALREADY_RESOLVED";
+    || eligibilityReason === "EVENT_ALREADY_RESOLVED";
+  const terminalBlocked = origin.eligibility_status === "terminal";
+  if (terminalBlocked && !resultKnown) {
+    structuralIssues.push(/^[A-Z][A-Z0-9_]{2,99}$/.test(eligibilityReason)
+      ? eligibilityReason : "RADAR_CANDIDATE_NOT_PREPARABLE");
+  }
   const now = new Date();
   const eligibilityExpiry = safeDate(origin.eligibility_expires_at);
   const eligibilityExpired = !eligibilityExpiry || eligibilityExpiry <= now;
-  const stale = origin.marketability_status === "rejected" ||
+  const stale = origin.marketability_status === "rejected" || terminalBlocked ||
     (origin.eligibility_status && origin.eligibility_status !== "eligible" && !resultKnown);
 
   if (originType === "radar_candidate") {
@@ -1048,8 +1228,12 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
   const assessment = deterministicAssessment(origin, originType);
   const contract = contractFromOrigin(origin, hypothesis, originType);
   const issues = validationIssues(contract);
-  const proposal = proposalFromOrigin(origin, hypothesis, contract);
-  const hardReject = assessment.integrity_status === "fail" || origin.marketability_status === "policy_blocked";
+  const originIssues = records(origin.workflow_issues);
+  const workflowTerminal = originIssues.some((issue) =>
+    text(issue.blocking_scope, 40) === "terminal" || text(issue.repairability, 40) === "terminal");
+  const proposal = workflowTerminal ? {} : proposalFromOrigin(origin, hypothesis, contract);
+  const hardReject = workflowTerminal
+    || assessment.integrity_status === "fail" || origin.marketability_status === "policy_blocked";
   const issueCodes = issues.map((issue) => text(issue.code, 100));
   const sourceReadiness = issues.some((issue) => issue.code === "RESOLUTION_PRIMARY_SOURCE_REQUIRED")
     ? "needs_official_source"
@@ -1080,6 +1264,7 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
       ...records(origin.marketability_reason_codes).map((item) => item.code || item),
       ...issueCodes,
       ...assessment.structuralIssues,
+      ...originIssues.map((issue) => text(issue.issue_code, 100)),
       ...(hardReject ? ["DETERMINISTIC_GATE_BLOCKED"] : []),
     ]),
     summary: hardReject
@@ -1102,8 +1287,10 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
       : [],
     proposal,
     resolution_contract: contract,
+    workflow_issues: originIssues,
     hypotheses,
     origin_preparation_revision: origin.preparation_revision ?? null,
+    origin_source_fingerprint: origin.fingerprint ?? null,
     policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
     schema_version: MARKET_EXPERT_SCHEMA_VERSION,
   };
@@ -1169,6 +1356,11 @@ function modelSafeOrigin(origin: JsonRecord): JsonRecord {
     "id", "external_id", "external_event_id", "external_market_id", "entity_id",
     "parent_entity_id", "watch_entity_id", "current_eligibility_check_id",
     "provider_payload", "recent_context", "provider_policy_flags", "expert_analysis_status",
+    "advancement_gate", "workflow_issues", "temporal_contract",
+    "domain_status", "domain_reason_code", "domain_policy_version",
+    "domain_positive_signals", "domain_negative_signals",
+    "source_market_open_at", "source_event_at", "source_event_start_at", "source_event_end_at",
+    "source_settlement_at", "source_series_expiry_at", "source_last_trade_at",
   ]);
   const stripIdentifiers = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stripIdentifiers);
@@ -1287,8 +1479,197 @@ function mergeExpertVerdict(deterministic: JsonRecord, expert: JsonRecord, origi
   };
 }
 
+function comparable(value: unknown): string {
+  return text(value, 8_000).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function comparablePhrasePresent(material: string, phrase: string): boolean {
+  return Boolean(phrase && (` ${material} `).includes(` ${phrase} `));
+}
+
+function comparableWithoutPhrase(material: string, phrase: string): string {
+  const tokens = material.split(" ").filter(Boolean);
+  const phraseTokens = phrase.split(" ").filter(Boolean);
+  if (!phraseTokens.length) return material;
+  const remaining: string[] = [];
+  for (let index = 0; index < tokens.length;) {
+    const matches = phraseTokens.every((token, offset) => tokens[index + offset] === token);
+    if (matches) index += phraseTokens.length;
+    else remaining.push(tokens[index++]);
+  }
+  return remaining.join(" ");
+}
+
+function proposalIdentityMismatchFields(proposal: JsonRecord, origin: JsonRecord): string[] {
+  const child = comparable(origin.family_child_label);
+  if (!child || !["categorical_outcomes", "participant_options", "platform_variants"]
+    .includes(text(origin.family_type, 80))) return [];
+  const fields: string[] = [];
+  if (comparable(proposal.subject) !== child) fields.push("subject");
+  const siblingPhrases = records(origin.family_matches).map((match) => (
+    comparable(match.family_child_label)
+      || comparable(text(match.family_child_key, 240).replace(/^option:/, "").replaceAll("-", " "))
+  )).filter((value) => value && value !== child);
+  for (const key of ["question", "yes_criteria", "no_criteria", "public_criteria"]) {
+    const material = comparable(proposal[key]);
+    const materialWithoutChild = comparableWithoutPhrase(material, child);
+    if (!comparablePhrasePresent(material, child)
+      || siblingPhrases.some((sibling) => comparablePhrasePresent(
+        comparablePhrasePresent(child, sibling) ? materialWithoutChild : material,
+        sibling,
+      ))) fields.push(key);
+  }
+  const childSlug = child.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const slugSegments = comparable(text(proposal.market_slug, 160).replaceAll("-", " "));
+  const slugWithoutChild = comparableWithoutPhrase(slugSegments, child);
+  if (childSlug && (!comparablePhrasePresent(slugSegments, child)
+    || siblingPhrases.some((sibling) => comparablePhrasePresent(
+      comparablePhrasePresent(child, sibling) ? slugWithoutChild : slugSegments,
+      sibling,
+    )))) {
+    fields.push("market_slug");
+  }
+  return fields;
+}
+
+function proposalEssentialTextNotSpanish(proposal: JsonRecord): boolean {
+  return essentialMarketTextNotSpanish([
+    proposal.question, proposal.yes_criteria, proposal.no_criteria, proposal.public_criteria,
+  ]);
+}
+
+async function appendExpertWorkflowIssues(verdict: JsonRecord, origin: JsonRecord): Promise<JsonRecord> {
+  const proposal = record(verdict.proposal) || {};
+  const existing = records(verdict.workflow_issues);
+  const existingCodes = new Set(existing.map((issue) => text(issue.issue_code, 100)));
+  const added: JsonRecord[] = [];
+  const mismatchFields = proposalIdentityMismatchFields(proposal, origin);
+  if (mismatchFields.length && !existingCodes.has("CHILD_IDENTITY_MISMATCH")) {
+    added.push(await createMarketWorkflowIssue({
+      issueCode: "CHILD_IDENTITY_MISMATCH", detectedBy: "editor", ownerStage: "corrector",
+      severity: "blocking", repairability: "human_editable", blockingScope: "approval",
+      affectedFields: mismatchFields,
+      evidenceRefs: [{ family_key: origin.family_key ?? null, family_child_key: origin.family_child_key ?? null }],
+      currentValue: Object.fromEntries(mismatchFields.map((field) => [field, proposal[field] ?? null])),
+      proposedValue: { family_child_label: origin.family_child_label ?? null }, confidence: 100,
+      policyVersion: MARKET_INTELLIGENCE_POLICY_VERSION, retryable: true,
+      nextAction: "repair_child_identity",
+    }) as JsonRecord);
+  }
+  if (proposalEssentialTextNotSpanish(proposal) && !existingCodes.has("ESSENTIAL_TEXT_NOT_SPANISH")) {
+    added.push(await createMarketWorkflowIssue({
+      issueCode: "ESSENTIAL_TEXT_NOT_SPANISH", detectedBy: "editor", ownerStage: "corrector",
+      severity: "blocking", repairability: "human_editable", blockingScope: "approval",
+      affectedFields: ["question", "yes_criteria", "no_criteria", "public_criteria"],
+      evidenceRefs: [{ policy_version: MARKET_INTELLIGENCE_POLICY_VERSION }],
+      currentValue: { question: proposal.question ?? null }, proposedValue: null, confidence: 95,
+      policyVersion: MARKET_INTELLIGENCE_POLICY_VERSION, retryable: true,
+      nextAction: "repair_essential_spanish_text",
+    }) as JsonRecord);
+  }
+  const reasonCodes = uniqueStrings(Array.isArray(verdict.reason_codes) ? verdict.reason_codes : []);
+  const validationIssueFields = new Map<string, string[]>();
+  for (const validationIssue of validationIssues(record(verdict.resolution_contract) || {})) {
+    const issueCode = text(validationIssue.code, 100);
+    const field = text(validationIssue.field, 200);
+    if (!issueCode || !field) continue;
+    validationIssueFields.set(issueCode, uniqueStrings([
+      ...(validationIssueFields.get(issueCode) || []), field,
+    ]));
+  }
+  for (const issueCode of reasonCodes) {
+    const policy = MATERIALIZED_REASON_ISSUE_POLICY[issueCode];
+    if (!policy || existingCodes.has(issueCode)) continue;
+    added.push(await createMarketWorkflowIssue({
+      issueCode,
+      detectedBy: policy.detectedBy,
+      ownerStage: policy.ownerStage,
+      severity: policy.severity || "blocking",
+      repairability: policy.repairability,
+      blockingScope: policy.blockingScope || "approval",
+      affectedFields: validationIssueFields.get(issueCode) || policy.affectedFields,
+      evidenceRefs: [{
+        origin_type: text(origin.origin_type ?? origin.provider, 80) || null,
+        origin_id: text(origin.id, 100) || null,
+        preparation_revision: origin.preparation_revision ?? null,
+      }],
+      currentValue: {
+        eligibility_status: origin.eligibility_status ?? null,
+        eligibility_expires_at: origin.eligibility_expires_at ?? null,
+        domain_gate: origin.domain_gate ?? null,
+        temporal_contract: origin.temporal_contract ?? null,
+      },
+      proposedValue: null,
+      confidence: 100,
+      policyVersion: MARKET_INTELLIGENCE_POLICY_VERSION,
+      retryable: policy.retryable !== false,
+      nextAction: policy.nextAction,
+    }) as JsonRecord);
+    existingCodes.add(issueCode);
+  }
+  if (!added.length) return verdict;
+  return {
+    ...verdict,
+    workflow_issues: [...existing, ...added],
+    reason_codes: uniqueStrings([...(Array.isArray(verdict.reason_codes) ? verdict.reason_codes : []),
+      ...added.map((issue) => issue.issue_code)]),
+  };
+}
+
+async function handoffEditorWorkflowIssues(
+  environment: SupabaseEnvironment,
+  verdict: JsonRecord,
+  originType: string,
+  originId: string,
+  origin: JsonRecord,
+): Promise<JsonRecord> {
+  const issues = records(verdict.workflow_issues);
+  const handoffIds = new Set(issues.filter((issue) => text(issue.owner_stage,40)==="editor"
+    && /^(?:TEMPORAL_|SOURCE_)/.test(text(issue.issue_code,100)))
+    .map((issue) => text(issue.issue_id,80)).filter((value) => /^[0-9a-f-]{36}$/i.test(value)));
+  if (originType!=="radar_candidate" || !handoffIds.size) return verdict;
+  const projectedRaw = await rpc(environment,"get_market_workflow_issues_v1",{
+    subject_type_input:"radar_candidate",
+    subject_key_input:originId,
+    subject_version_input:String(origin.preparation_revision ?? "0"),
+  },{service:true});
+  const projected = new Map(records(projectedRaw).map((issue) => [text(issue.issue_id,80),issue]));
+  const handedOff: JsonRecord[] = [];
+  for (const issue of issues) {
+    const issueId = text(issue.issue_id,80);
+    if (!handoffIds.has(issueId)) { handedOff.push(issue); continue; }
+    const current = projected.get(issueId);
+    if (!current) throw new Error("MARKET_WORKFLOW_ISSUE_NOT_FOUND");
+    if (["resolved","superseded"].includes(text(current.status,40))) {
+      handedOff.push({ ...issue,...current });
+      continue;
+    }
+    if (text(current.owner_stage,40)==="corrector"
+      && text(current.next_action,100)==="repair_temporal_or_source_contract") {
+      handedOff.push({ ...issue,...current });
+      continue;
+    }
+    const transition = record(await rpc(environment,"transition_market_workflow_issue_v1",{
+      issue_id_input:issueId,
+      expected_status_input:text(current.status,40)||"open",
+      new_status_input:"waiting",
+      owner_stage_input:"corrector",
+      next_action_input:"repair_temporal_or_source_contract",
+      resolution_method_input:null,
+      evidence_refs_input:[{ expert_origin_type:originType,expert_origin_id:originId }],
+    },{service:true})) ?? {};
+    handedOff.push({
+      ...issue,status:transition.status ?? "waiting",owner_stage:"corrector",
+      next_action:"repair_temporal_or_source_contract",updated_at:new Date().toISOString(),
+    });
+  }
+  return { ...verdict,workflow_issues:handedOff };
+}
+
 function buildDraftGate(verdict: JsonRecord): JsonRecord {
   const reasonCodes = Array.isArray(verdict.reason_codes) ? verdict.reason_codes.map((code) => text(code, 100)) : [];
+  const workflowIssues = records(verdict.workflow_issues);
   const rawHardBlocks = uniqueStrings([
     ...reasonCodes.filter((code) => HARD_REASON_CODES.has(code) && !DERIVED_REASON_CODES.has(code)),
     ...(verdict.integrity_status === "fail" ? ["INTEGRITY_FAILED"] : []),
@@ -1300,7 +1681,12 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
       : []),
     ...(verdict.source_readiness === "not_resolvable" ? ["SOURCE_NOT_RESOLVABLE"] : []),
   ]);
-  const terminalRoots = rawHardBlocks.filter((code) => TERMINAL_REASON_CODES.has(code));
+  const terminalRoots = uniqueStrings([
+    ...rawHardBlocks.filter((code) => TERMINAL_REASON_CODES.has(code)),
+    ...workflowIssues
+      .filter((issue) => text(issue.blocking_scope, 40) === "terminal" || text(issue.repairability, 40) === "terminal")
+      .map((issue) => text(issue.issue_code, 100)),
+  ]);
   let hardBlocks = terminalRoots.length ? terminalRoots : rawHardBlocks.filter((code) => !DERIVED_REASON_CODES.has(code));
   if (hardBlocks.includes("RADAR_ELIGIBILITY_REQUIRED")) {
     hardBlocks = hardBlocks.filter((code) => code !== "RADAR_CANDIDATE_NOT_PREPARABLE");
@@ -1316,28 +1702,45 @@ function buildDraftGate(verdict: JsonRecord): JsonRecord {
   const primaryReady = sources.some((source) => source.role === "PRIMARY_RESOLUTION" && safeHttpsUrl(source.url));
   const temporalReady = Boolean(safeDate(contract.evaluation_at || contract.window_end));
   const questionReady = Boolean(text(proposal.question || contract.canonical_statement, 500));
-  const canPrefill = hardBlocks.length === 0 && ["create", "create_with_edits"].includes(text(verdict.decision, 40));
-  const nonRepairableBlocks = hardBlocks.filter((code) => !REPAIR_MATERIALIZATION_REASON_CODES.has(code));
-  const canMaterializePrivateRepairDraft = terminalRoots.length === 0
-    && nonRepairableBlocks.length === 0
-    && ["create", "create_with_edits"].includes(text(verdict.decision, 40))
-    && questionReady;
-  const canSavePrivateDraft = canPrefill && primaryReady && temporalReady && questionReady;
+  const issueRepairability = new Map(workflowIssues.map((issue) => [
+    text(issue.issue_code, 100), text(issue.repairability, 40),
+  ]));
+  const issueOwners = new Map(workflowIssues.map((issue) => [
+    text(issue.issue_code, 100), text(issue.owner_stage, 40),
+  ]));
+  const nonRepairableBlocks = hardBlocks.filter((code) =>
+    !REPAIR_MATERIALIZATION_REASON_CODES.has(code)
+      || !issueRepairability.has(code)
+      || !["auto_recoverable", "auto_repairable", "human_editable", "waiting_authoritative_source"]
+        .includes(issueRepairability.get(code) || ""));
+  const artifactCanAdvance = terminalRoots.length === 0 && nonRepairableBlocks.length === 0 && questionReady;
+  const radarRecoverableHold = terminalRoots.length === 0 && hardBlocks.length > 0
+    && hardBlocks.every((code) => issueRepairability.get(code) === "auto_recoverable"
+      && ["radar", "provider", "internal_platform"].includes(issueOwners.get(code) || ""));
+  const canPrefill = artifactCanAdvance;
+  const canMaterializePrivateRepairDraft = artifactCanAdvance && hardBlocks.length > 0;
+  const canSavePrivateDraft = artifactCanAdvance;
+  const canBind = artifactCanAdvance && hardBlocks.length === 0 && primaryReady && temporalReady;
   const warnings = uniqueStrings(reasonCodes.filter((code) => !HARD_REASON_CODES.has(code)));
+  const nextIssue = workflowIssues.find((issue) => text(issue.status, 40) !== "resolved");
   return {
-    status: hardBlocks.length
-      ? canMaterializePrivateRepairDraft ? "repairable" : "blocked"
-      : warnings.length || verdict.source_readiness === "ready_with_warnings" ? "warning" : "validated",
+    status: terminalRoots.length ? "candidate_terminal"
+      : radarRecoverableHold ? "candidate_blocked_recoverable"
+      : hardBlocks.length || workflowIssues.length || warnings.length || verdict.source_readiness === "ready_with_warnings"
+        ? "proposal_ready_with_issues" : "proposal_ready",
     can_prefill: canPrefill,
     can_save_private_draft: canSavePrivateDraft,
     can_materialize_private_repair_draft: canMaterializePrivateRepairDraft,
-    can_bind: canSavePrivateDraft,
+    can_bind: canBind,
     can_publish: false,
     hard_blocks: hardBlocks,
     causal_roots: hardBlocks,
     derived_diagnostics: derivedDiagnostics,
     warnings,
-    automatic_recovery: null,
+    workflow_issues: workflowIssues,
+    owner_stage: text(nextIssue?.owner_stage, 40) || (terminalRoots.length ? "radar" : "editor"),
+    next_action: text(nextIssue?.next_action, 100) || (hardBlocks.length ? "edit_private_draft" : "apply_proposal"),
+    automatic_recovery: hardBlocks.includes("RADAR_ELIGIBILITY_REQUIRED") ? "refresh_deterministic_eligibility" : null,
     human_confirmation_required: true,
   };
 }
@@ -1411,9 +1814,13 @@ function reconcileSavedVerdict(savedValue: unknown, deterministic: JsonRecord, o
     uncertainties: issues.length
       ? ["El Plan de Resolución conserva advertencias pendientes."]
       : Array.isArray(saved.uncertainties) ? saved.uncertainties : [],
+    workflow_issues: [...new Map([
+      ...records(deterministic.workflow_issues), ...records(saved.workflow_issues),
+    ].map((issue) => [text(issue.fingerprint, 80), issue])).values()],
     proposal,
     resolution_contract: contract,
     origin_preparation_revision: origin.preparation_revision ?? deterministic.origin_preparation_revision ?? null,
+    origin_source_fingerprint: origin.fingerprint ?? deterministic.origin_source_fingerprint ?? null,
     policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
     schema_version: MARKET_EXPERT_SCHEMA_VERSION,
   });
@@ -1442,27 +1849,33 @@ async function storeRun(
     modelVersion?: string;
   } = {},
 ) {
+  const originFingerprint = await sha256(analysisOriginSnapshot(origin, originType));
+  const storedVerdict: JsonRecord = {
+    ...verdict,
+    origin_analysis_fingerprint: originFingerprint,
+    origin_source_fingerprint: origin.fingerprint ?? verdict.origin_source_fingerprint ?? null,
+  };
   return rpc(environment, "record_market_expert_run", {
     run_input: {
       agent_type: "market_editor",
       origin_type: originType,
       origin_id: originId,
       provider: origin.provider || null,
-      origin_fingerprint: await sha256(analysisOriginSnapshot(origin, originType)),
+      origin_fingerprint: originFingerprint,
       analysis_fingerprint: analysisFingerprint,
       policy_version: MARKET_INTELLIGENCE_POLICY_VERSION,
       schema_version: MARKET_EXPERT_SCHEMA_VERSION,
       model_version: options.modelVersion || "deterministic_only",
       status: options.status || "completed",
-      decision: verdict.decision || null,
-      integrity_status: verdict.integrity_status || null,
-      forecastability_status: verdict.forecastability_status || null,
-      source_readiness: verdict.source_readiness || null,
-      confidence: verdict.confidence ?? null,
-      human_review_required: verdict.human_review_required !== false,
-      result_json: verdict,
-      tool_summary: agentToolSummary(verdict.agent_execution).length
-        ? agentToolSummary(verdict.agent_execution)
+      decision: storedVerdict.decision || null,
+      integrity_status: storedVerdict.integrity_status || null,
+      forecastability_status: storedVerdict.forecastability_status || null,
+      source_readiness: storedVerdict.source_readiness || null,
+      confidence: storedVerdict.confidence ?? null,
+      human_review_required: storedVerdict.human_review_required !== false,
+      result_json: storedVerdict,
+      tool_summary: agentToolSummary(storedVerdict.agent_execution).length
+        ? agentToolSummary(storedVerdict.agent_execution)
         : safeToolSummary([
           { tool: "get_normalized_origin", status: "completed", count: 1 },
           { tool: "validate_resolution_contract", status: "completed", count: 1 },
@@ -1680,7 +2093,20 @@ async function analyzeOrigin(
   let aiTransportMode = "legacy_direct";
   let telemetryStatus = "not_attempted";
   let aiWarnings: readonly string[] = [];
-  try {
+  const preInferenceGate = buildDraftGate(deterministic);
+  const skipEditorialInference = preInferenceGate.status !== "proposal_ready";
+  if (skipEditorialInference) {
+    await dispatchEditorTool(agent, "request_editorial_enrichment", () => null, {
+      status: "no_op",
+      actionKey: "editorial-skipped-by-deterministic-gate",
+      progressFingerprint: `editorial:${analysisFingerprint}:skipped`,
+      summary: {
+        zero_inference: true,
+        gate_status: preInferenceGate.status,
+        next_action: preInferenceGate.next_action,
+      },
+    });
+  } else try {
     const editorial = await dispatchEditorTool(
       agent,
       "request_editorial_enrichment",
@@ -1721,6 +2147,8 @@ async function analyzeOrigin(
     });
   }
 
+  verdict = await appendExpertWorkflowIssues(verdict, origin);
+  verdict = await handoffEditorWorkflowIssues(environment,verdict,originType,originId,origin);
   verdict = decorateVerdict(verdict);
   const validation = await dispatchEditorTool(
     agent,
@@ -1770,7 +2198,8 @@ async function analyzeOrigin(
     "persist_editor_run",
     () => storeRun(environment, originType, originId, authoritativeOrigin, analysisFingerprint, storedVerdict, {
       errorCode: warningCode,
-      modelVersion: degraded ? `ai_gateway:${aiTransportMode}:degraded` : `ai_gateway:${aiTransportMode}`,
+      modelVersion: skipEditorialInference ? "deterministic_only"
+        : degraded ? `ai_gateway:${aiTransportMode}:degraded` : `ai_gateway:${aiTransportMode}`,
     }) as Promise<JsonRecord>,
     {
       actionKey: "persist-editor-run",
@@ -1792,7 +2221,8 @@ async function analyzeOrigin(
   try {
     finalizedRun = await storeRun(environment, originType, originId, authoritativeOrigin, analysisFingerprint, verdict, {
       errorCode: warningCode,
-      modelVersion: degraded ? `ai_gateway:${aiTransportMode}:degraded` : `ai_gateway:${aiTransportMode}`,
+      modelVersion: skipEditorialInference ? "deterministic_only"
+        : degraded ? `ai_gateway:${aiTransportMode}:degraded` : `ai_gateway:${aiTransportMode}`,
     }) as JsonRecord;
   } catch {
     // El dictamen ya quedó guardado. Un fallo al enriquecer su traza no altera

@@ -1,7 +1,12 @@
+import { nullableFiniteNumber } from "./nullable-number.mjs";
+import { sha256Hex } from "./ai/contracts.mjs";
+
 export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
 export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
 export const RADAR_FAMILY_VERSION = "atinara-market-family-v4";
 export const RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2";
+export const RADAR_DOMAIN_POLICY_VERSION = "atinara-gaming-domain-v1";
+export const RADAR_DOMAIN_FINGERPRINT_VERSION = "atinara-radar-domain-fingerprint-v1";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -12,7 +17,20 @@ export const RADAR_CATEGORIES = Object.freeze([
   "YouTubers",
 ]);
 
-export const RADAR_PROVIDERS = Object.freeze(["polymarket", "kalshi", "tavily"]);
+export const RADAR_PROVIDER_ROLE_VERSION = "atinara-radar-provider-roles-v1";
+export const RADAR_CANDIDATE_PROVIDERS = Object.freeze(["polymarket", "kalshi"]);
+export const RADAR_ENRICHMENT_CAPABILITIES = Object.freeze(["tavily"]);
+export const RADAR_PROVIDER_ROLES = Object.freeze({
+  polymarket: Object.freeze({ role: "candidate_feed", affectsCatalogHealth: true }),
+  kalshi: Object.freeze({ role: "candidate_feed", affectsCatalogHealth: true }),
+  tavily: Object.freeze({ role: "source_enrichment", affectsCatalogHealth: false }),
+});
+// Unión conservada para adaptadores, URLs y respuestas legacy. La salud del
+// catálogo usa RADAR_CANDIDATE_PROVIDERS, nunca esta unión.
+export const RADAR_PROVIDERS = Object.freeze([
+  ...RADAR_CANDIDATE_PROVIDERS,
+  ...RADAR_ENRICHMENT_CAPABILITIES,
+]);
 export const RADAR_API_HOSTS = Object.freeze([
   "gamma-api.polymarket.com",
   "external-api.kalshi.com",
@@ -54,6 +72,9 @@ export const RADAR_REASON_CODES = Object.freeze({
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "OFFICIAL_SELECTION_RECHECK_REQUIRED",
   VERIFICATION_REQUIRED: "VERIFICATION_REQUIRED",
   VERIFICATION_EXPIRED: "VERIFICATION_EXPIRED",
+  GAMING_DOMAIN_REVIEW_REQUIRED: "GAMING_DOMAIN_REVIEW_REQUIRED",
+  OUTSIDE_GAMING_DOMAIN: "OUTSIDE_GAMING_DOMAIN",
+  PROVIDER_PLACEHOLDER: "PROVIDER_PLACEHOLDER",
 });
 
 const PROVIDER_PUBLIC_HOSTS = Object.freeze({
@@ -103,6 +124,9 @@ const REASON_COPY = Object.freeze({
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "Una fuente oficial apunta a una selección ya publicada, pero Atinara debe completar su comprobación antes de volver a mostrar el evento.",
   VERIFICATION_REQUIRED: "La candidata necesita completar una comprobación automática antes de preparar un borrador.",
   VERIFICATION_EXPIRED: "La comprobación automática ha caducado y debe repetirse.",
+  GAMING_DOMAIN_REVIEW_REQUIRED: "La relación con videojuegos necesita una revisión específica.",
+  OUTSIDE_GAMING_DOMAIN: "La proposición está fuera del dominio gaming de este Radar.",
+  PROVIDER_PLACEHOLDER: "El proveedor todavía no identifica una opción real y concreta.",
 });
 
 export function isRecord(value) {
@@ -299,8 +323,28 @@ export function officialSelectionEditionCoverage(page, segments, subject) {
 }
 
 export function safeNumber(value) {
-  const number = typeof value === "number" ? value : Number(String(value ?? "").replace(",", "."));
-  return Number.isFinite(number) ? number : null;
+  return nullableFiniteNumber(value);
+}
+
+export function paginateMergedRadarParents(groups, {
+  parentOffset = 0,
+  parentLimit = 60,
+  authoritativeParentCount = 0,
+} = {}) {
+  const normalizedGroups = Array.isArray(groups) ? groups : [];
+  const offset = Math.max(0,Math.floor(Number(parentOffset)||0));
+  const limit = Math.max(1,Math.min(60,Math.floor(Number(parentLimit)||60)));
+  const parentCount = Math.max(
+    Math.max(0,Math.floor(Number(authoritativeParentCount)||0)),
+    offset+normalizedGroups.length,
+  );
+  return {
+    groups:normalizedGroups.slice(0,limit),
+    page:{
+      parent_count:parentCount,parent_offset:offset,parent_limit:limit,
+      next_parent_offset:offset+limit<parentCount ? offset+limit : null,
+    },
+  };
 }
 
 export function safeProbability(value) {
@@ -378,6 +422,263 @@ export function inferAtinaraCategory(...values) {
 export function isGamingRelated(...values) {
   const text = normalizeComparableText(values.flat().filter(Boolean).join(" "));
   return GAMING_TERMS.some((term) => text.includes(normalizeComparableText(term)));
+}
+
+function compareUtf16Binary(leftValue, rightValue) {
+  const left = String(leftValue ?? "");
+  const right = String(rightValue ?? "");
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference) return difference;
+  }
+  return left.length - right.length;
+}
+
+export async function radarDomainFingerprintV1(candidate) {
+  const providerPayload = isRecord(candidate?.provider_payload) ? candidate.provider_payload : {};
+  const tags = safeStringArray(candidate?.source_tags, 30)
+    .map((tag) => normalizeComparableText(tag)).filter(Boolean).sort(compareUtf16Binary);
+  return sha256Hex({
+    version: RADAR_DOMAIN_FINGERPRINT_VERSION,
+    provider: cleanText(candidate?.provider, 40),
+    external_id: cleanText(candidate?.external_id, 220),
+    external_event_id: cleanText(candidate?.external_event_id, 220),
+    event_group_key: cleanText(candidate?.event_group_key, 240),
+    source_title: normalizeComparableText(candidate?.source_title),
+    source_question: normalizeComparableText(candidate?.source_question),
+    source_description: normalizeComparableText(candidate?.source_description),
+    source_category: normalizeComparableText(candidate?.source_category),
+    source_tags: tags,
+    yes_sub_title: normalizeComparableText(candidate?.yes_sub_title),
+    provider_yes_sub_title: normalizeComparableText(providerPayload.yes_sub_title),
+    provider_title: normalizeComparableText(providerPayload.title),
+    provider_subtitle: normalizeComparableText(providerPayload.subtitle),
+    provider_category: normalizeComparableText(providerPayload.category),
+    provider_series_ticker: normalizeComparableText(providerPayload.series_ticker),
+    provider_event_ticker: normalizeComparableText(providerPayload.event_ticker),
+    context: normalizeComparableText(candidate?.context),
+    family_key: cleanText(candidate?.family_key, 240),
+    family_child_key: cleanText(candidate?.family_child_key, 240),
+    family_child_label: normalizeComparableText(candidate?.family_child_label),
+  });
+}
+
+const GAMING_DOMAIN_STRONG_PATTERNS = Object.freeze([
+  /\bvideo ?games?\b/, /\bvideojuegos?\b/, /\bplaystation\b/, /\bxbox\b/,
+  /\bnintendo\b/, /\bsteam\b/, /\bmetacritic\b/, /\bgame awards\b/,
+  /\bgoty\b/, /\besports?\b/, /\btwitch\b/, /\bgameplay\b/,
+  /\b(?:dlc|expansion|multiplayer|single player|console)\b/,
+  /\b(?:game developer|game publisher|gaming studio)\b/,
+]);
+
+const GAMING_DOMAIN_NEGATIVE_PATTERNS = Object.freeze([
+  /\bsports illustrated\b/, /\b(?:footballer|futbolista)\b/,
+  /\b(?:premier league|la liga|champions league|nba|nfl|mlb|nhl)\b/,
+  /\b(?:election|president|senate|congress|parliament|politic|eleccion)\b/,
+  /\b(?:stock price|share price|bitcoin|cryptocurrency|criptomoneda)\b/,
+  /\b(?:movie|film|box office|actor|actress|musician|album)\b/,
+]);
+
+const PROVIDER_PLACEHOLDER_PATTERNS = Object.freeze([
+  /^(?:game|juego)\s+[a-z0-9]$/,
+  /^(?:game|juego)\s+[a-z]\s*[-–]\s*[a-z]$/,
+  /^(?:another|other|otro)\s+(?:game|juego)$/,
+  /^(?:tbd|to be determined|por determinar|placeholder|unknown option)$/,
+]);
+
+function optionLabelFromQuestion(value, dimension = "outcome") {
+  const question = normalizeComparableText(value);
+  if (!question) return "";
+  const patterns = dimension === "participant"
+    ? [
+        /^(?:will|can|could)\s+(.+?)\s+(?:attend|appear|participate|compete)\b/,
+        /^(?:asistira|aparecera|participara|competira)\s+(.+?)\b/,
+      ]
+    : dimension === "platform"
+      ? [
+          /^(?:will|can|could)\s+(.+?)\s+(?:release|launch|appear|be available)\b/,
+          /^(?:se lanzara|aparecera|estara disponible)\s+(.+?)\b/,
+        ]
+      : [
+          /^(?:will|can|could)\s+(.+?)\s+(?:win|be named|be chosen|be awarded|receive|take home)\b/,
+          /^(?:ganara|sera nombrado|sera nombrada|sera elegido|sera elegida|recibira)\s+(.+?)\b/,
+          /^(?:will|can|could)\s+(.+?)\s+be\s+(?:the\s+)?(?:winner|game of the year)\b/,
+          /^(?:sera)\s+(.+?)\s+(?:el|la)\s+(?:ganador|ganadora)\b/,
+        ];
+  for (const pattern of patterns) {
+    const match = question.match(pattern);
+    const label = cleanText(match?.[1], 240);
+    if (label && label.split(/\s+/).length <= 18) return label;
+  }
+  return "";
+}
+
+export function extractRadarOptionChild(candidate = {}, dimension = null) {
+  const detectedDimension = dimension ?? familyDimension(
+    candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title,
+  ).dimension;
+  if (!["outcome", "participant", "platform"].includes(detectedDimension)) return null;
+  const payload = familyProviderPayload(candidate);
+  const structured = cleanText(
+    payload.yes_sub_title ?? candidate?.yes_sub_title ?? candidate?.family_child_label,
+    500,
+  );
+  const normalizedStructured = normalizeComparableText(structured);
+  const ordinaryStructured = normalizedStructured
+    && !/^(?:yes|si|true|no)$/.test(normalizedStructured);
+  const sourceField = ordinaryStructured
+    ? (payload.yes_sub_title ? "provider_payload.yes_sub_title"
+      : candidate?.yes_sub_title ? "yes_sub_title" : "family_child_label")
+    : "source_question";
+  const rawLabel = ordinaryStructured
+    ? structured
+    : optionLabelFromQuestion(
+        candidate?.source_question ?? candidate?.atinara_question ?? candidate?.question,
+        detectedDimension,
+      );
+  const label = cleanText(rawLabel, 240);
+  const normalizedLabel = normalizeComparableText(label);
+  const slug = familySlug(normalizedLabel, 120);
+  if (!label || !slug) return null;
+  return {
+    dimension: detectedDimension,
+    label,
+    slug,
+    source_field: sourceField,
+    confidence: ordinaryStructured ? 100 : 92,
+    placeholder: PROVIDER_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(normalizedLabel)),
+  };
+}
+
+export function evaluateGamingDomain(candidate = {}) {
+  const child = extractRadarOptionChild(candidate);
+  const label = normalizeComparableText(child?.label
+    ?? candidate.family_child_label
+    ?? candidate.yes_sub_title
+    ?? candidate.provider_payload?.yes_sub_title
+    ?? candidate.source_title
+    ?? candidate.title);
+  const evidenceFields = [
+    ["source_title", candidate.source_title],
+    ["source_question", candidate.source_question],
+    ["source_description", candidate.source_description],
+    ["provider_title", candidate.provider_payload?.title],
+    ["provider_subtitle", candidate.provider_payload?.subtitle],
+    ["provider_category", candidate.provider_payload?.category],
+    ["provider_series", candidate.provider_payload?.series_ticker],
+    ["provider_event", candidate.provider_payload?.event_ticker],
+    ["context", candidate.context],
+  ].map(([field, value]) => [field, normalizeComparableText(value)]).filter(([, value]) => value);
+  const collectSignals = (patterns, prefix) => evidenceFields.flatMap(([field, value]) =>
+    patterns.filter((pattern) => pattern.test(value))
+      .filter((pattern) => !(prefix === "NON_GAMING"
+        && /premier league|la liga|champions league|nba|nfl|mlb|nhl/.test(pattern.source)
+        && /\b(?:video ?games?|videojuegos?|gaming|gameplay|playstation|xbox|nintendo|steam)\b/.test(value)))
+      .map((pattern) => ({
+      code: `${prefix}_${stableFingerprint(pattern.source).slice(1).toUpperCase()}`,
+      field,
+    })),
+  );
+  const positiveSignals = collectSignals(GAMING_DOMAIN_STRONG_PATTERNS, "GAMING");
+  const negativeSignals = collectSignals(GAMING_DOMAIN_NEGATIVE_PATTERNS, "NON_GAMING");
+  const taxonomyGaming = /\b(?:video ?games?|videojuegos?|gaming|esports?)\b/.test(
+    normalizeComparableText(`${candidate.source_category ?? ""} ${(candidate.source_tags ?? []).join?.(" ") ?? ""}`),
+  );
+  if (taxonomyGaming) {
+    positiveSignals.push({ code: "GAMING_REGISTERED_TAXONOMY", field: "source_category" });
+  }
+  if (child?.placeholder || PROVIDER_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(label))) {
+    return {
+      status: "placeholder",
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.PROVIDER_PLACEHOLDER,
+      positive_signals: positiveSignals,
+      negative_signals: negativeSignals,
+      policy_version: RADAR_DOMAIN_POLICY_VERSION,
+    };
+  }
+  if (!positiveSignals.length && negativeSignals.length) {
+    return {
+      status: "review_required",
+      conclusive: false,
+      reason_code: RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED,
+      positive_signals: [],
+      negative_signals: negativeSignals,
+      policy_version: RADAR_DOMAIN_POLICY_VERSION,
+    };
+  }
+  if (positiveSignals.length >= 1 && !negativeSignals.length) {
+    return {
+      status: "in_domain",
+      conclusive: true,
+      reason_code: null,
+      positive_signals: positiveSignals,
+      negative_signals: negativeSignals,
+      policy_version: RADAR_DOMAIN_POLICY_VERSION,
+    };
+  }
+  return {
+    status: "review_required",
+    conclusive: false,
+    reason_code: RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED,
+    positive_signals: positiveSignals,
+    negative_signals: negativeSignals,
+    policy_version: RADAR_DOMAIN_POLICY_VERSION,
+  };
+}
+
+/**
+ * @param {Record<string, any>} candidate
+ * @param {Record<string, any> | null | undefined} humanReview
+ */
+export function projectRadarDomainReview(candidate = {}, humanReview = null) {
+  const automaticDomain = evaluateGamingDomain(candidate);
+  const candidateDomainFingerprint = cleanText(candidate?.domain_review_fingerprint, 80);
+  const exactReview = isRecord(humanReview)
+    && cleanText(humanReview.provider, 40) === cleanText(candidate?.provider, 40)
+    && cleanText(humanReview.external_id, 220) === cleanText(candidate?.external_id, 220)
+    && /^[a-f0-9]{64}$/.test(candidateDomainFingerprint)
+    && cleanText(humanReview.domain_fingerprint, 80) === candidateDomainFingerprint
+    && cleanText(humanReview.policy_version, 100) === automaticDomain.policy_version
+    ? humanReview : null;
+  const humanDecision = cleanText(exactReview?.decision, 40);
+  const humanDomainReview = exactReview ? {
+    request_id: cleanText(exactReview.request_id, 80),
+    decision: humanDecision,
+    rationale: cleanText(exactReview.rationale, 1_000),
+    evidence_refs: (Array.isArray(exactReview.evidence_refs)
+      ? exactReview.evidence_refs.slice(0, 8) : []).filter(isRecord).map((reference) => ({
+      url: safePublicUrl(reference.url),
+      role: cleanText(reference.role, 80),
+    })).filter((reference) => reference.url && reference.role),
+    candidate_fingerprint: cleanText(exactReview.candidate_fingerprint, 80),
+    domain_fingerprint: cleanText(exactReview.domain_fingerprint, 80),
+    policy_version: cleanText(exactReview.policy_version, 100),
+    supersedes_request_id: cleanText(exactReview.supersedes_request_id, 80) || null,
+    created_at: cleanText(exactReview.created_at, 80),
+  } : null;
+  const domain = exactReview && ["in_domain", "out_of_domain"].includes(humanDecision)
+    ? {
+      status: humanDecision,
+      conclusive: true,
+      reason_code: humanDecision === "out_of_domain" ? RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN : null,
+      positive_signals: humanDecision === "in_domain"
+        ? [...automaticDomain.positive_signals, { code: "GAMING_HUMAN_REVIEW", field: "domain_review" }]
+        : automaticDomain.positive_signals,
+      negative_signals: automaticDomain.negative_signals,
+      policy_version: automaticDomain.policy_version,
+      human_review_request_id: exactReview.request_id,
+    } : automaticDomain;
+  return {
+    ...candidate,
+    domain_status: domain.status,
+    domain_reason_code: domain.reason_code,
+    domain_positive_signals: domain.positive_signals,
+    domain_negative_signals: domain.negative_signals,
+    domain_policy_version: domain.policy_version,
+    human_domain_review: humanDomainReview,
+  };
 }
 
 export function containsBlockedTopic(...values) {
@@ -487,6 +788,13 @@ function baseCandidate(provider, externalId, input, now, cacheMinutes) {
     source_category: cleanText(input.category, 160) || null,
     source_tags: safeStringArray(input.tags, 30),
     source_close_at: closeAt,
+    source_market_open_at: safeIsoDate(input.market_open_at),
+    source_event_at: safeIsoDate(input.event_at),
+    source_event_start_at: safeIsoDate(input.event_start_at),
+    source_event_end_at: safeIsoDate(input.event_end_at),
+    source_settlement_at: safeIsoDate(input.settlement_at ?? input.settled_at),
+    source_series_expiry_at: safeIsoDate(input.series_expiry_at),
+    source_last_trade_at: safeIsoDate(input.last_trade_at),
     source_resolution_deadline: safeIsoDate(input.resolution_deadline),
     source_probability: probability,
     source_probability_yes: probability,
@@ -615,6 +923,10 @@ export function adaptPolymarketResponse(payload, options = {}) {
         category: event.category ?? market.category,
         tags: [event.category, market.category, ...(Array.isArray(event.tags) ? event.tags.map((tag) => tag?.label ?? tag) : [])],
         close_at: market.endDate ?? event.endDate,
+        market_open_at: market.startDate ?? event.startDate,
+        event_at: market.gameStartTime ?? event.gameStartTime,
+        event_end_at: event.endDate,
+        settlement_at: market.resolvedAt ?? market.resolutionDate ?? event.resolvedAt ?? event.resolutionDate,
         probability: parsed.probability,
         volume: market.volumeNum ?? market.volume ?? event.volume,
         liquidity: market.liquidityNum ?? market.liquidity ?? event.liquidity,
@@ -650,6 +962,11 @@ export function adaptPolymarketResponse(payload, options = {}) {
           canonical_event_children_complete: canonicalMarkets.length > 0 && canonicalEventChildren.length === canonicalMarkets.length,
           fact_context_fingerprint: factContextFingerprint,
           canonical_url_verified: eventValidated,
+          startDate: market.startDate ?? event.startDate ?? null,
+          endDate: market.endDate ?? event.endDate ?? null,
+          closedTime: market.closedTime ?? event.closedTime ?? null,
+          gameStartTime: market.gameStartTime ?? event.gameStartTime ?? null,
+          umaEndDate: market.umaEndDate ?? event.umaEndDate ?? null,
         },
       }, now, cacheMinutes);
       const closeMs = Date.parse(candidate.source_close_at ?? "");
@@ -717,8 +1034,13 @@ export function adaptKalshiResponse(payload, options = {}) {
       description: market.subtitle ?? event.sub_title ?? event.title,
       category: event.category ?? market.category ?? options.category,
       tags: [event.category, event.series_ticker, market.series_ticker, ...(Array.isArray(event.tags) ? event.tags : [])],
-      close_at: market.close_time ?? market.expected_expiration_time ?? event.expected_expiration_time,
-      resolution_deadline: market.expiration_time ?? market.latest_expiration_time,
+      close_at: market.close_time,
+      market_open_at: market.open_time,
+      event_at: market.occurrence_datetime ?? event.occurrence_datetime,
+      settlement_at: market.settlement_ts ?? market.determined_at ?? event.settlement_ts,
+      last_trade_at: market.close_time,
+      series_expiry_at: event.latest_expiration_time,
+      resolution_deadline: market.latest_expiration_time ?? event.latest_expiration_time,
       probability: kalshiProbability(market),
       volume: market.volume_fp ?? market.volume ?? event.volume_fp ?? event.volume,
       liquidity: market.liquidity_dollars ?? market.liquidity ?? event.liquidity,
@@ -755,6 +1077,12 @@ export function adaptKalshiResponse(payload, options = {}) {
         result: normalizeProviderResult(market.result),
         settlement_ts: safeIsoDate(market.settlement_ts ?? market.determined_at ?? event.settlement_ts),
         canonical_url_verified: urlVerified,
+        open_time: market.open_time ?? null,
+        close_time: market.close_time ?? null,
+        expected_expiration_time: market.expected_expiration_time ?? event.expected_expiration_time ?? null,
+        latest_expiration_time: market.latest_expiration_time ?? event.latest_expiration_time ?? null,
+        expiration_time: market.expiration_time ?? null,
+        occurrence_datetime: market.occurrence_datetime ?? event.occurrence_datetime ?? null,
       },
     }, now, cacheMinutes);
     const marketType = cleanText(market.market_type, 80).toLowerCase();
@@ -1240,7 +1568,7 @@ function familyDimension(question) {
   if (/\b(cover|portada|participant|candidato|athlete|atleta|appear\w*|attend\w*|presence|aparec\w*|asist\w*)\b/.test(source)) return { dimension: "participant", type: "participant_options" };
   if (/\b(platform|plataforma|playstation|xbox|switch|steam)\b/.test(source) && /\b(version|variant|variante)\b/.test(source)) return { dimension: "platform", type: "platform_variants" };
   if (/\b(score|puntuacion|threshold|umbral|views|visualizaciones|copies|copias|ventas|sales)\b/.test(source)) return { dimension: "threshold", type: "milestone_thresholds" };
-  if (/\b(winner|ganador|award|premio|goty|which|cual|nominee|nominat\w*|nominad\w*|game of the year|juego del ano)\b/.test(source)) return { dimension: "outcome", type: "categorical_outcomes" };
+  if (/\b(win|wins|ganar\w*|winner|ganador|award|premio|goty|which|cual|nominee|nominat\w*|nominad\w*|game of the year|juego del ano)\b/.test(source)) return { dimension: "outcome", type: "categorical_outcomes" };
   return { dimension: "related", type: "generic_related" };
 }
 
@@ -1786,7 +2114,6 @@ function familyProviderPayload(candidate) {
 function familyStructuredChild(candidate, dimension) {
   const payload = familyProviderPayload(candidate);
   const rawYesLabel = cleanText(payload.yes_sub_title, 500);
-  const normalizedYesLabel = normalizeComparableText(rawYesLabel);
   let threshold = dimension === "threshold" && rawYesLabel
     ? familyThreshold(rawYesLabel)
     : null;
@@ -1808,19 +2135,18 @@ function familyStructuredChild(candidate, dimension) {
       threshold,
     };
   }
-  if (["outcome", "participant", "platform"].includes(dimension)
-      && normalizedYesLabel
-      && !/^(?:yes|si|true|no)$/.test(normalizedYesLabel)) {
-    const option = normalizedYesLabel.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120);
-    if (option) {
-      return {
-        dimension,
-        type: dimension === "outcome" ? "categorical_outcomes"
-          : dimension === "participant" ? "participant_options" : "platform_variants",
-        child_key: `option:${option}`,
-        child_label: rawYesLabel,
-      };
-    }
+  const option = extractRadarOptionChild(candidate, dimension);
+  if (option) {
+    return {
+      dimension,
+      type: dimension === "outcome" ? "categorical_outcomes"
+        : dimension === "participant" ? "participant_options" : "platform_variants",
+      child_key: `option:${option.slug}`,
+      child_label: option.label,
+      option_source_field: option.source_field,
+      option_confidence: option.confidence,
+      option_placeholder: option.placeholder,
+    };
   }
   return null;
 }
@@ -2205,6 +2531,41 @@ export function evaluateProviderEligibility(candidate, now = new Date().toISOStr
       reason: reasonCopy(RADAR_REASON_CODES.DUPLICATE_MARKET),
       confidence: 100,
       ttl_minutes: 360,
+      evidence: [],
+    };
+  }
+  const domainStatus = candidate?.domain_policy_version === RADAR_DOMAIN_POLICY_VERSION
+    ? cleanText(candidate?.domain_status, 40) : "";
+  if (domainStatus === "out_of_domain") {
+    return {
+      eligible: false,
+      conclusive: true,
+      reason_code: RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN,
+      reason: reasonCopy(RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN),
+      confidence: 100,
+      ttl_minutes: 1_440,
+      evidence: [],
+    };
+  }
+  if (domainStatus === "placeholder") {
+    return {
+      eligible: false,
+      conclusive: false,
+      reason_code: RADAR_REASON_CODES.PROVIDER_PLACEHOLDER,
+      reason: reasonCopy(RADAR_REASON_CODES.PROVIDER_PLACEHOLDER),
+      confidence: 100,
+      ttl_minutes: 60,
+      evidence: [],
+    };
+  }
+  if (domainStatus === "review_required") {
+    return {
+      eligible: false,
+      conclusive: false,
+      reason_code: RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED,
+      reason: reasonCopy(RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED),
+      confidence: 0,
+      ttl_minutes: 60,
       evidence: [],
     };
   }
@@ -3251,7 +3612,9 @@ export function applyDeterministicRadarEligibility(candidate, decision = null, n
     || code === RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE
     || code === RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED
     || code === RADAR_REASON_CODES.VERIFICATION_REQUIRED
-    || code === RADAR_REASON_CODES.VERIFICATION_EXPIRED;
+    || code === RADAR_REASON_CODES.VERIFICATION_EXPIRED
+    || code === RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED
+    || code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER;
   const status = eligible ? "verified_open"
     : code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "rejected_resolved"
       : code === RADAR_REASON_CODES.DUPLICATE_MARKET ? "rejected_duplicate"
@@ -3392,10 +3755,13 @@ export function isAdaptedIdeaComplete(candidate) {
 
 export function buildDraftPrefill(candidate) {
   const family = deriveMarketFamily(candidate);
+  const temporal = isRecord(candidate?.temporal_contract) ? candidate.temporal_contract : {};
   const sourceUrl = safePublicUrl(candidate.atinara_resolution_source_url ?? candidate.source_resolution_url);
   const question = cleanText(candidate.atinara_question ?? candidate.source_question, 700);
   const criteria = cleanText(candidate.atinara_resolution_criteria, 5000);
-  const closeAt = safeIsoDate(candidate.source_close_at);
+  const evaluationEndsAt = safeIsoDate(temporal.evaluation_ends_at);
+  const resolutionDeadline = safeIsoDate(temporal.resolution_deadline);
+  const timezone = cleanText(temporal.timezone, 100);
   const slugBase = normalizeComparableText(question).split(" ").slice(0, 10).join("-").replace(/[^a-z0-9-]/g, "").slice(0, 90);
   const fields = {
     market_slug: slugBase,
@@ -3406,9 +3772,9 @@ export function buildDraftPrefill(candidate) {
     no_option: "No",
     description: cleanText(candidate.source_description, 3000),
     evaluation_period_label: "",
-    evaluation_ends_at: closeAt || "",
-    timezone: closeAt ? "Europe/Madrid" : "",
-    resolution_deadline: safeIsoDate(candidate.source_resolution_deadline) || "",
+    evaluation_ends_at: evaluationEndsAt || "",
+    timezone,
+    resolution_deadline: resolutionDeadline || "",
     yes_criteria: criteria,
     no_criteria: criteria ? `No se cumple el criterio de Sí: ${criteria}` : "",
     edge_cases: "",
@@ -3433,7 +3799,10 @@ export function buildDraftPrefill(candidate) {
     family,
     fields,
     origins,
-    warnings: [...new Set(candidate.warnings ?? [])],
+    warnings: [...new Set([
+      ...(candidate.warnings ?? []),
+      ...(Array.isArray(temporal.anomaly_codes) ? temporal.anomaly_codes : []),
+    ])],
     missing_fields: Object.entries(origins).filter(([, origin]) => origin === "missing" || origin === "review").map(([name]) => name),
     auto_saved: false,
     published: false,
@@ -3459,6 +3828,8 @@ export function buildDraftPrefill(candidate) {
       family_child_key: family?.family_child_key ?? null,
       family_relationship: candidate.family_relationship ?? family?.family_relationship ?? "standalone",
       family_version: family?.family_version ?? RADAR_FAMILY_VERSION,
+      temporal_contract: isRecord(candidate.temporal_contract) ? candidate.temporal_contract : null,
+      workflow_issues: Array.isArray(candidate.workflow_issues) ? candidate.workflow_issues : [],
     },
   };
 }

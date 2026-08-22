@@ -1,10 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   RADAR_API_HOSTS,
+  RADAR_CANDIDATE_PROVIDERS,
   RADAR_CATEGORIES,
+  RADAR_ENRICHMENT_CAPABILITIES,
   RADAR_ELIGIBILITY_POLICY_VERSION,
   RADAR_FACT_POLICY_VERSION,
   RADAR_NORMALIZER_VERSION,
+  RADAR_PROVIDER_ROLE_VERSION,
   RADAR_PROVIDERS,
   RADAR_REASON_CODES,
   adaptKalshiResponse,
@@ -18,11 +21,11 @@ import {
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
-  diversifyGroups,
   detectOfficialCoverEventResolution,
   detectOfficialCoverSelectionHold,
   deriveDeterministicUnresolvedProof,
   evidenceHasPotentialTerminalClaim,
+  evaluateGamingDomain,
   evaluateProviderEligibility,
   extractOfficialHtmlText,
   extractOfficialRelatedUrls,
@@ -36,11 +39,14 @@ import {
   isVerifiedTerminalEvidence,
   normalizeProviderResult,
   normalizeRadarCandidatePresentation,
+  paginateMergedRadarParents,
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
   providerResolutionSourceUrls,
   providerResultLabel,
+  projectRadarDomainReview,
   publicProviderError,
+  radarDomainFingerprintV1,
   safeIsoDate,
   safeNumber,
   safePublicUrl,
@@ -48,9 +54,17 @@ import {
   selectVerifiedResolutionUrl,
   summarizeRejections,
 } from "../_shared/market-radar.mjs";
+import {
+  createMarketWorkflowIssue,
+  publicMarketWorkflowIssue,
+} from "../_shared/market-workflow-issues.mjs";
+import {
+  createAtinaraTemporalContract,
+} from "../_shared/market-temporal-contract.mjs";
 import { createAbsoluteExecutionContext, createChildAbort, deadlineSleep, fetchWithinDeadline } from "../_shared/ai/deadline.mjs";
 import { createAiPersistence } from "../_shared/ai/persistence.mjs";
 import { persistAgentTelemetry } from "../_shared/ai/telemetry.mjs";
+import { canonicalJson, sha256Hex } from "../_shared/ai/contracts.mjs";
 import { ATINARA_AGENT_REGISTRY_VERSION, assertAgentRegistrySnapshot } from "../_shared/atinara-agent-registries-v2.mjs";
 import { createAtinaraAgentRunV2 } from "../_shared/atinara-agent-runtime-v2.mjs";
 
@@ -67,6 +81,8 @@ const RADAR_PERSISTENCE_BATCH_SIZE = 24;
 const MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER = 64;
 const PERSISTENCE_ISOLATION_BUDGET_MS = 20_000;
 const PERSISTENCE_RPC_START_MARGIN_MS = 750;
+const RADAR_REFRESH_REQUEST_VERSION = "atinara-radar-refresh-request-v1";
+const RADAR_REFRESH_MAX_PROCESS_CALLS = 24;
 const MAX_VISIBLE_GROUPS = 60;
 const MAX_AI_ENRICHMENT_GROUPS = 30;
 const MAX_AI_ENRICHMENT_CANDIDATES = 180;
@@ -150,6 +166,27 @@ type ProviderPersistenceOutcome = {
   deferred: RadarPersistenceDeferredBatch[];
   persistenceRpcCalls: number;
   failure: ReturnType<typeof publicProviderError> | null;
+};
+
+type RadarRefreshIntent = {
+  requestId: string;
+  provider: string;
+  capability: "candidate_feed" | "source_enrichment";
+  leaseToken: string | null;
+  phase: string;
+  terminal: boolean;
+  replayed: boolean;
+  inProgress: boolean;
+  responseSummary: JsonRecord | null;
+  expectedCount: number | null;
+  stagedCount: number;
+};
+
+type RadarRefreshContext = {
+  requestId: string;
+  requestHash: string;
+  leaseOwner: string;
+  intents: Map<string, RadarRefreshIntent>;
 };
 
 type FetchJsonOptions = {
@@ -304,6 +341,218 @@ async function rpc(
   return payload;
 }
 
+function validUuid(value: unknown): value is string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(cleanText(value, 80));
+}
+
+function refreshIntentKey(provider: string, capability: string): string {
+  return `${cleanText(provider, 40)}:${cleanText(capability, 40)}`;
+}
+
+async function radarRefreshIssue({
+  requestId,
+  provider,
+  capability,
+  code,
+  failureStage,
+  lastSuccessAt = null,
+  lastSuccessCount = 0,
+}: {
+  requestId: string;
+  provider: string;
+  capability: "candidate_feed" | "source_enrichment";
+  code: string;
+  failureStage: "fetch" | "persistence" | "enrichment";
+  lastSuccessAt?: unknown;
+  lastSuccessCount?: unknown;
+}) {
+  const ownerStage = failureStage === "persistence" ? "internal_platform" : "provider";
+  const nextAction = failureStage === "persistence"
+    ? "resume_persistence_intent"
+    : capability === "source_enrichment" ? "retry_source_enrichment" : "retry_provider_refresh";
+  return createMarketWorkflowIssue({
+    issueCode: code,
+    detectedBy: "radar",
+    ownerStage,
+    severity: "warning",
+    repairability: "auto_recoverable",
+    blockingScope: "none",
+    affectedFields: [],
+    evidenceRefs: [{ request_id: requestId, provider, capability }],
+    currentValue: {
+      provider,
+      capability,
+      failure_stage: failureStage,
+      last_success_at: safeIsoDate(lastSuccessAt),
+      last_success_count: Math.max(0, Number(lastSuccessCount) || 0),
+    },
+    proposedValue: null,
+    confidence: 100,
+    policyVersion: "atinara-radar-provider-resilience-v1",
+    retryable: true,
+    nextAction,
+  });
+}
+
+const RADAR_TERMINAL_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+  RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
+  RADAR_REASON_CODES.DUPLICATE_MARKET,
+  RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN,
+  RADAR_REASON_CODES.PROVIDER_NOT_OPEN,
+  RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
+  RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND,
+  RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND,
+]);
+const RADAR_SOURCE_CONTRACT_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
+  RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
+  RADAR_REASON_CODES.TEMPORAL_INCOHERENCE,
+]);
+const RADAR_TECHNICAL_HOLD_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.SOURCE_STALE,
+  RADAR_REASON_CODES.SUBJECT_NOT_ANNOUNCED,
+  RADAR_REASON_CODES.OFFICIAL_TERMINAL_SCAN_UNAVAILABLE,
+  RADAR_REASON_CODES.OFFICIAL_SELECTION_RECHECK_REQUIRED,
+]);
+const RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.VERIFICATION_REQUIRED,
+  RADAR_REASON_CODES.VERIFICATION_EXPIRED,
+]);
+
+async function candidateDecisionWorkflowIssue(candidate: JsonRecord, code: string) {
+  const terminal = RADAR_TERMINAL_WORKFLOW_CODES.has(code);
+  const gamingReview = code === RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED;
+  const placeholder = code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER;
+  const sourceContract = RADAR_SOURCE_CONTRACT_WORKFLOW_CODES.has(code);
+  const technicalHold = RADAR_TECHNICAL_HOLD_WORKFLOW_CODES.has(code);
+  const ownerStage = terminal ? "radar" : gamingReview ? "human_review"
+    : sourceContract ? "editor" : technicalHold || placeholder ? "provider" : "radar";
+  const repairability = terminal ? "terminal" : gamingReview ? "human_editable"
+    : sourceContract ? "waiting_authoritative_source" : "auto_recoverable";
+  const blockingScope = terminal ? "terminal" : gamingReview || sourceContract
+    || RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES.has(code)
+    ? "approval" : "none";
+  const nextAction = terminal ? "archive_terminal_candidate"
+    : gamingReview ? "review_gaming_domain_manually"
+    : sourceContract ? "repair_temporal_or_source_contract"
+    : placeholder ? "recheck_provider_identity"
+    : technicalHold ? "retry_source_enrichment" : "refresh_draft_eligibility";
+  return createMarketWorkflowIssue({
+    issueCode: code,
+    detectedBy: "radar",
+    ownerStage,
+    severity: terminal || blockingScope !== "none" ? "blocking" : "warning",
+    repairability,
+    blockingScope,
+    affectedFields: code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED
+      ? ["source_status", "source_result"] : ["eligibility_status", "domain_status", "resolution_source"],
+    evidenceRefs: [{
+      provider: cleanText(candidate.provider, 40),
+      external_id: cleanText(candidate.external_id, 220),
+      eligibility_check_id: candidate.current_eligibility_check_id ?? null,
+    }],
+    currentValue: {
+      eligibility_status: candidate.eligibility_status ?? null,
+      eligibility_reason_code: candidate.eligibility_reason_code ?? null,
+      domain_status: candidate.domain_status ?? null,
+    },
+    proposedValue: null,
+    confidence: terminal ? 100 : Number(candidate.eligibility_confidence) || 0,
+    policyVersion: cleanText(
+      gamingReview ? candidate.domain_policy_version : candidate.eligibility_policy_version,
+      100,
+    ) || RADAR_ELIGIBILITY_POLICY_VERSION,
+    retryable: !terminal,
+    nextAction,
+  }) as Promise<JsonRecord>;
+}
+
+async function beginRadarRefreshIntent(
+  environment: Environment,
+  authorization: string,
+  refresh: RadarRefreshContext,
+  provider: string,
+  capability: "candidate_feed" | "source_enrichment",
+  cacheKey: string,
+): Promise<RadarRefreshIntent> {
+  const probe = toRecord(await rpc(environment, "claim_market_radar_provider_probe_v1", {
+    provider_input: provider,
+    capability_input: capability,
+    request_id_input: refresh.requestId,
+  }, authorization));
+  if (probe?.allowed !== true) {
+    const issue = await radarRefreshIssue({
+      requestId: refresh.requestId,
+      provider,
+      capability,
+      code: "PROVIDER_CIRCUIT_OPEN",
+      failureStage: capability === "source_enrichment" ? "enrichment" : "fetch",
+      lastSuccessAt: probe?.last_success_at,
+      lastSuccessCount: probe?.last_success_count,
+    });
+    const blocked: RadarRefreshIntent = {
+      requestId: refresh.requestId,
+      provider,
+      capability,
+      leaseToken: null,
+      phase: cleanText(probe?.state, 40) || "open",
+      terminal: false,
+      replayed: false,
+      inProgress: true,
+      responseSummary: { issue, retry_after_at: probe?.retry_after_at ?? null },
+      expectedCount: null,
+      stagedCount: 0,
+    };
+    refresh.intents.set(refreshIntentKey(provider, capability), blocked);
+    return blocked;
+  }
+  const started = toRecord(await rpc(environment, "begin_market_radar_refresh_v2", {
+    request_id_input: refresh.requestId,
+    provider_input: provider,
+    capability_input: capability,
+    request_hash_input: refresh.requestHash,
+    cache_key_input: cacheKey,
+    normalizer_version_input: RADAR_NORMALIZER_VERSION,
+    policy_version_input: RADAR_ELIGIBILITY_POLICY_VERSION,
+    lease_owner_input: refresh.leaseOwner,
+    probe_lease_token_input: validUuid(probe?.probe_lease_token)
+      ? cleanText(probe?.probe_lease_token, 80) : null,
+  }, authorization));
+  const canonicalRequestId = cleanText(started?.request_id,80);
+  if (started?.in_progress === true && validUuid(canonicalRequestId)) {
+    refresh.requestId = canonicalRequestId;
+  }
+  const status = cleanText(started?.status, 40) || "in_progress";
+  const intent: RadarRefreshIntent = {
+    requestId: validUuid(canonicalRequestId) ? canonicalRequestId : refresh.requestId,
+    provider,
+    capability,
+    leaseToken: validUuid(started?.lease_token) ? cleanText(started?.lease_token, 80) : null,
+    phase: cleanText(started?.phase, 40) || "claimed",
+    terminal: status !== "in_progress",
+    replayed: started?.replayed === true,
+    inProgress: started?.in_progress === true,
+    responseSummary: toRecord(started?.response_summary),
+    expectedCount: Number.isSafeInteger(Number(started?.expected_count))
+      ? Number(started?.expected_count) : null,
+    stagedCount: Math.max(0, Number(started?.staged_count) || 0),
+  };
+  refresh.intents.set(refreshIntentKey(provider, capability), intent);
+  return intent;
+}
+
+async function renewRadarRefreshLease(environment: Environment, intent: RadarRefreshIntent) {
+  if (!intent.leaseToken) throw new Error("RADAR_REFRESH_LEASE_REQUIRED");
+  return rpc(environment, "renew_market_radar_refresh_lease_v1", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+  }, undefined, true);
+}
+
 async function authenticateAdmin(environment: Environment, authorization: string): Promise<{ adminId: string } | Response> {
   const response = await fetchInternal(environment, `${environment.supabaseUrl}/auth/v1/user`, {
     headers: { Authorization: authorization, apikey: environment.publishableKey },
@@ -454,6 +703,13 @@ const QUARANTINABLE_PERSISTENCE_RULES = new Set([
   "RADAR_FACT_EVIDENCE_REQUIRED",
   "RADAR_FACT_STATUS_CONFLICT",
   "RADAR_PROVIDER_FACT_REQUIRED",
+  "TEMPORAL_CONTRACT_INVALID",
+  "MARKET_WORKFLOW_ISSUES_INVALID",
+  "MARKET_WORKFLOW_ISSUE_INVALID",
+  "MARKET_WORKFLOW_SUBJECT_INVALID",
+  "MARKET_WORKFLOW_ISSUE_ID_REUSED",
+  "MARKET_WORKFLOW_SUBJECT_FINGERPRINT_CONFLICT",
+  "MARKET_WORKFLOW_REPAIR_BINDING_REQUIRED",
 ]);
 
 function isQuarantinablePersistenceError(error: unknown): error is RadarRpcError {
@@ -509,6 +765,7 @@ function safeFilters(body: JsonRecord) {
     order: ["recommended", "popularity", "closing", "recent"].includes(requestedOrder) ? requestedOrder : "recommended",
     horizon: ["30d", "90d", "180d", "365d"].includes(requestedHorizon) ? requestedHorizon : "180d",
     query: cleanText(body.query, 120),
+    parent_offset: Math.max(0, Math.min(10_000, Math.floor(Number(body.parent_offset) || 0))),
   };
 }
 
@@ -795,20 +1052,15 @@ async function loadAuthoritativeSourceDomains(environment: Environment): Promise
   return new Set(domains);
 }
 
-function canonicalJson(value: unknown): string {
-  const normalize = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(normalize);
-    if (!isRecord(item)) return item ?? null;
-    const record = item as JsonRecord;
-    return Object.fromEntries(Object.keys(record).sort((left, right) => left.localeCompare(right)).map((key) => [key, normalize(record[key])]));
-  };
-  return JSON.stringify(normalize(value));
-}
-
-async function sha256Hex(value: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(typeof value === "string" ? value : canonicalJson(value));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+function compareUtf16Text(leftValue: unknown, rightValue: unknown): number {
+  const left = cleanText(leftValue, 2_000);
+  const right = cleanText(rightValue, 2_000);
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = left.charCodeAt(index) - right.charCodeAt(index);
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
 }
 
 function canonicalEventProjection(event: JsonRecord, provider: "polymarket" | "kalshi"): JsonRecord[] {
@@ -828,7 +1080,7 @@ function canonicalEventProjection(event: JsonRecord, provider: "polymarket" | "k
     result: normalizeProviderResult(market.result),
     settled_at: safeIsoDate(market.settlement_ts ?? market.determined_at),
     close_at: safeIsoDate(market.close_time ?? market.expected_expiration_time),
-  }).sort((left, right) => cleanText(left.market_id, 220).localeCompare(cleanText(right.market_id, 220)));
+  }).sort((left, right) => compareUtf16Text(left.market_id, right.market_id));
 }
 
 async function attachCanonicalFactContext(
@@ -1207,16 +1459,15 @@ async function fetchKalshiMarketRecord(environment: Environment, ticker: string)
 async function reconcileRejectedKalshiOutcomes(
   environment: Environment,
   rejected: JsonRecord[],
-  cacheKey: string,
   now: string,
-): Promise<number> {
+): Promise<JsonRecord[]> {
   const pending = rejected
     .filter((candidate) => cleanText(candidate.provider, 40) === "kalshi"
       && cleanText(candidate.verification_reason_code, 100) === RADAR_REASON_CODES.PROVIDER_NOT_OPEN
       && !normalizeProviderResult(candidate.source_result)
       && cleanText(candidate.external_market_id, 220))
     .slice(0, MAX_REJECTED_OUTCOME_RECONCILIATIONS);
-  if (!pending.length) return 0;
+  if (!pending.length) return [];
   const checked = await mapWithConcurrency(pending, KALSHI_CONCURRENCY, async (candidate) => {
     const market = await fetchKalshiMarketRecord(environment, cleanText(candidate.external_market_id, 220));
     const result = normalizeProviderResult(market?.result);
@@ -1260,9 +1511,7 @@ async function reconcileRejectedKalshiOutcomes(
     }, now) as JsonRecord;
   });
   const reconciled = checked.flatMap((item) => item.status === "fulfilled" && item.value ? [item.value] : []);
-  if (!reconciled.length) return 0;
-  const outcome = await persistProviderResult(environment, "kalshi", `${cacheKey}:resultados`, reconciled);
-  return outcome.persistedCount;
+  return reconciled;
 }
 
 type OfficialResearchOutcome = {
@@ -1530,7 +1779,7 @@ async function researchGroupsWithTavily(
           : /feature|news/.test(comparable) ? 20 : 5;
         return { url, score: identityScore + editorialScore };
       })
-      .sort((left, right) => right.score - left.score || left.url.localeCompare(right.url));
+      .sort((left, right) => right.score - left.score || compareUtf16Text(left.url, right.url));
     for (const item of ranked.slice(0, MAX_RELATED_OFFICIAL_SOURCE_URLS_PER_GROUP)) {
       const key = `${group.event_group_key}:${item.url}`;
       if (relatedKeys.has(key)) continue;
@@ -2058,6 +2307,270 @@ async function persistProviderResult(
   }
 }
 
+type RadarProviderRefreshOutcomeV2 = ProviderPersistenceOutcome & {
+  issues: JsonRecord[];
+  inProgress: boolean;
+  terminal: boolean;
+  quarantinedCount: number;
+};
+
+function refreshOutcomeFromSummary(provider: string, summary: JsonRecord | null): RadarProviderRefreshOutcomeV2 {
+  const issue = toRecord(summary?.issue);
+  const status = cleanText(summary?.status, 40);
+  const failure = issue
+    ? publicProviderError(provider, cleanText(issue.issue_code, 100) || "PROVIDER_UNAVAILABLE", 503)
+    : status && status !== "available" ? publicProviderError(provider, "PROVIDER_UNAVAILABLE", 503) : null;
+  return {
+    persistedCount: Math.max(0, Number(summary?.accepted_count) || 0),
+    quarantined: [],
+    deferred: [],
+    persistenceRpcCalls: 0,
+    failure,
+    issues: issue ? [issue] : [],
+    inProgress: false,
+    terminal: true,
+    quarantinedCount: Math.max(0, Number(summary?.quarantined_count) || 0),
+  };
+}
+
+async function radarPersistenceEntries(
+  candidates: JsonRecord[],
+  cacheKey: string,
+): Promise<JsonRecord[]> {
+  return Promise.all(candidates.map(async (candidate) => {
+    const checkedAt = safeIsoDate(candidate.eligibility_checked_at ?? candidate.verified_at)
+      ?? new Date().toISOString();
+    const expiresAt = safeIsoDate(candidate.eligibility_expires_at ?? candidate.verification_expires_at)
+      ?? new Date(Date.parse(checkedAt) + VERIFICATION_TTL_MINUTES * 60_000).toISOString();
+    const evidence = toRecordArray(candidate.eligibility_evidence ?? candidate.verification_evidence).slice(0, 12);
+    const persistedCandidate = { ...candidate, cache_key: cacheKey };
+    return {
+      candidate: persistedCandidate,
+      eligibility_check: {
+        provider: cleanText(candidate.provider, 40),
+        external_id: cleanText(candidate.external_id, 220),
+        event_group_key: cleanText(candidate.event_group_key, 240) || null,
+        policy_version: RADAR_ELIGIBILITY_POLICY_VERSION,
+        status: cleanText(candidate.eligibility_status, 40) || "technical_hold",
+        reason_code: cleanText(candidate.eligibility_reason_code, 100) || null,
+        reason: cleanText(candidate.eligibility_reason, 1_000) || null,
+        evidence,
+        checked_at: checkedAt,
+        expires_at: expiresAt,
+        decision_hash: await sha256Hex({
+          provider: candidate.provider,
+          external_id: candidate.external_id,
+          status: candidate.eligibility_status,
+          reason_code: candidate.eligibility_reason_code,
+          evidence,
+          checked_at: checkedAt,
+        }),
+      },
+    };
+  }));
+}
+
+async function persistProviderResultV2(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  cacheKey: string,
+  candidates: JsonRecord[] | null,
+): Promise<RadarProviderRefreshOutcomeV2> {
+  if (intent.terminal) return refreshOutcomeFromSummary(intent.provider, intent.responseSummary);
+  if (intent.inProgress || !intent.leaseToken) {
+    const issue = toRecord(intent.responseSummary?.issue) ?? await radarRefreshIssue({
+      requestId: intent.requestId,
+      provider: intent.provider,
+      capability: intent.capability,
+      code: "RADAR_REFRESH_ALREADY_RUNNING",
+      failureStage: "persistence",
+    });
+    return {
+      persistedCount: 0, quarantined: [], deferred: [], persistenceRpcCalls: 0,
+      failure: publicProviderError(intent.provider, "RADAR_REFRESH_ALREADY_RUNNING", 202),
+      issues: [issue], inProgress: true, terminal: false,
+      quarantinedCount: 0,
+    };
+  }
+
+  let rpcCalls = 0;
+  let phase = intent.phase;
+  if (["claimed", "fetching", "staged"].includes(phase)) {
+    const stagedComplete = phase === "staged" && intent.expectedCount !== null
+      && intent.stagedCount === intent.expectedCount;
+    let expectedCount = intent.expectedCount;
+    if (!stagedComplete) {
+      if (!Array.isArray(candidates)) throw new Error("RADAR_REFRESH_STAGING_INPUT_REQUIRED");
+      const entries = await radarPersistenceEntries(candidates, cacheKey);
+      expectedCount = entries.length;
+      await renewRadarRefreshLease(environment, intent);
+      await rpc(environment, "declare_market_radar_refresh_manifest_v1", {
+        request_id_input: intent.requestId,
+        provider_input: intent.provider,
+        capability_input: intent.capability,
+        lease_token_input: intent.leaseToken,
+        expected_count_input: entries.length,
+      }, undefined, true);
+      rpcCalls += 1;
+      for (let offset = 0, ordinal = 0; offset < entries.length; offset += RADAR_PERSISTENCE_BATCH_SIZE, ordinal += 1) {
+        await renewRadarRefreshLease(environment, intent);
+        await rpc(environment, "stage_market_radar_refresh_batch_v1", {
+          request_id_input: intent.requestId,
+          provider_input: intent.provider,
+          capability_input: intent.capability,
+          lease_token_input: intent.leaseToken,
+          batch_ordinal_input: ordinal,
+          items_input: entries.slice(offset, offset + RADAR_PERSISTENCE_BATCH_SIZE),
+        }, undefined, true);
+        rpcCalls += 1;
+      }
+    }
+    if (expectedCount === null) throw new Error("RADAR_REFRESH_MANIFEST_REQUIRED");
+    await renewRadarRefreshLease(environment, intent);
+    await rpc(environment, "seal_market_radar_refresh_v1", {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+      expected_count_input: expectedCount,
+    }, undefined, true);
+    rpcCalls += 1;
+    phase = "persisting";
+  }
+
+  const persistenceDeadline = Math.min(
+    Date.now() + PERSISTENCE_ISOLATION_BUDGET_MS,
+    environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS,
+  );
+  let lastResult: JsonRecord | null = null;
+  for (let call = 0; call < RADAR_REFRESH_MAX_PROCESS_CALLS; call += 1) {
+    if (Date.now() + PERSISTENCE_RPC_START_MARGIN_MS >= persistenceDeadline) break;
+    await renewRadarRefreshLease(environment, intent);
+    lastResult = toRecord(await rpc(environment, "process_market_radar_refresh_batch_v1", {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+    }, undefined, true));
+    rpcCalls += 1;
+    if (lastResult?.ok === false) {
+      const batchId = cleanText(lastResult.batch_id, 80);
+      const itemCount = Math.max(0, Number(lastResult.item_count) || 0);
+      if (validUuid(batchId) && itemCount > 1) {
+        await renewRadarRefreshLease(environment, intent);
+        await rpc(environment, "split_market_radar_refresh_batch_v1", {
+          request_id_input: intent.requestId,
+          provider_input: intent.provider,
+          capability_input: intent.capability,
+          lease_token_input: intent.leaseToken,
+          batch_id_input: batchId,
+        }, undefined, true);
+        rpcCalls += 1;
+        continue;
+      }
+      break;
+    }
+    if (Math.max(0, Number(lastResult?.remaining_batches) || 0) === 0) break;
+  }
+
+  if (!lastResult || lastResult.ok === false || Math.max(0, Number(lastResult.remaining_batches) || 0) > 0) {
+    const code = cleanText(lastResult?.code, 100) || "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
+    const deferred = toRecord(await rpc(environment, "defer_market_radar_refresh_v1", {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+      issue_code_input: code,
+    }, undefined, true));
+    const issue = toRecord(deferred?.issue) ?? await radarRefreshIssue({
+      requestId: intent.requestId,
+      provider: intent.provider,
+      capability: intent.capability,
+      code,
+      failureStage: "persistence",
+    });
+    return {
+      persistedCount: Math.max(0, Number(deferred?.processed_count) || 0),
+      quarantined: [], deferred: [], persistenceRpcCalls: rpcCalls + 1,
+      failure: publicProviderError(intent.provider, code, 202), issues: [issue],
+      inProgress: true, terminal: false,
+      quarantinedCount: Math.max(0, Number(deferred?.quarantined_count) || 0),
+    };
+  }
+
+  await renewRadarRefreshLease(environment, intent);
+  const finalized = toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+    status_input: "available",
+    error_code_input: null,
+    failure_stage_input: null,
+    retry_after_seconds_input: null,
+  }, undefined, true));
+  const issue = toRecord(finalized?.issue);
+  return {
+    persistedCount: Math.max(0, Number(finalized?.accepted_count) || 0),
+    quarantined: [], deferred: [], persistenceRpcCalls: rpcCalls + 2,
+    failure: null, issues: issue ? [issue] : [], inProgress: false, terminal: true,
+    quarantinedCount: Math.max(0, Number(finalized?.quarantined_count) || 0),
+  };
+}
+
+async function finalizeRadarRefreshFailureV2(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  failure: JsonRecord,
+  failureStage: "fetch" | "persistence" | "enrichment",
+): Promise<JsonRecord> {
+  if (intent.terminal) return intent.responseSummary ?? {};
+  if (intent.inProgress || !intent.leaseToken) {
+    return {
+      outcome: "in_progress",
+      issue: intent.responseSummary?.issue ?? await radarRefreshIssue({
+        requestId: intent.requestId,
+        provider: intent.provider,
+        capability: intent.capability,
+        code: "RADAR_REFRESH_ALREADY_RUNNING",
+        failureStage,
+      }),
+    };
+  }
+  await renewRadarRefreshLease(environment, intent);
+  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+    status_input: cleanText(failure.code, 100) === "PROVIDER_RATE_LIMITED" ? "rate_limited" : "unavailable",
+    error_code_input: cleanText(failure.code, 100) || "PROVIDER_UNAVAILABLE",
+    failure_stage_input: failureStage,
+    retry_after_seconds_input: Number.isFinite(Number(failure.retry_after_seconds))
+      ? Math.max(0, Math.floor(Number(failure.retry_after_seconds)))
+      : null,
+  }, undefined, true)) ?? {};
+}
+
+async function finalizeRadarEnrichmentSuccessV2(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+): Promise<JsonRecord> {
+  if (intent.terminal) return intent.responseSummary ?? {};
+  if (intent.inProgress || !intent.leaseToken) return { outcome: "in_progress" };
+  await renewRadarRefreshLease(environment, intent);
+  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+    status_input: "available",
+    error_code_input: null,
+    failure_stage_input: null,
+    retry_after_seconds_input: null,
+  }, undefined, true)) ?? {};
+}
+
 async function persistProviderFailure(environment: Environment, provider: string, cacheKey: string, failure: JsonRecord) {
   await finalizeProviderRefresh(
     environment,
@@ -2110,15 +2623,15 @@ async function loadRadarView(
   minimumDiscoveryCheckedAt: string | null = null,
 ) {
   const [candidatesPayload, rejectedPayload, providers] = await Promise.all([
-    rpc(environment, "list_market_radar_candidates_v2", {
+    rpc(environment, "list_market_radar_candidates_v3", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       quality_filter: filters.quality,
       query_filter: filters.query || null,
       order_key: filters.order,
       horizon_filter: filters.horizon,
-      limit_count: 240,
-      offset_count: 0,
+      parent_limit_count: MAX_VISIBLE_GROUPS,
+      parent_offset_count: filters.parent_offset,
     }, authorization),
     rpc(environment, "list_market_radar_rejections", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
@@ -2130,18 +2643,30 @@ async function loadRadarView(
   ]);
   const checkedAt = Date.now();
   const minimumCheckedAt = minimumDiscoveryCheckedAt ? Date.parse(minimumDiscoveryCheckedAt) : Number.NaN;
-  const candidates = toRecordArray(candidatesPayload)
+  const candidatePage = toRecord(candidatesPayload) ?? {};
+  const candidates = toRecordArray(candidatePage.items)
     .filter((candidate) => cleanText(candidate.eligibility_policy_version, 80) === RADAR_ELIGIBILITY_POLICY_VERSION)
-    .filter((candidate) => hasCurrentEligibility(candidate, checkedAt))
+    .filter((candidate) => filters.quality !== "fit" || hasCurrentEligibility(candidate, checkedAt))
     .filter((candidate) => !Number.isFinite(minimumCheckedAt)
-      || Date.parse(cleanText(candidate.eligibility_checked_at, 100)) >= minimumCheckedAt);
+      || Date.parse(cleanText(candidate.fetched_at, 100)) >= minimumCheckedAt);
   const rejected = toRecordArray(rejectedPayload);
-  const groups = diversifyGroups(groupCandidates(candidates), MAX_VISIBLE_GROUPS);
+  const groups = groupCandidates(candidates).sort((left, right) => {
+    const leftRank = Math.min(...left.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
+    const rightRank = Math.min(...right.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
+    return leftRank - rightRank;
+  });
   return {
     candidates,
     groups,
     rejected: summarizeRejections(rejected),
     providers: toRecordArray(providers),
+    page: {
+      parent_count: Math.max(0, Number(candidatePage.parent_count) || 0),
+      parent_offset: Math.max(0, Number(candidatePage.parent_offset) || 0),
+      parent_limit: Math.max(1, Number(candidatePage.parent_limit) || MAX_VISIBLE_GROUPS),
+      next_parent_offset: Number.isInteger(Number(candidatePage.next_parent_offset))
+        ? Number(candidatePage.next_parent_offset) : null,
+    },
   };
 }
 
@@ -2150,7 +2675,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const cacheKey = buildCacheKey(filters);
   const current = await loadRadarView(environment, authorization, filters);
   const requestedRefresh = body.refresh === true;
-  const latest = current.providers.map((provider) => Date.parse(cleanText(provider.fetched_at, 100))).filter(Number.isFinite).sort((a, b) => b - a)[0] || 0;
+  const latest = current.providers
+    .filter((provider) => RADAR_CANDIDATE_PROVIDERS.includes(cleanText(provider.provider, 40)))
+    .map((provider) => Date.parse(cleanText(provider.fetched_at, 100)))
+    .filter(Number.isFinite).sort((a, b) => b - a)[0] || 0;
   const cooldownRemaining = Math.max(0, REFRESH_COOLDOWN_MS - (Date.now() - latest));
   if (!requestedRefresh || cooldownRemaining > 0) {
     // loadRadarView ya excluye snapshots caducados, hechos no discovery y
@@ -2169,9 +2697,20 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         && fetchedAt + (FACT_CHECK_TTL_MINUTES * 60_000) > Date.now();
     });
     const cachedAuthoritative = current.candidates.length > 0 || providerCoverageCurrent;
+    const candidateProviders = current.providers.filter((provider) =>
+      RADAR_CANDIDATE_PROVIDERS.includes(cleanText(provider.provider, 40)));
+    const enrichmentCapabilities = current.providers
+      .filter((provider) => RADAR_ENRICHMENT_CAPABILITIES.includes(cleanText(provider.provider, 40)))
+      .map((provider) => ({ ...provider, role: "source_enrichment", affects_catalog_health: false }));
     return jsonResponse({
       ok: true,
       ...current,
+      providers: candidateProviders,
+      candidate_providers: candidateProviders,
+      enrichment_capabilities: enrichmentCapabilities,
+      provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
+      provider_issues: [],
+      enrichment_issues: [],
       cached_candidate_count: current.candidates.length,
       filters,
       cache_key: cacheKey,
@@ -2185,21 +2724,73 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
 
   const now = new Date().toISOString();
-  const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
-  const reconciledProviderResults = await reconcileRejectedKalshiOutcomes(
+  const refreshRequestHash = await sha256Hex({
+    request_version: RADAR_REFRESH_REQUEST_VERSION,
+    provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
+    filters,
+  });
+  const requestedRefreshId = cleanText(body.refresh_request_id, 80);
+  const activeRefresh = toRecord(await rpc(
     environment,
-    toRecordArray(current.rejected?.items),
-    cacheKey,
-    now,
-  ).catch(() => 0);
+    "get_active_market_radar_refresh_v1",
+    { request_hash_input: refreshRequestHash, cache_key_input: cacheKey },
+    authorization,
+  ));
+  const activeRefreshId = cleanText(activeRefresh?.request_id, 80);
+  const refreshRequestId = validUuid(activeRefreshId) ? activeRefreshId
+    : validUuid(requestedRefreshId) ? requestedRefreshId : crypto.randomUUID();
+  const refresh: RadarRefreshContext = {
+    requestId: refreshRequestId,
+    requestHash: refreshRequestHash,
+    leaseOwner: environment.execution.invocationId,
+    intents: new Map(),
+  };
+  const requestedProviders = filters.provider === "all"
+    ? [...RADAR_CANDIDATE_PROVIDERS]
+    : RADAR_CANDIDATE_PROVIDERS.includes(filters.provider) ? [filters.provider] : [];
+  const candidateProviderErrors: JsonRecord[] = [];
+  const providerIssues: JsonRecord[] = [];
+  const enrichmentIssues: JsonRecord[] = [];
+  const providerIntents = new Map<string, RadarRefreshIntent>();
+  for (const provider of requestedProviders) {
+    const intent = await beginRadarRefreshIntent(
+      environment, authorization, refresh, provider, "candidate_feed", cacheKey,
+    );
+    providerIntents.set(provider, intent);
+    const issue = toRecord(intent.responseSummary?.issue);
+    if (issue) providerIssues.push(issue);
+    if (intent.inProgress) {
+      candidateProviderErrors.push({
+        ...publicProviderError(provider, "RADAR_REFRESH_ALREADY_RUNNING", 202),
+        retryable: true,
+        state_preserved: true,
+        issue,
+      });
+    }
+  }
+  const tavilyIntent = await beginRadarRefreshIntent(
+    environment, authorization, refresh, "tavily", "source_enrichment", cacheKey,
+  );
+  const initialTavilyIssue = toRecord(tavilyIntent.responseSummary?.issue);
+  if (initialTavilyIssue) enrichmentIssues.push(initialTavilyIssue);
+
+  const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
+  const kalshiIntent = providerIntents.get("kalshi");
+  const reconciledCandidates = kalshiIntent && !kalshiIntent.terminal && !kalshiIntent.inProgress
+    ? await reconcileRejectedKalshiOutcomes(
+      environment,
+      toRecordArray(current.rejected?.items),
+      now,
+    ).catch(() => [])
+    : [];
+  const reconciledProviderResults = reconciledCandidates.length;
   const existing = await loadExistingDefinitions(environment, authorization);
-  const requestedProviders = filters.provider === "all" ? ["polymarket", "kalshi"] : filters.provider === "tavily" ? [] : [filters.provider];
-  const errors: JsonRecord[] = [];
   const providers = requestedProviders.filter((provider) => {
-    const circuit = activeProviderCircuit(current.providers, provider);
-    if (!circuit) return true;
-    errors.push(circuit);
-    return false;
+    const intent = providerIntents.get(provider);
+    return Boolean(intent && !intent.terminal && !intent.inProgress
+      && !["persisting", "finalizing"].includes(intent.phase)
+      && !(intent.phase === "staged" && intent.expectedCount !== null
+        && intent.stagedCount === intent.expectedCount));
   });
   const discoveredByProvider = new Map<string, JsonRecord[]>();
   const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => ({
@@ -2216,17 +2807,92 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       continue;
     }
     const failure = providerFailure(result.reason, provider);
-    errors.push(failure);
-    await persistProviderFailure(environment, provider, cacheKey, failure);
+    const intent = providerIntents.get(provider);
+    const finalization = intent
+      ? await finalizeRadarRefreshFailureV2(environment, intent, failure, "fetch")
+      : {};
+    const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
+      requestId: refresh.requestId, provider, capability: "candidate_feed",
+      code: cleanText(failure.code, 100) || "PROVIDER_UNAVAILABLE", failureStage: "fetch",
+    });
+    providerIssues.push(issue);
+    candidateProviderErrors.push({ ...failure, issue, state_preserved: true });
   }
+  if (reconciledCandidates.length) {
+    const currentKalshi = discoveredByProvider.get("kalshi") ?? [];
+    const byIdentity = new Map(currentKalshi.map((candidate) => [
+      cleanText(candidate.external_id, 220), candidate,
+    ]));
+    for (const candidate of reconciledCandidates) {
+      byIdentity.set(cleanText(candidate.external_id, 220), candidate);
+    }
+    discoveredByProvider.set("kalshi", [...byIdentity.values()]);
+  }
+
+  const qualityNotices: JsonRecord[] = [];
+  const domainScopedCandidates: JsonRecord[] = await Promise.all(
+    [...discoveredByProvider.values()].flat().map(async (candidate: JsonRecord): Promise<JsonRecord> => ({
+      ...candidate,
+      domain_review_fingerprint: await radarDomainFingerprintV1(candidate),
+    })),
+  );
+  const domainReviewScopeMap = new Map<string, JsonRecord>();
+  for (const candidate of domainScopedCandidates) {
+    const scope: JsonRecord = {
+      provider: cleanText(candidate.provider, 40),
+      external_id: cleanText(candidate.external_id, 220),
+      domain_fingerprint: cleanText(candidate.domain_review_fingerprint, 80),
+    };
+    if (scope.provider && scope.external_id && /^[a-f0-9]{64}$/.test(String(scope.domain_fingerprint))) {
+      domainReviewScopeMap.set(`${scope.provider}\u0000${scope.external_id}\u0000${scope.domain_fingerprint}`, scope);
+    }
+  }
+  const domainReviewScopes = [...domainReviewScopeMap.values()]
+    .slice(0, MAX_NORMALIZED_PER_PROVIDER * RADAR_CANDIDATE_PROVIDERS.length);
+  const domainReviewRows: JsonRecord[] = [];
+  let domainReviewStateAvailable = true;
+  for (let offset = 0; offset < domainReviewScopes.length; offset += 240) {
+    try {
+      domainReviewRows.push(...toRecordArray(await rpc(environment, "get_market_radar_domain_reviews_v1", {
+        fingerprints_input: domainReviewScopes.slice(offset, offset + 240),
+      }, undefined, true)));
+    } catch {
+      domainReviewStateAvailable = false;
+      domainReviewRows.length = 0;
+      break;
+    }
+  }
+  if (!domainReviewStateAvailable) qualityNotices.push({
+    provider: "radar", code: "RADAR_DOMAIN_REVIEW_STATE_UNAVAILABLE", quarantined_count: 0,
+    message: "Las decisiones humanas de dominio no pudieron proyectarse. Las candidatas ambiguas permanecen bloqueadas.",
+  });
+  const domainReviews = new Map(domainReviewRows.map((review) => [
+    `${cleanText(review.provider, 40)}\u0000${cleanText(review.external_id, 220)}\u0000${cleanText(review.domain_fingerprint, 80)}`,
+    review,
+  ]));
 
   // La elegibilidad no depende de que un modelo demuestre la ausencia de un
   // resultado. El proveedor abre la candidata; Atinara solo la cierra por una
   // señal canónica o una prueba oficial terminal exacta para su sujeto.
-  let candidates = [...discoveredByProvider.values()].flat().map((candidate) => {
-    const providerDecision = evaluateProviderEligibility(candidate, now) as JsonRecord | null;
-    return applyDeterministicRadarEligibility(candidate, providerDecision, now) as JsonRecord;
+  let candidates = domainScopedCandidates.map((candidate) => {
+    const humanReview = domainReviews.get(
+      `${cleanText(candidate.provider, 40)}\u0000${cleanText(candidate.external_id, 220)}\u0000${cleanText(candidate.domain_review_fingerprint, 80)}`,
+    );
+    const classifiedCandidate = projectRadarDomainReview(candidate, humanReview);
+    const providerDecision = domainReviewStateAvailable
+      ? evaluateProviderEligibility(classifiedCandidate, now) as JsonRecord | null
+      : {
+        eligible: false,
+        conclusive: false,
+        reason_code: "RADAR_DOMAIN_REVIEW_STATE_UNAVAILABLE",
+        reason: "Las atestaciones humanas de dominio no pudieron comprobarse; el snapshot permanece bloqueado.",
+        confidence: 0,
+        ttl_minutes: 5,
+        evidence: [],
+      };
+    return applyDeterministicRadarEligibility(classifiedCandidate, providerDecision, now) as JsonRecord;
   });
+  candidates = candidates.map((candidate) => ({ ...candidate, workflow_issues: [] }));
   let evidenceByGroup = new Map<string, JsonRecord[]>();
   let deferredVerificationCount = 0;
   let processedVerificationCount = 0;
@@ -2235,14 +2901,21 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   let sourceAgentExecution: JsonRecord | null = null;
   const scanCandidates = candidates.filter((candidate) => candidate.eligibility_status === "eligible");
   if (!authoritativeDomains.size) {
-    errors.push({
+    const failure = {
       ...publicProviderError("tavily", "SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE", 503),
       classification: "enrichment",
       degrades_provider: false,
       message: "El registro de fuentes oficiales no estuvo disponible. Las candidatas de proveedor se conservan, pero preparar seguirá cerrado hasta recuperarlo.",
+    };
+    const finalization = await finalizeRadarRefreshFailureV2(environment, tavilyIntent, failure, "enrichment");
+    const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
+      requestId: refresh.requestId, provider: "tavily", capability: "source_enrichment",
+      code: "SOURCE_AUTHORITY_REGISTRY_UNAVAILABLE", failureStage: "enrichment",
     });
+    enrichmentIssues.push(issue);
   }
-  if (scanCandidates.length && authoritativeDomains.size) {
+  if (scanCandidates.length && authoritativeDomains.size
+      && !tavilyIntent.terminal && !tavilyIntent.inProgress) {
     try {
       const research = await researchGroupsWithTavily(environment, environment.tavilyKey, scanCandidates, authoritativeDomains);
       evidenceByGroup = research.evidenceByGroup;
@@ -2253,15 +2926,14 @@ async function runDiscovery(environment: Environment, authorization: string, bod
           && research.enrichmentError.message === "PROVIDER_NOT_CONFIGURED"
           ? publicProviderError("tavily", "PROVIDER_NOT_CONFIGURED", 503)
           : providerFailure(research.enrichmentError, "tavily");
-        errors.push({
-          ...failure,
-          classification: "enrichment",
-          degrades_provider: false,
-          message: "La búsqueda auxiliar se degradó, pero Atinara conservó y comprobó los contratos oficiales aportados por los proveedores.",
+        const finalization = await finalizeRadarRefreshFailureV2(environment, tavilyIntent, failure, "enrichment");
+        const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
+          requestId: refresh.requestId, provider: "tavily", capability: "source_enrichment",
+          code: cleanText(failure.code, 100) || "PROVIDER_UNAVAILABLE", failureStage: "enrichment",
         });
-        await persistProviderFailure(environment, "tavily", cacheKey, failure);
+        enrichmentIssues.push(issue);
       } else {
-        await persistProviderResult(environment, "tavily", cacheKey, []);
+        await finalizeRadarEnrichmentSuccessV2(environment, tavilyIntent);
       }
     } catch (error) {
       incompleteOfficialResearchGroups = new Set(scanCandidates.map((candidate) => cleanText(candidate.event_group_key, 240)).filter(Boolean));
@@ -2270,14 +2942,16 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         : providerFailure(error, "tavily");
       // Tavily es un enriquecedor sustituible. Su caída no convierte a
       // Polymarket o Kalshi en proveedores con incidencia.
-      errors.push({
-        ...failure,
-        classification: "enrichment",
-        degrades_provider: false,
-        message: "El enriquecimiento de fuentes oficiales no estuvo disponible. Las fuentes principales continúan operativas.",
+      const finalization = await finalizeRadarRefreshFailureV2(environment, tavilyIntent, failure, "enrichment");
+      const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
+        requestId: refresh.requestId, provider: "tavily", capability: "source_enrichment",
+        code: cleanText(failure.code, 100) || "PROVIDER_UNAVAILABLE", failureStage: "enrichment",
       });
-      await persistProviderFailure(environment, "tavily", cacheKey, failure);
+      enrichmentIssues.push(issue);
     }
+  } else if (!scanCandidates.length && authoritativeDomains.size
+      && !tavilyIntent.terminal && !tavilyIntent.inProgress) {
+    await finalizeRadarEnrichmentSuccessV2(environment, tavilyIntent);
   }
 
   const groupResolutions = new Map(officialEventResolutionSignals(candidates, evidenceByGroup, now)
@@ -2371,7 +3045,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   });
 
   candidates = candidates.map((candidate) => normalizeRadarCandidatePresentation(candidate) as JsonRecord);
-  const scored = (scoreCandidates(candidates, existing, now) as JsonRecord[]).map((candidate) => {
+  let scored = (scoreCandidates(candidates, existing, now) as JsonRecord[]).map((candidate) => {
     const duplicate = toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
     return duplicate && candidate.eligibility_status === "eligible"
       ? applyDeterministicRadarEligibility(candidate, {
@@ -2385,15 +3059,70 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       }, now) as JsonRecord
       : candidate;
   });
+  scored = await Promise.all(scored.map(async (candidate) => {
+    const temporalContract = await createAtinaraTemporalContract(candidate, now) as JsonRecord;
+    const workflowIssues = toRecordArray(candidate.workflow_issues);
+    const workflowCodes = new Set(workflowIssues.map((issue) => cleanText(issue.issue_code, 100)));
+    const decisionCode = cleanText(candidate.eligibility_reason_code || candidate.domain_reason_code, 100);
+    if (decisionCode && !workflowCodes.has(decisionCode)) {
+      workflowIssues.push(await candidateDecisionWorkflowIssue(candidate, decisionCode));
+      workflowCodes.add(decisionCode);
+    }
+    for (const temporalCode of Array.isArray(temporalContract.anomaly_codes)
+      ? temporalContract.anomaly_codes.map((value) => cleanText(value, 100))
+        .filter((value) => value.startsWith("TEMPORAL_")) : []) {
+      if (workflowCodes.has(temporalCode)) continue;
+      workflowIssues.push(await createMarketWorkflowIssue({
+        issueCode: temporalCode,detectedBy: "radar",ownerStage: "editor",
+        severity: "blocking",repairability: "waiting_authoritative_source",blockingScope: "approval",
+        affectedFields: ["evaluation_ends_at", "closes_at", "resolution_deadline", "timezone"],
+        evidenceRefs: [{
+          provider: cleanText(candidate.provider, 40),external_id: cleanText(candidate.external_id, 220),
+          temporal_decision_hash: cleanText(temporalContract.decision_hash, 80),
+        }],
+        currentValue: {
+          raw_source_dates: temporalContract.raw_source_dates,
+          evaluation_ends_at: temporalContract.evaluation_ends_at,timezone: temporalContract.timezone,
+        },
+        proposedValue: null,confidence: Number(temporalContract.confidence) || 0,
+        policyVersion: cleanText(temporalContract.policy_version, 100),retryable: true,
+        nextAction: "resolve_temporal_contract",
+      }) as JsonRecord);
+      workflowCodes.add(temporalCode);
+    }
+    return { ...candidate,temporal_contract: temporalContract,workflow_issues: workflowIssues };
+  }));
   const quarantinedCandidates: RadarCandidateQuarantine[] = [];
-  const qualityNotices: JsonRecord[] = [];
   const deferredPersistenceBatches: RadarPersistenceDeferredBatch[] = [];
   const currentCandidatesByIdentity = new Map(current.candidates.map((candidate) => [
     `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`,
     candidate,
   ]));
   const preservedCandidatesByIdentity = new Map<string, JsonRecord>();
-  for (const provider of discoveredByProvider.keys()) {
+  for (const failure of candidateProviderErrors) {
+    const failedProvider = cleanText(failure.provider, 40);
+    for (const candidate of current.candidates.filter((item) => item.provider === failedProvider)) {
+      const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
+      preservedCandidatesByIdentity.set(identity, {
+        ...candidate,
+        eligibility_state_preserved: true,
+        provider_refresh_checked_at: now,
+        provider_refresh_state: "provider_degraded",
+      });
+    }
+  }
+  const providersToPersist = new Set<string>([
+    ...discoveredByProvider.keys(),
+    ...requestedProviders.filter((provider) => {
+      const intent = providerIntents.get(provider);
+      return Boolean(intent && !intent.inProgress && (
+        ["persisting", "finalizing"].includes(intent.phase)
+        || (intent.phase === "staged" && intent.expectedCount !== null
+          && intent.stagedCount === intent.expectedCount)
+      ));
+    }),
+  ]);
+  for (const provider of providersToPersist) {
     const providerCandidates = scored
       .filter((candidate) => candidate.provider === provider)
       .slice(0, MAX_NORMALIZED_PER_PROVIDER);
@@ -2417,59 +3146,85 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       return false;
     });
     try {
-      const outcome = await persistProviderResult(
-        environment,
-        provider,
-        cacheKey,
-        persistableCandidates,
-        providerCandidates.length,
+      const intent = providerIntents.get(provider);
+      if (!intent) throw new Error("RADAR_REFRESH_INTENT_REQUIRED");
+      const outcome = await persistProviderResultV2(
+        environment, intent, cacheKey,
+        discoveredByProvider.has(provider) ? persistableCandidates : null,
       );
       quarantinedCandidates.push(...outcome.quarantined);
-      if (outcome.quarantined.length) {
+      if (outcome.quarantinedCount) {
         qualityNotices.push({
-          ...quarantinedProviderNotice(provider, outcome.quarantined.length),
-          quarantined_count: outcome.quarantined.length,
+          ...quarantinedProviderNotice(provider, outcome.quarantinedCount),
+          quarantined_count: outcome.quarantinedCount,
           quarantined: outcome.quarantined,
           persisted_count: outcome.persistedCount,
         });
       }
+      providerIssues.push(...outcome.issues);
       deferredPersistenceBatches.push(...outcome.deferred);
       if (outcome.failure) {
-        errors.push({
+        candidateProviderErrors.push({
           ...outcome.failure,
-          quarantined_count: outcome.quarantined.length,
+          quarantined_count: outcome.quarantinedCount,
           quarantined: outcome.quarantined,
           deferred_count: deferredPersistenceCandidateCount(outcome),
           deferred_batches: outcome.deferred,
           persisted_count: outcome.persistedCount,
           persistence_rpc_count: outcome.persistenceRpcCalls,
+          issue: outcome.issues[0] ?? null,
+          state_preserved: true,
         });
-      }
-    } catch (error) {
-      const failure = error instanceof RadarPersistenceError
-        ? error.failure
-        : persistenceFailure(error, provider);
-      if (error instanceof RadarPersistenceError) {
-        quarantinedCandidates.push(...error.outcome.quarantined);
-        if (error.outcome.quarantined.length) {
-          qualityNotices.push({
-            ...quarantinedProviderNotice(provider, error.outcome.quarantined.length),
-            quarantined_count: error.outcome.quarantined.length,
-            quarantined: error.outcome.quarantined,
-            persisted_count: error.outcome.persistedCount,
+        for (const candidate of current.candidates.filter((item) => item.provider === provider)) {
+          const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
+          preservedCandidatesByIdentity.set(identity, {
+            ...candidate,
+            eligibility_state_preserved: true,
+            provider_refresh_checked_at: now,
+            provider_refresh_state: outcome.inProgress ? "persistence_resumable" : "provider_degraded",
           });
         }
-        deferredPersistenceBatches.push(...error.outcome.deferred);
-        Object.assign(failure, {
-          quarantined_count: error.outcome.quarantined.length,
-          quarantined: error.outcome.quarantined,
-          deferred_count: deferredPersistenceCandidateCount(error.outcome),
-          deferred_batches: error.outcome.deferred,
-          persisted_count: error.outcome.persistedCount,
-          persistence_rpc_count: error.outcome.persistenceRpcCalls,
+      }
+    } catch (error) {
+      const failure = persistenceFailure(error, provider);
+      const intent = providerIntents.get(provider);
+      const deferred = intent?.leaseToken ? toRecord(await rpc(
+        environment,
+        "defer_market_radar_refresh_v1",
+        {
+          request_id_input: intent.requestId,
+          provider_input: intent.provider,
+          capability_input: intent.capability,
+          lease_token_input: intent.leaseToken,
+          issue_code_input: cleanText(failure.code, 100) || "RADAR_PERSISTENCE_FAILED",
+        },
+        undefined,
+        true,
+      ).catch(() => null)) : null;
+      const issue = toRecord(deferred?.issue) ?? await radarRefreshIssue({
+        requestId: refresh.requestId, provider, capability: "candidate_feed",
+        code: cleanText(failure.code, 100) || "RADAR_PERSISTENCE_FAILED",
+        failureStage: "persistence",
+      });
+      providerIssues.push(issue);
+      candidateProviderErrors.push({
+        ...failure,
+        status: intent ? 202 : failure.status,
+        retryable: true,
+        issue,
+        state_preserved: true,
+        refresh_request_id: intent?.requestId ?? refresh.requestId,
+        next_action: "resume_persistence_intent",
+      });
+      for (const candidate of current.candidates.filter((item) => item.provider === provider)) {
+        const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
+        preservedCandidatesByIdentity.set(identity, {
+          ...candidate,
+          eligibility_state_preserved: true,
+          provider_refresh_checked_at: now,
+          provider_refresh_state: "persistence_degraded",
         });
       }
-      errors.push(failure);
     }
   }
   // Una respuesta marcada como fresca solo puede contener snapshots creados por
@@ -2482,24 +3237,59 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const preservedCandidates = [...preservedCandidatesByIdentity.entries()]
     .filter(([identity]) => !freshIdentities.has(identity))
     .map(([, candidate]) => candidate);
-  const responseCandidates = [...freshView.candidates, ...preservedCandidates];
+  const mergedCandidates = [...freshView.candidates, ...preservedCandidates];
+  const mergedGroups = groupCandidates(mergedCandidates).sort((left, right) => {
+    const leftRank = Math.min(...left.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
+    const rightRank = Math.min(...right.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
+    return leftRank - rightRank;
+  });
+  const mergedPage = paginateMergedRadarParents(mergedGroups,{
+    parentOffset:Number(freshView.page.parent_offset)||0,
+    parentLimit:Number(freshView.page.parent_limit)||MAX_VISIBLE_GROUPS,
+    authoritativeParentCount:Math.max(
+      Number(freshView.page.parent_count)||0,Number(current.page.parent_count)||0,
+    ),
+  });
+  const responseGroups = mergedPage.groups as JsonRecord[];
+  const responseCandidates = responseGroups.flatMap((group) => toRecordArray(group.candidates));
   const view = {
     ...freshView,
+    providers: freshView.providers.filter((provider) =>
+      RADAR_CANDIDATE_PROVIDERS.includes(cleanText(provider.provider, 40))),
     candidates: responseCandidates,
-    groups: diversifyGroups(groupCandidates(responseCandidates), MAX_VISIBLE_GROUPS),
+    groups: responseGroups,
+    page: {
+      ...freshView.page,
+      ...mergedPage.page,
+    },
   };
+  const enrichmentCapabilities = freshView.providers
+    .filter((provider) => RADAR_ENRICHMENT_CAPABILITIES.includes(cleanText(provider.provider, 40)))
+    .map((provider) => ({
+      ...provider,
+      role: "source_enrichment",
+      affects_catalog_health: false,
+    }));
   return jsonResponse({
     ok: true,
     ...view,
     filters,
     cache_key: cacheKey,
     cached: false,
-    cached_authoritative: preservedCandidates.length > 0,
+    cached_authoritative: responseCandidates.some((candidate) =>
+      candidate.eligibility_state_preserved===true),
     requires_eligibility_refresh: responseCandidates.length === 0
       && scored.some((candidate) => cleanText(candidate.eligibility_reason_code, 100)
         === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING),
-    partial: errors.length > 0,
-    errors,
+    partial: candidateProviderErrors.length > 0,
+    errors: candidateProviderErrors,
+    provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
+    candidate_providers: view.providers,
+    enrichment_capabilities: enrichmentCapabilities,
+    provider_issues: providerIssues,
+    enrichment_issues: enrichmentIssues,
+    refresh_request_id: refresh.requestId,
+    refresh_in_progress: candidateProviderErrors.some((error) => Number(error.status) === 202),
     deferred_verification_count: deferredVerificationCount,
     processed_verification_count: processedVerificationCount,
     failed_verification_batches: failedVerificationBatches,
@@ -2530,7 +3320,26 @@ function candidatePreflight(candidate: JsonRecord): { ok: true } | { ok: false; 
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente. Actualiza el Radar." };
   const state = cleanText(candidate.state, 40);
+  const terminalCodes = new Set([
+    RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN, RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
+    "EVENT_OUTSIDE_CONTRACT", RADAR_REASON_CODES.DUPLICATE_MARKET, "PROVIDER_NOT_OPEN",
+    "PROVIDER_OPTION_INACTIVE", "PROVIDER_EVENT_NOT_FOUND", "PROVIDER_CHILD_NOT_FOUND",
+  ]);
+  const terminalWorkflow = toRecordArray(candidate.workflow_issues).some((issue) =>
+    (cleanText(issue.blocking_scope, 40) === "terminal" || cleanText(issue.repairability, 40) === "terminal")
+      && !["resolved", "superseded"].includes(cleanText(issue.status, 40) || "open"));
+  if (cleanText(candidate.eligibility_status, 40) === "terminal"
+    || cleanText(candidate.domain_status, 40) === "out_of_domain"
+    || [candidate.domain_reason_code, candidate.eligibility_reason_code]
+      .some((value) => terminalCodes.has(cleanText(value, 100)))
+    || terminalWorkflow) {
+    return { ok: false, error: "RADAR_CANDIDATE_TERMINAL", message: "La candidata conserva una condición terminal y no admite preparación." };
+  }
   if (["prepared", "dismissed", "expired"].includes(state)) return { ok: false, error: "CANDIDATE_NOT_PREPARABLE", message: "La candidata ya no está disponible para preparar." };
+  if ([candidate.domain_reason_code, candidate.eligibility_reason_code]
+    .some((value) => cleanText(value, 100) === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER)) {
+    return { ok: false, error: "PROVIDER_PLACEHOLDER", message: "El proveedor todavía no identifica una opción real y concreta." };
+  }
   if (toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match))) return { ok: false, error: "CONFIRMED_DUPLICATE", message: "La candidata coincide con un mercado o borrador existente." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_")) {
@@ -2587,6 +3396,32 @@ function refreshCandidateCacheLease(candidate: JsonRecord, checkedAt: string): J
     fetched_at: checkedAt,
     cache_expires_at: new Date(Date.parse(checkedAt) + (20 * 60_000)).toISOString(),
   };
+}
+
+async function revalidateCurrentCandidateDomain(
+  environment: Environment,
+  candidate: JsonRecord,
+): Promise<JsonRecord> {
+  const domainFingerprint = await radarDomainFingerprintV1(candidate);
+  const scopedCandidate: JsonRecord = { ...candidate, domain_review_fingerprint: domainFingerprint };
+  let reviews: JsonRecord[];
+  try {
+    reviews = toRecordArray(await rpc(environment, "get_market_radar_domain_reviews_v1", {
+      fingerprints_input: [{
+        provider: cleanText(scopedCandidate.provider, 40),
+        external_id: cleanText(scopedCandidate.external_id, 220),
+        domain_fingerprint: domainFingerprint,
+      }],
+    }, undefined, true));
+  } catch {
+    // Una caída del ledger humano nunca equivale a ausencia de atestación.
+    throw new Error("ELIGIBILITY_SCAN_UNAVAILABLE");
+  }
+  const exactReview = reviews.find((review) =>
+    cleanText(review.provider, 40) === cleanText(scopedCandidate.provider, 40)
+      && cleanText(review.external_id, 220) === cleanText(scopedCandidate.external_id, 220)
+      && cleanText(review.domain_fingerprint, 80) === domainFingerprint);
+  return projectRadarDomainReview(scopedCandidate, exactReview);
 }
 
 async function revalidatePolymarketCandidate(environment: Environment, candidate: JsonRecord): Promise<JsonRecord | null> {
@@ -2674,10 +3509,12 @@ async function revalidateCandidateForPreparation(
     throw new Error("PROVIDER_UNAVAILABLE");
   }
   const checkedAt = new Date().toISOString();
+  const currentProviderCandidate = providerCandidate
+    ? await revalidateCurrentCandidateDomain(environment, providerCandidate) : null;
   let eligibility = applyDeterministicRadarEligibility(
-    providerCandidate ?? candidate,
-    providerCandidate
-      ? evaluateProviderEligibility(providerCandidate, checkedAt)
+    currentProviderCandidate ?? candidate,
+    currentProviderCandidate
+      ? evaluateProviderEligibility(currentProviderCandidate, checkedAt)
       : {
         eligible: false,
         conclusive: true,
@@ -2954,10 +3791,52 @@ async function handleAction(
     return jsonResponse({ ok: true, providers: toRecordArray(providers) });
   }
   const candidateId = cleanText(body.candidate_id, 80);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateId)) {
-    return jsonResponse({ error: "INVALID_CANDIDATE", message: "La candidata solicitada no es válida." }, 400);
-  }
-  if (action === "details") {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateId)) {
+        return jsonResponse({ error: "INVALID_CANDIDATE", message: "La candidata solicitada no es válida." }, 400);
+      }
+      if (action === "review-domain") {
+        const expectedRevision = Number(body.expected_revision);
+        const expectedFingerprint = cleanText(body.expected_fingerprint, 80).toLowerCase();
+        const decision = cleanText(body.decision, 40);
+        const rationale = cleanText(body.rationale, 1_000);
+        const requestedOperationId = cleanText(body.operation_id, 80);
+        const operationId = validUuid(requestedOperationId) ? requestedOperationId : crypto.randomUUID();
+        const requestedSupersedesId = cleanText(body.supersedes_request_id, 80);
+        const supersedesRequestId = requestedSupersedesId ? requestedSupersedesId : null;
+        const evidenceRefs = toRecordArray(body.evidence_refs).slice(0, 8).map((item) => ({
+          url: safePublicUrl(item.url),
+          role: cleanText(item.role, 80) || "DOMAIN_REVIEW",
+        })).filter((item) => item.url);
+        if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0
+          || !/^[a-f0-9]{64}$/.test(expectedFingerprint)
+          || !["in_domain", "out_of_domain"].includes(decision)
+          || rationale.length < 20
+          || (supersedesRequestId !== null && !validUuid(supersedesRequestId))
+          || (decision === "out_of_domain" && evidenceRefs.length === 0)) {
+          return jsonResponse({
+            error: "RADAR_DOMAIN_REVIEW_INVALID",
+            message: "La decisión de dominio necesita versión, huella y una justificación suficiente.",
+          }, 400);
+        }
+        const result = await rpc(environment, "review_market_radar_domain_v1", {
+          candidate_id_input: candidateId,
+          expected_revision_input: expectedRevision,
+          expected_fingerprint_input: expectedFingerprint,
+          decision_input: decision,
+          rationale_input: rationale,
+          evidence_refs_input: evidenceRefs,
+          request_id_input: operationId,
+          supersedes_request_id_input: supersedesRequestId,
+        }, authorization);
+        return jsonResponse({
+          ok: true,
+          status: "domain_review_recorded",
+          review: toRecord(result) ?? {},
+          next_action: "refresh_draft_eligibility",
+          publishes: false,
+        });
+      }
+      if (action === "details") {
     const candidate = toRecord(await rpc(environment, "get_market_radar_candidate", { candidate_id_input: candidateId }, authorization));
     if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
     let detailedCandidate = candidate;
@@ -2981,6 +3860,66 @@ async function handleAction(
       // El detalle sigue siendo una lectura válida con el último estado guardado.
     }
     return jsonResponse({ ok: true, candidate: detailedCandidate });
+  }
+  if (action === "recover-draft-eligibility") {
+    const draftId = cleanText(body.draft_id, 80);
+    const draftVersion = Number(body.draft_version);
+    const draftFingerprint = cleanText(body.draft_fingerprint, 80).toLowerCase();
+    const requestedOperationId = cleanText(body.operation_id, 80);
+    const operationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedOperationId)
+      ? requestedOperationId : crypto.randomUUID();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(draftId)
+      || !Number.isSafeInteger(draftVersion) || draftVersion<1
+      || !/^[a-f0-9]{64}$/.test(draftFingerprint)) {
+      return jsonResponse({ error: "INVALID_DRAFT_ELIGIBILITY_SCOPE", message: "La versión privada no es válida." }, 400);
+    }
+    const replay = toRecord(await rpc(
+      environment,
+      "get_market_draft_eligibility_recovery_replay_v1",
+      {
+        attempt_id_input:operationId,draft_id_input:draftId,
+        expected_version_input:draftVersion,expected_fingerprint_input:draftFingerprint,
+        candidate_id_input:candidateId,
+      },undefined,true,
+    ));
+    if (replay?.replayed===true) {
+      return jsonResponse({
+        ...replay,message:"La recuperación ya estaba registrada; no se repitió ninguna consulta externa.",
+      });
+    }
+    const candidate = toRecord(await rpc(
+      environment,
+      "get_market_radar_candidate_for_draft_revalidation_v2",
+      {
+        candidate_id_input: candidateId,
+        draft_id_input: draftId,
+        expected_version_input: draftVersion,
+        expected_fingerprint_input: draftFingerprint,
+      },
+      undefined,
+      true,
+    ));
+    if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
+    const preflight = candidateRevalidationPreflight(candidate);
+    if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
+    try {
+      const result = await revalidateCandidateForPreparation(
+        environment,authorization,candidate,"revalidate",operationId,
+      );
+      const recovery = toRecord(await rpc(environment, "recover_market_draft_radar_eligibility_v1", {
+        draft_id_input: draftId,expected_version_input: draftVersion,
+        expected_fingerprint_input: draftFingerprint,candidate_id_input: candidateId,
+        actor_id_input: adminId,attempt_id_input: operationId,
+      }, undefined, true));
+      return jsonResponse({
+        ok: true,status: "eligibility_recovered",candidate: result.candidate,
+        recovery,owner_stage: "validator",next_action: "request_market_validation",
+        state_preserved: true,
+      });
+    } catch (error) {
+      await recordTechnicalEligibilityAttempt(environment,candidate,"revalidate",operationId,error);
+      return eligibilityFailureResponse(error,operationId);
+    }
   }
   if (action === "check-eligibility") {
     const draftId = cleanText(body.draft_id, 80);
