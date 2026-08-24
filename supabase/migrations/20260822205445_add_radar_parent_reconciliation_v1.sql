@@ -117,7 +117,7 @@ create or replace function public.declare_market_radar_refresh_manifest_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -166,7 +166,7 @@ create or replace function public.seal_market_radar_refresh_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -190,7 +190,7 @@ begin
   into root_count,item_count,min_ordinal,max_ordinal,manifest_hash_value
   from private.market_radar_refresh_batches_v1
   where request_id=request_id_input and provider=provider_input
-    and capability=capability_input and generation=0 and split_path='';
+    and capability=capability_input and generation=0 and length(split_path)=0;
   if item_count<>expected_count_input
      or (root_count>0 and (min_ordinal<>0 or max_ordinal<>root_count-1))
      or exists (
@@ -426,7 +426,7 @@ create or replace function private.capture_market_repair_checkpoint_radar_bindin
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -482,7 +482,7 @@ returns boolean
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   checkpoint private.market_repair_workflow_checkpoints_v1%rowtype;
@@ -622,7 +622,7 @@ revoke all on sequence private.market_radar_parent_children_v1_id_seq
   from public,anon,authenticated,service_role;
 
 create or replace function private.reject_market_radar_reconciliation_mutation_v1()
-returns trigger language plpgsql security definer set search_path=''
+returns trigger language plpgsql security definer set search_path to ''
 as $function$
 begin
   raise exception 'RADAR_PARENT_RECONCILIATION_APPEND_ONLY' using errcode='55000';
@@ -648,7 +648,7 @@ create or replace function public.record_market_radar_provider_selection_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -734,7 +734,7 @@ create or replace function private.market_radar_reconciliation_payload_hash_v1(
 returns text
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare
   material jsonb;
@@ -798,7 +798,7 @@ create or replace function private.market_radar_child_matches_legacy_v1(
 returns boolean
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare
   baseline_occurrence text:=nullif(baseline_input ->> 'child_occurrence_key','');
@@ -847,7 +847,7 @@ create or replace function public.record_market_radar_parent_reconciliations_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -1608,7 +1608,7 @@ returns setof jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   if auth.role()<>'service_role' then
@@ -1746,7 +1746,7 @@ returns setof jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   if auth.role()<>'service_role' then
@@ -1922,7 +1922,7 @@ returns setof jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare protected_count integer;
 begin
@@ -1985,7 +1985,7 @@ create or replace function private.enforce_market_candidate_reconciliation_proje
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   identity_status_value text;
@@ -2121,14 +2121,14 @@ create or replace function private.market_family_option_slug_v2(
 returns text
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare
   bounded_length integer:=greatest(1,least(coalesce(length_input,120),240));
   cleaned_value text;
   folded_value text;
   ascii_slug text;
-  unicode_slug text:='';
+  unicode_slug text default '';
   slug_value text;
   character_value text;
   folded_character text;
@@ -2157,14 +2157,14 @@ begin
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'
     );
     if character_value~'[[:alnum:]]' and folded_character!~'^[a-z0-9]$' then
-      unicode_slug:=unicode_slug||case when unicode_slug='' then '' else '-' end
+      unicode_slug:=unicode_slug||case when length(unicode_slug)=0 then '' else '-' end
         ||to_hex(ascii(character_value));
     end if;
   end loop;
   slug_value:=case
-    when ascii_slug<>'' and unicode_slug<>'' then ascii_slug||'-u-'||unicode_slug
-    when ascii_slug<>'' then ascii_slug
-    when unicode_slug<>'' then 'u-'||unicode_slug
+    when length(ascii_slug)>0 and length(unicode_slug)>0 then ascii_slug||'-u-'||unicode_slug
+    when length(ascii_slug)>0 then ascii_slug
+    when length(unicode_slug)>0 then 'u-'||unicode_slug
     else ''
   end;
   hash_source:=regexp_replace(
@@ -2199,7 +2199,7 @@ create or replace function private.market_family_cross_version_identity_v1(
 returns text
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare child_key_value text;
 begin
@@ -2280,7 +2280,7 @@ create or replace function private.guard_market_draft_cross_version_identity_v1(
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare identity_value text;
 begin
@@ -2314,7 +2314,7 @@ create or replace function private.guard_public_market_cross_version_identity_v1
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare identity_value text;
 begin
@@ -2352,7 +2352,7 @@ create or replace function private.market_candidate_blocking_duplicates(
 returns jsonb
 language sql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
   with filtered as (
     select item,ordinality,
@@ -2378,7 +2378,7 @@ create or replace function private.market_candidate_sibling_matches(
 returns jsonb
 language sql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
   with filtered as (
     select item,ordinality,
@@ -2405,7 +2405,7 @@ create or replace function private.market_candidate_has_blocking_duplicate(
 returns boolean
 language sql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
   select jsonb_array_length(
     private.market_candidate_blocking_duplicates(items_input,self_id_input)
@@ -2429,7 +2429,7 @@ returns text
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   metadata_value jsonb;
@@ -2485,7 +2485,7 @@ returns jsonb
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   with target as materialized (
     select private.market_radar_candidate_cross_version_identity_v1(candidate_input) as identity_key
@@ -2608,7 +2608,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select jsonb_array_length(
     private.market_radar_candidate_live_duplicates_v1(candidate_input)
@@ -2624,7 +2624,7 @@ revoke all on function private.market_radar_candidate_has_live_duplicate_v1(
 -- Forward definitions: los writers PL/pgSQL siguientes las resuelven también
 -- con check_function_bodies estricto durante la aplicación remota.
 create or replace function private.market_workflow_issue_deterministic_v1(issue_input jsonb)
-returns jsonb language plpgsql immutable set search_path='' as $function$
+returns jsonb language plpgsql immutable set search_path to '' as $function$
 declare
   fingerprint_value text:=lower(coalesce(issue_input ->> 'fingerprint',''));
   issue_id_value uuid;
@@ -2645,7 +2645,7 @@ revoke all on function private.market_workflow_issue_deterministic_v1(jsonb)
 create or replace function private.market_workflow_issue_array_replace_v1(
   existing_input jsonb,issue_input jsonb
 )
-returns jsonb language plpgsql immutable set search_path='' as $function$
+returns jsonb language plpgsql immutable set search_path to '' as $function$
 declare result_value jsonb;
 begin
   if jsonb_typeof(issue_input)<>'object' or nullif(issue_input ->> 'issue_code','') is null then
@@ -2678,7 +2678,7 @@ create or replace function private.persist_market_radar_live_duplicate_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -2835,7 +2835,7 @@ create or replace function private.clear_market_radar_live_duplicate_v1(
 returns private.external_market_candidates
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -2961,7 +2961,7 @@ create or replace function private.project_market_draft_workflow_state_v2(
 returns private.market_drafts
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -3044,7 +3044,7 @@ create or replace function private.sync_market_radar_revalidation_issues_v1(
 returns private.external_market_candidates
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -3192,7 +3192,7 @@ create or replace function private.market_family_text_contains_label_v2(
 returns boolean
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare
   text_value text;
@@ -3215,7 +3215,7 @@ begin
   label_value:=regexp_replace(label_value,U&'[\2010-\2015\2212\FE58\FE63\FF0D]','-','g');
   text_value:=btrim(text_value);
   label_value:=btrim(label_value);
-  if label_value='' or text_value='' then return false; end if;
+  if length(label_value)=0 or length(text_value)=0 then return false; end if;
   loop
     relative_position:=strpos(substr(text_value,search_offset),label_value);
     if relative_position=0 then return false; end if;
@@ -3223,8 +3223,8 @@ begin
     before_character:=case when match_position=1 then ''
       else substr(text_value,match_position-1,1) end;
     after_character:=substr(text_value,match_position+char_length(label_value),1);
-    if (before_character='' or before_character!~'[[:alnum:]]')
-       and (after_character='' or after_character!~'[[:alnum:]]') then
+    if (length(before_character)=0 or before_character!~'[[:alnum:]]')
+       and (length(after_character)=0 or after_character!~'[[:alnum:]]') then
       return true;
     end if;
     search_offset:=match_position+1;
@@ -3242,7 +3242,7 @@ create or replace function private.assert_market_radar_candidate_no_live_duplica
 returns void
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare lock_identity_value text;
 begin
@@ -3265,7 +3265,7 @@ create or replace function private.market_workflow_issue_deterministic_v1(issue_
 returns jsonb
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare
   fingerprint_value text:=lower(coalesce(issue_input ->> 'fingerprint',''));
@@ -3291,7 +3291,7 @@ create or replace function private.market_workflow_issue_array_replace_v1(
 returns jsonb
 language plpgsql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
 declare result_value jsonb;
 begin
@@ -3326,7 +3326,7 @@ create or replace function private.assert_market_candidate_draft_identity_v1(
 returns void
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -3424,7 +3424,7 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   result jsonb;
@@ -3491,7 +3491,7 @@ create or replace function private.assign_market_draft_family_v4()
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -3555,7 +3555,7 @@ create or replace function private.assign_public_market_family_v4()
 returns trigger
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   metadata_value jsonb;
@@ -3607,7 +3607,7 @@ create or replace function public.process_market_radar_refresh_batch_v2(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -3652,7 +3652,7 @@ begin
         !~ '^[a-f0-9]{64}$'
       or coalesce(item #>> '{candidate,canonical_projection_version}','')
         is distinct from 'atinara-radar-child-projection-v1'
-      or coalesce(item #>> '{candidate,parent_child_occurrence_key}','')=''
+      or nullif(item #>> '{candidate,parent_child_occurrence_key}','') is null
       or coalesce(item #>> '{candidate,parent_child_fingerprint}','') !~ '^[a-f0-9]{64}$'
       or coalesce(item #>> '{candidate,provider_child_contract_hash}','') !~ '^[a-f0-9]{64}$'
       or jsonb_typeof(item #> '{candidate,provider_child_contract}') is distinct from 'object'
@@ -3821,7 +3821,7 @@ create or replace function private.rebind_market_radar_protected_candidates_v1(
 returns integer
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   rebound_count integer:=0;
@@ -4111,7 +4111,7 @@ create or replace function private.market_candidate_preparation_projection(
 returns jsonb
 language sql
 immutable
-set search_path=''
+set search_path to ''
 as $function$
   select (
     to_jsonb(candidate)
@@ -4177,7 +4177,7 @@ create or replace function public.finalize_market_radar_refresh_v4(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   intent private.market_radar_refresh_intents_v1%rowtype;
@@ -4262,7 +4262,7 @@ create or replace function public.finalize_market_radar_refresh_v5(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   if auth.role()<>'service_role' then
@@ -4302,7 +4302,7 @@ create or replace function public.complete_market_radar_candidate_refresh_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   batch_result jsonb;
@@ -4409,7 +4409,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select candidate.normalizer_version='atinara-radar-v3'
     and candidate.normalized_payload ->> 'normalizer_version'='atinara-radar-v3'
@@ -4502,7 +4502,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select private.market_radar_candidate_reconciliation_bound_v1(candidate)
     and exists (
@@ -4534,7 +4534,7 @@ create or replace function private.persist_market_radar_draft_origin_binding_v1(
 returns private.market_drafts
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -4637,7 +4637,7 @@ create or replace function private.bind_market_radar_draft_eligibility_internal_
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   binding_row private.market_draft_eligibility_bindings%rowtype;
@@ -4752,7 +4752,7 @@ create or replace function public.bind_market_radar_draft_eligibility_v2(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -4820,7 +4820,7 @@ create or replace function public.save_market_draft_from_radar(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   actor_id_value uuid:=private.require_current_admin();
@@ -4962,7 +4962,7 @@ create or replace function public.save_market_draft_from_radar_intelligence_with
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   actor_id uuid:=private.require_current_admin();
@@ -5164,7 +5164,7 @@ create or replace function public.save_market_draft_from_radar_intelligence(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   result jsonb;
@@ -5198,7 +5198,7 @@ create or replace function private.lock_market_draft_workflow_scope_v1(
 returns private.market_drafts
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   initial_draft private.market_drafts%rowtype;
@@ -5281,7 +5281,7 @@ create or replace function public.apply_market_draft_expert_repair_with_checkpoi
   repair_meta_input jsonb,workflow_attempt_id_input uuid,repair_round_input smallint,
   repair_request_id_input uuid,review_attempt_id_input uuid,workflow_issue_ids_input jsonb
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 begin
   perform private.lock_market_draft_workflow_scope_v1(draft_id_input);
@@ -5296,7 +5296,7 @@ $function$;
 create or replace function public.begin_market_draft_repair_workflow_v1(
   draft_id_input uuid,expected_version_input bigint,request_key_input uuid
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 begin
   perform private.lock_market_draft_workflow_scope_v1(draft_id_input);
@@ -5311,7 +5311,7 @@ create or replace function public.checkpoint_market_draft_repair_noop_v1(
   repair_round_input smallint,repair_request_id_input uuid,review_attempt_id_input uuid,
   workflow_issue_ids_input jsonb
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 begin
   perform private.lock_market_draft_workflow_scope_v1(draft_id_input);
@@ -5329,7 +5329,7 @@ create or replace function public.complete_market_draft_repair_workflow_v1(
   draft_id_input uuid,repair_status_input text,owner_stage_input text,next_action_input text,
   workflow_issue_status_input text,resolution_method_input text
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 begin
   perform private.lock_market_draft_workflow_scope_v1(draft_id_input);
@@ -5345,7 +5345,7 @@ $function$;
 create or replace function public.reconcile_market_draft_repair_workflow_v1(
   attempt_id_input uuid
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 declare
   draft_id_value uuid;
@@ -5410,7 +5410,7 @@ create or replace function public.publish_market_draft_v2(
   scheduled_for_input timestamptz default null,
   request_id_input uuid default gen_random_uuid()
 )
-returns jsonb language plpgsql security definer set search_path=''
+returns jsonb language plpgsql security definer set search_path to ''
 as $function$
 begin
   perform private.lock_market_draft_workflow_scope_v1(draft_id_input);
@@ -5432,7 +5432,7 @@ create or replace function private.try_lock_market_draft_workflow_scope_v1(
 returns private.market_drafts
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   initial_draft private.market_drafts%rowtype;
@@ -5480,7 +5480,7 @@ create or replace function public.publish_due_market_drafts_v2(limit_count integ
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -5641,7 +5641,7 @@ create or replace function public.get_market_radar_candidate(candidate_id_input 
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -5678,7 +5678,7 @@ create or replace function public.get_market_radar_candidate_for_revalidation_v1
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -5715,7 +5715,7 @@ create or replace function public.get_market_intelligence_origin(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   result jsonb;
@@ -5766,11 +5766,11 @@ returns setof jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   perform private.require_current_admin();
-  if provider_filter is not null and provider_filter<>''
+  if nullif(provider_filter,'') is not null
      and provider_filter not in ('polymarket','kalshi') then
     raise exception 'INVALID_RADAR_PROVIDER' using errcode='22023';
   end if;
@@ -5808,9 +5808,9 @@ begin
     where event.issue_id=occurrence.issue_id
     order by event.occurred_at desc,event.id desc limit 1
   ) issue_event on true
-  where (provider_filter is null or provider_filter='' or parent_alias.provider=provider_filter)
-    and (category_filter is null or category_filter='' or parent_alias.category=category_filter)
-    and (query_filter is null or query_filter=''
+  where (nullif(provider_filter,'') is null or parent_alias.provider=provider_filter)
+    and (nullif(category_filter,'') is null or parent_alias.category=category_filter)
+    and (nullif(query_filter,'') is null
       or parent_alias.raw_provider_parent_label ilike '%'||query_filter||'%'
       or parent_alias.canonical_parent_label ilike '%'||query_filter||'%')
   order by (parent_alias.reconciliation_status='complete'),parent_alias.checked_at desc,
@@ -5837,12 +5837,12 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare result jsonb;
 begin
   perform private.require_current_admin();
-  if provider_filter is not null and provider_filter<>''
+  if nullif(provider_filter,'') is not null
      and provider_filter not in ('polymarket','kalshi') then
     raise exception 'INVALID_RADAR_PROVIDER' using errcode='22023';
   end if;
@@ -5864,9 +5864,9 @@ begin
   ), filtered as materialized (
     select parent_alias.*
     from latest parent_alias
-    where (provider_filter is null or provider_filter='' or parent_alias.provider=provider_filter)
-      and (category_filter is null or category_filter='' or parent_alias.atinara_category=category_filter)
-      and (query_filter is null or query_filter=''
+    where (nullif(provider_filter,'') is null or parent_alias.provider=provider_filter)
+      and (nullif(category_filter,'') is null or parent_alias.atinara_category=category_filter)
+      and (nullif(query_filter,'') is null
         or parent_alias.raw_provider_parent_label ilike '%'||query_filter||'%'
         or parent_alias.canonical_parent_label ilike '%'||query_filter||'%')
       and (parent_alias.horizon_at is null or parent_alias.horizon_at<=clock_timestamp()+case horizon_filter
@@ -5921,7 +5921,7 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare result jsonb;
 begin
@@ -5978,14 +5978,14 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   result jsonb;
   checked_at_value timestamptz:=clock_timestamp();
 begin
   perform private.require_current_admin();
-  if provider_filter is not null and provider_filter<>''
+  if nullif(provider_filter,'') is not null
      and provider_filter not in ('polymarket','kalshi') then
     raise exception 'INVALID_RADAR_PROVIDER' using errcode='22023';
   end if;
@@ -6017,9 +6017,9 @@ begin
       and candidate.family_version='atinara-market-family-v5'
       and candidate.family_key is not null and candidate.family_child_key is not null
       and private.market_radar_candidate_reconciliation_ready_v1(candidate)
-      and (provider_filter is null or provider_filter='' or candidate.provider=provider_filter)
-      and (category_filter is null or category_filter='' or candidate.atinara_category=category_filter)
-      and (query_filter is null or query_filter=''
+      and (nullif(provider_filter,'') is null or candidate.provider=provider_filter)
+      and (nullif(category_filter,'') is null or candidate.atinara_category=category_filter)
+      and (nullif(query_filter,'') is null
         or candidate.normalized_payload ->> 'source_title' ilike '%'||query_filter||'%'
         or candidate.normalized_payload ->> 'source_question' ilike '%'||query_filter||'%'
         or candidate.normalized_payload ->> 'atinara_question' ilike '%'||query_filter||'%')
@@ -6127,11 +6127,11 @@ returns setof jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   perform private.require_current_admin();
-  if provider_filter is not null and provider_filter<>''
+  if nullif(provider_filter,'') is not null
      and provider_filter not in ('polymarket','kalshi') then
     raise exception 'INVALID_RADAR_PROVIDER' using errcode='22023';
   end if;
@@ -6150,8 +6150,8 @@ begin
     and candidate.state='rejected'
     and private.market_radar_candidate_reconciliation_bound_v1(candidate)
     and candidate.normalized_payload ->> 'identity_status'='resolved'
-    and (provider_filter is null or provider_filter='' or candidate.provider=provider_filter)
-    and (category_filter is null or category_filter='' or candidate.atinara_category=category_filter)
+    and (nullif(provider_filter,'') is null or candidate.provider=provider_filter)
+    and (nullif(category_filter,'') is null or candidate.atinara_category=category_filter)
   order by candidate.verified_at desc nulls last,candidate.updated_at desc,candidate.id
   limit limit_count offset offset_count;
 end;
@@ -6181,7 +6181,7 @@ returns jsonb
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select public.list_market_radar_candidates_v4(
     provider_filter,category_filter,quality_filter,query_filter,order_key,
@@ -6209,7 +6209,7 @@ returns jsonb
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select public.list_market_radar_candidates_v4(
     provider_filter,category_filter,quality_filter,query_filter,order_key,
@@ -6233,7 +6233,7 @@ returns setof jsonb
 language sql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select * from public.list_market_radar_rejections_v2(
     provider_filter,category_filter,limit_count,offset_count
@@ -6258,7 +6258,7 @@ create or replace function public.apply_market_radar_prepare_eligibility_v2(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare candidate private.external_market_candidates%rowtype;
 begin
@@ -6304,7 +6304,7 @@ create or replace function public.apply_market_radar_prepare_eligibility_v3(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -6601,7 +6601,7 @@ create or replace function public.apply_market_radar_prepare_eligibility_v4(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -6827,7 +6827,7 @@ create function private.assert_market_radar_draft_eligibility_v1(
 returns void
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare radar_lineage boolean;
 begin
@@ -6862,7 +6862,7 @@ create or replace function public.begin_market_draft_review_v3(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -7008,7 +7008,7 @@ create or replace function public.get_market_radar_candidate_for_draft_revalidat
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -7070,7 +7070,7 @@ create function private.publication_issue_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 begin
   if error_code_input in ('RADAR_CONFIRMED_DUPLICATE','RADAR_EVENT_ALREADY_RESOLVED') then
@@ -7123,7 +7123,7 @@ create or replace function public.confirm_market_draft_review_v3(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   draft private.market_drafts%rowtype;
@@ -7195,7 +7195,7 @@ create or replace function public.save_market_draft_from_expert_with_issues_v2(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   actor uuid:=private.require_current_admin();
@@ -7452,7 +7452,7 @@ returns jsonb
 language sql
 volatile
 security definer
-set search_path=''
+set search_path to ''
 as $function$
   select public.save_market_draft_from_expert_with_issues_v2(
     candidate_id_input,expert_run_id_input,draft_input
@@ -7472,7 +7472,7 @@ create or replace function private.assert_market_radar_candidate_eligible_v1(
 returns private.external_market_candidates
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -7545,7 +7545,7 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
@@ -7610,7 +7610,7 @@ create or replace function public.recover_market_draft_radar_eligibility_v1(
 returns jsonb
 language plpgsql
 security definer
-set search_path=''
+set search_path to ''
 as $function$
 declare
   candidate private.external_market_candidates%rowtype;
