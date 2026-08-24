@@ -4,6 +4,9 @@ begin;
 
 set local lock_timeout='5s';
 set local statement_timeout='30s';
+-- Producción usa la política estricta: cualquier colisión entre variables
+-- PL/pgSQL y alias SQL debe fallar durante esta prueba transaccional.
+set local plpgsql.variable_conflict='error';
 
 do $test$
 declare
@@ -280,7 +283,7 @@ begin
         'source_title','Parent '||parent_size,
         'source_question','Will Option '||child_index||' win Parent '||parent_size||'?',
         'source_description',null,'source_resolution_rules','Official result.',
-        'source_resolution_url','https://example.com/official-parent-'||parent_size,
+        'source_resolution_url','https://thegameawards.com/official-parent-'||parent_size,
         'source_close_at','2027-01-01T00:00:00.000Z',
         'source_resolution_deadline','2027-01-02T00:00:00.000Z',
         'source_status','open','source_result',null,
@@ -317,7 +320,7 @@ begin
           'endpoint','/events/parent-'||parent_size,'identifier_type','external_market_id',
           'identifier',parent_size||'-'||child_index,'result','child_identity_observed_in_parent',
           'content_sha256',repeat('1',64),'identity_sha256',repeat('2',64),
-          'checked_at',date_trunc('second',clock_timestamp())
+          'checked_at',checked_at_value
         )),
         'present_in_current_snapshot',true,'present_in_legacy_snapshot',false,
         'transition','new','duplicate_of_child_identity_key',null,
@@ -329,14 +332,15 @@ begin
         'projection_version','atinara-radar-child-projection-v1',
         'child_fingerprint',encode(extensions.digest(convert_to(
           'parent-'||parent_size||':child-'||child_index,'UTF8'
-        ),'sha256'),'hex'),'checked_at',date_trunc('second',clock_timestamp())
+        ),'sha256'),'hex'),'checked_at',checked_at_value
       );
       children:=children||jsonb_build_array(child_value);
     end loop;
     parent_value:=jsonb_build_object(
       'provider','polymarket','provider_parent_id','parent-'||parent_size,
       'raw_provider_parent_label','Parent '||parent_size,
-      'canonical_parent_label','Padre '||parent_size,'category','Eventos',
+      'canonical_parent_label','Padre '||parent_size,
+      'raw_provider_category','Events','atinara_category','Eventos','category','Eventos',
       'external_parent_url','https://polymarket.com/event/parent-'||parent_size,
       'provider_declared_child_count',parent_size,
       'provider_discovered_child_count',parent_size,
@@ -351,13 +355,13 @@ begin
       'normalizer_version','atinara-radar-v3','family_version','atinara-market-family-v5',
       'reconciliation_fingerprint',encode(extensions.digest(convert_to(
         'parent-'||parent_size||':complete','UTF8'
-      ),'sha256'),'hex'),'checked_at',date_trunc('second',clock_timestamp()),
+      ),'sha256'),'hex'),'checked_at',checked_at_value,
       'next_retry_at',null,'source_refs',jsonb_build_array(jsonb_build_object(
         'url','https://gamma-api.polymarket.com/events/parent-'||parent_size,
         'endpoint','/events/parent-'||parent_size,'identifier_type','event_id',
         'identifier','parent-'||parent_size,'result','parent_children_enumerated',
         'content_sha256',repeat('3',64),'identity_sha256',repeat('4',64),
-        'checked_at',date_trunc('second',clock_timestamp())
+        'checked_at',checked_at_value
       )),'issue',null,'children',children
     );
     reconciliations:=reconciliations||jsonb_build_array(parent_value);
@@ -494,6 +498,23 @@ begin
   );
   process_lease:=(process_started ->> 'lease_token')::uuid;
   process_parent:=reconciliations -> 0;
+  -- Este segundo refresh del mismo padre debe acreditar exhaustivamente el
+  -- ledger V3 ya finalizado; no puede reutilizar el fixture de primera captura
+  -- como si la hija nunca hubiese existido.
+  child_value:=(process_parent #> '{children,0}')||jsonb_build_object(
+    'present_in_legacy_snapshot',true,'transition','same',
+    'child_fingerprint',encode(extensions.digest(convert_to(
+      'parent-1:child-1:followup','UTF8'
+    ),'sha256'),'hex')
+  );
+  process_parent:=process_parent||jsonb_build_object(
+    'legacy_expected_child_count',1,'legacy_accounted_child_count',1,
+    'new_child_count',0,
+    'reconciliation_fingerprint',encode(extensions.digest(convert_to(
+      'parent-1:complete:followup','UTF8'
+    ),'sha256'),'hex'),
+    'children',jsonb_build_array(child_value)
+  );
   perform set_config('request.jwt.claims','{"role":"service_role"}',true);
   perform public.record_market_radar_provider_selection_v1(
     process_request_id,'polymarket','candidate_feed',process_lease,
@@ -550,7 +571,8 @@ begin
     'canonical_child_key','option:option-1','canonical_child_label','Option 1',
     'raw_provider_child_label','Option 1','identity_kind','option',
     'identity_status','resolved','identity_classification','identified_real_option',
-    'identity_source','provider_contract_question','identity_confidence',100,
+    'identity_source','provider_contract_question','identity_confidence',100
+  )||jsonb_build_object(
     'parent_reconciliation_status','complete',
     'parent_reconciliation_version','atinara-radar-parent-reconciliation-v1',
     'parent_reconciliation_fingerprint',process_parent ->> 'reconciliation_fingerprint',
@@ -567,21 +589,25 @@ begin
     'eligibility_reason','Contrato futuro y verificable.',
     'eligibility_checked_at',clock_timestamp(),'eligibility_expires_at',clock_timestamp()+interval '6 hours',
     'eligibility_evidence',jsonb_build_array(jsonb_build_object(
-      'url','https://example.com/official-parent-1','source_type','official',
+      'url','https://thegameawards.com/official-parent-1','source_type','official',
       'retrieval_status','verified_content','evidence_basis','retrieved_content',
-      'content_sha256',repeat('6',64),'claim_status','direct','direct_claim',true
+      'parser_version','atinara-official-content-v1',
+      'content_sha256',repeat('6',64),'claim_status','direct','direct_claim',true,
+      'claim_verifiable',true
     )),
     'source_status','open','source_title','Parent 1','source_question','Will Option 1 win?',
     'source_close_at',clock_timestamp()+interval '30 days',
     'source_resolution_rules','Resuelve la fuente oficial.',
-    'source_resolution_url','https://example.com/official-parent-1',
+    'source_resolution_url','https://thegameawards.com/official-parent-1',
     'atinara_question','¿Ganará Option 1?','atinara_category','Eventos',
     'atinara_resolution_criteria','Sí si la fuente oficial confirma Option 1.',
-    'atinara_resolution_source_url','https://example.com/official-parent-1',
+    'atinara_resolution_source_url','https://thegameawards.com/official-parent-1',
     'resolution_source_evidence',jsonb_build_array(jsonb_build_object(
-      'url','https://example.com/official-parent-1','source_type','official',
+      'url','https://thegameawards.com/official-parent-1','source_type','official',
       'retrieval_status','verified_content','evidence_basis','retrieved_content',
-      'content_sha256',repeat('6',64),'claim_status','direct','direct_claim',true
+      'parser_version','atinara-official-content-v1',
+      'content_sha256',repeat('6',64),'claim_status','direct','direct_claim',true,
+      'claim_verifiable',true
     )),
     'warnings','[]'::jsonb,'duplicate_matches','[]'::jsonb,
     'verification_status','verified_open','verification_reason','Elegibilidad determinista vigente.',
@@ -796,7 +822,7 @@ begin
     'no_criteria','No if Option 1 does not win the official event.',
     'edge_cases','Option 1 follows the official result.',
     'public_criteria','Official result for Option 1.',
-    'primary_source',jsonb_build_object('url','https://example.com/official-parent-1'),
+    'primary_source',jsonb_build_object('url','https://thegameawards.com/official-parent-1'),
     'alternative_sources',jsonb_build_array(jsonb_build_object(
       'url','https://polymarket.com/event/parent-1'
     )),
@@ -936,6 +962,13 @@ begin
         ),'hex')
       );
     end if;
+    child_value:=child_value||jsonb_build_object(
+      'present_in_legacy_snapshot',true,'transition','same',
+      'child_fingerprint',encode(extensions.digest(convert_to(
+        'parent-48:followup:'||child_index||':'||(child_value ->> 'identity_status'),
+        'UTF8'
+      ),'sha256'),'hex')
+    );
     children:=children||jsonb_build_array(child_value);
   end loop;
   incomplete_issue:=private.market_workflow_server_issue_v1(
@@ -946,6 +979,8 @@ begin
   );
   incomplete_parent:=(reconciliations -> 3)||jsonb_build_object(
     'provider_identified_child_count',21,'provider_unresolved_child_count',27,
+    'legacy_expected_child_count',48,'legacy_accounted_child_count',48,
+    'new_child_count',0,
     'reconciliation_status','incomplete_provider_metadata',
     'reconciliation_fingerprint',repeat('8',64),
     'next_retry_at',clock_timestamp()+interval '1 hour',
@@ -1080,6 +1115,16 @@ begin
         where request_id=legacy_partial_request_id)<>0 then
     raise exception 'TEST_RADAR_LEGACY_PARTIAL_ACCOUNTING_INVALID:%',response;
   end if;
+  perform public.declare_market_radar_refresh_manifest_v1(
+    legacy_partial_request_id,'polymarket','candidate_feed',legacy_partial_lease,0
+  );
+  perform public.seal_market_radar_refresh_v1(
+    legacy_partial_request_id,'polymarket','candidate_feed',legacy_partial_lease,0
+  );
+  perform public.complete_market_radar_candidate_refresh_v1(
+    legacy_partial_request_id,'polymarket','candidate_feed',legacy_partial_lease,
+    'available',null,null,null
+  );
 
   -- El wrapper promueve todos los batches o ninguno. El segundo item conserva
   -- una huella hija incorrecta para forzar fallo después del primer batch.
@@ -1105,9 +1150,28 @@ begin
       'deferred_parent_ids','[]'::jsonb
     )
   );
+  children:='[]'::jsonb;
+  for child_index in 0..2 loop
+    child_value:=(reconciliations #> array['1','children',child_index::text])
+      ||jsonb_build_object(
+        'present_in_legacy_snapshot',true,'transition','same',
+        'child_fingerprint',encode(extensions.digest(convert_to(
+          'parent-3:followup:'||child_index,'UTF8'
+        ),'sha256'),'hex')
+      );
+    children:=children||jsonb_build_array(child_value);
+  end loop;
+  parent_value:=(reconciliations -> 1)||jsonb_build_object(
+    'legacy_expected_child_count',3,'legacy_accounted_child_count',3,
+    'new_child_count',0,
+    'reconciliation_fingerprint',encode(extensions.digest(convert_to(
+      'parent-3:complete:followup','UTF8'
+    ),'sha256'),'hex'),
+    'children',children
+  );
   perform public.record_market_radar_parent_reconciliations_v1(
     rollback_request_id,'polymarket','candidate_feed',rollback_lease,
-    jsonb_build_array(reconciliations -> 1)
+    jsonb_build_array(parent_value)
   );
   valid_candidate:=candidate_value||jsonb_build_object(
     'external_id','3-1','external_event_id','parent-3','external_market_id','3-1',
@@ -1117,12 +1181,12 @@ begin
     'family_key','atinara:v5:parent-3:outcome','family_title','Opciones · Padre 3',
     'family_child_key','option:option-1','family_child_label','Option 1',
     'canonical_child_key','option:option-1','canonical_child_label','Option 1',
-    'parent_reconciliation_fingerprint',reconciliations #>> '{1,reconciliation_fingerprint}',
-    'parent_child_occurrence_key',reconciliations #>> '{1,children,0,child_occurrence_key}',
-    'parent_child_identity_key',reconciliations #>> '{1,children,0,provider_child_identity_key}',
-    'parent_child_fingerprint',reconciliations #>> '{1,children,0,child_fingerprint}',
-    'provider_child_contract',reconciliations #> '{1,children,0,provider_contract}',
-    'provider_child_contract_hash',reconciliations #>> '{1,children,0,provider_contract_hash}',
+    'parent_reconciliation_fingerprint',parent_value ->> 'reconciliation_fingerprint',
+    'parent_child_occurrence_key',parent_value #>> '{children,0,child_occurrence_key}',
+    'parent_child_identity_key',parent_value #>> '{children,0,provider_child_identity_key}',
+    'parent_child_fingerprint',parent_value #>> '{children,0,child_fingerprint}',
+    'provider_child_contract',parent_value #> '{children,0,provider_contract}',
+    'provider_child_contract_hash',parent_value #>> '{children,0,provider_contract_hash}',
     'provider_declared_child_count',3,'provider_discovered_child_count',3,
     'provider_accounted_child_count',3,'provider_identified_child_count',3
   );
@@ -1131,11 +1195,11 @@ begin
     'fingerprint','rbbbbbbbb','family_child_key','option:option-2',
     'family_child_label','Option 2','canonical_child_key','option:option-2',
     'canonical_child_label','Option 2',
-    'parent_child_occurrence_key',reconciliations #>> '{1,children,1,child_occurrence_key}',
-    'parent_child_identity_key',reconciliations #>> '{1,children,1,provider_child_identity_key}',
+    'parent_child_occurrence_key',parent_value #>> '{children,1,child_occurrence_key}',
+    'parent_child_identity_key',parent_value #>> '{children,1,provider_child_identity_key}',
     'parent_child_fingerprint',repeat('0',64),
-    'provider_child_contract',reconciliations #> '{1,children,1,provider_contract}',
-    'provider_child_contract_hash',reconciliations #>> '{1,children,1,provider_contract_hash}'
+    'provider_child_contract',parent_value #> '{children,1,provider_contract}',
+    'provider_child_contract_hash',parent_value #>> '{children,1,provider_contract_hash}'
   );
   valid_eligibility:=eligibility_value||jsonb_build_object(
     'external_id','3-1','event_group_key','polymarket:parent-3',

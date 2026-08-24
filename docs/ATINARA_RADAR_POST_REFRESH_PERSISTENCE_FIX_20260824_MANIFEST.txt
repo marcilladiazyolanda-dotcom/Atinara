@@ -1,0 +1,34 @@
+ATINARA_RADAR_POST_REFRESH_PERSISTENCE_FIX_20260824
+Generated: 2026-08-24
+Base: origin/main abfb1b872fd086d81f8d3126d3e7730793c65814
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_POST_REFRESH_PERSISTENCE_FIX_20260824.md
+A docs/ATINARA_RADAR_POST_REFRESH_PERSISTENCE_FIX_20260824_MANIFEST.txt
+A supabase/migrations/20260824140500_fix_radar_parent_reconciliation_child_alias_v1.sql
+M supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+
+SHA-256 PAYLOAD FILES
+f96a6399bca91ef376a6c46894bbc35709bc4e62e0a108da4e51aaa631929ee1  docs/ATINARA_RADAR_POST_REFRESH_PERSISTENCE_FIX_20260824.md
+18ae23dc55490779e896943751587b70f49d1b0fd6cbeb58be6430a8693cb6d0  supabase/migrations/20260824140500_fix_radar_parent_reconciliation_child_alias_v1.sql
+a749072655c7c101dcc2f2f8aa7031f7edd2adbdaa590a6ae035c79ec07c8455  supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+
+MIGRATIONS
+20260824140500_fix_radar_parent_reconciliation_child_alias_v1.sql
+
+EDGE FUNCTIONS: none
+FRONTEND FILES: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+
+VERIFICATION
+- node --test tests/radar-parent-reconciliation.test.js: 49 passed, 0 failed
+- SQL transaction structure: 18 valid, 0 invalid
+- production transaction with rollback: passed
+- exact migration dry-run with rollback: passed
+- git diff --check: passed
+- production fixtures left behind: 0
+
