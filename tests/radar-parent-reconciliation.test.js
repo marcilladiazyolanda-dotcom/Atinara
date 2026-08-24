@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   RADAR_CHILD_PROJECTION_VERSION,
@@ -12,6 +13,7 @@ import {
   RADAR_REASON_CODES,
   bindRadarCandidatesToReconciledChildren,
   buildRadarPersistenceBatches,
+  collapseLegacyChildRepresentations,
   collectProviderCursorPages,
   deriveMarketFamily,
   evaluateProviderEligibility,
@@ -28,6 +30,10 @@ import {
 } from "../supabase/functions/_shared/market-radar.mjs";
 
 const checkedAt = "2026-08-22T18:00:00.000Z";
+const legacyRepresentationMigration = readFileSync(new URL(
+  "../supabase/migrations/20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql",
+  import.meta.url,
+), "utf8");
 
 function child(id, label, overrides = {}) {
   return {
@@ -74,6 +80,20 @@ test("versiona normalizador, dominio, familia, reconciliación y proyección", (
   assert.equal(RADAR_PARENT_RECONCILIATION_VERSION, "atinara-radar-parent-reconciliation-v1");
   assert.equal(RADAR_CHILD_PROJECTION_VERSION, "atinara-radar-child-projection-v1");
   assert.equal(RADAR_PROVIDER_CHILD_CONTRACT_VERSION, "atinara-radar-provider-child-contract-v1");
+});
+
+test("la migración legacy es aditiva, bloquea drift y cuenta identidades lógicas", () => {
+  assert.match(legacyRepresentationMigration,
+    /a89b0b56766f91e9b3ecfe67af19cb6945112cff1b2666c2f9675630e8dbd60c/);
+  assert.match(legacyRepresentationMigration,
+    /count\(distinct private\.market_radar_legacy_candidate_logical_key_v1/);
+  assert.match(legacyRepresentationMigration,
+    /count\(distinct private\.market_radar_legacy_child_logical_key_v1/);
+  assert.match(legacyRepresentationMigration, /RADAR_LEGACY_REPRESENTATION_PREFLIGHT_DRIFT/);
+  assert.match(legacyRepresentationMigration, /^begin;/m);
+  assert.match(legacyRepresentationMigration, /^commit;/m);
+  assert.doesNotMatch(legacyRepresentationMigration,
+    /\b(?:insert\s+into|update\s+private\.|delete\s+from|truncate\s+)\b/i);
 });
 
 for (const count of [1, 3, 21, 48, 101, 480]) {
@@ -343,6 +363,49 @@ test("las ocurrencias duplicadas se emparejan 1:1 entre snapshots", async () => 
   ], { previous_children: previous.toReversed() });
   assert.deepEqual(twoToTwo.children.map((item) => item.child_occurrence_key),
     reordered.children.map((item) => item.child_occurrence_key));
+});
+
+test("colapsa representaciones legacy del mismo market id sin ocultar conflictos fuertes", () => {
+  const thin = {
+    child_occurrence_key: "legacy:old-candidate", provider_parent_id: "499343",
+    external_market_id: "2295650", child_fingerprint: "old", checked_at: "2026-08-06T15:27:56.544Z",
+    provider_contract: { source_question: "Will Florian Wirtz be on the cover of EA Sports FC 27?" },
+  };
+  const rich = {
+    ...thin, child_occurrence_key: "legacy:new-candidate", external_market_id: "polymarket:2295650",
+    condition_id: "condition-2295650", child_slug: "will-florian-wirtz-be-on-the-cover-of-ea-sports-fc-27",
+    child_fingerprint: "new", checked_at: "2026-08-16T18:00:15.426Z",
+  };
+  const collapsed = collapseLegacyChildRepresentations("polymarket", [thin, rich]);
+  assert.equal(collapsed.length, 1);
+  assert.equal(collapsed[0].external_market_id, "2295650");
+  assert.equal(collapsed[0].provider_child_identity_key, "polymarket:market:2295650");
+  assert.equal(collapsed[0].condition_id, "condition-2295650");
+  assert.equal(collapsed[0].legacy_representation_count, 2);
+  assert.equal(collapsed[0].legacy_representation_refs.length, 2);
+  assert.equal(collapsed[0].legacy_identity_conflict, false);
+
+  const conflicted = collapseLegacyChildRepresentations("polymarket", [
+    rich, { ...rich, child_occurrence_key: "legacy:conflict", condition_id: "different-condition" },
+  ]);
+  assert.equal(conflicted.length, 1);
+  assert.equal(conflicted[0].legacy_identity_conflict, true);
+
+  const ledgerOccurrences = collapseLegacyChildRepresentations("polymarket", [
+    { ...rich, child_occurrence_key: "polymarket:market:2295650:0" },
+    { ...rich, child_occurrence_key: "polymarket:market:2295650:1" },
+  ]);
+  assert.equal(ledgerOccurrences.length, 2);
+});
+
+test("el contrato canónico firmado normaliza separadores de párrafo sin alterar el payload fuente", async () => {
+  const sourceRules = "Regla principal.\n\nRegla secundaria.";
+  const result = await reconcile([child(1, "Marathon", { source_resolution_rules: sourceRules })]);
+  const projected = result.children[0];
+  assert.equal(projected.provider_contract.source_resolution_rules, "Regla principal. Regla secundaria.");
+  assert.equal(JSON.parse(projected.provider_contract_canonical_json).source_resolution_rules,
+    "Regla principal. Regla secundaria.");
+  assert.equal(sourceRules, "Regla principal.\n\nRegla secundaria.");
 });
 
 test("el binding candidata-hija usa condition/token y nunca posición cuando falta market id", () => {

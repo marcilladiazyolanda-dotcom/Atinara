@@ -26,6 +26,7 @@ import {
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
+  collapseLegacyChildRepresentations,
   collectProviderCursorPages,
   constrainRadarDiscoveryPayload,
   detectOfficialCoverEventResolution,
@@ -1755,7 +1756,8 @@ async function loadPreviousParentChildren(
     childSlugs.add(slug);
     childIdentityKeys.add(`${provider}:slug:${slug}`);
   }
-  const rows = toRecordArray(await rpc(environment, "get_market_radar_children_for_reconciliation_v3", {
+  const rows = collapseLegacyChildRepresentations(provider, toRecordArray(await rpc(
+    environment, "get_market_radar_children_for_reconciliation_v3", {
     provider_input: provider,
     parent_ids_input: [...new Set(parentIds)],
     external_market_ids_input: [...externalMarketIds],
@@ -1764,7 +1766,7 @@ async function loadPreviousParentChildren(
     child_slugs_input: [...childSlugs],
     child_identity_keys_input: [...childIdentityKeys],
     current_request_id_input: validUuid(requestId) ? requestId : null,
-  }, undefined, true));
+    }, undefined, true)));
   const result = new Map<string, JsonRecord[]>(parentIds.map((parentId) => [parentId, []]));
   const seen = new Map<string, Set<string>>(parentIds.map((parentId) => [parentId, new Set()]));
   for (const row of rows) {

@@ -1,0 +1,51 @@
+ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824
+Generated: 2026-08-24
+Base: origin/main 2ac36203ea4aae38b69d821828408cc12bf58e82
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+A docs/ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824.md
+A docs/ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824_MANIFEST.txt
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql
+M supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+M tests/radar-parent-reconciliation.test.js
+
+SHA-256 PAYLOAD FILES
+82166f43a5421d763783dbdfbc927057869677c45617a528ee23712e9863d39d  ORAKLO_PROJECT_CONTEXT.md
+c82b0d9155d87d067a978e1b055c70c78f81611ca92d80c22c18dc3d09c036d5  docs/ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824.md
+670a3a387341099d5b06343a3a24b692f5fb3fa59309fdd9842ed160ec581215  supabase/functions/_shared/market-radar.mjs
+a8ac3746f34347b2641e7781caf6e6e743980155bdecf7af5452d8b8d4ea3554  supabase/functions/market-radar/index.ts
+1a3995566c5e7677e5e9746c076d557e1ae20538009e0127422b0d80b83b3bb0  supabase/migrations/20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql
+9f282118a553a097dfe2e65c3b73c2081259f0e3f49c4f7c9dc69bffaa5de5d8  supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+14f04e7a050ac5d6261b32762bf55f35db35a310c5fad0292a6c654532111aa3  tests/radar-parent-reconciliation.test.js
+
+MIGRATIONS
+20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql
+
+EDGE FUNCTIONS
+market-radar (deploy with verify_jwt=true)
+
+FRONTEND FILES: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+
+VERIFICATION
+- node --test tests/*.test.js: 551 passed, 0 failed
+- node --test tests/radar-parent-reconciliation.test.js: 52 passed, 0 failed
+- JavaScript syntax: 127 valid
+- Edge Deno checks: 9 passed, 0 failed
+- SQL transaction structure: 18 valid, 0 invalid
+- git diff --check: passed
+
+POST-UPLOAD
+- fetch and compare all 8 paths and contents
+- apply only migration 20260824153000
+- deploy only market-radar with verify_jwt=true
+- execute exactly one authenticated Radar refresh without Gemini
+- verify durable intent, batches, reconciliation, replay, UI and invariants

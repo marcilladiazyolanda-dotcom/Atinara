@@ -790,7 +790,10 @@ export function providerChildContractProjection(providerInput, child = {}) {
     source_title: cleanText(child.source_title ?? child.title ?? child.sub_title, 700) || null,
     source_question: cleanText(child.source_question ?? child.question ?? child.title, 1_000) || null,
     source_description: cleanText(child.source_description ?? child.description, 5_000) || null,
-    source_resolution_rules: [...new Set(rules)].join("\n\n") || null,
+    // El contrato firmado usa la misma representación canónica que su hash.
+    // El payload fuente conserva el texto original; aquí solo se eliminan
+    // diferencias de control/espaciado que no cambian su significado.
+    source_resolution_rules: cleanText([...new Set(rules)].join("\n\n"), 10_000) || null,
     source_resolution_url: safePublicUrl(
       child.source_resolution_url ?? child.resolution_source_url ?? child.resolutionSource
         ?? child.resolution_source,
@@ -858,6 +861,110 @@ function providerChildStableAliases(provider, child = {}) {
 
 function providerChildIdentityKey(provider, child = {}) {
   return providerChildStableAliases(provider, child)[0] ?? null;
+}
+
+function normalizedLegacyMarketId(provider, value) {
+  const raw = cleanText(value, 220);
+  if (!raw) return null;
+  const lowered = raw.toLowerCase();
+  const marketPrefix = `${provider}:market:`;
+  if (lowered.startsWith(marketPrefix)) return raw.slice(marketPrefix.length) || null;
+  const providerPrefix = `${provider}:`;
+  if (lowered.startsWith(providerPrefix)) return raw.slice(providerPrefix.length) || null;
+  return raw;
+}
+
+function legacyLogicalIdentityKey(provider, child = {}) {
+  const explicit = cleanText(child.provider_child_identity_key, 500);
+  if (explicit && ["market", "condition", "token"].some((kind) =>
+    explicit.toLowerCase().startsWith(`${provider}:${kind}:`))) return explicit.toLowerCase();
+  const ids = providerChildIdentifiers(child);
+  const marketId = normalizedLegacyMarketId(provider, ids.external_market_id);
+  if (marketId) return `${provider}:market:${marketId}`.toLowerCase();
+  if (ids.condition_id) return `${provider}:condition:${ids.condition_id}`.toLowerCase();
+  if (ids.token_ids[0]) return `${provider}:token:${ids.token_ids[0]}`.toLowerCase();
+  if (explicit) return explicit.toLowerCase();
+  return ids.child_slug ? `${provider}:slug:${ids.child_slug}`.toLowerCase() : null;
+}
+
+function legacyRepresentationScore(child = {}) {
+  const ids = providerChildIdentifiers(child);
+  const contract = isRecord(child.provider_contract) ? child.provider_contract : {};
+  return [
+    ids.external_market_id, ids.condition_id, ids.child_slug, ...ids.token_ids,
+    child.provider_child_identity_key, child.canonical_child_label,
+    contract.source_question, contract.source_resolution_rules,
+    child.provider_contract_hash, child.child_fingerprint,
+  ].filter((value) => cleanText(value, 10_000)).length;
+}
+
+/**
+ * Convierte varias filas históricas del mismo identificador estable en una
+ * sola hija lógica. No borra ni reescribe historia: conserva las referencias
+ * de todas las representaciones y marca como conflicto cualquier desacuerdo
+ * entre condition/token IDs fuertes. Las ocurrencias de un ledger V6 nunca se
+ * colapsan; solo las proyecciones `legacy:<candidate_id>`.
+ */
+export function collapseLegacyChildRepresentations(providerInput, rows = []) {
+  const provider = cleanText(providerInput, 40).toLowerCase();
+  if (!RADAR_CANDIDATE_PROVIDERS.includes(provider)) throw new TypeError("RADAR_PROVIDER_INVALID");
+  const groups = new Map();
+  (Array.isArray(rows) ? rows : []).filter(isRecord).forEach((row, index) => {
+    const occurrence = cleanText(row.child_occurrence_key, 500);
+    const parentId = cleanText(row.provider_parent_id ?? row.event_id ?? row.external_event_id, 220);
+    const identity = legacyLogicalIdentityKey(provider, row);
+    const collapsible = occurrence.startsWith("legacy:") && parentId && identity;
+    const key = collapsible ? `${parentId}\u0000${identity}` : `occurrence\u0000${index}\u0000${occurrence}`;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  });
+  const collapsed = [];
+  for (const values of groups.values()) {
+    const ranked = [...values].sort((left, right) => {
+      const score = legacyRepresentationScore(right) - legacyRepresentationScore(left);
+      if (score) return score;
+      const checked = compareUtf16Binary(
+        cleanText(right.checked_at, 80), cleanText(left.checked_at, 80),
+      );
+      if (checked) return checked;
+      return compareUtf16Binary(cleanText(left.child_occurrence_key, 500), cleanText(right.child_occurrence_key, 500));
+    });
+    if (ranked.length === 1 || !cleanText(ranked[0].child_occurrence_key, 500).startsWith("legacy:")) {
+      collapsed.push(ranked[0]);
+      continue;
+    }
+    const representative = { ...ranked[0] };
+    const firstValue = (field) => ranked.map((row) => row[field]).find((value) =>
+      Array.isArray(value) ? value.length > 0 : isRecord(value) ? Object.keys(value).length > 0 : Boolean(cleanText(value, 10_000)));
+    for (const field of [
+      "provider_child_identity_key", "external_market_id", "condition_id", "token_ids",
+      "child_slug", "event_id", "event_slug", "raw_provider_child_label",
+      "canonical_child_label", "canonical_child_key", "identity_source", "identity_evidence",
+      "provider_contract", "provider_contract_hash", "child_fingerprint", "checked_at",
+    ]) {
+      const value = firstValue(field);
+      if (value !== undefined) representative[field] = value;
+    }
+    const marketId = normalizedLegacyMarketId(provider, representative.external_market_id);
+    if (marketId) {
+      representative.external_market_id = marketId;
+      representative.provider_child_identity_key = `${provider}:market:${marketId}`;
+    }
+    const conditionIds = new Set(ranked.map((row) => providerChildIdentifiers(row).condition_id).filter(Boolean));
+    const tokenSets = new Set(ranked.map((row) => providerChildIdentifiers(row).token_ids.join("\u0000")).filter(Boolean));
+    representative.legacy_identity_conflict = conditionIds.size > 1 || tokenSets.size > 1;
+    representative.legacy_representation_count = ranked.length;
+    representative.legacy_representation_refs = ranked.slice(0, 24).map((row) => ({
+      child_occurrence_key: cleanText(row.child_occurrence_key, 500) || null,
+      child_fingerprint: cleanText(row.child_fingerprint, 80) || null,
+      checked_at: safeIsoDate(row.checked_at),
+    }));
+    representative.child_occurrence_key = `legacy:logical:${legacyLogicalIdentityKey(provider, representative)}`.slice(0, 500);
+    collapsed.push(representative);
+  }
+  return collapsed.sort((left, right) => compareUtf16Binary(
+    `${cleanText(left.provider_parent_id, 220)}\u0000${providerChildSortKey(provider, left)}`,
+    `${cleanText(right.provider_parent_id, 220)}\u0000${providerChildSortKey(provider, right)}`,
+  ));
 }
 
 function isGenericBinaryProviderLabel(value) {
@@ -1105,7 +1212,8 @@ export async function reconcileProviderParent(input = {}) {
       && (ids.token_ids.length !== previousIds.token_ids.length
         || ids.token_ids.some((value) => !previousIds.token_ids.includes(value)));
     const stableIdentifierConflict = Boolean(previous && (
-      (ids.external_market_id && previousIds.external_market_id
+      previous.legacy_identity_conflict === true
+      || (ids.external_market_id && previousIds.external_market_id
         && ids.external_market_id !== previousIds.external_market_id)
       || (ids.condition_id && previousIds.condition_id && ids.condition_id !== previousIds.condition_id)
       || tokenSetsDiffer
@@ -1289,6 +1397,10 @@ export async function reconcileProviderParent(input = {}) {
       present_in_legacy_snapshot: presentInLegacySnapshot,
       transition,
       duplicate_of_child_identity_key: duplicateOfChildIdentityKey,
+      legacy_representation_count: previous
+        ? Math.max(1, Number(previous.legacy_representation_count) || 1) : 0,
+      legacy_representation_refs: previous && Array.isArray(previous.legacy_representation_refs)
+        ? previous.legacy_representation_refs.slice(0, 24) : [],
       provider_contract: providerContract,
       provider_contract_canonical_json: providerContractCanonicalJson,
       provider_contract_hash: providerContractHash,
@@ -1396,6 +1508,9 @@ export async function reconcileProviderParent(input = {}) {
       present_in_legacy_snapshot: true,
       transition: missingTransition,
       duplicate_of_child_identity_key: null,
+      legacy_representation_count: Math.max(1, Number(previous.legacy_representation_count) || 1),
+      legacy_representation_refs: Array.isArray(previous.legacy_representation_refs)
+        ? previous.legacy_representation_refs.slice(0, 24) : [],
       provider_contract: providerContract,
       provider_contract_canonical_json: providerContractCanonicalJson,
       provider_contract_hash: providerContractHash,

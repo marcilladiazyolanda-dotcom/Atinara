@@ -4,29 +4,55 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras desplegar V6 y antes de su refresh:** Atinara Engine V2.1 usa `market-radar` v58,
-> `market-draft-fixer` v21, `validate-market-draft` v30, `market-expert` v26 y
-> `analyze-market-resolution` v16, todas activas con `verify_jwt=true`. Las
-> cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
-> desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
-> v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
-> revisión factual ya no es un bloqueo operativo. Los artefactos existentes
-> conservan familia v4; toda candidata canónica nueva usa familia v5 y la cadena
-> de borrador/Corrector/publicación preserva exactamente la versión de origen.
-> La revisión automática del borrador usa política v3.
-> Los schedulers opcionales del Observatorio y del monitor siguen apagados. El
-> corte preservó exactamente mercados publicados, predicciones, Karma,
-> Prestigio, maker state e histórico; ninguna migración o Edge Function de este
-> hito confirma, publica, predice, resuelve o liquida por sí sola. Las migraciones
-> V6 constan una sola vez como `20260822164140` y `20260822164309`; sus tablas
-> nacieron vacías, sin backfill. El cron V6 está recuperado y responde 200 sin
-> borradores programados. El refresh productivo de Radar todavía no se ha
-> ejecutado: tras cerrar el presupuesto de respuesta se detectó que un snapshot
-> legacy podía reducir un padre de 48 hijas a 21 candidatas y proyectar
-> `deadline:*` como identidad. El E2E sigue detenido antes de cualquier escritura
-> hasta subir y desplegar la reconciliación de padres v1. Las tres migraciones V2.1 quedaron aplicadas una sola
-> vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
-> directo a `main`.
+> **Estado productivo verificado tras el primer refresh V6:** `origin/main` está
+> en `2ac36203ea4aae38b69d821828408cc12bf58e82`; `market-radar` v59 está
+> `ACTIVE` con `verify_jwt=true`. Las migraciones V6 constan una sola vez como
+> `20260822164140` y `20260822164309`, y la corrección SQL posterior figura como
+> `20260824124210 · fix_radar_parent_reconciliation_child_alias_v1`. Las cinco
+> tareas de IA siguen en `legacy_direct`; OpenRouter y NVIDIA NIM permanecen
+> desactivados, sin rutas y con presupuestos cero. El refresh administrativo sin
+> Gemini `93b078a3-a54c-49d3-bf62-e2438d6eae5a` creó intención durable y enumeró
+> todos los padres/hijas, pero Polymarket y Kalshi fallaron antes de los batches:
+> el primero por representaciones legacy duplicadas de una misma hija estable y
+> el segundo por una divergencia de espaciado entre contrato canónico y contrato
+> firmado. El E2E continúa detenido antes de Editor. Mercados, predicciones,
+> perfiles, Karma, Prestigio, LMSR, histórico y borradores permanecen intactos.
+> Está pendiente subir y desplegar el paquete incremental documentado en
+> `docs/ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824.md`. No hacer push directo
+> a `main` ni repetir las migraciones ya aplicadas.
+
+### Persistencia live de reconciliación · 24 de agosto de 2026
+
+- El refresh `93b078a3-a54c-49d3-bf62-e2438d6eae5a` enumeró 74 hijas de tres
+  padres Polymarket y 109 hijas de ocho padres Kalshi, con paginación agotada y
+  Tavily desacoplado. Polymarket terminó en
+  `RADAR_PARENT_LEGACY_IDENTITY_BIJECTION_MISMATCH`; Kalshi terminó en
+  `RADAR_PARENT_CHILD_RECONCILIATION_INVALID`. No llegó a persistir batches ni
+  candidatas V3 y no utilizó Gemini.
+- En el padre Polymarket `499343`, producción conserva 45 filas históricas pero
+  solo 23 `external_market_id` estables: 22 pares son una representación antigua
+  mínima y otra posterior enriquecida del mismo contrato. La historia raw es
+  válida y no se borra; contar filas físicas como hijas hacía imposible la
+  biyección. El arreglo colapsa solo proyecciones `legacy:*` por identidad fuerte,
+  conserva referencias a todas sus representaciones y convierte desacuerdos de
+  condition/token en conflicto explícito. Las ocurrencias V6 reales nunca se
+  colapsan.
+- Kalshi exponía reglas resolutivas con varios párrafos. `provider_contract`
+  conservaba los saltos mientras `provider_contract_canonical_json` los
+  normalizaba antes de firmar; SQL comparaba ambas formas literalmente. El
+  contrato firmado normaliza ahora solo caracteres de control/espaciado. El
+  payload fuente sigue conservando el texto original.
+- La migración pendiente
+  `20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql` es DDL
+  aditivo sin DML ni backfill. Añade dos helpers privados sin grants y parchea la
+  función de registro únicamente si su huella normalizada CRLF/LF coincide con
+  el cuerpo productivo esperado. Mantiene owner, `SECURITY DEFINER`,
+  `search_path=''` y grant exclusivo a `service_role`.
+- Evidencia local: 551/551 unitarias, 127 JavaScript con sintaxis válida, nueve
+  Edge verificadas con IA externa desactivada y 18 matrices SQL estáticas
+  válidas. Tras la subida se debe aplicar solo la migración nueva, desplegar solo
+  `market-radar`, ejecutar exactamente un refresh administrativo sin Gemini y
+  comprobar persistencia, replay, completitud y UI antes de reanudar Editor.
 
 ### Incidencia bloqueante de completitud e identidad del padre · 23 de agosto de 2026
 

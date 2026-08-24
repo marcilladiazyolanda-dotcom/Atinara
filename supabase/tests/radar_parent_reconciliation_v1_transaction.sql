@@ -66,6 +66,8 @@ begin
      or to_regprocedure('public.process_market_radar_refresh_batch_v2(uuid,text,text,uuid)') is null
      or to_regprocedure('public.record_market_radar_provider_selection_v1(uuid,text,text,uuid,jsonb)') is null
      or to_regprocedure('public.get_market_radar_children_for_reconciliation_v3(text,text[],text[],text[],text[],text[],text[],uuid)') is null
+     or to_regprocedure('private.market_radar_legacy_child_logical_key_v1(jsonb,text)') is null
+     or to_regprocedure('private.market_radar_legacy_candidate_logical_key_v1(text,jsonb,text)') is null
      or to_regprocedure('public.list_market_radar_parent_reconciliations_v2(text,text,text,text,integer,integer)') is null
      or to_regprocedure('public.list_market_radar_candidates_v2(text,text,text,text,text,text,integer,integer)') is null
      or to_regprocedure('public.finalize_market_radar_refresh_v4(uuid,text,text,uuid,text,text,text,integer)') is null
@@ -178,6 +180,20 @@ begin
        'public.publish_due_market_drafts_v2(integer)','execute') then
     raise exception 'TEST_RADAR_PARENT_RECONCILIATION_ACL_INVALID';
   end if;
+  if has_function_privilege('anon',
+       'private.market_radar_legacy_child_logical_key_v1(jsonb,text)','execute')
+     or has_function_privilege('authenticated',
+       'private.market_radar_legacy_child_logical_key_v1(jsonb,text)','execute')
+     or has_function_privilege('service_role',
+       'private.market_radar_legacy_child_logical_key_v1(jsonb,text)','execute')
+     or has_function_privilege('anon',
+       'private.market_radar_legacy_candidate_logical_key_v1(text,jsonb,text)','execute')
+     or has_function_privilege('authenticated',
+       'private.market_radar_legacy_candidate_logical_key_v1(text,jsonb,text)','execute')
+     or has_function_privilege('service_role',
+       'private.market_radar_legacy_candidate_logical_key_v1(text,jsonb,text)','execute') then
+    raise exception 'TEST_RADAR_LEGACY_LOGICAL_KEY_ACL_INVALID';
+  end if;
   if not exists(
     select 1 from pg_catalog.pg_class relation
     join pg_catalog.pg_namespace namespace on namespace.oid=relation.relnamespace
@@ -204,6 +220,23 @@ begin
          'family_version','atinara-market-family-v5','family_child_key','option:sibling')
      ),null))<>1 then
     raise exception 'TEST_RADAR_PARENT_RECONCILIATION_V5_DUPLICATE_HELPERS_INVALID';
+  end if;
+  if private.market_radar_legacy_candidate_logical_key_v1(
+       '2295650','{}'::jsonb,'polymarket'
+     ) is distinct from private.market_radar_legacy_candidate_logical_key_v1(
+       'polymarket:2295650',jsonb_build_object(
+         'external_market_id','2295650','provider_payload',jsonb_build_object(
+           'condition_id','condition-2295650'
+         )
+       ),'polymarket'
+     )
+     or private.market_radar_legacy_child_logical_key_v1(jsonb_build_object(
+       'external_market_id','2295650','child_occurrence_key','legacy:old'
+     ),'polymarket')<>'polymarket:market:2295650'
+     or private.market_radar_legacy_child_logical_key_v1(jsonb_build_object(
+       'external_market_id','2295651','child_occurrence_key','legacy:other'
+     ),'polymarket')='polymarket:market:2295650' then
+    raise exception 'TEST_RADAR_LEGACY_LOGICAL_KEY_INVALID';
   end if;
   if private.market_family_option_slug_v2('Marathon',120)<>'marathon'
      or private.market_family_option_slug_v2('A 星 B',120)
