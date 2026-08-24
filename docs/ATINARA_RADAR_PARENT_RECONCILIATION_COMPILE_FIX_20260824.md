@@ -28,6 +28,16 @@ La transacción completa fue revertida. Se comprobó después:
 
 No cambia contratos, reglas, locks, permisos, datos ni decisiones de dominio.
 
+La validación transaccional completa permitió detectar y cerrar además, antes
+de otro intento con efecto:
+
+- una bifurcación `CASE` de cobertura legacy reescrita como ramas booleanas
+  equivalentes;
+- un paréntesis ausente en la proyección de duplicado live;
+- nombres de parámetros legacy V2 conservados exactamente;
+- tipo de retorno JSONB del wrapper histórico de rechazos preservado;
+- un paréntesis excedente en la sincronización de provider projection.
+
 ## Inventario incremental
 
 1. `supabase/migrations/20260822205445_add_radar_parent_reconciliation_v1.sql`
@@ -39,6 +49,9 @@ No cambia contratos, reglas, locks, permisos, datos ni decisiones de dominio.
 - SQL estático: 18/18.
 - Suites focales Radar/workflow: 67/67.
 - `git diff --check`: verde.
+- Migración completa ejecutada con preflight, compilación de todas las
+  funciones y postflight reales, sustituyendo únicamente el `COMMIT` final por
+  `ROLLBACK`: verde y sin persistencia.
 
 Producción permanece en el estado anterior a la migración. Este diferencial
 debe subirse a GitHub antes de reintentar la aplicación.

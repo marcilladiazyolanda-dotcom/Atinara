@@ -870,6 +870,8 @@ declare
   legacy_expected_value integer;
   legacy_accounted_value integer;
   legacy_accounted_count integer;
+  legacy_persisted_expected_value integer;
+  legacy_persisted_accounted_value integer;
   legacy_count integer;
   legacy_candidate_count integer;
   legacy_ledger_count integer;
@@ -884,6 +886,7 @@ declare
   checked_at_value timestamptz;
   next_retry_at_value timestamptz;
   child_checked_at_value timestamptz;
+  expected_provider_identity_key text;
   output_items jsonb:='[]'::jsonb;
   prior_issue record;
 begin
@@ -1131,29 +1134,32 @@ begin
     if exists (
       select 1 from jsonb_array_elements(reconciliation -> 'children') child
       where coalesce((child ->> 'present_in_legacy_snapshot')::boolean,false)
-        and case when prior_parent_id_value is not null then (
-          select count(*) from private.market_radar_parent_children_v1 baseline
-          where baseline.parent_reconciliation_id=prior_parent_id_value
-            and private.market_radar_child_matches_legacy_v1(
-              to_jsonb(baseline),child,provider_input
-            )
-        ) else (
-          select count(*) from private.external_market_candidates baseline
-          where baseline.provider=provider_input
-            and baseline.external_event_id=reconciliation ->> 'provider_parent_id'
-            and baseline.normalizer_version<>'atinara-radar-v3'
-            and private.market_radar_child_matches_legacy_v1(jsonb_build_object(
-              'external_market_id',coalesce(
-                nullif(baseline.normalized_payload ->> 'external_market_id',''),baseline.external_id
-              ),
-              'condition_id',nullif(baseline.normalized_payload #>> '{provider_payload,condition_id}',''),
-              'token_ids',case
-                when jsonb_typeof(baseline.normalized_payload #> '{provider_payload,token_ids}')='array'
-                  then baseline.normalized_payload #> '{provider_payload,token_ids}'
-                else '[]'::jsonb end,
-              'child_slug',nullif(baseline.normalized_payload ->> 'external_market_slug','')
-            ),child,provider_input)
-        ) end <>1
+        and (
+          (prior_parent_id_value is not null and (
+            select count(*) from private.market_radar_parent_children_v1 baseline
+            where baseline.parent_reconciliation_id=prior_parent_id_value
+              and private.market_radar_child_matches_legacy_v1(
+                to_jsonb(baseline),child,provider_input
+              )
+          )<>1)
+          or (prior_parent_id_value is null and (
+            select count(*) from private.external_market_candidates baseline
+            where baseline.provider=provider_input
+              and baseline.external_event_id=reconciliation ->> 'provider_parent_id'
+              and baseline.normalizer_version<>'atinara-radar-v3'
+              and private.market_radar_child_matches_legacy_v1(jsonb_build_object(
+                'external_market_id',coalesce(
+                  nullif(baseline.normalized_payload ->> 'external_market_id',''),baseline.external_id
+                ),
+                'condition_id',nullif(baseline.normalized_payload #>> '{provider_payload,condition_id}',''),
+                'token_ids',case
+                  when jsonb_typeof(baseline.normalized_payload #> '{provider_payload,token_ids}')='array'
+                    then baseline.normalized_payload #> '{provider_payload,token_ids}'
+                  else '[]'::jsonb end,
+                'child_slug',nullif(baseline.normalized_payload ->> 'external_market_slug','')
+              ),child,provider_input)
+          )<>1)
+        )
     ) then
       raise exception 'RADAR_PARENT_LEGACY_IDENTITY_BIJECTION_MISMATCH' using errcode='22023';
     end if;
@@ -1172,8 +1178,9 @@ begin
        -- observada no significa estar reconciliada: legacy_accounted puede ser
        -- menor mientras el estado sea historical_mapping_required.
        or (legacy_expected_value is not null and legacy_count is distinct from legacy_expected_value)
-       or legacy_accounted_value is distinct from
-         case when legacy_expected_value is null then null else legacy_accounted_count end
+       or (legacy_expected_value is null and legacy_accounted_value is not null)
+       or (legacy_expected_value is not null
+         and legacy_accounted_value is distinct from legacy_accounted_count)
        or (known_legacy_count>0 and (
          legacy_expected_value is distinct from known_legacy_count
          or legacy_count is distinct from known_legacy_count
@@ -1200,6 +1207,16 @@ begin
           or datetime_field_overflow then
         raise exception 'RADAR_PARENT_CHILD_CONFIDENCE_INVALID' using errcode='22003';
       end;
+      expected_provider_identity_key:=null;
+      if nullif(child ->> 'external_market_id','') is not null then
+        expected_provider_identity_key:=provider_input||':market:'||(child ->> 'external_market_id');
+      elsif nullif(child ->> 'condition_id','') is not null then
+        expected_provider_identity_key:=provider_input||':condition:'||(child ->> 'condition_id');
+      elsif jsonb_array_length(coalesce(child -> 'token_ids','[]'::jsonb))>0 then
+        expected_provider_identity_key:=provider_input||':token:'||(child -> 'token_ids' ->> 0);
+      elsif nullif(child ->> 'child_slug','') is not null then
+        expected_provider_identity_key:=provider_input||':slug:'||(child ->> 'child_slug');
+      end if;
       if jsonb_typeof(child)<>'object'
          or nullif(child ->> 'child_occurrence_key','') is null
          or char_length(child ->> 'child_occurrence_key')>500
@@ -1250,17 +1267,8 @@ begin
            is distinct from nullif(child ->> 'raw_provider_child_label','')
          or (nullif(child ->> 'event_id','') is not null
            and child ->> 'event_id'<>reconciliation ->> 'provider_parent_id')
-         or nullif(child ->> 'provider_child_identity_key','') is distinct from
-           case
-             when nullif(child ->> 'external_market_id','') is not null
-               then provider_input||':market:'||(child ->> 'external_market_id')
-             when nullif(child ->> 'condition_id','') is not null
-               then provider_input||':condition:'||(child ->> 'condition_id')
-             when jsonb_array_length(coalesce(child -> 'token_ids','[]'::jsonb))>0
-               then provider_input||':token:'||(child -> 'token_ids' ->> 0)
-             when nullif(child ->> 'child_slug','') is not null
-               then provider_input||':slug:'||(child ->> 'child_slug')
-             else null end
+         or nullif(child ->> 'provider_child_identity_key','')
+           is distinct from expected_provider_identity_key
          or coalesce(child ->> 'provider_contract_hash','') !~ '^[a-f0-9]{64}$'
          or (child ->> 'provider_contract_canonical_json')::jsonb is distinct from
            jsonb_build_object(
@@ -1403,6 +1411,15 @@ begin
       );
     end if;
 
+    legacy_persisted_expected_value:=coalesce(
+      nullif(known_legacy_count,0),legacy_expected_value
+    );
+    if legacy_expected_value is null then
+      legacy_persisted_accounted_value:=null;
+    else
+      legacy_persisted_accounted_value:=legacy_accounted_count;
+    end if;
+
     insert into private.market_radar_parent_reconciliations_v1(
       request_id,provider,capability,provider_parent_id,raw_provider_parent_label,
       canonical_parent_label,raw_provider_category,atinara_category,category,
@@ -1427,8 +1444,7 @@ begin
       nullif(reconciliation ->> 'horizon_at','')::timestamptz,declared_count,
       current_count,current_count,identified_count,unresolved_count,removed_count,
       closed_count,duplicate_count,conflict_count,
-      case when known_legacy_count>0 then known_legacy_count else legacy_expected_value end,
-      case when legacy_expected_value is null then null else legacy_accounted_count end,new_count,
+      legacy_persisted_expected_value,legacy_persisted_accounted_value,new_count,
       coalesce((reconciliation ->> 'provider_pagination_exhausted')::boolean,false),
       status_value,'atinara-radar-parent-reconciliation-v1','atinara-radar-v3',
       'atinara-market-family-v5',reconciliation ->> 'reconciliation_fingerprint',
@@ -2792,7 +2808,7 @@ begin
       'eligibility_expires_at',expires_at_value,
       'eligibility_policy_version','atinara-prediction-policy-v5',
       'workflow_issues',workflow_issues_value
-    ),updated_at=clock_timestamp()
+    )),updated_at=clock_timestamp()
   where candidate_alias.id=candidate.id;
   for issue_link in
     select draft.id as draft_id,draft.content_version,draft.content_fingerprint
@@ -6204,8 +6220,8 @@ create or replace function public.list_market_radar_candidates_v2(
   query_filter text default null,
   order_key text default 'recommended',
   horizon_filter text default '180d',
-  parent_limit_count integer default 60,
-  parent_offset_count integer default 0
+  limit_count integer default 60,
+  offset_count integer default 0
 )
 returns jsonb
 language sql
@@ -6215,7 +6231,7 @@ set search_path to ''
 as $function$
   select public.list_market_radar_candidates_v4(
     provider_filter,category_filter,quality_filter,query_filter,order_key,
-    horizon_filter,parent_limit_count,parent_offset_count
+    horizon_filter,limit_count,offset_count
   );
 $function$;
 alter function public.list_market_radar_candidates_v2(text,text,text,text,text,text,integer,integer)
@@ -6231,15 +6247,16 @@ create or replace function public.list_market_radar_rejections(
   limit_count integer default 100,
   offset_count integer default 0
 )
-returns setof jsonb
+returns jsonb
 language sql
 stable
 security definer
 set search_path to ''
 as $function$
-  select * from public.list_market_radar_rejections_v2(
+  select coalesce(jsonb_agg(item),'[]'::jsonb)
+  from public.list_market_radar_rejections_v2(
     provider_filter,category_filter,limit_count,offset_count
-  );
+  ) item;
 $function$;
 alter function public.list_market_radar_rejections(text,text,integer,integer)
   owner to postgres;
@@ -6451,7 +6468,7 @@ begin
       'provider_child_contract_hash',current_child.provider_contract_hash,
       'temporal_contract',eligibility_input -> 'temporal_contract',
       'domain_fingerprint',eligibility_input -> 'domain_fingerprint'
-    )),updated_at=clock_timestamp()
+    ),updated_at=clock_timestamp()
   where candidate_alias.id=candidate.id;
   select * into candidate from private.external_market_candidates candidate_alias
   where candidate_alias.id=candidate_id_input for update;
