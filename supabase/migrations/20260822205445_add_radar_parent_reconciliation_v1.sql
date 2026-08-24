@@ -493,13 +493,9 @@ declare
   current_contract jsonb;
   material_issue_seen boolean:=false;
 begin
-  select checkpoint_alias,version_alias.canonical_payload
-    into checkpoint,baseline
+  select checkpoint_alias.* into checkpoint
   from private.market_repair_workflow_checkpoints_v1 checkpoint_alias
   join private.market_repair_attempts attempt on attempt.id=checkpoint_alias.attempt_id
-  join private.market_draft_versions version_alias
-    on version_alias.draft_id=checkpoint_alias.draft_id
-   and version_alias.content_version=checkpoint_alias.expected_version
   where checkpoint_alias.draft_id=draft_input.id
     and checkpoint_alias.resulting_version=draft_input.content_version
     and checkpoint_alias.resulting_fingerprint=draft_input.content_fingerprint
@@ -519,6 +515,12 @@ begin
       row(candidate_input.family_version,candidate_input.family_key,
         candidate_input.family_child_key)
   order by checkpoint_alias.repair_round desc limit 1;
+  if checkpoint.attempt_id is not null then
+    select version_alias.canonical_payload into baseline
+    from private.market_draft_versions version_alias
+    where version_alias.draft_id=checkpoint.draft_id
+      and version_alias.content_version=checkpoint.expected_version;
+  end if;
   if checkpoint.attempt_id is null or jsonb_typeof(baseline)<>'object'
      or row(draft_input.family_version,draft_input.family_key,draft_input.family_child_key)
        is distinct from row(candidate_input.family_version,candidate_input.family_key,
