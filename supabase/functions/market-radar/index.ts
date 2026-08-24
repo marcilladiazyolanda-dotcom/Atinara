@@ -822,12 +822,15 @@ function providerFailure(error: unknown, provider: string) {
 }
 
 function persistenceFailure(error: unknown, provider: string) {
+  const deferred = error instanceof Error
+    && error.message === "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
   const timedOut = error instanceof RadarRpcError
     ? error.databaseCode === "57014" || error.status === 504
     : error instanceof Error && /TIMEOUT|ABORT/i.test(error.message);
   return publicProviderError(
     provider,
-    timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
+    deferred ? "RADAR_PERSISTENCE_ISOLATION_DEFERRED"
+      : timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
     timedOut ? 503 : 502,
   );
 }
@@ -3927,8 +3930,34 @@ async function persistProviderResultV2(
     phase = "persisting";
   }
 
+  let processedBatchCount = 0;
+  while (true) {
+    if (processedBatchCount >= 512) throw new Error("RADAR_ATOMIC_CANDIDATE_COMMIT_LIMIT");
+    await renewRadarRefreshLease(environment, intent);
+    const batchResult = toRecord(await rpc(environment, "process_market_radar_refresh_batch_v3", {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+    }, undefined, true, { timeoutPolicyMs: 30_000 }));
+    rpcCalls += 2;
+    if (batchResult?.ok !== true) {
+      throw new Error(cleanText(batchResult?.code, 100) || "RADAR_PERSISTENCE_FAILED");
+    }
+    const remainingBatchCount = Math.max(0, Number(batchResult.remaining_batches) || 0);
+    if (batchResult.processed === true) processedBatchCount += 1;
+    if (remainingBatchCount === 0) break;
+    if (batchResult.processed !== true) {
+      throw new Error("RADAR_PERSISTENCE_ISOLATION_DEFERRED");
+    }
+    if (Date.now() + PERSISTENCE_ISOLATION_BUDGET_MS
+        >= environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS) {
+      throw new Error("RADAR_PERSISTENCE_TIMEOUT");
+    }
+  }
+
   await renewRadarRefreshLease(environment, intent);
-  const finalized = toRecord(await rpc(environment, "complete_market_radar_candidate_refresh_v1", {
+  const finalized = toRecord(await rpc(environment, "complete_market_radar_candidate_refresh_v2", {
     request_id_input: intent.requestId,
     provider_input: intent.provider,
     capability_input: intent.capability,
@@ -4133,14 +4162,27 @@ async function loadRadarView(
 async function runDiscovery(environment: Environment, authorization: string, body: JsonRecord) {
   const filters = safeFilters(body);
   const cacheKey = buildCacheKey(filters);
-  const current = await loadRadarView(environment, authorization, filters);
   const requestedRefresh = body.refresh === true;
+  const refreshRequestHash = await sha256Hex({
+    request_version: RADAR_REFRESH_REQUEST_VERSION,
+    provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
+    filters,
+  });
+  const activeRefresh = toRecord(await rpc(
+    environment,
+    "get_active_market_radar_refresh_v1",
+    { request_hash_input: refreshRequestHash, cache_key_input: cacheKey },
+    authorization,
+  ));
+  const activeRefreshId = cleanText(activeRefresh?.request_id, 80);
+  const activeRefreshInProgress = validUuid(activeRefreshId);
+  const current = await loadRadarView(environment, authorization, filters);
   const latest = current.providers
     .filter((provider) => RADAR_CANDIDATE_PROVIDERS.includes(cleanText(provider.provider, 40)))
     .map((provider) => Date.parse(cleanText(provider.fetched_at, 100)))
     .filter(Number.isFinite).sort((a, b) => b - a)[0] || 0;
   const cooldownRemaining = Math.max(0, REFRESH_COOLDOWN_MS - (Date.now() - latest));
-  if (!requestedRefresh || cooldownRemaining > 0) {
+  if (!requestedRefresh || (cooldownRemaining > 0 && !activeRefreshInProgress)) {
     // loadRadarView ya excluye snapshots caducados, hechos no discovery y
     // duplicados ocupados. Conservar ese último expediente vigente permite
     // explorar y filtrar durante el cooldown o una degradación técnica sin
@@ -4180,6 +4222,8 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       cached: true,
       cached_authoritative: cachedAuthoritative,
       requires_eligibility_refresh: !cachedAuthoritative,
+      refresh_request_id: activeRefreshInProgress ? activeRefreshId : null,
+      refresh_in_progress: activeRefreshInProgress,
       cooldown_seconds: Math.ceil(cooldownRemaining / 1000),
       cooldown_until: new Date(Date.now() + cooldownRemaining).toISOString(),
       limits: { max_pages: MAX_PROVIDER_PAGES, max_kalshi_series: MAX_KALSHI_SERIES, max_visible_groups: MAX_VISIBLE_GROUPS },
@@ -4187,19 +4231,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
 
   const now = new Date().toISOString();
-  const refreshRequestHash = await sha256Hex({
-    request_version: RADAR_REFRESH_REQUEST_VERSION,
-    provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
-    filters,
-  });
   const requestedRefreshId = cleanText(body.refresh_request_id, 80);
-  const activeRefresh = toRecord(await rpc(
-    environment,
-    "get_active_market_radar_refresh_v1",
-    { request_hash_input: refreshRequestHash, cache_key_input: cacheKey },
-    authorization,
-  ));
-  const activeRefreshId = cleanText(activeRefresh?.request_id, 80);
   const refreshRequestId = validUuid(activeRefreshId) ? activeRefreshId
     : validUuid(requestedRefreshId) ? requestedRefreshId : crypto.randomUUID();
   const refresh: RadarRefreshContext = {

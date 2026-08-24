@@ -1,0 +1,109 @@
+ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824
+Generated: 2026-08-24
+Base: origin/main 0af8e8090cfe4ccb3eca73f0d75348c483fca15d
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M admin-community.html
+M admin-markets.html
+M admin-markets.js
+M admin-resolution.html
+M community.html
+M index.html
+M market-detail.html
+M my-predictions.html
+M profile.html
+M radar-refresh-request.js
+M ranking.html
+M reset-password.html
+A docs/ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824.md
+A docs/ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824_MANIFEST.txt
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql
+M supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+M tests/agent-engine-frontend.test.js
+M tests/agent-engine-v2.test.js
+M tests/authoritative-radar-fact-gate.test.js
+M tests/expert-market-cycle-definitive.test.js
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+M tests/radar-eligibility-sources-v5.test.js
+M tests/radar-provider-resumability-v1.test.js
+M tests/radar-refresh-resilience.test.js
+
+SHA-256 PAYLOAD FILES
+ff3bd514060c8f39c2b8375d1ead645c2acf7af4ede8df278f55a1e13e4fe26b  ORAKLO_PROJECT_CONTEXT.md
+03ffd36fc88f1ae72667997982847d46164cab9139531f2a4629f88109085d25  admin-community.html
+8f6eb0b292b338184af6454952d04344ca2e72371582df5bce00f16b547b9046  admin-markets.html
+d665653bd93009f8cf23e8823f38735d55881e3602bcce0e0890f64f855d0d96  admin-markets.js
+963c755eccd1e36d5caebf5860b4bf5905b2ee6e1c8f6431bb7d514769fcb012  admin-resolution.html
+bb9853eeb1929ee198fb2aa24665fa404c76658e4dd020c511eb793d7ad8a348  community.html
+4603a186c14a46e526a6214cd1ee009c5f57d876017f59d3d022e8fa6e053c64  index.html
+1a1eac9f96b3dc3ba2b48c7a4398867496425f08177ca0bcde7f5f2b7fad0f9f  market-detail.html
+0a152351acc58207c01df8dbf91633f9213cc2a1dde62a37c052df1acf208663  my-predictions.html
+00176eb915ef56216dc47f2141542358bad65984ab185a6354943841d754a2c8  profile.html
+b2aacd026eaf5289cd1c21b1374656cf9c2e8b9df417f9ab50f26deda8f4b4a3  radar-refresh-request.js
+3546a6e39a62dbaa64f96bb853f65e4a1570711693dba0ae1062894ed5514d90  ranking.html
+974421d5d7a5d8e02656cba2d8e416114ff3bccc082f9e3ab23f4ff5241b11e6  reset-password.html
+a879d430d5be4d85bb59d574472adfa17499f20f1b9b83d1a2da34fbd9929caa  supabase/functions/market-radar/index.ts
+d98a10273a8f0911559bdac0b3d7a3157703020aa1aa33118a3448a3a6c10781  supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+1c176c187f197bca0b6010d3435256c6cb51ea5d8e86651bfe4c81218f88e0a8  tests/agent-engine-frontend.test.js
+6d34e7bdfb5e68f0bc5f41ef7b6a719da04d5effa0abcbb0a7601c882dab9c19  tests/agent-engine-v2.test.js
+04732cacb21840d5b83156658fb3bb232a35f859b294bf095091683fd753f6f6  tests/authoritative-radar-fact-gate.test.js
+e565b3ef8bbf77b00c6c025c475cdd5d8557c9f395ca7839d440eff5918daa46  tests/expert-market-cycle-definitive.test.js
+029542225ff54f4ef5078c6bacb12c425a09c01d383e380f89e635008e2b71da  tests/human-confirmation-flow.test.js
+72a2f222b1998179c4b2c3fc292e9259958058a317ee97b0802b010aeadbfe47  tests/market-radar.test.js
+0a377afd594e991b18115920832d1afa1b0bfaaf387a00fbaba2c4cfc3027e7c  tests/official-opportunity-discovery.test.js
+2692976362f36652c3a4ccfa07ad26307cfe64a4699d170641381f8f9f8cfb3a  tests/radar-eligibility-sources-v5.test.js
+b403597f335590c7a45f01634777686ba04aeaf6032aece2222dc50c68172b45  tests/radar-provider-resumability-v1.test.js
+e97ce2d163dacd51f494a79838d2f2f241b38a89c0f2f96d0d8af0113fb5035d  tests/radar-refresh-resilience.test.js
+709bffb6bd3bacb7625c6df8081272df2ae941d2e8d6b65d6f57589e5812f36b  docs/ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824.md
+84c99d47a485f01f39bc0ab7a3429f914cea12fac18c675834821f90bda86076  supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql
+
+MIGRATIONS
+20260824190000_harden_radar_batch_resume_visibility_v1.sql
+
+EDGE FUNCTIONS
+market-radar (deploy with verify_jwt=true)
+
+FRONTEND
+- 10 HTML files share cache version 20260824-radar-batch-resume1
+- admin-markets.js
+- radar-refresh-request.js
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+
+VERIFICATION
+- node --test tests/*.test.js: 553 passed, 0 failed
+- JavaScript syntax: 127 valid
+- SQL transaction structure: 18 valid, 0 invalid
+- Edge Deno checks: 9 passed, 0 failed
+- exact migration plus full parent reconciliation SQL suite on production: passed, ROLLBACK
+- live request simulation under statement_timeout=8s: 5 batches, 105 accepted, 0 quarantined, ROLLBACK
+- LKG family regression: 2 bound -> 0 during active/first batch -> 2 after terminal
+- independent Supabase review: APTO
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- migration 20260824174351 is applied
+- migration 20260824190000 is absent
+- market-radar v60 ACTIVE verify_jwt=true
+- request 2798d1af-9ccd-4b79-9be7-37d5876d9484 remains in_progress/persisting
+- Kalshi batches 20/22/23/22/18 remain pending; processed=0, accepted=0
+- no domain or economy fingerprint changed
+
+POST-UPLOAD
+- fetch and compare all 28 paths and contents
+- apply only migration 20260824190000
+- deploy only market-radar with verify_jwt=true
+- wait for Pages cache version 20260824-radar-batch-resume1
+- verify fresh tab shows Continue for the same UUID
+- click once; verify 105/105, partial parent isolation, replay, UI and invariants
+- continue Radar to Editor only after the smoke passes

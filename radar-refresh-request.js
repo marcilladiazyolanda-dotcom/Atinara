@@ -40,6 +40,18 @@
       return promise;
     }
 
+    function resume(payload, requestId) {
+      const normalizedRequestId = String(requestId || "").trim();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(normalizedRequestId)) throw new TypeError("RADAR_REFRESH_REQUEST_ID_INVALID");
+      const intent = { key: payloadKey(payload), requestId: normalizedRequestId };
+      if (active && (active.key !== intent.key || active.requestId !== intent.requestId)) {
+        throw new Error("RADAR_REFRESH_ACTIVE_INTENT_CONFLICT");
+      }
+      resumable = intent;
+      return snapshot();
+    }
+
     function snapshot() {
       return Object.freeze({
         active: Boolean(active),
@@ -48,7 +60,7 @@
       });
     }
 
-    return Object.freeze({ run, snapshot });
+    return Object.freeze({ run, resume, snapshot });
   }
 
   globalThis.atinaraRadarRefreshRequests = Object.freeze({ createCoordinator });

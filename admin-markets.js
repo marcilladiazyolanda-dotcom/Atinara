@@ -2505,6 +2505,9 @@
         : nextErrors.filter((error) => error?.degrades_provider === false)
           .map((error) => error?.issue).filter(Boolean);
       const nextRefreshInProgress = data.refresh_in_progress === true;
+      if (nextRefreshInProgress && radarRequestCoordinator?.resume) {
+        radarRequestCoordinator.resume(requestPayload, data.refresh_request_id);
+      }
       const nextQualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
       const nextPage = data.page && typeof data.page === "object"
         ? data.page : { parent_count: nextGroups.length, parent_offset: state.radar.parentOffset, parent_limit: 60, next_parent_offset: null };

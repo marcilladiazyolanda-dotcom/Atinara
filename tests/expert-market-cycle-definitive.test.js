@@ -55,8 +55,9 @@ test("Radar · 429 respeta Retry-After, abre circuito y preserva last-known-good
   assert.match(adminJs, /Degradado temporalmente/);
 });
 
-test("Radar · un registro venenoso se aísla dentro de una sola RPC sin perder filas sanas", () => {
-  assert.match(radarEdge, /complete_market_radar_candidate_refresh_v1/);
+test("Radar · un registro venenoso se aísla por batch durable sin perder filas sanas", () => {
+  assert.match(radarEdge, /process_market_radar_refresh_batch_v3/);
+  assert.match(radarEdge, /complete_market_radar_candidate_refresh_v2/);
   assert.doesNotMatch(radarEdge, /rpc\(environment, "upsert_market_radar_batch_with_(?:fact_checks|eligibility)/);
   assert.match(parentReconciliationMigration, /public\.process_market_radar_refresh_batch_v1/);
   assert.match(parentReconciliationMigration, /market_radar_candidate_quarantines/);

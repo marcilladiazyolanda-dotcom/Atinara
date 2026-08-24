@@ -468,7 +468,7 @@ test("el parser puro conserva abierto Marvel solo por ancla oficial +7 días", (
 
 test("descubrimiento, preparación y persistencia usan la puerta atómica de elegibilidad", () => {
   assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_with_eligibility_v1"/);
-  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v2/);
   assert.match(edge, /apply_market_radar_prepare_eligibility_v4/);
   assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_v2"/);
   assert.doesNotMatch(edge, /rpc\(environment, "record_market_radar_fact_checks"/);
@@ -619,7 +619,7 @@ test("la caché conserva solo decisiones de elegibilidad vigentes", () => {
   assert.match(eligibilityMigration, /origin_type_input = 'radar_candidate'[\s\S]*market_radar_eligibility_payload/);
 
   const cachedBranch = edge.slice(
-    edge.indexOf("if (!requestedRefresh || cooldownRemaining > 0)"),
+    edge.indexOf("if (!requestedRefresh || (cooldownRemaining > 0 && !activeRefreshInProgress))"),
     edge.indexOf("const now = new Date().toISOString()"),
   );
   assert.doesNotMatch(cachedBranch, /candidates: \[\]/);

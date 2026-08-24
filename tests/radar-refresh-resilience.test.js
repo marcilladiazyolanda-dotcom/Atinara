@@ -18,6 +18,10 @@ const resumabilityMigration = readFileSync(
   join(root, "supabase/migrations/20260820163014_harden_radar_provider_resumability_v1.sql"),
   "utf8",
 );
+const batchResumeMigration = readFileSync(
+  join(root, "supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql"),
+  "utf8",
+);
 const sqlTest = readFileSync(
   join(root, "supabase/tests/radar_refresh_timeout_transaction.sql"),
   "utf8",
@@ -52,14 +56,17 @@ test("cada proveedor usa una intención durable, lotes reanudables y una sola fi
   assert.match(edge, /begin_market_radar_refresh_v2/);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
   assert.match(edge, /seal_market_radar_refresh_v1/);
-  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
-  assert.doesNotMatch(edge, /process_market_radar_refresh_batch_v2|split_market_radar_refresh_batch_v1/);
+  assert.match(edge, /process_market_radar_refresh_batch_v3/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v2/);
+  assert.doesNotMatch(edge, /"process_market_radar_refresh_batch_v2"|"complete_market_radar_candidate_refresh_v1"|split_market_radar_refresh_batch_v1/);
   assert.match(edge, /finalize_market_radar_refresh_v5/);
   assert.match(resumabilityMigration, /unique \(request_id, provider, capability, batch_ordinal, split_path\)/);
   assert.match(resumabilityMigration, /market_radar_provider_history_refresh_uidx/);
   assert.match(cycleV2Migration, /result_count_input > 240/);
   assert.match(cycleV2Migration, /grant execute on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*to service_role/);
   assert.match(cycleV2Migration, /revoke all on function public\.finalize_market_radar_provider_refresh_v2[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(batchResumeMigration, /candidate_visibility','deferred_until_provider_terminal/);
+  assert.match(batchResumeMigration, /RADAR_REFRESH_BATCHES_REMAIN/);
 });
 
 test("un fallo de escritura queda aislado al proveedor y no derriba todo el Radar", () => {

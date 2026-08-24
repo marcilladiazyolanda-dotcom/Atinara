@@ -150,7 +150,7 @@ test("Radar v2 es de solo lectura y la persistencia de elegibilidad queda en el 
   assert.equal(radarTools.every((tool) => tools.ATINARA_AGENT_TOOL_REGISTRY_V2[tool].canWrite === false), true);
   const radarEdge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
   assert.doesNotMatch(radarEdge, /rpc\(environment, "upsert_market_radar_batch_with_eligibility_v1"/);
-  assert.match(radarEdge, /complete_market_radar_candidate_refresh_v1/);
+  assert.match(radarEdge, /complete_market_radar_candidate_refresh_v2/);
 });
 
 test("Writer único exige estrategia autorizada, CAS y una escritura por ronda", async () => {

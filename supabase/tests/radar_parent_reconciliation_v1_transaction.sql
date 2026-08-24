@@ -18,6 +18,8 @@ declare
   legacy_partial_request_id uuid:=gen_random_uuid();
   rollback_request_id uuid:=gen_random_uuid();
   pagination_partial_request_id uuid:=gen_random_uuid();
+  lkg_baseline_request_id uuid:=gen_random_uuid();
+  lkg_active_request_id uuid:=gen_random_uuid();
   lease_owner_value uuid:=gen_random_uuid();
   lease_token_value uuid;
   started jsonb;
@@ -32,12 +34,19 @@ declare
   legacy_partial_lease uuid;
   rollback_lease uuid;
   pagination_partial_lease uuid;
+  lkg_baseline_lease uuid;
+  lkg_active_lease uuid;
   incomplete_parent jsonb;
   incomplete_issue jsonb;
   process_parent jsonb;
   legacy_partial_parent jsonb;
   pagination_partial_parent jsonb;
   pagination_partial_result jsonb;
+  lkg_parent jsonb;
+  lkg_entries jsonb;
+  lkg_candidate jsonb;
+  lkg_check jsonb;
+  lkg_result jsonb;
   candidate_value jsonb;
   valid_candidate jsonb;
   invalid_candidate jsonb;
@@ -68,6 +77,7 @@ begin
      or to_regclass('private.market_radar_parent_children_v1') is null
      or to_regprocedure('public.record_market_radar_parent_reconciliations_v1(uuid,text,text,uuid,jsonb)') is null
      or to_regprocedure('public.process_market_radar_refresh_batch_v2(uuid,text,text,uuid)') is null
+     or to_regprocedure('public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)') is null
      or to_regprocedure('public.record_market_radar_provider_selection_v1(uuid,text,text,uuid,jsonb)') is null
      or to_regprocedure('public.get_market_radar_children_for_reconciliation_v3(text,text[],text[],text[],text[],text[],text[],uuid)') is null
      or to_regprocedure('private.market_radar_legacy_child_logical_key_v1(jsonb,text)') is null
@@ -77,6 +87,7 @@ begin
      or to_regprocedure('public.finalize_market_radar_refresh_v4(uuid,text,text,uuid,text,text,text,integer)') is null
      or to_regprocedure('public.finalize_market_radar_refresh_v5(uuid,text,text,uuid,text,text,text,integer)') is null
      or to_regprocedure('public.complete_market_radar_candidate_refresh_v1(uuid,text,text,uuid,text,text,text,integer)') is null
+     or to_regprocedure('public.complete_market_radar_candidate_refresh_v2(uuid,text,text,uuid,text,text,text,integer)') is null
      or to_regprocedure('public.apply_market_radar_prepare_eligibility_v4(uuid,bigint,text,timestamptz,jsonb,jsonb,jsonb,boolean)') is null
      or to_regprocedure('public.get_market_radar_candidate_for_draft_revalidation_v3(uuid,uuid,bigint,text)') is null
      or to_regprocedure('public.begin_market_draft_review_v3(uuid,bigint,uuid,text,text,text,boolean)') is null
@@ -100,9 +111,11 @@ begin
       'public.get_market_radar_children_for_reconciliation_v3(text,text[],text[],text[],text[],text[],text[],uuid)'::regprocedure::oid,
       'public.record_market_radar_provider_selection_v1(uuid,text,text,uuid,jsonb)'::regprocedure::oid,
       'public.process_market_radar_refresh_batch_v2(uuid,text,text,uuid)'::regprocedure::oid,
+      'public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)'::regprocedure::oid,
       'public.finalize_market_radar_refresh_v4(uuid,text,text,uuid,text,text,text,integer)'::regprocedure::oid,
       'public.finalize_market_radar_refresh_v5(uuid,text,text,uuid,text,text,text,integer)'::regprocedure::oid,
       'public.complete_market_radar_candidate_refresh_v1(uuid,text,text,uuid,text,text,text,integer)'::regprocedure::oid,
+      'public.complete_market_radar_candidate_refresh_v2(uuid,text,text,uuid,text,text,text,integer)'::regprocedure::oid,
       'public.apply_market_radar_prepare_eligibility_v4(uuid,bigint,text,timestamptz,jsonb,jsonb,jsonb,boolean)'::regprocedure::oid,
       'public.get_market_radar_candidate_for_draft_revalidation_v3(uuid,uuid,bigint,text)'::regprocedure::oid,
       'public.begin_market_draft_review_v3(uuid,bigint,uuid,text,text,text,boolean)'::regprocedure::oid,
@@ -144,6 +157,18 @@ begin
        'public.apply_market_radar_prepare_eligibility_v2(uuid,bigint,text,timestamptz,jsonb,jsonb,boolean)','execute')
      or has_function_privilege('service_role',
        'public.process_market_radar_refresh_batch_v2(uuid,text,text,uuid)','execute')
+     or has_function_privilege('anon',
+       'public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)','execute')
+     or has_function_privilege('authenticated',
+       'public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)','execute')
+     or not has_function_privilege('service_role',
+       'public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)','execute')
+     or has_function_privilege('anon',
+       'public.complete_market_radar_candidate_refresh_v2(uuid,text,text,uuid,text,text,text,integer)','execute')
+     or has_function_privilege('authenticated',
+       'public.complete_market_radar_candidate_refresh_v2(uuid,text,text,uuid,text,text,text,integer)','execute')
+     or not has_function_privilege('service_role',
+       'public.complete_market_radar_candidate_refresh_v2(uuid,text,text,uuid,text,text,text,integer)','execute')
      or has_function_privilege('service_role',
        'public.finalize_market_radar_refresh_v3(uuid,text,text,uuid,text,text,text,integer)','execute')
      or has_function_privilege('service_role',
@@ -1163,6 +1188,322 @@ begin
     'available',null,null,null
   );
 
+  -- Una familia LKG real con dos hermanas se completa primero. El refresh
+  -- siguiente divide las mismas hijas en dos batches: tras confirmar solo el
+  -- primero deben quedar cero hijas bound, nunca una familia antigua parcial.
+  children:='[]'::jsonb;
+  for child_index in 1..2 loop
+    provider_contract_value:=jsonb_build_object(
+      'contract_version','atinara-radar-provider-child-contract-v1',
+      'provider','polymarket','provider_parent_id','parent-lkg',
+      'external_market_id','lkg-'||child_index,
+      'condition_id','condition-lkg-'||child_index,
+      'token_ids','[]'::jsonb,'child_slug','lkg-option-'||child_index,
+      'event_slug','parent-lkg','external_event_url','https://polymarket.com/event/parent-lkg',
+      'external_market_url','https://polymarket.com/event/parent-lkg',
+      'source_title','Parent LKG','source_question','Will LKG Option '||child_index||' win?',
+      'source_description',null,'source_resolution_rules','Official result.',
+      'source_resolution_url','https://thegameawards.com/official-parent-lkg',
+      'source_close_at','2027-01-01T00:00:00.000Z',
+      'source_resolution_deadline','2027-01-02T00:00:00.000Z',
+      'source_status','open','source_result',null,
+      'raw_provider_child_label','LKG Option '||child_index
+    );
+    provider_contract_canonical:=private.market_workflow_canonical_json_v1(
+      jsonb_build_object(
+        'contract_version',provider_contract_value -> 'contract_version',
+        'provider',provider_contract_value -> 'provider',
+        'source_question',provider_contract_value -> 'source_question',
+        'source_description',provider_contract_value -> 'source_description',
+        'source_resolution_rules',provider_contract_value -> 'source_resolution_rules',
+        'source_resolution_url',provider_contract_value -> 'source_resolution_url',
+        'source_close_at',provider_contract_value -> 'source_close_at',
+        'source_resolution_deadline',provider_contract_value -> 'source_resolution_deadline'
+      )
+    );
+    child_value:=jsonb_build_object(
+      'child_occurrence_key','polymarket:lkg:'||child_index,
+      'provider_child_identity_key','polymarket:market:lkg-'||child_index,
+      'external_market_id','lkg-'||child_index,
+      'condition_id','condition-lkg-'||child_index,
+      'identity_kind','option','token_ids','[]'::jsonb,
+      'child_slug','lkg-option-'||child_index,'event_id','parent-lkg','event_slug','parent-lkg',
+      'raw_provider_child_label','LKG Option '||child_index,
+      'canonical_child_label','LKG Option '||child_index,
+      'canonical_child_slug','lkg-option-'||child_index,
+      'canonical_child_key','option:lkg-option-'||child_index,
+      'identity_classification','identified_real_option','identity_status','resolved',
+      'availability_status','open','identity_source','provider_contract_question',
+      'identity_confidence',100,'identity_evidence',jsonb_build_array(jsonb_build_object(
+        'url','https://gamma-api.polymarket.com/events/parent-lkg',
+        'endpoint','/events/parent-lkg','identifier_type','external_market_id',
+        'identifier','lkg-'||child_index,'result','child_identity_observed_in_parent',
+        'content_sha256',repeat('1',64),'identity_sha256',repeat('2',64),
+        'checked_at',checked_at_value
+      )),'present_in_current_snapshot',true,'present_in_legacy_snapshot',false,
+      'transition','new','duplicate_of_child_identity_key',null,
+      'provider_contract',provider_contract_value,
+      'provider_contract_canonical_json',provider_contract_canonical,
+      'provider_contract_hash',encode(extensions.digest(
+        convert_to(provider_contract_canonical,'UTF8'),'sha256'
+      ),'hex'),'projection_version','atinara-radar-child-projection-v1',
+      'child_fingerprint',encode(extensions.digest(convert_to(
+        'parent-lkg:child-'||child_index,'UTF8'
+      ),'sha256'),'hex'),'checked_at',checked_at_value
+    );
+    children:=children||jsonb_build_array(child_value);
+  end loop;
+  lkg_parent:=jsonb_build_object(
+    'provider','polymarket','provider_parent_id','parent-lkg',
+    'raw_provider_parent_label','Parent LKG','canonical_parent_label','Padre LKG',
+    'raw_provider_category','Events','atinara_category','Eventos','category','Eventos',
+    'external_parent_url','https://polymarket.com/event/parent-lkg',
+    'provider_declared_child_count',2,'provider_discovered_child_count',2,
+    'provider_accounted_child_count',2,'provider_identified_child_count',2,
+    'provider_unresolved_child_count',0,'provider_removed_child_count',0,
+    'provider_closed_child_count',0,'provider_duplicate_child_count',0,
+    'provider_conflict_child_count',0,'legacy_expected_child_count',null,
+    'legacy_accounted_child_count',null,'new_child_count',2,
+    'provider_pagination_exhausted',true,'reconciliation_status','complete',
+    'reconciliation_version','atinara-radar-parent-reconciliation-v1',
+    'normalizer_version','atinara-radar-v3','family_version','atinara-market-family-v5',
+    'reconciliation_fingerprint',encode(extensions.digest(convert_to(
+      'parent-lkg:baseline','UTF8'
+    ),'sha256'),'hex'),'checked_at',checked_at_value,'next_retry_at',null,
+    'source_refs',jsonb_build_array(jsonb_build_object(
+      'url','https://gamma-api.polymarket.com/events/parent-lkg',
+      'endpoint','/events/parent-lkg','identifier_type','event_id','identifier','parent-lkg',
+      'result','parent_children_enumerated','content_sha256',repeat('3',64),
+      'identity_sha256',repeat('4',64),'checked_at',checked_at_value
+    )),'issue',null,'children',children
+  );
+  perform set_config('request.jwt.claims',jsonb_build_object(
+    'sub',admin_id,'role','authenticated'
+  )::text,true);
+  perform public.claim_market_radar_provider_probe_v1(
+    'polymarket','candidate_feed',lkg_baseline_request_id
+  );
+  process_started:=public.begin_market_radar_refresh_v2(
+    lkg_baseline_request_id,'polymarket','candidate_feed',repeat('1',64),
+    'atinara-radar-v3:test-lkg-baseline','atinara-radar-v3',
+    'atinara-prediction-policy-v5',gen_random_uuid()
+  );
+  lkg_baseline_lease:=(process_started ->> 'lease_token')::uuid;
+  perform set_config('request.jwt.claims','{"role":"service_role"}',true);
+  perform public.record_market_radar_provider_selection_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,
+    jsonb_build_object(
+      'policy_version','atinara-radar-parent-selection-v1','total_parent_count',1,
+      'selected_parent_count',1,'deferred_parent_count',0,'selected_child_count',2,
+      'no_parent_truncated',true,'selected_parent_ids',jsonb_build_array('parent-lkg'),
+      'deferred_parent_ids','[]'::jsonb
+    )
+  );
+  perform public.record_market_radar_parent_reconciliations_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,
+    jsonb_build_array(lkg_parent)
+  );
+  lkg_entries:='[]'::jsonb;
+  for child_index in 1..2 loop
+    child_value:=lkg_parent #> array['children',(child_index-1)::text];
+    lkg_candidate:=candidate_value||jsonb_build_object(
+      'external_id','lkg-'||child_index,'external_event_id','parent-lkg',
+      'external_market_id','lkg-'||child_index,'external_event_slug','parent-lkg',
+      'external_market_slug','lkg-option-'||child_index,
+      'event_group_key','polymarket:parent-lkg',
+      'fingerprint',encode(extensions.digest(convert_to(
+        'lkg-candidate-'||child_index,'UTF8'
+      ),'sha256'),'hex'),'cache_key','atinara-radar-v3:test-lkg-baseline',
+      'family_key','atinara:v5:parent-lkg:outcome','family_title','Opciones · Padre LKG',
+      'family_child_key','option:lkg-option-'||child_index,
+      'family_child_label','LKG Option '||child_index,
+      'canonical_child_key','option:lkg-option-'||child_index,
+      'canonical_child_label','LKG Option '||child_index,
+      'raw_provider_child_label','LKG Option '||child_index,
+      'parent_reconciliation_fingerprint',lkg_parent ->> 'reconciliation_fingerprint',
+      'parent_child_occurrence_key',child_value ->> 'child_occurrence_key',
+      'parent_child_identity_key',child_value ->> 'provider_child_identity_key',
+      'parent_child_fingerprint',child_value ->> 'child_fingerprint',
+      'provider_child_contract',child_value -> 'provider_contract',
+      'provider_child_contract_hash',child_value ->> 'provider_contract_hash',
+      'provider_declared_child_count',2,'provider_discovered_child_count',2,
+      'provider_accounted_child_count',2,'provider_identified_child_count',2,
+      'source_title','Parent LKG','source_question','Will LKG Option '||child_index||' win?',
+      'source_resolution_url','https://thegameawards.com/official-parent-lkg',
+      'atinara_question','¿Ganará LKG Option '||child_index||'?',
+      'atinara_resolution_source_url','https://thegameawards.com/official-parent-lkg'
+    );
+    lkg_check:=eligibility_value||jsonb_build_object(
+      'attempt_id',gen_random_uuid(),'external_id','lkg-'||child_index,
+      'event_group_key','polymarket:parent-lkg',
+      'checked_at',lkg_candidate ->> 'eligibility_checked_at',
+      'expires_at',lkg_candidate ->> 'eligibility_expires_at',
+      'decision_hash',encode(extensions.digest(convert_to(
+        'lkg-baseline-check-'||child_index,'UTF8'
+      ),'sha256'),'hex')
+    );
+    lkg_entries:=lkg_entries||jsonb_build_array(jsonb_build_object(
+      'candidate',lkg_candidate,'eligibility_check',lkg_check
+    ));
+  end loop;
+  perform public.declare_market_radar_refresh_manifest_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,2
+  );
+  perform public.stage_market_radar_refresh_batch_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,0,
+    jsonb_build_array(lkg_entries -> 0)
+  );
+  perform public.stage_market_radar_refresh_batch_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,1,
+    jsonb_build_array(lkg_entries -> 1)
+  );
+  perform public.seal_market_radar_refresh_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,2
+  );
+  lkg_result:=public.complete_market_radar_candidate_refresh_v1(
+    lkg_baseline_request_id,'polymarket','candidate_feed',lkg_baseline_lease,
+    'available',null,null,null
+  );
+  if lkg_result ->> 'outcome'<>'completed'
+     or (select count(*) from private.external_market_candidates candidate
+       where candidate.provider='polymarket' and candidate.external_id like 'lkg-%'
+         and private.market_radar_candidate_reconciliation_bound_v1(candidate))<>2 then
+    raise exception 'TEST_RADAR_LKG_BASELINE_NOT_BOUND:%',lkg_result;
+  end if;
+
+  -- Segunda reconciliación material del mismo padre; antes de cualquier batch
+  -- las dos hermanas LKG deben retirarse juntas de la proyección current.
+  children:='[]'::jsonb;
+  for child_index in 0..1 loop
+    child_value:=(lkg_parent #> array['children',child_index::text])
+      ||jsonb_build_object(
+        'present_in_legacy_snapshot',true,'transition','same',
+        'child_fingerprint',encode(extensions.digest(convert_to(
+          'parent-lkg:active-child-'||child_index,'UTF8'
+        ),'sha256'),'hex')
+      );
+    children:=children||jsonb_build_array(child_value);
+  end loop;
+  lkg_parent:=lkg_parent||jsonb_build_object(
+    'legacy_expected_child_count',2,'legacy_accounted_child_count',2,'new_child_count',0,
+    'reconciliation_fingerprint',encode(extensions.digest(convert_to(
+      'parent-lkg:active','UTF8'
+    ),'sha256'),'hex'),'children',children
+  );
+  perform set_config('request.jwt.claims',jsonb_build_object(
+    'sub',admin_id,'role','authenticated'
+  )::text,true);
+  perform public.claim_market_radar_provider_probe_v1(
+    'polymarket','candidate_feed',lkg_active_request_id
+  );
+  process_started:=public.begin_market_radar_refresh_v2(
+    lkg_active_request_id,'polymarket','candidate_feed',repeat('2',64),
+    'atinara-radar-v3:test-lkg-active','atinara-radar-v3',
+    'atinara-prediction-policy-v5',gen_random_uuid()
+  );
+  lkg_active_lease:=(process_started ->> 'lease_token')::uuid;
+  perform set_config('request.jwt.claims','{"role":"service_role"}',true);
+  perform public.record_market_radar_provider_selection_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,
+    jsonb_build_object(
+      'policy_version','atinara-radar-parent-selection-v1','total_parent_count',1,
+      'selected_parent_count',1,'deferred_parent_count',0,'selected_child_count',2,
+      'no_parent_truncated',true,'selected_parent_ids',jsonb_build_array('parent-lkg'),
+      'deferred_parent_ids','[]'::jsonb
+    )
+  );
+  perform public.record_market_radar_parent_reconciliations_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,
+    jsonb_build_array(lkg_parent)
+  );
+  if (select count(*) from private.external_market_candidates candidate
+      where candidate.provider='polymarket' and candidate.external_id like 'lkg-%'
+        and private.market_radar_candidate_reconciliation_bound_v1(candidate))<>0 then
+    raise exception 'TEST_RADAR_ACTIVE_PARENT_EXPOSED_LKG_BEFORE_BATCH';
+  end if;
+  lkg_entries:='[]'::jsonb;
+  for child_index in 1..2 loop
+    child_value:=lkg_parent #> array['children',(child_index-1)::text];
+    lkg_candidate:=candidate_value||jsonb_build_object(
+      'external_id','lkg-'||child_index,'external_event_id','parent-lkg',
+      'external_market_id','lkg-'||child_index,'external_event_slug','parent-lkg',
+      'external_market_slug','lkg-option-'||child_index,
+      'event_group_key','polymarket:parent-lkg',
+      'fingerprint',encode(extensions.digest(convert_to(
+        'lkg-active-candidate-'||child_index,'UTF8'
+      ),'sha256'),'hex'),'cache_key','atinara-radar-v3:test-lkg-active',
+      'family_key','atinara:v5:parent-lkg:outcome','family_title','Opciones · Padre LKG',
+      'family_child_key','option:lkg-option-'||child_index,
+      'family_child_label','LKG Option '||child_index,
+      'canonical_child_key','option:lkg-option-'||child_index,
+      'canonical_child_label','LKG Option '||child_index,
+      'raw_provider_child_label','LKG Option '||child_index,
+      'parent_reconciliation_fingerprint',lkg_parent ->> 'reconciliation_fingerprint',
+      'parent_child_occurrence_key',child_value ->> 'child_occurrence_key',
+      'parent_child_identity_key',child_value ->> 'provider_child_identity_key',
+      'parent_child_fingerprint',child_value ->> 'child_fingerprint',
+      'provider_child_contract',child_value -> 'provider_contract',
+      'provider_child_contract_hash',child_value ->> 'provider_contract_hash',
+      'provider_declared_child_count',2,'provider_discovered_child_count',2,
+      'provider_accounted_child_count',2,'provider_identified_child_count',2,
+      'source_title','Parent LKG','source_question','Will LKG Option '||child_index||' win?',
+      'source_resolution_url','https://thegameawards.com/official-parent-lkg',
+      'atinara_question','¿Ganará LKG Option '||child_index||'?',
+      'atinara_resolution_source_url','https://thegameawards.com/official-parent-lkg'
+    );
+    lkg_check:=eligibility_value||jsonb_build_object(
+      'attempt_id',gen_random_uuid(),'external_id','lkg-'||child_index,
+      'event_group_key','polymarket:parent-lkg',
+      'checked_at',lkg_candidate ->> 'eligibility_checked_at',
+      'expires_at',lkg_candidate ->> 'eligibility_expires_at',
+      'decision_hash',encode(extensions.digest(convert_to(
+        'lkg-active-check-'||child_index,'UTF8'
+      ),'sha256'),'hex')
+    );
+    lkg_entries:=lkg_entries||jsonb_build_array(jsonb_build_object(
+      'candidate',lkg_candidate,'eligibility_check',lkg_check
+    ));
+  end loop;
+  perform public.declare_market_radar_refresh_manifest_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,2
+  );
+  perform public.stage_market_radar_refresh_batch_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,0,
+    jsonb_build_array(lkg_entries -> 0)
+  );
+  perform public.stage_market_radar_refresh_batch_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,1,
+    jsonb_build_array(lkg_entries -> 1)
+  );
+  perform public.seal_market_radar_refresh_v1(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,2
+  );
+  process_result:=public.process_market_radar_refresh_batch_v3(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease
+  );
+  if process_result ->> 'remaining_batches'<>'1'
+     or (select count(*) from private.external_market_candidates candidate
+       where candidate.provider='polymarket' and candidate.external_id like 'lkg-%'
+         and private.market_radar_candidate_reconciliation_bound_v1(candidate))<>0 then
+    raise exception 'TEST_RADAR_PARTIAL_BATCH_EXPOSED_LKG:%',process_result;
+  end if;
+  perform public.process_market_radar_refresh_batch_v3(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease
+  );
+  lkg_result:=public.complete_market_radar_candidate_refresh_v2(
+    lkg_active_request_id,'polymarket','candidate_feed',lkg_active_lease,
+    'available',null,null,null
+  );
+  if lkg_result ->> 'outcome'<>'completed'
+     or (select count(*) from private.external_market_candidates candidate
+       join private.market_radar_parent_reconciliations_v1 parent_alias
+         on parent_alias.id=candidate.current_parent_reconciliation_id
+       where candidate.provider='polymarket' and candidate.external_id like 'lkg-%'
+         and parent_alias.request_id=lkg_active_request_id
+         and private.market_radar_candidate_reconciliation_bound_v1(candidate))<>2 then
+    raise exception 'TEST_RADAR_LKG_FAMILY_NOT_ATOMIC_AFTER_TERMINAL:%',lkg_result;
+  end if;
+
   -- El wrapper promueve todos los batches o ninguno. El segundo item conserva
   -- una huella hija incorrecta para forzar fallo después del primer batch.
   perform set_config('request.jwt.claims',jsonb_build_object(
@@ -1356,7 +1697,22 @@ begin
   perform public.seal_market_radar_refresh_v1(
     pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,1
   );
-  pagination_partial_result:=public.complete_market_radar_candidate_refresh_v1(
+  process_result:=public.process_market_radar_refresh_batch_v3(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease
+  );
+  if process_result ->> 'processed'<>'true'
+     or process_result ->> 'accepted_count'<>'1'
+     or process_result ->> 'remaining_batches'<>'0'
+     or process_result ->> 'batch_commit_version'<>'atinara-radar-batch-commit-v1'
+     or not exists (
+       select 1 from private.external_market_candidates candidate
+       where candidate.provider='polymarket' and candidate.external_id='3-1'
+         and candidate.current_parent_reconciliation_id is not null
+         and not private.market_radar_candidate_reconciliation_ready_v1(candidate)
+     ) then
+    raise exception 'TEST_RADAR_BATCH_COMMIT_VISIBILITY_INVALID:%',process_result;
+  end if;
+  pagination_partial_result:=public.complete_market_radar_candidate_refresh_v2(
     pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
     'available',null,null,null
   );
@@ -1365,6 +1721,7 @@ begin
      or pagination_partial_result #>> '{issue,issue_code}'
        <>'RADAR_PARENT_RECONCILIATION_INCOMPLETE'
      or pagination_partial_result ->> 'atomic_candidate_commit'<>'true'
+     or pagination_partial_result ->> 'provider_visibility_committed'<>'true'
      or not exists (
        select 1 from private.external_market_candidates candidate
        join private.market_radar_parent_reconciliations_v1 parent_alias
@@ -1376,7 +1733,7 @@ begin
      ) then
     raise exception 'TEST_RADAR_PARTIAL_PARENT_DID_NOT_ISOLATE:%',pagination_partial_result;
   end if;
-  replay:=public.complete_market_radar_candidate_refresh_v1(
+  replay:=public.complete_market_radar_candidate_refresh_v2(
     pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
     'available',null,null,null
   );

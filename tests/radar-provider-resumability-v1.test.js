@@ -11,6 +11,7 @@ const sharedUrl = pathToFileURL(join(root, "supabase/functions/_shared/market-ra
 const issuesUrl = pathToFileURL(join(root, "supabase/functions/_shared/market-workflow-issues.mjs")).href;
 const edge = read("supabase/functions/market-radar/index.ts");
 const migration = read("supabase/migrations/20260820163014_harden_radar_provider_resumability_v1.sql");
+const batchResumeMigration = read("supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql");
 const admin = read("admin-markets.js");
 const html = read("admin-markets.html");
 const styles = read("styles.css");
@@ -215,6 +216,14 @@ test("coordinador Radar colapsa doble clic y reutiliza UUID tras transporte ambi
   assert.equal(result.request.refresh_request_id, "33333333-3333-4333-8333-333333333333");
   const retry = await coordinator.run(payload, async (request) => request);
   assert.equal(retry.refresh_request_id, "33333333-3333-4333-8333-333333333333");
+
+  const recovered = context.globalThis.atinaraRadarRefreshRequests.createCoordinator({
+    createRequestId: () => "44444444-4444-4444-8444-444444444444",
+  });
+  recovered.resume(payload, "55555555-5555-4555-8555-555555555555");
+  const afterReload = await recovered.run(payload, async (request) => request);
+  assert.equal(afterReload.refresh_request_id, "55555555-5555-4555-8555-555555555555");
+  assert.throws(() => recovered.resume(payload, "not-a-uuid"), /RADAR_REFRESH_REQUEST_ID_INVALID/);
 });
 
 test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => {
@@ -227,12 +236,32 @@ test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => 
   assert.ok(runStart >= 0 && runEnd > runStart && activeIndex >= 0
     && beginIndex > activeIndex && discoverIndex > beginIndex);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
-  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
-  assert.doesNotMatch(edge, /process_market_radar_refresh_batch_v2|split_market_radar_refresh_batch_v1/);
+  assert.match(edge, /process_market_radar_refresh_batch_v3/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v2/);
+  assert.doesNotMatch(edge, /"process_market_radar_refresh_batch_v2"|"complete_market_radar_candidate_refresh_v1"|split_market_radar_refresh_batch_v1/);
   assert.match(edge, /defer_market_radar_refresh_v1/);
   assert.match(edge, /finalize_market_radar_refresh_v5/);
   assert.match(edge, /partial:\s*candidateProviderErrors\.length > 0/);
   assert.match(edge, /enrichment_issues:\s*enrichmentIssues/);
+});
+
+test("la reanudación confirma batches bajo el timeout y mantiene invisible la intención no terminal", () => {
+  assert.match(batchResumeMigration, /process_market_radar_refresh_batch_v3/);
+  assert.match(batchResumeMigration, /complete_market_radar_candidate_refresh_v2/);
+  assert.match(batchResumeMigration, /latest_intent\.status in \(''completed'',''partial''\)/);
+  assert.match(batchResumeMigration, /RADAR_REFRESH_BATCHES_REMAIN/);
+  assert.match(batchResumeMigration, /candidate_visibility','deferred_until_provider_terminal/);
+  assert.match(batchResumeMigration, /active_intent\.status=''in_progress''/);
+  assert.match(batchResumeMigration, /RADAR_BATCH_RESUME_VISIBILITY_PATCH_MISSING/);
+  assert.match(batchResumeMigration, /revoke all on function public\.process_market_radar_refresh_batch_v3[\s\S]*grant execute[\s\S]*to service_role/);
+  assert.doesNotMatch(batchResumeMigration,
+    /\b(?:insert\s+into|update\s+(?:public|private)\.|delete\s+from|truncate\s+)\b/i);
+  const activeLookup = edge.indexOf('"get_active_market_radar_refresh_v1"');
+  const cachedReturn = edge.indexOf("if (!requestedRefresh", activeLookup);
+  assert.ok(activeLookup >= 0 && cachedReturn > activeLookup);
+  assert.match(edge, /refresh_request_id:\s*activeRefreshInProgress \? activeRefreshId : null/);
+  assert.match(edge, /refresh_in_progress:\s*activeRefreshInProgress/);
+  assert.match(admin, /radarRequestCoordinator\.resume\(requestPayload, data\.refresh_request_id\)/);
 });
 
 test("SQL conserva v1, impone lease, replay, cuarentena única y finalización única", () => {
@@ -257,5 +286,5 @@ test("UI elimina Tavily de tarjetas rojas y usa un único resumen expandible", (
   assert.match(admin, /Continuar actualización/);
   assert.doesNotMatch(admin, /class="radar-partial-error"/);
   assert.match(styles, /\.radar-operational-summary/);
-  assert.match(html, /radar-refresh-request\.js\?v=20260823-v6-parent-reconciliation2/);
+  assert.match(html, /radar-refresh-request\.js\?v=20260824-radar-batch-resume1/);
 });

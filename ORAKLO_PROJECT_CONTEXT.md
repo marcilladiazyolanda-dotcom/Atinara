@@ -4,22 +4,56 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el segundo refresh V6:** `origin/main`
-> está en `413b075058a32a1f106a320afdabe75f51ae1d32`; la migración local
-> `20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql` consta
-> aplicada una sola vez como `20260824153114`, y `market-radar` v60 está
-> `ACTIVE` con `verify_jwt=true`. Las cinco tareas de IA siguen en
-> `legacy_direct`; OpenRouter y NVIDIA NIM permanecen desactivados, sin rutas y
-> con presupuestos cero. El refresh administrativo sin Gemini
-> `2798d1af-9ccd-4b79-9be7-37d5876d9484` promovió las 74 hijas Polymarket, pero
-> Kalshi quedó durable y reanudable antes de los batches: siete padres están
-> completos y el padre `KXPS6-26` está correctamente `provider_unavailable`
-> porque una página histórica oficial respondió con limitación temporal. El
-> guard global `RADAR_PARENT_MANIFEST_REQUIRED` impide hoy promover también los
-> padres completos. El E2E continúa detenido antes de Editor y no debe pulsarse
-> otra continuación hasta aplicar el paquete incremental descrito en
-> `docs/ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824.md`. No repetir la
-> migración `20260824153000`, no redesplegar Edge y no iniciar un refresh nuevo.
+> **Estado productivo verificado tras el tercer intento durable V6:**
+> `origin/main` está en `0af8e8090cfe4ccb3eca73f0d75348c483fca15d`;
+> `20260824180000_allow_partial_radar_parent_persistence_v1.sql` consta aplicada
+> una sola vez como `20260824174351`, y `market-radar` v60 continúa `ACTIVE` con
+> `verify_jwt=true`. La misma intención sin Gemini
+> `2798d1af-9ccd-4b79-9be7-37d5876d9484` conserva Polymarket 74/74 y Kalshi
+> 105 staged, 0 procesadas, cinco batches pendientes y `claim_count=3`. La
+> continuación superó la guardia de padre parcial, pero PostgREST canceló la RPC
+> monolítica con `RADAR_PERSISTENCE_TIMEOUT`: el rol autenticador limita cada
+> sentencia a 8 s y el completion completo tarda 11,53 s. No hubo otra UUID,
+> batch parcial, cuarentena, borrador ni mutación económica. Está pendiente el
+> paquete incremental documentado en
+> `docs/ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824.md`; no pulsar otra
+> continuación, no repetir `20260824180000` y no iniciar un refresh nuevo.
+
+### Persistencia durable por batch y visibilidad atómica · 24 de agosto de 2026
+
+- La migración parcial se aplicó desde el blob LF canónico de GitHub. Un primer
+  transporte desde el checkout Windows conservó CRLF dentro de patrones SQL y
+  abortó antes del efecto; historial y tres cuerpos permanecieron intactos. El
+  segundo intento canónico pasó preflight y postflight y quedó registrado como
+  `20260824174351`.
+- El smoke visual recuperó la misma UUID desde servidor; `request_count=1` y
+  `claim_count=3`, sin repetir Polymarket. Los cinco batches Kalshi siguieron
+  pendientes porque `complete_market_radar_candidate_refresh_v1` intentaba
+  confirmar 105 candidatas dentro de una sola sentencia PostgREST. Un batch de
+  20 tarda 2,26 s; los cinco juntos, 11,53 s; la sesión autenticadora tiene
+  `statement_timeout=8s`.
+- La migración local nueva
+  `20260824190000_harden_radar_batch_resume_visibility_v1.sql` crea dos wrappers
+  service-only. Cada llamada confirma un único batch durable; otra llamada corta
+  finaliza solo cuando `processed_count=expected_count`. La puerta compartida
+  oculta todas las candidatas antiguas y nuevas de un padre mientras exista una
+  reconciliación `in_progress`, por lo que una recarga nunca puede proyectar una
+  familia LKG parcial. El estado terminal vuelve a habilitar de golpe únicamente
+  los padres completos.
+- `market-radar` consulta la intención activa también al cargar caché y el
+  coordinador de interfaz adopta la UUID autoritativa. Después de cerrar y abrir
+  la pestaña, el botón muestra «Continuar actualización» y no genera otra
+  intención. El recurso está versionado de forma coherente en las páginas HTML.
+- La simulación exacta productiva con `ROLLBACK` y límite de 8 s completó los
+  batches 20/22/23/22/18: 105 procesadas, 105 aceptadas, cero cuarentenas, cierre
+  `partial` por el único padre proveedor incompleto, 105 candidatas ligadas a
+  padres completos y cero al padre incompleto. La suite SQL completa pasó en la
+  misma forma.
+- Evidencia local: 553/553 unitarias, sintaxis de 127 JavaScript, 18 matrices
+  SQL, 9/9 Edge checks, `git diff --check` y auditoría Supabase read-only. El
+  paquete aún no está desplegado; producción conserva los cinco batches
+  pendientes y todos los fingerprints de mercados, predicciones, perfiles,
+  borradores, Karma, Prestigio, LMSR e histórico.
 
 ### Aislamiento de padre parcial en la persistencia Radar · 24 de agosto de 2026
 
