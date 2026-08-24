@@ -15,6 +15,7 @@ import {
   deriveMarketFamily,
   evaluateGamingDomain,
   extractRadarOptionChild,
+  radarOptionSlug,
 } from "../supabase/functions/_shared/market-radar.mjs";
 import { nullableFiniteNumber } from "../supabase/functions/_shared/nullable-number.mjs";
 import { evaluateValiditySeparately } from "../supabase/functions/_shared/market-intelligence/option-logic.mjs";
@@ -34,6 +35,7 @@ const admin = read("admin-markets.js");
 const agentUi = read("admin-agent-engine.js");
 const fixerUi = read("market-draft-fixer.js");
 const migration = read("supabase/migrations/20260820174316_add_market_workflow_orchestration_v1.sql");
+const parentMigration = read("supabase/migrations/20260822205445_add_radar_parent_reconciliation_v1.sql");
 
 function legacyRadarCanonical(value) {
   const normalize = (item) => {
@@ -225,8 +227,8 @@ test("identidad y dominio extraen opciones reales y aíslan placeholders sin har
   };
   const sibling = { ...real, source_question: "Will Saros win Best Multiplayer at The Game Awards 2026?" };
   const placeholder = { ...real, source_question: "Will Game A win Best Multiplayer at The Game Awards 2026?" };
-  assert.equal(extractRadarOptionChild(real)?.slug, "half-life-3");
-  assert.equal(deriveMarketFamily(real)?.family_child_key, "option:half-life-3");
+  assert.equal(extractRadarOptionChild(real)?.slug,radarOptionSlug("Half-Life 3"));
+  assert.equal(deriveMarketFamily(real)?.family_child_key,`option:${radarOptionSlug("Half-Life 3")}`);
   assert.equal(deriveMarketFamily(sibling)?.family_child_key, "option:saros");
   assert.equal(evaluateGamingDomain(placeholder).status, "placeholder");
   assert.equal(evaluateGamingDomain({ source_title: "Sports Illustrated", source_question: "Will a footballer win?" }).status, "review_required");
@@ -284,7 +286,7 @@ test("Expert y Validator progresan el artefacto sin IA sobre snapshots reparable
   assert.match(expertEdge, /proposal_ready_with_issues/);
   assert.match(expertEdge, /"PROVIDER_PLACEHOLDER"/);
   assert.doesNotMatch(expertEdge, /proposalQuestionChild/);
-  assert.match(agentUi, /save_market_draft_from_expert_with_issues_v1/);
+  assert.match(agentUi, /save_market_draft_from_expert_with_issues_v2/);
   assert.doesNotMatch(expertEdge, /origin\.source_close_at\s*\|\|\s*origin\.time_window_end/);
   assert.match(validatorEdge, /inherited_workflow_gate: true, zero_inference: true/);
   assert.match(validatorEdge, /record_market_draft_review_with_issues_v1/);
@@ -297,7 +299,7 @@ test("Expert y Validator progresan el artefacto sin IA sobre snapshots reparable
 });
 
 test("confirmación, publicación y scheduler devuelven recuperación estructurada", () => {
-  assert.match(admin, /confirm_market_draft_review_v2/);
+  assert.match(admin, /confirm_market_draft_review_v3/);
   assert.match(admin, /publish_market_draft_v2/);
   assert.match(admin, /PUBLICATION_ATTEMPT_KEY_PREFIX/);
   assert.match(admin, /request_id_input: publicationRequestId/);
@@ -312,6 +314,58 @@ test("confirmación, publicación y scheduler devuelven recuperación estructura
   assert.match(migration, /MARKET_WORKFLOW_APPROVAL_BLOCKED/);
   assert.match(migration, /publication_failed_terminal/);
   assert.match(migration, /reload_current_draft/);
+  assert.match(parentMigration, /try_lock_market_draft_workflow_scope_v1/);
+  assert.match(parentMigration, /for update skip locked/);
+  assert.match(parentMigration, /claim_order','candidate_advisory_draft/);
+});
+
+test("la pérdida de respuesta de elegibilidad reanuda desde checkpoint sin repetir proveedor", () => {
+  const recoveryStart = radarEdge.indexOf('if (action === "recover-draft-eligibility")');
+  const recoveryEnd = radarEdge.indexOf('if (action === "check-eligibility")', recoveryStart);
+  const recovery = radarEdge.slice(recoveryStart, recoveryEnd);
+  const checkpoint = recovery.indexOf('get_market_radar_eligibility_attempt_checkpoint_v1');
+  const candidateFetch = recovery.indexOf('get_market_radar_candidate_for_draft_revalidation_v3');
+  const providerRevalidation = recovery.indexOf('revalidateCandidateForPreparation');
+  assert.ok(checkpoint > 0 && checkpoint < candidateFetch && checkpoint < providerRevalidation);
+  assert.match(recovery, /eligibility_checkpoint_replay:true/);
+  assert.match(recovery, /provider_calls_replayed:0/);
+});
+
+test("Radar enlaza Market Expert al guardar y la UI deriva autoridad del issue efectivo", () => {
+  assert.match(admin, /save_market_draft_from_radar_intelligence/);
+  assert.match(admin, /contract_input: intelligencePrefill\.contract/);
+  assert.match(admin, /sources_input: intelligencePrefill\.sources/);
+  assert.match(admin, /dominantAuthorityIssue/);
+  assert.match(admin, /confirmationAuthorityBlocked/);
+  assert.match(admin, /publicationAuthorityBlocked/);
+  assert.match(correctorEdge, /providerContractRepairCodes/);
+  assert.match(correctorEdge, /source_close_at", "source_resolution_deadline/);
+  const helperStart = parentMigration.indexOf(
+    "create or replace function public.save_market_draft_from_radar_intelligence_without_revision_guard(",
+  );
+  const helperEnd = parentMigration.indexOf("$function$;", helperStart);
+  const helperBody = parentMigration.slice(helperStart, helperEnd);
+  assert.ok(helperStart > 0 && helperEnd > helperStart);
+  assert.match(helperBody, /save_result:=public\.save_market_draft_from_radar\(/);
+  assert.doesNotMatch(helperBody, /save_market_draft_from_radar_without_authoritative_fact_gate_v1/);
+  assert.match(helperBody, /origin_analysis_fingerprint/);
+  assert.match(helperBody, /origin_source_fingerprint/);
+  assert.match(helperBody, /origin_preparation_revision/);
+  assert.match(helperBody, /expert_prepared_replay/);
+});
+
+test("writers sensibles comparten candidate → advisory → draft y cierran legacy available", () => {
+  assert.match(parentMigration, /lock_market_draft_workflow_scope_v1/);
+  assert.match(parentMigration, /candidate_alias\.id=candidate_id_value for update/);
+  assert.match(parentMigration, /market-draft-workflow:/);
+  assert.match(parentMigration, /candidate\.normalizer_version='atinara-radar-v2'[\s\S]{0,240}if not prepared_replay/);
+  assert.match(parentMigration, /result:=public\.save_market_draft\(/);
+  assert.match(parentMigration, /bind_market_radar_draft_eligibility_internal_v1/);
+  assert.match(parentMigration, /market_radar_material_repair_checkpoint_valid_v1/);
+  assert.match(parentMigration, /eligibility_recovered_validation_pending/);
+  assert.match(parentMigration, /'waiting',[\s\S]{0,160}'validator','request_market_validation'/);
+  assert.match(parentMigration, /legacy_expected_value not between 0 and 1920/);
+  assert.match(parentMigration, /markets_cross_version_identity_v1_uidx/);
 });
 
 test("la UI no deja botones muertos y traduce estados, roles y acciones", () => {

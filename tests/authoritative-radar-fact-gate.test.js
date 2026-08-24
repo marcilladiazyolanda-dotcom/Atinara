@@ -467,13 +467,14 @@ test("el parser puro conserva abierto Marvel solo por ancla oficial +7 días", (
 });
 
 test("descubrimiento, preparación y persistencia usan la puerta atómica de elegibilidad", () => {
-  assert.match(edge, /upsert_market_radar_batch_with_eligibility_v1/);
-  assert.match(edge, /apply_market_radar_prepare_eligibility_v1/);
+  assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_with_eligibility_v1"/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
+  assert.match(edge, /apply_market_radar_prepare_eligibility_v4/);
   assert.doesNotMatch(edge, /rpc\(environment, "upsert_market_radar_batch_v2"/);
   assert.doesNotMatch(edge, /rpc\(environment, "record_market_radar_fact_checks"/);
   assert.doesNotMatch(edge, /rpc\(environment, "apply_market_radar_prepare_verification"/);
   assert.match(edge, /eligibility_check_input: eligibilityCheck/);
-  assert.ok(edge.indexOf("apply_market_radar_prepare_eligibility_v1") < edge.indexOf("if (!applied?.ok)"));
+  assert.ok(edge.indexOf("apply_market_radar_prepare_eligibility_v4") < edge.indexOf("if (!applied?.ok)"));
   assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
   assert.match(edge, /applyDeterministicRadarEligibility\(classifiedCandidate, providerDecision, now\)/);
   assert.match(edge, /ELIGIBILITY_SCAN_UNAVAILABLE/);
@@ -679,7 +680,7 @@ test("un borrador Radar confirma en privado y renueva una ligadura exacta antes 
     ? admin.indexOf("async function requestReview", publishStartUi)
     : admin.indexOf("async function loadRadar", publishStartUi));
   assert.doesNotMatch(confirmUi, /ensureRadarDraftEligibility\(draft\)/);
-  assert.match(confirmUi, /rpc\("confirm_market_draft_review_v2"/);
+  assert.match(confirmUi, /rpc\("confirm_market_draft_review_v3"/);
   assert.ok(publishUi.indexOf("ensureRadarDraftEligibility(draft)") < publishUi.indexOf('rpc("publish_market_draft_v2"'));
   assert.match(admin, /confirmationRequested &&/);
   assert.match(admin, /publicationRequested &&/);

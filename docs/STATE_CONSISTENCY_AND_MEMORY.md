@@ -14,17 +14,17 @@ fecha. La frontera temporal permanece en `family_sort_at` y en
 `family_semantics.temporal_boundary`; nunca sustituye a la opción como
 `family_child_key`.
 
-El trigger de candidatas solo reutiliza una identidad previa si `family_key`,
-`family_child_key` y `family_version` coinciden con la proyección entrante.
-Una actualización normal puede así corregir una identidad SQL histórica
-divergente, mientras una segunda escritura factual idéntica conserva la ruta
-rápida. La RPC administrativa filtra y ordena horizontes mediante
+Las candidatas v3 aceptan únicamente la proyección familiar v5 calculada por el
+normalizador vigente; los triggers v4 se ejecutan solo para expedientes legacy y
+no pueden reescribirla. Una actualización normal corrige así una identidad SQL
+histórica divergente sin hacer compatible el snapshot antiguo. La RPC
+administrativa filtra y ordena horizontes mediante
 `market_radar_candidate_horizon_at_v1`: frontera familiar superior/exacta o
 evaluación, `atinara_closes_at` y, como último recurso, cierre técnico del
 proveedor. Una frontera inferior `gt/gte` es el inicio y no el fin; no desplaza
 el cierre efectivo. La lista excluye finales ya vencidos.
 
-Cuando `radar_candidate_id` vincula un borrador, su identidad familiar v4 se
+Cuando `radar_candidate_id` vincula un borrador, su identidad familiar v4 o v5 se
 proyecta desde la candidata autoritativa en vez de reinterpretar la opción a
 partir de texto editorial incompleto. Al materializar, el mercado hereda la
 identidad del borrador. La cadena conserva el bloqueo exacto cross-provider sin
@@ -32,6 +32,60 @@ convertir una opción hermana en duplicado y sin conceder publicación automáti
 La referencia exacta `market_id` prevalece; antes de materializar solo cuenta
 una intención `human_confirmed` o `scheduled`, y dos intenciones publicables con
 el mismo slug detienen la proyección en vez de elegir un borrador arbitrario.
+
+### Completitud del padre y transición de snapshots Radar
+
+Una fila raw del proveedor y una candidata canónica actual son memorias
+distintas. `atinara-radar-v3` solo proyecta una hija cuando el snapshot
+append-only `atinara-radar-parent-reconciliation-v1` demuestra el padre y el
+registro `atinara-radar-child-projection-v1` demuestra su identidad. Una fila
+v2 se conserva como historia, pero no puede aparecer en el catálogo actual ni
+iniciar un borrador nuevo.
+
+La intención durable declara además un parent manifest. Cada padre registra
+total declarado, descubierto, contabilizado, identificado, pendiente, cerrado,
+eliminado, duplicado y conflictivo, junto a paginación, huella y evidencia. SQL
+recalcula los recuentos desde las hijas; no confía en sumas del runtime. Un
+refresh puede terminar correctamente y contener un padre
+`incomplete_provider_metadata`: la ejecución está cerrada, pero ese padre solo
+aparece en «Reconciliación del proveedor» y no como catálogo o rechazo.
+
+Identidad y disponibilidad son ejes separados. Un placeholder inactivo sigue
+siendo primero `unresolved_placeholder`; no se convierte en un mercado real
+rechazado. Su etiqueta raw, IDs y respuestas oficiales se conservan. Solo una
+etiqueta demostrada por el mismo proveedor produce identidad canónica. Una
+categórica resuelta exige `option:<slug>` y rechaza cualquier label temporal.
+La corrección de identidad no modifica mercados o borradores legacy: una ruta
+ya preparada conserva compatibilidad exacta, mientras toda preparación nueva
+exige padre completo.
+
+La promoción de candidatas y la finalización de la intención comparten una sola
+transacción SQL. Los batches permanecen durables como staging, pero ninguna
+hija se proyecta con el padre nuevo hasta que todos los batches terminan y el
+snapshot pasa a terminal. Un fallo revierte la promoción completa y deja la
+intención reanudable sobre el último catálogo válido.
+
+El service role solo puede entrar por el wrapper atómico y por el finalizador
+v5 que separa `candidate_feed` de `source_enrichment`; los procesadores v1/v2 y
+finalizadores v3/v4 son internos del owner. El commit extiende su propio lease a
+120 segundos frente al timeout RPC de 90. Cada refresh compara todas las
+occurrences del último snapshot durable —no solo las heredadas originalmente de
+v2— y acepta un rename/move únicamente por intersección de aliases fuertes. Un
+slug es fallback solo si no existe ID/condition/token y es único en el scope.
+
+Las candidatas v3 ya preparadas no se reescriben como nuevas. Si la hija actual
+conserva identidad y opción exactas, el commit reata únicamente los punteros
+append-only; esos IDs técnicos no elevan `preparation_revision`. Una huella
+material, una disponibilidad no abierta o una identidad distinta sí deja el
+expediente stale y obliga a revalidar. Los rechazos reales cerrados/inactivos
+siguen visibles mediante el contrato de reconciliación bound, sin adquirir
+autoridad para avanzar.
+
+La detección de duplicado exacto se repite bajo una identidad y advisory lock
+comunes V4/V5 al preparar, guardar, confirmar y publicar. Un match live se
+persiste como check `duplicate`, rechazo e issue ledger idempotentes; no queda
+como un 409 efímero. Colisiones de slug, Unicode, puntuación o etiquetas iguales
+con IDs fuertes distintos son conflicto de proveedor, nunca prueba de duplicado.
 
 ### Guardado Radar y replay del expediente experto
 
@@ -60,12 +114,13 @@ poseen la capacidad `candidate_feed`; Tavily posee `source_enrichment`. Una
 caída de enriquecimiento nunca convierte el catálogo de candidatas en parcial o
 indisponible.
 
-Las candidatas saneadas se sellan en un manifest de hasta 240 elementos y se
-procesan en lotes durables de hasta 24. Cada elemento conserva ordinal e
+Las candidatas saneadas se sellan en un manifest de hasta 480 elementos y se
+dividen en lotes durables de hasta 24. Cada elemento conserva ordinal e
 `eligibility_attempt_id`; un replay exacto no crea otro check, cuarentena,
-evento o histórico. Un fallo técnico mantiene el lote pendiente para reanudar;
-una fila inválida se aísla una sola vez. El cursor no vive en el navegador ni en
-la respuesta de una Edge.
+evento o histórico. La promoción procesa todos los lotes dentro de un único
+commit; una fila inválida se aísla una sola vez y un fallo técnico revierte la
+promoción sin exponer una familia parcial. El cursor no vive en el navegador ni
+en la respuesta de una Edge.
 
 El circuito se serializa por proveedor y capacidad, con un único probe
 `half_open`. La finalización bloquea intención, circuito y snapshot, y crea una
@@ -218,14 +273,14 @@ El rollback a v1 cambia el modo de transporte o el bundle de una Edge, pero no b
 | Preparar desde Radar | `admin-markets.js` | `save_market_draft_from_radar` | Versión del borrador y lock de candidata | Guarda y reserva candidata en una transacción; misma UUID | Una sola reserva; replay exacto no reescribe procedencia | Procedencia y `RADAR_DRAFT_PREPARED` |
 | Actualizar Radar | `radar-refresh-request.js` | Edge `market-radar` → intención/lotes/finalización v2/v3 | UUID, actor, huella, lease, manifest y cursor | Claim antes de red; lote durable; un histórico/snapshot | Doble clic comparte intención; replay no repite lote ni final | Candidatas/checks/cuarentenas aislados; salud por capacidad |
 | Radar + Agente Editor | puente de `admin-markets.html` | `save_market_draft_from_radar_intelligence` | Versión, candidata, ejecución experta y binding | Guardado, procedencia y binding en una transacción | Botón bloqueado; replay exige UUID, contrato, fuentes y binding exactos y no escribe | Dictamen y Plan de Resolución vinculados; nunca publica |
-| Borrador con incidencias | puente del Editor | `save_market_draft_from_expert_with_issues_v1` | Candidata, run y `issue_id` exactos | Crea borrador privado y enlaces append-only; no concede binding de elegibilidad | Replay exacto conserva una sola ocurrencia | Responsable, bloqueo y siguiente acción sobreviven al handoff |
+| Borrador con incidencias | puente del Editor | `save_market_draft_from_expert_with_issues_v2` (`v1` delega por compatibilidad) | Candidata, run, familia v4/v5 e `issue_id` exactos | Crea borrador privado y enlaces append-only; no concede binding de elegibilidad | Replay exacto conserva una sola ocurrencia | Responsable, bloqueo y siguiente acción sobreviven al handoff |
 | Descubrir oportunidades oficiales | `admin-markets.js` | Edge `data-observatory` → `begin/finish_official_opportunity_discovery_v2` | UUID, actor, huella e índice único antes de red | Una fila técnica; `FOR UPDATE`; insert o refresh condicional; payload idéntico no-op | Doble submit comparte promesa; retry ambiguo reutiliza UUID; replay no entra en red | `success`, `zero_results`, `partial` o `technical_failure` sin consulta, HTML ni URL fallida |
 | Datos y tendencias | `admin-markets.js` | `save_market_draft_from_intelligence` | Solo creación y ejecución experta válida | Guardado y binding en una transacción; UUID obligatoria | Una sola creación | Origen, contrato, fuentes y feedback persistidos |
 | Aplicar propuesta del Agente Editor | `admin-markets.js` / puente | RPC anteriores y `bind_market_draft_intelligence` | Versión y origen inmutables | Binding repetido compara contrato+fuentes y hace no-op | UI bloqueada; mismatch falla | Plan versionado si cambia |
-| Corrector Experto | `market-draft-fixer.js` | Edge `market-draft-fixer` → check PRIMARY v1 → `begin_market_draft_repair_workflow_v1` → `apply_market_draft_expert_repair_with_checkpoint_v1` o checkpoint no-op → Edge `validate-market-draft` → `complete_market_draft_repair_workflow_v1` / reconciliación | `expected_version`; issue IDs exactas; fuente primaria atestada; el resultado antiguo no puede guardar | Checkpoint, apply, transición y proyección quedan recuperables; replay sella una finalización ya aplicada sin otra inferencia | UI bloqueada; como máximo una versión; retry reanuda o falla cerrado | Solo issues del owner Corrector; propuesta, fuente, campos, binding y review attempt enlazados; nunca confirma/publica |
+| Corrector Experto | `market-draft-fixer.js` | Edge `market-draft-fixer` → check PRIMARY v1 → `begin_market_draft_repair_workflow_v1` → `apply_market_draft_expert_repair_with_checkpoint_v1` o checkpoint no-op → Edge `validate-market-draft` → `complete_market_draft_repair_workflow_v1` / reconciliación | `expected_version`; issue IDs exactas; fuente primaria atestada; orden `candidate → workflow advisory → draft → attempt`; el resultado antiguo no puede guardar | Checkpoint, apply, transición y proyección quedan recuperables; replay sella una finalización ya aplicada sin otra inferencia | UI bloqueada; como máximo una versión; retry reanuda o falla cerrado | Solo issues del owner Corrector; propuesta, fuente, campos, binding y review attempt enlazados; nunca confirma/publica |
 | Solicitar revisión | `admin-markets.js` | Edge `validate-market-draft` → `begin_market_draft_review_v2` → `record_market_draft_review_with_issues_v1` | UUID de intento; lock de borrador; versión/huella y check PRIMARY exacta | Inicio, issues, enlaces al `review_attempt` y finalización idempotentes; respuesta tardía `stale` | Botón bloqueado; replay lee las issues autoritativas; un retry técnico crea otro intento | Intento técnico/contenido separado de revisión efectiva; terminal prevalece en fresh y replay |
 | Confirmar revisión | `admin-markets.js` | `confirm_market_draft_review_v2` | `expected_version`, huella, revisión, binding e issues `human_confirmation`/terminal | Wrapper estructurado; confirmación repetida es no-op; `force_review` compatible exige carry-forward auditado | Botón bloqueado; retry devuelve confirmación existente sin borrar blockers | `HUMAN_CONFIRMATION_RECORDED` o `HUMAN_CONFIRMATION_CARRIED_FORWARD`; nunca se atribuye una acción nueva al modelo |
-| Programar / publicar | `admin-markets.js` / Edge `publish-scheduled-markets` | `publish_market_draft_v2` / `publish_due_market_drafts_v2` → revalidación PRIMARY service-only → writer canónico | Lock, versión, aprobación, confirmación, binding, baseline e incidencias actuales | UUID de intento; check fresca comparada con baseline; segundo pase programado solo tras atestación equivalente | Replay no duplica mercado; cambio vuelve a Corrector; baseline legacy vuelve al Validator; fallo técnico conserva autoridad | Programación/publicación y revalidación auditadas; un draft programado se edita solo después de cancelación explícita |
+| Programar / publicar | `admin-markets.js` / Edge `publish-scheduled-markets` | `publish_market_draft_v2` / `publish_due_market_drafts_v2` → revalidación PRIMARY service-only → writer canónico | Orden `candidate → workflow advisory → draft`; versión, aprobación, confirmación, binding, baseline e incidencias actuales | UUID de intento; check fresca comparada con baseline; dos workers reclaman con `FOR UPDATE SKIP LOCKED`; segundo pase programado solo tras atestación equivalente | Replay no duplica mercado; cambio vuelve a Corrector; baseline legacy vuelve al Validator; fallo técnico conserva autoridad | Programación/publicación y revalidación auditadas; un draft programado se edita solo después de cancelación explícita |
 | Verificar binding | `admin-markets.js` | Edge `market-source-monitor` y RPC de binding | Lock/estado de binding y plan versionado | Resultado persistido en Supabase | UI bloqueada; repetir revalida, no crea mercado | Estado de validación y problemas trazables |
 | Armar / pausar monitor | `admin-markets.js` | Edge `market-source-monitor` | Transición de estado comprobada | Cada transición es autoritativa | UI bloqueada; estados incompatibles fallan | Queda auditado; no resuelve y no activa el scheduler global |
 | Capturar evidencia | `admin-resolution.js` | Edge `market-source-monitor` → snapshot/result RPC | Binding vigente; huella de evidencia | Snapshot y ejecución son persistentes; un valor ausente no se vuelve cero | Botón bloqueado; capturas repetidas son historial, no una resolución | Evidencia y paquete recuperables; nunca resuelve solo |

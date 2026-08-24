@@ -75,7 +75,7 @@ begin
        'public.get_active_market_radar_refresh_v1(text,text)','execute')
      or has_function_privilege('authenticated',
        'public.process_market_radar_refresh_batch_v1(uuid,text,text,uuid)','execute')
-     or not has_function_privilege('service_role',
+     or has_function_privilege('service_role',
        'public.process_market_radar_refresh_batch_v1(uuid,text,text,uuid)','execute')
      or has_table_privilege('service_role','private.market_radar_refresh_intents_v1','select')
      or has_table_privilege('service_role','private.market_radar_provider_runs','update')
@@ -237,6 +237,8 @@ begin
     raise exception 'TEST_RADAR_RESUME_SEAL_REPLAY_INVALID: % %',sealed,replay;
   end if;
 
+  -- El primitive v1 permanece probado desde la sesión owner de esta matriz,
+  -- pero el cutover de reconciliación revoca su invocación directa a service_role.
   processed:=public.process_market_radar_refresh_batch_v1(
     request_id_value,'kalshi','candidate_feed',lease_token_value
   );

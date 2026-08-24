@@ -658,10 +658,33 @@ function correctorWorkflowIssues(issues: JsonRecord[]): JsonRecord[] {
       .includes(cleanText(issue.repairability,40)));
 }
 
+function providerContractRepairCodes(issue: JsonRecord): string[] {
+  const providerChild = isRecord(issue.current_value) && isRecord(issue.current_value.provider_child)
+    ? issue.current_value.provider_child : {};
+  const prior = isRecord(providerChild.prior_provider_contract)
+    ? providerChild.prior_provider_contract : {};
+  const current = isRecord(providerChild.provider_contract)
+    ? providerChild.provider_contract : {};
+  const changed = (fields: string[]) => fields.some((field) => prior[field] !== current[field]);
+  const codes: string[] = [];
+  if (changed(["source_close_at", "source_resolution_deadline"])) {
+    codes.push("TEMPORAL_INCOHERENCE");
+  }
+  if (changed([
+    "source_title", "source_question", "source_description", "source_resolution_rules",
+    "source_resolution_url", "external_event_url", "external_market_url",
+  ])) {
+    codes.push("MISSING_RESOLUTION_SOURCE");
+  }
+  if (!codes.length) codes.push("INVALID_QUESTION");
+  return codes;
+}
+
 function contextWithWorkflowIssues(context: JsonRecord, workflowIssues: JsonRecord[]): JsonRecord {
-  const mappedCodes = workflowIssues.map((issue) => {
+  const mappedCodes = workflowIssues.flatMap((issue) => {
     const code = cleanText(issue.issue_code, 100);
-    return WORKFLOW_TO_REGISTRY_ISSUE[code as keyof typeof WORKFLOW_TO_REGISTRY_ISSUE] || code;
+    if (code === "PROVIDER_CHILD_CONTRACT_CHANGED") return providerContractRepairCodes(issue);
+    return [WORKFLOW_TO_REGISTRY_ISSUE[code as keyof typeof WORKFLOW_TO_REGISTRY_ISSUE] || code];
   }).filter((code) => VALIDATOR_CONTENT_ISSUE_CODE_SET.has(code));
   const existingCodes = Array.isArray(context.issue_codes) ? context.issue_codes : [];
   return {

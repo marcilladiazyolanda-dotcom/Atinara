@@ -151,7 +151,7 @@ test("el frontend confirma sin Radar y publica solo después de revalidar y liga
   assert.match(confirmBody, /confirm_market_draft_review/);
   assert.match(publishBody, /ensureRadarDraftEligibility/);
   assert.match(publishBody, /publish_market_draft/);
-  assert.match(radarEdge, /get_market_radar_candidate_for_draft_revalidation_v2/);
+  assert.match(radarEdge, /get_market_radar_candidate_for_draft_revalidation_v3/);
   assert.match(radarEdge, /bind_market_radar_draft_eligibility_v2/);
 });
 

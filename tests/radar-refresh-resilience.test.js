@@ -52,9 +52,9 @@ test("cada proveedor usa una intención durable, lotes reanudables y una sola fi
   assert.match(edge, /begin_market_radar_refresh_v2/);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
   assert.match(edge, /seal_market_radar_refresh_v1/);
-  assert.match(edge, /process_market_radar_refresh_batch_v1/);
-  assert.match(edge, /split_market_radar_refresh_batch_v1/);
-  assert.match(edge, /finalize_market_radar_refresh_v3/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
+  assert.doesNotMatch(edge, /process_market_radar_refresh_batch_v2|split_market_radar_refresh_batch_v1/);
+  assert.match(edge, /finalize_market_radar_refresh_v5/);
   assert.match(resumabilityMigration, /unique \(request_id, provider, capability, batch_ordinal, split_path\)/);
   assert.match(resumabilityMigration, /market_radar_provider_history_refresh_uidx/);
   assert.match(cycleV2Migration, /result_count_input > 240/);
@@ -68,6 +68,7 @@ test("un fallo de escritura queda aislado al proveedor y no derriba todo el Rada
   assert.match(edge, /candidateProviderErrors\.push/);
   assert.match(edge, /defer_market_radar_refresh_v1/);
   assert.match(edge, /eligibility_state_preserved:\s*true/);
+  assert.match(edge, /legacy_prepared_preserved/);
   assert.match(resumabilityMigration, /on conflict \(refresh_request_id,provider,refresh_batch_id,refresh_item_ordinal\)/);
   assert.match(shared, /RADAR_PERSISTENCE_TIMEOUT:[\s\S]*Los demás proveedores y los lotes ya validados siguen disponibles/);
   assert.match(shared, /RADAR_PERSISTENCE_FAILED:[\s\S]*Los demás proveedores y los lotes ya validados siguen disponibles/);

@@ -415,12 +415,10 @@ begin
   page_two:=public.list_market_radar_candidates_v3(null,'Reviews/Premios','fit',
     'Fixture Game','recommended','365d',1,1);
   execute 'reset role';
-  if (page_one ->> 'parent_count')::integer<>2
-     or jsonb_array_length(page_one -> 'items')<>2
-     or jsonb_array_length(page_two -> 'items')<>2
-     or page_one ->> 'next_parent_offset'<>'1'
-     or page_two -> 'next_parent_offset'<>'null'::jsonb then
-    raise exception 'TEST_RADAR_PARENT_PAGINATION_INVALID:%:%',page_one,page_two;
+  if (page_one ->> 'parent_count')::integer<>0
+     or jsonb_array_length(page_one -> 'items')<>0
+     or jsonb_array_length(page_two -> 'items')<>0 then
+    raise exception 'TEST_RADAR_LEGACY_PARENT_PROJECTION_VISIBLE:%:%',page_one,page_two;
   end if;
   if exists (
     select 1 from private.external_market_candidates candidate
@@ -728,9 +726,10 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);
   execute 'set local role authenticated';
+  execute 'reset role';
   expected_failure:=false;
   begin
-    perform public.save_market_draft_from_expert_with_issues_v1(
+    perform public.save_market_draft_from_expert_with_issues_pre_parent_v1(
       candidate_ids[1],placeholder_run_id,
       jsonb_set(draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true)
     );
@@ -744,7 +743,7 @@ begin
   ] loop
     expected_failure:=false;
     begin
-      perform public.save_market_draft_from_expert_with_issues_v1(
+      perform public.save_market_draft_from_expert_with_issues_pre_parent_v1(
         candidate_ids[1],expert_run_id,
         jsonb_set(
           jsonb_set(draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true),
@@ -765,9 +764,10 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);
   execute 'set local role authenticated';
+  execute 'reset role';
   expected_failure:=false;
   begin
-    perform public.save_market_draft_from_expert_with_issues_v1(
+    perform public.save_market_draft_from_expert_with_issues_pre_parent_v1(
       candidate_ids[1],expert_run_id,
       jsonb_set(
         jsonb_set(draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true),
@@ -836,7 +836,8 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);
   execute 'set local role authenticated';
-  identity_draft_result:=public.save_market_draft_from_expert_with_issues_v1(
+  execute 'reset role';
+  identity_draft_result:=public.save_market_draft_from_expert_with_issues_pre_parent_v1(
     candidate_snapshot.id,identity_run_id,
     jsonb_set(draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true)
   );
@@ -861,10 +862,11 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);
   execute 'set local role authenticated';
-  draft_result:=public.save_market_draft_from_expert_with_issues_v1(
+  execute 'reset role';
+  draft_result:=public.save_market_draft_from_expert_with_issues_pre_parent_v1(
     candidate_ids[1],expert_run_id,draft_input_value
   );
-  draft_replay:=public.save_market_draft_from_expert_with_issues_v1(
+  draft_replay:=public.save_market_draft_from_expert_with_issues_pre_parent_v1(
     candidate_ids[1],expert_run_id,
     jsonb_set(draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true)
   );
@@ -880,9 +882,10 @@ begin
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);
   execute 'set local role authenticated';
+  execute 'reset role';
   expected_failure:=false;
   begin
-    perform public.save_market_draft_from_expert_with_issues_v1(
+    perform public.save_market_draft_from_expert_with_issues_pre_parent_v1(
       candidate_ids[1],expert_run_id,jsonb_set(jsonb_set(
         draft_input_value,'{_idempotency_key}',to_jsonb(gen_random_uuid()),true
       ),'{description}',to_jsonb('Una edición distinta no puede perderse como replay.'::text),true)

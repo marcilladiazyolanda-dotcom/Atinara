@@ -39,6 +39,8 @@
       candidates: [],
       groups: [],
       rejected: { total: 0, counts: {}, items: [] },
+      parentReconciliations: [],
+      selectedReconciliation: null,
       providers: [],
       errors: [],
       candidateProviders: [],
@@ -62,7 +64,10 @@
       order: "recommended",
       rejectionReason: "current",
       parentOffset: 0,
-      page: { parent_count: 0, parent_offset: 0, parent_limit: 60, next_parent_offset: null }
+      parentOffsetHistory: [],
+      reconciliationOffset: 0,
+      reconciliationPage: { total: 0, offset: 0, limit: 20, previous_offset: null, next_offset: null, snapshot_available: false },
+      page: { parent_count: 0, parent_offset: 0, parent_limit: 60, previous_parent_offset: null, next_parent_offset: null }
     },
     radarPrefill: null,
     radarLoading: false,
@@ -94,6 +99,10 @@
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
   const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Fuentes oficiales" };
   const RADAR_POLICY_VERSION = "atinara-prediction-policy-v5";
+  const RADAR_NORMALIZER_VERSION = "atinara-radar-v3";
+  const RADAR_FAMILY_VERSION = "atinara-market-family-v5";
+  const RADAR_RECONCILIATION_VERSION = "atinara-radar-parent-reconciliation-v1";
+  const RADAR_CHILD_PROJECTION_VERSION = "atinara-radar-child-projection-v1";
   const RADAR_REASON_LABELS = {
     EVENT_ALREADY_RESOLVED: "Evento ya resuelto",
     SOURCE_STALE: "Información desactualizada",
@@ -106,6 +115,9 @@
     PROVIDER_OPTION_INACTIVE: "Opción no disponible",
     PROVIDER_EVENT_NOT_FOUND: "Evento de origen no disponible",
     PROVIDER_CHILD_NOT_FOUND: "Opción de origen no disponible",
+    PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED: "Identidad del proveedor pendiente",
+    RADAR_PARENT_RECONCILIATION_INCOMPLETE: "Reconciliación del proveedor pendiente",
+    PROVIDER_PARENT_COUNT_INCONSISTENT: "Recuento del proveedor incoherente",
     RESOLUTION_SOURCE_AUTHORITY_PENDING: "Fuente oficial pendiente",
     OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "Comprobación oficial temporalmente no disponible",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Selección oficial en comprobación",
@@ -127,6 +139,9 @@
     PROVIDER_OPTION_INACTIVE: "Esta opción no está negociable; el evento padre conserva otras opciones abiertas.",
     PROVIDER_EVENT_NOT_FOUND: "El proveedor ya no ofrece el evento indicado.",
     PROVIDER_CHILD_NOT_FOUND: "La opción ya no pertenece al evento de origen.",
+    PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED: "Radar conserva la hija y sus identificadores, pero el proveedor todavía no demuestra una identidad real utilizable.",
+    RADAR_PARENT_RECONCILIATION_INCOMPLETE: "El evento padre no puede entrar al catálogo hasta contabilizar y reconciliar todas sus hijas.",
+    PROVIDER_PARENT_COUNT_INCONSISTENT: "El número de hijas declarado no coincide con las observadas; no se proyecta el padre como completo.",
     RESOLUTION_SOURCE_AUTHORITY_PENDING: "Atinara volverá a buscar automáticamente una fuente resolutiva oficial y exacta para esta opción.",
     OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "La consulta de fuentes oficiales no terminó. Es un fallo técnico reintentable y no una prueba de que el evento esté resuelto.",
     OFFICIAL_SELECTION_RECHECK_REQUIRED: "Atinara ha localizado una selección oficial posiblemente ya publicada. Mantiene oculto el evento mientras completa la comprobación automática.",
@@ -144,6 +159,7 @@
     RADAR_ELIGIBILITY_REQUIRED: "La elegibilidad debe renovarse",
     RESOLUTION_PRIMARY_SOURCE_REQUIRED: "Falta una fuente primaria oficial",
     CHILD_IDENTITY_MISMATCH: "La identidad de la opción no coincide en todos los campos",
+    PROVIDER_CHILD_CONTRACT_CHANGED: "El proveedor cambió reglas, fuente o fechas de esta opción",
   };
   const WORKFLOW_OWNER_LABELS = {
     radar: "Radar", editor: "Agente Editor", validator: "Validator",
@@ -299,7 +315,51 @@
   }
 
   function radarCandidatePolicyCurrent(candidate) {
-    return candidate?.eligibility_policy_version === RADAR_POLICY_VERSION;
+    return candidate?.eligibility_policy_version === RADAR_POLICY_VERSION
+      && candidate?.normalizer_version === RADAR_NORMALIZER_VERSION
+      && candidate?.family_version === RADAR_FAMILY_VERSION
+      && candidate?.parent_reconciliation_version === RADAR_RECONCILIATION_VERSION
+      && candidate?.canonical_projection_version === RADAR_CHILD_PROJECTION_VERSION;
+  }
+
+  function radarIntegerCount(value) {
+    if (value === null || value === undefined || value === "" || (typeof value === "string" && !value.trim())) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  function radarParentComplete(candidate) {
+    const declared = radarIntegerCount(candidate?.provider_declared_child_count);
+    const discovered = radarIntegerCount(candidate?.provider_discovered_child_count);
+    const accounted = radarIntegerCount(candidate?.provider_accounted_child_count);
+    const unresolved = radarIntegerCount(candidate?.provider_unresolved_child_count);
+    const conflicts = radarIntegerCount(candidate?.provider_conflict_child_count);
+    return candidate?.parent_reconciliation_status === "complete"
+      && candidate?.parent_reconciliation_version === RADAR_RECONCILIATION_VERSION
+      && /^[a-f0-9]{64}$/.test(String(candidate?.parent_reconciliation_fingerprint || ""))
+      && Boolean(String(candidate?.external_event_id || candidate?.provider_parent_id || "").trim())
+      && candidate?.provider_pagination_exhausted === true
+      && declared !== null && discovered === declared && accounted === declared
+      && unresolved === 0 && conflicts === 0;
+  }
+
+  function radarCanonicalChildProjectionValid(candidate) {
+    if (candidate?.canonical_projection_version !== RADAR_CHILD_PROJECTION_VERSION) return false;
+    if (!["categorical_outcomes", "participant_options", "platform_variants"]
+      .includes(candidate?.family_type)) return true;
+    const familyKey = String(candidate?.family_child_key || "").trim();
+    const canonicalKey = String(candidate?.canonical_child_key || "").trim();
+    const familyLabel = String(candidate?.family_child_label || "").trim();
+    const canonicalLabel = String(candidate?.canonical_child_label || "").trim();
+    const invalidTemporalLabel = /(?:^\s*deadline:|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})|^\s*(?:lt|lte|gt|gte)\s+\d|^\s*(?:ET|year)\s*$|^\s*(?:before|after|by|on\s+or\s+before|on\s+or\s+after|during|in|antes\s+de|despu[eé]s\s+de|hasta|durante|en)\s+\d{4}(?:\s|$)|^\s*\d{4}(?:\s*\((?:ET|year)\))?\s*$)/i;
+    return candidate?.identity_status === "resolved"
+      && ["identified_real_option", "aggregate_other_option", "tie_option", "no_winner_option", "provider_closed_child"]
+        .includes(candidate?.identity_classification)
+      && /^option:[a-z0-9][a-z0-9-]{0,237}$/.test(canonicalKey)
+      && familyKey === canonicalKey
+      && Boolean(canonicalLabel)
+      && familyLabel.localeCompare(canonicalLabel, undefined, { sensitivity: "base" }) === 0
+      && !invalidTemporalLabel.test(canonicalLabel);
   }
 
   function radarReasonDescription(candidate) {
@@ -541,6 +601,18 @@
     return Object.keys(proposed).filter((field) => JSON.stringify(proposed[field]) !== JSON.stringify(saved[field]));
   }
 
+  function radarExpertBindingCompatible(prefill, payload) {
+    const contract = prefill?.contract;
+    const sources = Array.isArray(prefill?.sources) ? prefill.sources : [];
+    if (!prefill?.expertRunId || !contract || typeof contract !== "object" || Array.isArray(contract)) return false;
+    const evaluationAt = String(contract.evaluation_at || contract.window_end || "").trim();
+    const primary = sources.find((source) => source?.role === "PRIMARY_RESOLUTION");
+    return contract.contract_schema_version === "atinara-resolution-contract-v1"
+      && String(contract.canonical_statement || "").trim() === String(payload?.question || "").trim()
+      && Date.parse(evaluationAt) === Date.parse(String(payload?.evaluation_ends_at || ""))
+      && String(primary?.url || "").trim() === String(payload?.primary_source?.url || "").trim();
+  }
+
   function disabled() {
     return state.busy ? " disabled" : "";
   }
@@ -690,17 +762,35 @@
           : `No compatible · ${escapeHtml(bindingReasonText || "requiere revisión")}`}
       </p>`;
     const locked = ["scheduled", "published", "early_closed", "cancelled", "pending_resolution", "resolved", "annulled"].includes(draft.workflow_status);
-    const terminalWorkflow = workflowIssues.some((issue) => issue.blocking_scope === "terminal"
+    const blockingScopePriority = { terminal: 5, publication: 4, human_confirmation: 3, approval: 2, none: 0 };
+    const authorityIssues = workflowIssues.filter((issue) => issue.blocking_scope !== "none");
+    const dominantAuthorityIssue = [...authorityIssues].sort((left, right) =>
+      (blockingScopePriority[right.blocking_scope] || 1) - (blockingScopePriority[left.blocking_scope] || 1))[0] || null;
+    const terminalWorkflow = authorityIssues.some((issue) => issue.blocking_scope === "terminal"
       || issue.repairability === "terminal");
-    const canReview = !locked && !terminalWorkflow && !["human_confirmed", "scheduled"].includes(draft.workflow_status);
+    const reviewAuthorityBlocked = authorityIssues.some((issue) => issue.blocking_scope !== "approval"
+      || issue.owner_stage !== "validator");
+    const canReview = !locked && !reviewAuthorityBlocked
+      && !["human_confirmed", "scheduled"].includes(draft.workflow_status);
+    const confirmationAuthorityBlocked = authorityIssues.some((issue) =>
+      ["approval", "human_confirmation", "terminal"].includes(issue.blocking_scope));
     const canConfirm = Boolean(effective)
       && draft.workflow_status === "review_approved"
       && draft.review_status === "approved"
-      && binding.compatible === true;
+      && binding.compatible === true
+      && !confirmationAuthorityBlocked;
     const terminalPublication = draft.artifact_status === "publication_failed_terminal"
       || terminalWorkflow;
-    const canPublish = draft.workflow_status === "human_confirmed" && !terminalPublication;
-    const nextActionLabel = WORKFLOW_ACTION_LABELS[draft.workflow_next_action]
+    const publicationAuthorityBlocked = authorityIssues.some((issue) =>
+      ["approval", "human_confirmation", "publication", "terminal"].includes(issue.blocking_scope));
+    const canPublish = draft.workflow_status === "human_confirmed"
+      && !terminalPublication && !publicationAuthorityBlocked;
+    const effectiveNextAction = dominantAuthorityIssue?.next_action || draft.workflow_next_action;
+    const canRecoverPublication = draft.workflow_status === "human_confirmed"
+      && !terminalPublication
+      && dominantAuthorityIssue?.blocking_scope === "publication"
+      && dominantAuthorityIssue?.retryable !== false;
+    const nextActionLabel = WORKFLOW_ACTION_LABELS[effectiveNextAction]
       || (workflowIssues.length ? "Continuar con el agente responsable" : "Editar el borrador");
     const scheduledActive = draft.workflow_status === "scheduled";
     const scheduledRecovery = scheduledActive
@@ -713,7 +803,7 @@
       || draft.source_provenance?.radar_candidate_id;
     const canRecoverRadarEligibility = draft.intelligence_origin_type === "radar_candidate"
       && Boolean(recoveryCandidateId)
-      && (!draft.radar_candidate_id || draft.workflow_next_action === "refresh_draft_eligibility");
+      && (!draft.radar_candidate_id || effectiveNextAction === "refresh_draft_eligibility");
 
     return `
       <section class="admin-review-gate" aria-labelledby="admin-review-title" data-latest-attempt-classification="${escapeHtml(latestAttempt?.classification || "none")}" data-workflow-status="${escapeHtml(draft.workflow_status || "")}" data-publication-schedule-status="${escapeHtml(draft.publication_schedule_status || "")}">
@@ -745,11 +835,11 @@
             : `<a class="secondary-button" href="#admin-market-form">${escapeHtml(nextActionLabel)}</a>`}
         </div>
         <p class="admin-gate-rule">No existe una acción para omitir un rechazo o aceptar el riesgo. Cualquier cambio esencial invalida esta revisión.</p>
-        ${canPublish ? `<fieldset class="admin-publish-controls" data-state-allowed="true">
+        ${canPublish || canRecoverPublication ? `<fieldset class="admin-publish-controls" data-state-allowed="true" data-publication-recovery="${canRecoverPublication}">
           <legend>Programación o publicación</legend>
-          <label><span>Programar para (opcional)</span><input type="datetime-local" step="0.001" name="scheduled_for" form="admin-market-form"></label>
-          <button class="primary-button" type="button" data-publish-draft data-state-allowed="true"${disabled()}>Revalidar y publicar</button>
-          <p>Supabase volverá a comprobar rol, estado, versión, huella y aprobación vigente.</p>
+          ${canPublish ? `<label><span>Programar para (opcional)</span><input type="datetime-local" step="0.001" name="scheduled_for" form="admin-market-form"></label>` : ""}
+          <button class="primary-button" type="button" data-publish-draft data-state-allowed="true"${disabled()}>${canRecoverPublication ? "Revalidar evidencia y reintentar" : "Revalidar y publicar"}</button>
+          <p>${canRecoverPublication ? "Este intento conserva el mercado privado hasta superar la incidencia de publicación." : "Supabase volverá a comprobar rol, estado, versión, huella y aprobación vigente."}</p>
         </fieldset>` : scheduledActive ? `<aside class="admin-service-incident" role="status">
           <strong>${scheduledTerminal ? "La programación terminó en un estado no reintentable." : scheduledRecovery ? "La publicación programada necesita atención." : "Mercado programado y pendiente de ejecución segura."}</strong>
           <span>${scheduledRecovery ? `${escapeHtml(nextActionLabel)}. ` : ""}Los campos permanecen bloqueados. Cancela la programación antes de editar o de abrir una corrección; la autoridad compatible se conservará cuando el estado lo permita.</span>
@@ -1022,7 +1112,9 @@
           && !["resolved", "superseded"].includes(String(issue?.status || "open"))))
       && candidate.state === "available"
       && candidate.verification_status === "verified_open"
-      && candidate.eligibility_policy_version === RADAR_POLICY_VERSION
+      && radarCandidatePolicyCurrent(candidate)
+      && radarParentComplete(candidate)
+      && radarCanonicalChildProjectionValid(candidate)
       && radarEligibilityCurrent(candidate)
       && radarResolutionSourceProven(candidate)
       && !candidate.is_stale
@@ -1043,7 +1135,9 @@
   }
 
   function radarCandidateIsPlaceholder(candidate) {
-    return radarCandidateDispositionCode(candidate) === "PROVIDER_PLACEHOLDER";
+    return ["PROVIDER_PLACEHOLDER", "PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED"]
+      .includes(radarCandidateDispositionCode(candidate))
+      || candidate?.identity_status === "unresolved_placeholder";
   }
 
   function radarBlockingDuplicateMatches(candidate) {
@@ -1055,22 +1149,16 @@
   }
 
   function radarOriginalChildLabel(candidate) {
-    const payload = candidate?.provider_payload && typeof candidate.provider_payload === "object"
-      ? candidate.provider_payload
-      : {};
-    return String(
-      candidate?.family_child_label
-      || payload.yes_sub_title
-      || payload.no_sub_title
-      || ""
-    ).trim();
+    return String(candidate?.raw_provider_child_label || "").trim();
+  }
+
+  function radarCanonicalChildLabel(candidate) {
+    if (!radarCanonicalChildProjectionValid(candidate)) return "";
+    return String(candidate?.canonical_child_label || candidate?.family_child_label || "").trim();
   }
 
   function radarCandidateHeading(candidate) {
-    const question = String(candidate?.atinara_question || candidate?.source_question || candidate?.source_title || "Opción externa").trim();
-    const childLabel = radarOriginalChildLabel(candidate);
-    if (!childLabel || question.toLocaleLowerCase("es").includes(childLabel.toLocaleLowerCase("es"))) return question;
-    return `${question} · Opción del proveedor: ${childLabel}`;
+    return String(candidate?.atinara_question || radarCanonicalChildLabel(candidate) || "Opción del evento pendiente de adaptación").trim();
   }
 
   function radarAgentExecutionMarkup(candidate) {
@@ -1093,10 +1181,12 @@
   function radarChildMarkup(candidate) {
     const ready = radarCandidateReady(candidate);
     const status = radarVerificationLabel(candidate);
+    const canonicalLabel = radarCanonicalChildLabel(candidate);
+    const question = radarCandidateHeading(candidate);
     return `<li class="radar-event-option">
       <div class="radar-event-option-copy">
-        <strong>${escapeHtml(radarCandidateHeading(candidate))}</strong>
-        <span>Probabilidad del proveedor: ${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · Cierre: ${escapeHtml(displayDate(candidate.source_close_at))}</span>
+        <strong>${escapeHtml(canonicalLabel || "Identidad canónica pendiente")}</strong>
+        <span>${escapeHtml(question)} · Probabilidad del proveedor: ${escapeHtml(displayProbability(candidate.source_probability_yes ?? candidate.source_probability))} · Cierre: ${escapeHtml(displayDate(candidate.source_close_at))}</span>
       </div>
       <div class="radar-event-option-actions">
         <span class="radar-quality-badge" data-quality="${escapeHtml(candidate.quality_status)}">${escapeHtml(status)}</span>
@@ -1114,13 +1204,15 @@
     const groupKey = String(group.event_group_key || `${group.provider || "external"}:${groupIndex}`);
     const expanded = state.radar.expandedGroups.has(groupKey);
     const candidates = expanded ? allCandidates : highlightedCandidates;
-    const hiddenCount = Math.max(0, Number(group.child_count || allCandidates.length || 0) - candidates.length);
-    const childCount = Number(group.child_count || allCandidates.length || candidates.length);
+    const declaredCount = radarIntegerCount(group.provider_declared_child_count);
+    const accountedCount = radarIntegerCount(group.provider_accounted_child_count);
+    const childCount = declaredCount ?? allCandidates.length;
+    const hiddenCount = Math.max(0, allCandidates.length - candidates.length);
     const summary = childCount === 1
-      ? "1 opción encontrada para este evento."
+      ? "1 opción declarada y contabilizada por el proveedor."
       : expanded
-        ? `${childCount} opciones del mismo evento. Se muestran todas con su probabilidad individual.`
-        : `${childCount} opciones del mismo evento. Se muestran las tres más relevantes.`;
+        ? `${childCount} opciones declaradas · ${accountedCount ?? "recuento pendiente"} contabilizadas. Se muestran todas las candidatas de este filtro.`
+        : `${childCount} opciones declaradas y contabilizadas. Se muestran las tres más relevantes.`;
     const optionsId = `radar-group-options-${groupIndex}`;
     return `<article class="radar-candidate-card radar-event-card" data-verification="${escapeHtml(group.verification_status)}" data-child-count="${escapeHtml(childCount)}">
       <header>
@@ -1130,9 +1222,24 @@
       <h3>${escapeHtml(group.title || "Evento externo")}</h3>
       <p class="radar-event-summary">${escapeHtml(summary)}</p>
       <ul class="radar-event-options" id="${optionsId}">${candidates.map(radarChildMarkup).join("")}</ul>
-      ${hiddenCount ? `<p class="radar-event-more">Quedan ${escapeHtml(hiddenCount)} opciones por mostrar.</p>` : ""}
-      <footer>${childCount > highlightedCandidates.length ? `<button class="secondary-button" type="button" data-radar-toggle-group="${valueAttribute(groupKey)}" aria-expanded="${String(expanded)}" aria-controls="${optionsId}">${expanded ? "Mostrar solo las 3 destacadas" : `Ver las ${childCount} opciones`}</button>` : ""}${externalLink(group.external_event_url, "Abrir evento original", "primary")}</footer>
+      ${hiddenCount ? `<p class="radar-event-more">Quedan ${escapeHtml(hiddenCount)} opciones identificadas por mostrar.</p>` : ""}
+      <footer>${allCandidates.length > highlightedCandidates.length ? `<button class="secondary-button" type="button" data-radar-toggle-group="${valueAttribute(groupKey)}" aria-expanded="${String(expanded)}" aria-controls="${optionsId}">${expanded ? "Mostrar solo las 3 destacadas" : `Ver las ${allCandidates.length} opciones identificadas`}</button>` : ""}${externalLink(group.external_event_url, "Abrir evento original", "primary")}</footer>
     </article>`;
+  }
+
+  function radarCurrentGroupProjection(group) {
+    const candidates = Array.isArray(group?.candidates) ? group.candidates : [];
+    if (!candidates.length || candidates.some((candidate) =>
+      !radarCandidatePolicyCurrent(candidate)
+        || !radarParentComplete(candidate)
+        || !radarCanonicalChildProjectionValid(candidate))) return null;
+    const currentIds = new Set(candidates.map((candidate) => String(candidate.id || "")));
+    return {
+      ...group,
+      candidates,
+      top_candidates: (Array.isArray(group.top_candidates) ? group.top_candidates : [])
+        .filter((candidate) => currentIds.has(String(candidate.id || ""))),
+    };
   }
 
   function radarRejectionMarkup(candidate) {
@@ -1149,7 +1256,10 @@
 
   function radarRejectionsMarkup() {
     const rejected = state.radar.rejected || { total: 0, counts: {}, items: [] };
-    const items = Array.isArray(rejected.items) ? rejected.items : [];
+    const items = (Array.isArray(rejected.items) ? rejected.items : [])
+      .filter((candidate) => candidate?.identity_status === "resolved"
+        && radarParentComplete(candidate)
+        && radarCanonicalChildProjectionValid(candidate));
     if (!items.length) return "";
     const policyItems = items.filter(radarCandidatePolicyCurrent);
     const outdatedItems = items.filter((candidate) => !radarCandidatePolicyCurrent(candidate));
@@ -1176,10 +1286,161 @@
       ? `<div class="radar-rejection-grid">${visibleItems.map(radarRejectionMarkup).join("")}</div>`
       : `<div class="admin-empty-state radar-empty"><strong>No hay rechazos con este filtro</strong><span>Elige otro motivo para consultar el archivo de decisiones.</span></div>`;
     return `<section class="radar-rejections" aria-labelledby="radar-rejections-title">
-      <header><div><p class="eyebrow">Auditoría de elegibilidad</p><h3 id="radar-rejections-title">${escapeHtml(rejected.total || items.length)} candidatas registradas</h3></div><p>Los eventos ya resueltos y las evaluaciones del criterio anterior quedan ocultos por defecto. Puedes filtrar cada motivo sin exponer códigos internos.</p></header>
+      <header><div><p class="eyebrow">Auditoría de elegibilidad</p><h3 id="radar-rejections-title">${escapeHtml(items.length)} candidatas reales registradas</h3></div><p>Los eventos ya resueltos y las evaluaciones del criterio anterior quedan ocultos por defecto. Puedes filtrar cada motivo sin exponer códigos internos.</p></header>
       <div class="radar-rejection-counts" role="group" aria-label="Filtrar candidatas no aptas por motivo">${filterButton("current", "Rechazos vigentes", currentItems.length)}${filterButton("all", "Todos", items.length)}${outdatedItems.length ? filterButton("outdated", "Criterio anterior", outdatedItems.length) : ""}${reasonButtons}</div>
       <p class="radar-rejection-summary" role="status">Mostrando ${escapeHtml(visibleItems.length)} de ${escapeHtml(items.length)} candidatas.</p>
       ${cards}
+    </section>`;
+  }
+
+  const RADAR_RECONCILIATION_LABELS = {
+    complete: "Completa",
+    incomplete_provider_metadata: "Metadatos del proveedor incompletos",
+    inconsistent_provider_count: "Recuento incoherente",
+    refresh_required: "Actualización pendiente",
+    provider_unavailable: "Proveedor temporalmente no disponible",
+    historical_mapping_required: "Mapeo histórico pendiente",
+    terminal_provider_corruption: "Conflicto terminal del proveedor"
+  };
+
+  const RADAR_CHILD_CLASSIFICATION_LABELS = {
+    identified_real_option: "Opción real identificada",
+    provider_placeholder_pending_resolution: "Identidad pendiente de reconciliación",
+    aggregate_other_option: "Opción agregada «Otro»",
+    tie_option: "Opción de empate",
+    no_winner_option: "Opción sin ganador",
+    provider_removed_child: "Hija eliminada por el proveedor",
+    provider_closed_child: "Hija cerrada por el proveedor",
+    provider_duplicate_child: "Duplicado exacto del proveedor",
+    provider_data_conflict: "Conflicto de datos del proveedor"
+  };
+  const RADAR_CHILD_AVAILABILITY_LABELS = {
+    open: "Abierta", closed: "Cerrada", inactive: "Inactiva", removed: "Eliminada",
+    unopened: "Aún no abierta", paused: "Pausada", unknown: "Estado no disponible"
+  };
+  const RADAR_CHILD_TRANSITION_LABELS = {
+    same: "Sin cambio", new: "Nueva", renamed: "Renombrada",
+    removed: "Retirada", moved_parent: "Movida de evento padre"
+  };
+  const RADAR_IDENTITY_EVIDENCE_RESULT_LABELS = {
+    parent_children_enumerated: "Hijas enumeradas en el padre",
+    current_child_page_enumerated: "Página actual enumerada",
+    historical_child_page_enumerated: "Página histórica enumerada",
+    child_identity_observed_in_parent: "Identidad observada en el padre",
+    identity_resolved: "Identidad resuelta",
+    provider_removed_child: "Retirada confirmada por el proveedor",
+    provider_closed_child: "Cierre confirmado por el proveedor",
+    provider_unavailable: "Proveedor temporalmente no disponible",
+    placeholder_unresolved: "Identidad todavía no disponible"
+  };
+
+  function radarCountText(value) {
+    const count = radarIntegerCount(value);
+    return count === null ? "No disponible" : String(count);
+  }
+
+  function radarReconciliationIssueMarkup(issue) {
+    if (!issue || typeof issue !== "object") return "";
+    const stageLabels = { radar: "Radar", provider_refresh: "Actualización del proveedor" };
+    const scopeLabels = { none: "Sin bloqueo", approval: "Aprobación", human_confirmation: "Confirmación humana", publication: "Publicación", terminal: "Terminal" };
+    const actionLabels = { retry_provider_refresh: "Reintentar la actualización del proveedor", resolve_provider_child_identity: "Resolver la identidad de la hija", inspect_provider_data_conflict: "Revisar el conflicto de datos del proveedor" };
+    const statusLabels = { open: "Abierta", in_progress: "En curso", waiting: "En espera", resolved: "Resuelta", superseded: "Sustituida" };
+    return `<section class="radar-reconciliation-issue"><h4>Seguimiento de la incidencia</h4><dl>
+      <div><dt>Issue</dt><dd><code>${escapeHtml(issue.issue_id || "No disponible")}</code></dd></div>
+      <div><dt>Detectada por</dt><dd>${escapeHtml(stageLabels[issue.detected_by] || issue.detected_by || "No disponible")}</dd></div>
+      <div><dt>Responsable</dt><dd>${escapeHtml(stageLabels[issue.owner_stage] || issue.owner_stage || "No disponible")}</dd></div>
+      <div><dt>Alcance bloqueado</dt><dd>${escapeHtml(scopeLabels[issue.blocking_scope] || issue.blocking_scope || "No disponible")}</dd></div>
+      <div><dt>Siguiente acción</dt><dd>${escapeHtml(actionLabels[issue.next_action] || issue.next_action || "No disponible")}</dd></div>
+      <div><dt>Estado</dt><dd>${escapeHtml(statusLabels[issue.status] || "No disponible")}</dd></div>
+    </dl></section>`;
+  }
+
+  function radarIdentityEvidenceMarkup(items) {
+    const evidence = Array.isArray(items) ? items.slice(0, 12) : [];
+    if (!evidence.length) return "<p>Evidencia de identidad no disponible.</p>";
+    return `<ul class="radar-evidence-list">${evidence.map((item) => `<li>
+      <strong>${escapeHtml(RADAR_IDENTITY_EVIDENCE_RESULT_LABELS[item.result] || "Comprobación oficial")}</strong>
+      ${item.endpoint ? ` · endpoint <code>${escapeHtml(item.endpoint)}</code>` : ""}
+      ${item.identifier ? ` · identificador <code>${escapeHtml(item.identifier)}</code>` : ""}
+      ${item.checked_at ? ` · ${escapeHtml(displayDate(item.checked_at))}` : ""}
+      ${externalLink(item.url, "Abrir evidencia oficial")}
+    </li>`).join("")}</ul>`;
+  }
+
+  function radarReconciliationMarkup() {
+    const items = Array.isArray(state.radar.parentReconciliations)
+      ? state.radar.parentReconciliations : [];
+    const page = state.radar.reconciliationPage || {};
+    const previousOffset = radarIntegerCount(page.previous_offset);
+    const nextOffset = radarIntegerCount(page.next_offset);
+    const pagination = previousOffset !== null || nextOffset !== null ? `<nav class="radar-page-controls" aria-label="Páginas de reconciliación del proveedor">
+      ${previousOffset !== null ? `<button class="secondary-button" type="button" data-radar-reconciliation-page="${escapeHtml(previousOffset)}">Conciliaciones anteriores</button>` : ""}
+      <span>Mostrando ${escapeHtml(items.length)} de ${escapeHtml(radarCountText(page.total))} padres reconciliados.</span>
+      ${nextOffset !== null ? `<button class="secondary-button" type="button" data-radar-reconciliation-page="${escapeHtml(nextOffset)}">Conciliaciones siguientes</button>` : ""}
+    </nav>` : "";
+    if (!items.length) return `<section class="radar-reconciliation-section" aria-labelledby="radar-reconciliation-title">
+      <header><div><p class="eyebrow">Integridad de catálogo</p><h3 id="radar-reconciliation-title">Reconciliación del proveedor</h3></div><p>${page.snapshot_available === false ? "No existe todavía un snapshot vigente con recuento de padres e hijas. Las filas legacy no se proyectan como catálogo actual." : "La consulta es válida y no contiene padres para estos filtros."}</p></header>${pagination}
+    </section>`;
+    const incomplete = items.filter((item) => item.reconciliation_status !== "complete").length;
+    return `<section class="radar-reconciliation-section" aria-labelledby="radar-reconciliation-title">
+      <header><div><p class="eyebrow">Integridad de catálogo</p><h3 id="radar-reconciliation-title">Reconciliación del proveedor</h3></div><p>${escapeHtml(radarCountText(page.total))} padres comprobados · ${escapeHtml(incomplete)} pendientes en esta página. Un padre incompleto no entra en candidatas ni en rechazos.</p></header>
+      <div class="radar-reconciliation-grid">${items.map((item) => {
+        const canonicalTitle = String(item.canonical_parent_label || "").trim();
+        return `<article class="radar-reconciliation-card" data-reconciliation="${escapeHtml(item.reconciliation_status)}">
+          <header><div><span class="radar-provider-badge">${escapeHtml(RADAR_PROVIDER_LABELS[item.provider] || item.provider)}</span><strong>${escapeHtml(RADAR_RECONCILIATION_LABELS[item.reconciliation_status] || "Pendiente")}</strong></div><time>${escapeHtml(displayDate(item.checked_at))}</time></header>
+          <h4>${escapeHtml(canonicalTitle || "Identidad canónica del padre pendiente")}</h4>
+          ${canonicalTitle ? "" : `<p><strong>Título original:</strong> ${escapeHtml(item.raw_provider_parent_label || "No disponible")}</p>`}
+          <p>${escapeHtml(radarCountText(item.provider_declared_child_count))} opciones declaradas · ${escapeHtml(radarCountText(item.provider_accounted_child_count))} contabilizadas · ${escapeHtml(radarCountText(item.provider_identified_child_count))} identificadas · ${escapeHtml(radarCountText(item.provider_unresolved_child_count))} pendientes de identidad.</p>
+          <p>${item.provider_pagination_exhausted === true ? "Paginación del proveedor agotada." : "La paginación del proveedor todavía no está agotada."}${item.next_retry_at ? ` Próximo reintento: ${escapeHtml(displayDate(item.next_retry_at))}.` : ""}</p>
+          ${radarReconciliationIssueMarkup(item.issue)}
+          <div class="radar-reconciliation-links">${item.id ? `<button class="primary-button" type="button" data-radar-reconciliation="${escapeHtml(item.id)}" aria-haspopup="dialog" aria-controls="radar-reconciliation-detail">Ver reconciliación</button>` : ""}${externalLink(item.external_parent_url, "Abrir evento original")}</div>
+        </article>`;
+      }).join("")}</div>${pagination}
+    </section>`;
+  }
+
+  function radarReconciliationDetailMarkup(reconciliation) {
+    if (!reconciliation) return "";
+    const children = Array.isArray(reconciliation.children) ? reconciliation.children : [];
+    const canonicalTitle = String(reconciliation.canonical_parent_label || "").trim();
+    const title = canonicalTitle || "Identidad canónica del padre pendiente";
+    const parentSources = Array.isArray(reconciliation.source_refs) ? reconciliation.source_refs : [];
+    return `<section class="radar-candidate-detail" id="radar-reconciliation-detail" role="dialog" aria-modal="false" aria-labelledby="radar-reconciliation-detail-title" tabindex="-1">
+      <header><div><p class="eyebrow">Detalle técnico bajo demanda</p><h2 id="radar-reconciliation-detail-title">${escapeHtml(title)}</h2></div><button class="secondary-button" type="button" data-radar-close-reconciliation>Cerrar</button></header>
+      <div class="radar-detail-grid"><section><h3>Recuento autoritativo</h3><dl>
+        <div><dt>ID del padre</dt><dd><code>${escapeHtml(reconciliation.provider_parent_id || "No disponible")}</code></dd></div>
+        <div><dt>Título original</dt><dd>${escapeHtml(reconciliation.raw_provider_parent_label || "No disponible")}</dd></div>
+        <div><dt>Título canónico Atinara</dt><dd>${escapeHtml(canonicalTitle || "No disponible")}</dd></div>
+        <div><dt>Declaradas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_declared_child_count))}</dd></div>
+        <div><dt>Descubiertas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_discovered_child_count))}</dd></div>
+        <div><dt>Contabilizadas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_accounted_child_count))}</dd></div>
+        <div><dt>Identificadas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_identified_child_count))}</dd></div>
+        <div><dt>Pendientes</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_unresolved_child_count))}</dd></div>
+        <div><dt>Cerradas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_closed_child_count))}</dd></div>
+        <div><dt>Eliminadas verificadas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_removed_child_count))}</dd></div>
+        <div><dt>Duplicadas</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_duplicate_child_count))}</dd></div>
+        <div><dt>Conflictos</dt><dd>${escapeHtml(radarCountText(reconciliation.provider_conflict_child_count))}</dd></div>
+        <div><dt>Nuevas</dt><dd>${escapeHtml(radarCountText(reconciliation.new_child_count))}</dd></div>
+      </dl></section><section><h3>Contrato</h3><dl>
+        <div><dt>Estado</dt><dd>${escapeHtml(RADAR_RECONCILIATION_LABELS[reconciliation.reconciliation_status] || reconciliation.reconciliation_status)}</dd></div>
+        <div><dt>Versión</dt><dd><code>${escapeHtml(reconciliation.reconciliation_version)}</code></dd></div>
+        <div><dt>Fingerprint</dt><dd><code>${escapeHtml(reconciliation.reconciliation_fingerprint)}</code></dd></div>
+        <div><dt>Paginación agotada</dt><dd>${reconciliation.provider_pagination_exhausted === true ? "Sí" : "No"}</dd></div>
+        <div><dt>Próximo reintento</dt><dd>${reconciliation.next_retry_at ? escapeHtml(displayDate(reconciliation.next_retry_at)) : "No programado"}</dd></div>
+      </dl>${radarIdentityEvidenceMarkup(parentSources)}</section></div>
+      ${radarReconciliationIssueMarkup(reconciliation.issue)}
+      <section class="radar-reconciliation-children" aria-label="Hijas reconciliadas"><div class="radar-reconciliation-grid">${children.map((child) => `<article class="radar-reconciliation-card">
+        <header><div><strong>${escapeHtml(child.canonical_child_label || "Identidad pendiente")}</strong></div><span>${escapeHtml(RADAR_CHILD_AVAILABILITY_LABELS[child.availability_status] || "Estado no disponible")}</span></header>
+        <p><strong>Etiqueta original:</strong> ${escapeHtml(child.raw_provider_child_label || "No disponible")}</p>
+        <p><strong>Clave canónica:</strong> <code>${escapeHtml(child.canonical_child_key || "No disponible")}</code></p>
+        <p><strong>ID externo:</strong> <code>${escapeHtml(child.external_market_id || "No disponible")}</code>${child.condition_id ? ` · condición <code>${escapeHtml(child.condition_id)}</code>` : ""}</p>
+        <p><strong>Evento:</strong> <code>${escapeHtml(child.event_id || child.event_slug || "No disponible")}</code></p>
+        <p>${escapeHtml(RADAR_CHILD_CLASSIFICATION_LABELS[child.identity_classification] || "Clasificación no disponible")} · ${escapeHtml(child.identity_status === "resolved" ? "Identidad resuelta" : child.identity_status === "unresolved_placeholder" ? "Identidad pendiente" : child.identity_status === "duplicate" ? "Duplicada" : child.identity_status === "removed" ? "Eliminada" : "En conflicto")}</p>
+        <p><strong>Transición:</strong> ${escapeHtml(RADAR_CHILD_TRANSITION_LABELS[child.transition] || "No disponible")} · actual: ${child.present_in_current_snapshot === true ? "sí" : "no"} · histórica: ${child.present_in_legacy_snapshot === true ? "sí" : "no"}</p>
+        <p><strong>Fuente de identidad:</strong> ${escapeHtml(child.identity_source || "Fuente de identidad no disponible")}${radarIntegerCount(child.identity_confidence) !== null ? ` · ${escapeHtml(radarIntegerCount(child.identity_confidence))} %` : ""}</p>
+        ${Array.isArray(child.token_ids) && child.token_ids.length ? `<p><strong>Contratos del proveedor:</strong> ${child.token_ids.map((token) => `<code>${escapeHtml(token)}</code>`).join(" · ")}</p>` : ""}
+        ${radarIdentityEvidenceMarkup(child.identity_evidence)}
+      </article>`).join("")}</div></section>
     </section>`;
   }
 
@@ -1195,18 +1456,20 @@
     const candidateReady = radarCandidateReady(candidate);
     const terminalCandidate = radarCandidateIsTerminal(candidate);
     const placeholderCandidate = radarCandidateIsPlaceholder(candidate);
+    const identityOrReconciliationBlocked = !radarCandidatePolicyCurrent(candidate)
+      || !radarParentComplete(candidate) || !radarCanonicalChildProjectionValid(candidate);
     const domainReviewRequired = radarCandidateDispositionCode(candidate) === "GAMING_DOMAIN_REVIEW_REQUIRED";
     const humanDomainReview = candidate.human_domain_review && typeof candidate.human_domain_review === "object"
       ? candidate.human_domain_review : null;
     const domainReviewActionable = domainReviewRequired || Boolean(humanDomainReview?.request_id);
     const domainEvidence = Array.isArray(humanDomainReview?.evidence_refs)
       ? humanDomainReview.evidence_refs : [];
-    const continuationAction = terminalCandidate
-        ? `<span>Condición terminal auditada: no se enviará al Editor ni se creará un borrador.</span>`
+    const continuationAction = placeholderCandidate || identityOrReconciliationBlocked
+        ? `<button class="secondary-button" type="button" data-radar-refresh>Volver a comprobar el proveedor</button><span>La identidad o la reconciliación del padre debe completarse antes del Editor y del borrador.</span>`
+        : terminalCandidate
+          ? `<span>Condición terminal auditada: no se enviará al Editor ni se creará un borrador.</span>`
         : domainReviewRequired
           ? `<span>La pertenencia temática necesita una decisión humana explícita antes de renovar la elegibilidad.</span>`
-        : placeholderCandidate
-          ? `<button class="secondary-button" type="button" data-radar-refresh>Volver a comprobar el proveedor</button>`
           : candidateReady
             ? `<button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}">Preparar borrador</button>`
             : `<button class="primary-button" type="button" data-radar-prepare="${escapeHtml(candidate.id)}">Renovar elegibilidad y continuar</button>`;
@@ -1218,7 +1481,9 @@
           <div><dt>ID externo</dt><dd><code>${escapeHtml(candidate.external_id)}</code></dd></div>
           <div><dt>Título original</dt><dd>${escapeHtml(candidate.source_title || "No disponible")}</dd></div>
           <div><dt>Pregunta original</dt><dd>${escapeHtml(candidate.source_question || "No disponible")}</dd></div>
-          <div><dt>Opción original</dt><dd>${escapeHtml(radarOriginalChildLabel(candidate) || "No diferenciada por el proveedor")}</dd></div>
+          <div><dt>Etiqueta original del proveedor</dt><dd>${escapeHtml(radarOriginalChildLabel(candidate) || "No diferenciada en el campo estructurado")}</dd></div>
+          <div><dt>Identidad canónica Atinara</dt><dd>${escapeHtml(radarCanonicalChildLabel(candidate) || "Proyección canónica pendiente")}</dd></div>
+          <div><dt>Fuente de identidad</dt><dd>${escapeHtml(candidate.identity_source || "No disponible")}${Number.isFinite(Number(candidate.identity_confidence)) ? ` · ${escapeHtml(candidate.identity_confidence)} %` : ""}</dd></div>
           <div><dt>Estado y fechas</dt><dd>${escapeHtml(providerStatusLabel(candidate.source_status))} · ${escapeHtml(displayDate(candidate.source_close_at))}</dd></div>
           ${candidate.source_result ? `<div><dt>Resultado del proveedor</dt><dd>${escapeHtml(providerResultLabel(candidate.source_result))}</dd></div>` : ""}
         </dl><div class="radar-source-links">${externalLink(candidate.external_event_url, "Abrir evento original", "primary")}${externalLink(candidate.external_market_url, "Abrir mercado original", "primary")}</div></section>
@@ -1245,19 +1510,23 @@
         <section><h3>Revisión necesaria</h3>
           ${warnings.length ? `<ul>${warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Sin advertencias registradas.</p>"}
           ${missing.length ? `<p><strong>Campos sin información:</strong> ${escapeHtml(missing.join(", "))}</p>` : ""}
-          ${candidate.family_key ? `<p><strong>Familia:</strong> ${escapeHtml(candidate.family_title || candidate.family_key)} · <code>${escapeHtml(candidate.family_child_key)}</code></p>` : ""}
+          ${candidate.family_key ? radarCanonicalChildProjectionValid(candidate)
+            ? `<p><strong>Familia:</strong> ${escapeHtml(candidate.family_title || candidate.family_key)} · <code>${escapeHtml(candidate.family_child_key)}</code></p>`
+            : `<p><strong>Proyección bloqueada:</strong> la identidad hija no cumple el contrato canónico vigente.</p>` : ""}
           ${siblings.length ? `<p><strong>Mercados hermanos permitidos:</strong> ${escapeHtml(siblings.length)}. Comparten acontecimiento, pero conservan opción, precio y economía independientes.</p>` : ""}
           ${duplicates.length ? `<ul>${duplicates.map((item) => `<li><strong>${escapeHtml(item.relationship || "exact_duplicate")}</strong> · ${escapeHtml(item.question || item.id || "Mercado existente")}</li>`).join("")}</ul>` : "<p>Sin duplicados exactos ni semánticos.</p>"}
           ${tags.length ? `<p><strong>Tags:</strong> ${escapeHtml(tags.join(", "))}</p>` : ""}
           ${humanDomainReview ? `<div class="admin-workflow-note"><strong>Última decisión humana:</strong> ${escapeHtml(humanDomainReview.decision === "out_of_domain" ? "Fuera del ámbito" : "Dentro del ámbito")}<p>${escapeHtml(humanDomainReview.rationale || "Sin explicación disponible.")}</p>${domainEvidence.length ? `<ul>${domainEvidence.map((reference) => `<li>${externalLink(reference.url, reference.role === "DOMAIN_CONTEXT" ? "Abrir evidencia de dominio" : "Abrir fuente revisada")}</li>`).join("")}</ul>` : ""}<small>La corrección crea una nueva atestación y conserva la anterior en el historial.</small></div>` : ""}
           ${domainReviewActionable ? `<label><span>${humanDomainReview ? "Justificación de la corrección" : "Justificación de dominio"}</span><textarea name="radar_domain_rationale" minlength="20" maxlength="1000" placeholder="Explica qué evidencia permite clasificar esta candidata sin depender de una coincidencia textual."></textarea></label><div class="admin-gate-actions"><button class="primary-button" type="button" data-radar-domain-decision="in_domain">Confirmar dentro del ámbito</button><button class="secondary-button" type="button" data-radar-domain-decision="out_of_domain">Marcar fuera del ámbito</button></div>` : ""}
         </section>
-        <section><h3>Agente Editor</h3>${currentExpertRun
+        <section><h3>Agente Editor</h3>${identityOrReconciliationBlocked
+          ? `<p>No se ejecuta mientras la identidad canónica o el padre permanezcan incompletos.</p>`
+          : currentExpertRun
           ? `<p><strong>${escapeHtml(EXPERT_DECISION_LABELS[currentExpertRun.result_json?.decision] || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
           : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
         <section><h3>Agente de fuentes</h3>${radarAgentExecutionMarkup(candidate)}</section>
       </div>
-      <footer>${terminalCandidate || placeholderCandidate || domainReviewRequired ? "" : `<button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button>`}${continuationAction}</footer>
+      <footer>${terminalCandidate || placeholderCandidate || identityOrReconciliationBlocked || domainReviewRequired ? "" : `<button class="secondary-button" type="button" data-radar-expert="${escapeHtml(candidate.id)}">${currentExpertRun ? "Reanalizar con el Agente Editor" : "Analizar con el Agente Editor"}</button>`}${continuationAction}</footer>
     </section>`;
   }
 
@@ -1323,16 +1592,18 @@
   }
 
   function radarMarkup() {
-    const groups = Array.isArray(state.radar.groups) ? state.radar.groups : [];
+    const groups = (Array.isArray(state.radar.groups) ? state.radar.groups : [])
+      .map(radarCurrentGroupProjection).filter(Boolean);
     const cards = groups.length
       ? `<div class="radar-candidate-grid">${groups.map((group, index) => radarGroupMarkup(group, index)).join("")}</div>`
       : `<div class="admin-empty-state radar-empty"><strong>No hay eventos con estos filtros</strong><span>Actualiza las fuentes o cambia categoría, consulta u horizonte. No se inventan mercados para llenar este estado.</span></div>`;
     const operationalSummary = radarOperationalSummaryMarkup();
     const page = state.radar.page || {};
-    const previousOffset = Math.max(0, (Number(page.parent_offset) || 0) - (Number(page.parent_limit) || 60));
+    const previousOffset = state.radar.parentOffsetHistory.length
+      ? state.radar.parentOffsetHistory[state.radar.parentOffsetHistory.length - 1] : null;
     const pageMarkup = (Number(page.parent_offset) > 0 || page.next_parent_offset !== null) ? `<nav class="radar-page-controls" aria-label="Páginas de eventos Radar">
-      ${Number(page.parent_offset) > 0 ? `<button class="secondary-button" type="button" data-radar-page="${previousOffset}">Eventos anteriores</button>` : ""}
-      <span>Mostrando ${escapeHtml(groups.length)} de ${escapeHtml(page.parent_count || groups.length)} eventos completos.</span>
+      ${previousOffset !== null ? `<button class="secondary-button" type="button" data-radar-page-previous>Eventos anteriores</button>` : ""}
+      <span>Mostrando ${escapeHtml(groups.length)} de ${escapeHtml(page.parent_count || groups.length)} padres aptos para catálogo.</span>
       ${page.next_parent_offset !== null ? `<button class="secondary-button" type="button" data-radar-page="${escapeHtml(page.next_parent_offset)}">Eventos siguientes</button>` : ""}
     </nav>` : "";
     const quarantinedRows = state.radar.qualityNotices.flatMap((notice) =>
@@ -1350,11 +1621,13 @@
       ${radarProviderMarkup()}
       ${operationalSummary}
       ${qualityNotices}
+      ${radarReconciliationMarkup()}
       <div class="radar-results-heading"><h3>${escapeHtml(groups.length)} eventos · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
       ${cards}
       ${pageMarkup}
       ${radarRejectionsMarkup()}
       ${radarDetailMarkup(state.radar.selected)}
+      ${radarReconciliationDetailMarkup(state.radar.selectedReconciliation)}
     </section>`;
   }
 
@@ -1685,7 +1958,18 @@
       };
       let result;
       if (intelligencePrefill?.candidateId && !form.dataset.draftId) {
-        result = await rpc("save_market_draft_from_radar", { candidate_id_input: intelligencePrefill.candidateId, ...args });
+        result = radarExpertBindingCompatible(intelligencePrefill, payload)
+          ? await rpc("save_market_draft_from_radar_intelligence", {
+            candidate_id_input: intelligencePrefill.candidateId,
+            ...args,
+            expert_run_id_input: intelligencePrefill.expertRunId,
+            contract_input: intelligencePrefill.contract || {},
+            sources_input: intelligencePrefill.sources || []
+          })
+          : await rpc("save_market_draft_from_radar", {
+            candidate_id_input: intelligencePrefill.candidateId,
+            ...args
+          });
       } else if (intelligencePrefill?.originType === "observatory_signal" && !form.dataset.draftId) {
         result = await rpc("save_market_draft_from_intelligence", {
           ...args,
@@ -1933,7 +2217,7 @@
     let confirmationRequested = false;
     try {
       confirmationRequested = true;
-      result = await rpc("confirm_market_draft_review_v2", {
+      result = await rpc("confirm_market_draft_review_v3", {
         draft_id_input: draft.id,
         expected_version_input: draft.content_version
       });
@@ -2149,33 +2433,9 @@
       quality: state.radar.quality,
       order: state.radar.order,
       parent_offset: state.radar.parentOffset,
+      reconciliation_offset: state.radar.reconciliationOffset,
       refresh
     };
-  }
-
-  function fallbackRadarGroups(candidates) {
-    const groups = new Map();
-    candidates.forEach((candidate) => {
-      const key = candidate.event_group_key || `${candidate.provider || "external"}:${candidate.external_event_id || candidate.external_id}`;
-      const current = groups.get(key) || {
-        event_group_key: key,
-        provider: candidate.provider,
-        title: candidate.source_title || candidate.source_question,
-        category: candidate.atinara_category || candidate.source_category,
-        external_event_url: candidate.external_event_url || candidate.external_url,
-        verification_status: candidate.verification_status || "needs_review",
-        quality_score: Number(candidate.quality_score) || 0,
-        candidates: []
-      };
-      current.candidates.push(candidate);
-      current.quality_score = Math.max(current.quality_score, Number(candidate.quality_score) || 0);
-      groups.set(key, current);
-    });
-    return [...groups.values()].map((group) => ({
-      ...group,
-      child_count: group.candidates.length,
-      top_candidates: group.candidates.slice().sort((left, right) => (Number(right.quality_score) || 0) - (Number(left.quality_score) || 0)).slice(0, 3)
-    }));
   }
 
   function updateRadarCooldownButton() {
@@ -2212,52 +2472,65 @@
       const data = refresh && radarRequestCoordinator
         ? await radarRequestCoordinator.run(requestPayload, (payload) => invokeRadar("discover", payload))
         : await invokeRadar("discover", requestPayload);
-      state.radar.candidates = Array.isArray(data.candidates) ? data.candidates : [];
-      state.radar.groups = Array.isArray(data.groups) && data.groups.length
-        ? data.groups
-        : fallbackRadarGroups(state.radar.candidates);
-      const currentGroupKeys = new Set(state.radar.groups.map((group) => String(group.event_group_key || "")));
-      state.radar.expandedGroups = new Set(
+      const nextCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+      const nextGroups = Array.isArray(data.groups) ? data.groups : null;
+      if (!nextGroups || (nextCandidates.length && !nextGroups.length)) {
+        throw new Error("RADAR_CURRENT_PARENT_PROJECTION_REQUIRED");
+      }
+      const nextParentReconciliations = Array.isArray(data.parent_reconciliations)
+        ? data.parent_reconciliations : [];
+      const currentGroupKeys = new Set(nextGroups.map((group) => String(group.event_group_key || "")));
+      const nextExpandedGroups = new Set(
         [...state.radar.expandedGroups].filter((groupKey) => currentGroupKeys.has(groupKey)),
       );
-      state.radar.rejected = data.rejected && typeof data.rejected === "object"
+      const nextRejected = data.rejected && typeof data.rejected === "object"
         ? data.rejected
         : { total: 0, counts: {}, items: [] };
-      if (!["current", "all", "outdated"].includes(state.radar.rejectionReason)
-        && !Object.hasOwn(state.radar.rejected.counts || {}, state.radar.rejectionReason)) {
-        state.radar.rejectionReason = "current";
-      }
-      state.radar.providers = Array.isArray(data.providers) ? data.providers : [];
-      state.radar.errors = Array.isArray(data.errors) ? data.errors : [];
-      state.radar.candidateProviders = Array.isArray(data.candidate_providers)
+      const nextRejectionReason = !["current", "all", "outdated"].includes(state.radar.rejectionReason)
+        && !Object.hasOwn(nextRejected.counts || {}, state.radar.rejectionReason)
+        ? "current" : state.radar.rejectionReason;
+      const nextProviders = Array.isArray(data.providers) ? data.providers : [];
+      const nextErrors = Array.isArray(data.errors) ? data.errors : [];
+      const nextCandidateProviders = Array.isArray(data.candidate_providers)
         ? data.candidate_providers
-        : state.radar.providers.filter((provider) => provider?.provider !== "tavily");
-      state.radar.enrichmentCapabilities = Array.isArray(data.enrichment_capabilities)
+        : nextProviders.filter((provider) => provider?.provider !== "tavily");
+      const nextEnrichmentCapabilities = Array.isArray(data.enrichment_capabilities)
         ? data.enrichment_capabilities
-        : state.radar.providers.filter((provider) => provider?.provider === "tavily");
-      state.radar.providerIssues = Array.isArray(data.provider_issues)
+        : nextProviders.filter((provider) => provider?.provider === "tavily");
+      const nextProviderIssues = Array.isArray(data.provider_issues)
         ? data.provider_issues
-        : state.radar.errors.map((error) => error?.issue).filter(Boolean);
-      state.radar.enrichmentIssues = Array.isArray(data.enrichment_issues)
+        : nextErrors.map((error) => error?.issue).filter(Boolean);
+      const nextEnrichmentIssues = Array.isArray(data.enrichment_issues)
         ? data.enrichment_issues
-        : state.radar.errors.filter((error) => error?.degrades_provider === false)
+        : nextErrors.filter((error) => error?.degrades_provider === false)
           .map((error) => error?.issue).filter(Boolean);
-      state.radar.refreshInProgress = data.refresh_in_progress === true;
-      state.radar.qualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
-      state.radar.cached = data.cached === true;
-      state.radar.cachedAuthoritative = data.cached_authoritative === true;
-      state.radar.requiresEligibilityRefresh = data.requires_eligibility_refresh === true;
-      state.radar.page = data.page && typeof data.page === "object"
-        ? data.page : { parent_count: state.radar.groups.length, parent_offset: state.radar.parentOffset, parent_limit: 60, next_parent_offset: null };
-      state.radar.parentOffset = Math.max(0, Number(state.radar.page.parent_offset) || 0);
-      state.radar.loaded = true;
+      const nextRefreshInProgress = data.refresh_in_progress === true;
+      const nextQualityNotices = Array.isArray(data.quality_notices) ? data.quality_notices : [];
+      const nextPage = data.page && typeof data.page === "object"
+        ? data.page : { parent_count: nextGroups.length, parent_offset: state.radar.parentOffset, parent_limit: 60, next_parent_offset: null };
+      const nextReconciliationPage = data.reconciliation_page && typeof data.reconciliation_page === "object"
+        ? data.reconciliation_page : { total: nextParentReconciliations.length, offset: 0, limit: 20, previous_offset: null, next_offset: null, snapshot_available: true };
       const cooldownMs = Math.max(0, Number(data.cooldown_seconds) || 0) * 1000;
       const serverCooldownUntil = Date.parse(data.cooldown_until || "");
-      state.radar.cooldownUntil = state.radar.refreshInProgress ? 0 : Number.isFinite(serverCooldownUntil)
+      const nextCooldownUntil = nextRefreshInProgress ? 0 : Number.isFinite(serverCooldownUntil)
         ? serverCooldownUntil
         : Date.now() + cooldownMs;
+      Object.assign(state.radar, {
+        candidates: nextCandidates, groups: nextGroups,
+        parentReconciliations: nextParentReconciliations,
+        expandedGroups: nextExpandedGroups, rejected: nextRejected,
+        rejectionReason: nextRejectionReason, providers: nextProviders, errors: nextErrors,
+        candidateProviders: nextCandidateProviders, enrichmentCapabilities: nextEnrichmentCapabilities,
+        providerIssues: nextProviderIssues, enrichmentIssues: nextEnrichmentIssues,
+        refreshInProgress: nextRefreshInProgress, qualityNotices: nextQualityNotices,
+        cached: data.cached === true, cachedAuthoritative: data.cached_authoritative === true,
+        requiresEligibilityRefresh: data.requires_eligibility_refresh === true,
+        page: nextPage, parentOffset: Math.max(0, Number(nextPage.parent_offset) || 0),
+        reconciliationPage: nextReconciliationPage,
+        reconciliationOffset: Math.max(0, Number(nextReconciliationPage.offset) || 0),
+        loaded: true, cooldownUntil: nextCooldownUntil, selected: null, selectedReconciliation: null,
+      });
       startRadarCooldownTicker();
-      state.radar.selected = null;
       const reconciledResults = Math.max(0, Number(data.reconciled_provider_results) || 0);
       const reconciliationCopy = reconciledResults
         ? ` Se corrigieron ${reconciledResults} resultado${reconciledResults === 1 ? "" : "s"} directamente con el proveedor.`
@@ -2289,9 +2562,13 @@
     try {
       const data = await invokeRadar("details", { candidate_id: candidateId });
       state.radar.selected = data.candidate || null;
+      state.radar.selectedReconciliation = null;
       if (state.radar.selected
         && !radarCandidateIsTerminal(state.radar.selected)
-        && !radarCandidateIsPlaceholder(state.radar.selected)) {
+        && !radarCandidateIsPlaceholder(state.radar.selected)
+        && radarCandidatePolicyCurrent(state.radar.selected)
+        && radarParentComplete(state.radar.selected)
+        && radarCanonicalChildProjectionValid(state.radar.selected)) {
         const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId }).catch(() => null);
         state.radar.selected.expert_analysis = expertRun(expert);
       }
@@ -2301,6 +2578,23 @@
       state.busy = false;
       renderWorkspace();
       document.querySelector(".radar-candidate-detail")?.focus();
+    }
+  }
+
+  async function openRadarReconciliation(reconciliationId) {
+    state.busy = true;
+    renderWorkspace();
+    try {
+      const data = await invokeRadar("reconciliation-details", { reconciliation_id: reconciliationId });
+      state.radar.selectedReconciliation = data.reconciliation || null;
+      state.radar.selected = null;
+      setNotice("Reconciliación cargada. Las etiquetas raw se muestran solo en este detalle técnico.", "info");
+    } catch (error) {
+      setNotice(helpers.getFriendlyError(error, "No se pudo abrir la reconciliación del proveedor."), "error");
+    } finally {
+      state.busy = false;
+      renderWorkspace();
+      document.querySelector('[aria-labelledby="radar-reconciliation-detail-title"]')?.focus();
     }
   }
 
@@ -2321,14 +2615,29 @@
         || ""
       ).trim();
       const eligibilityCheckId = String(data.eligibility_check_id || candidate.current_eligibility_check_id || "").trim();
-      const fields = prefill.fields || {};
-      const alternatives = String(fields.alternative_sources || "").split(/\r?\n/).map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
+      const currentExpertRun = state.radar.selected?.id === candidateId
+        ? expertRun(state.radar.selected.expert_analysis) : null;
+      const expertVerdict = currentExpertRun?.result_json && typeof currentExpertRun.result_json === "object"
+        ? currentExpertRun.result_json : {};
+      const expertProposal = expertVerdict.proposal && typeof expertVerdict.proposal === "object"
+        && !Array.isArray(expertVerdict.proposal) ? expertVerdict.proposal : {};
+      const expertContract = expertVerdict.resolution_contract
+        && typeof expertVerdict.resolution_contract === "object"
+        && !Array.isArray(expertVerdict.resolution_contract)
+        ? expertVerdict.resolution_contract : {};
+      const fields = currentExpertRun ? { ...(prefill.fields || {}), ...expertProposal } : prefill.fields || {};
+      const alternatives = (Array.isArray(fields.alternative_sources)
+        ? fields.alternative_sources.map((item) => typeof item === "string" ? item : item?.url)
+        : String(fields.alternative_sources || "").split(/\r?\n/))
+        .map((url) => String(url || "").trim()).filter(Boolean).map((url) => ({ url }));
       state.radarPrefill = {
         candidateId,
         preparationRevision,
         eligibilityCheckId,
         origins: prefill.origins || {},
-        expertRunId: state.radar.selected?.id === candidateId ? expertRun(state.radar.selected.expert_analysis)?.id || null : null,
+        expertRunId: currentExpertRun?.id || null,
+        contract: expertContract,
+        sources: Array.isArray(expertContract.sources) ? expertContract.sources : [],
         proposedFields: fields
       };
       state.selected = {
@@ -2384,12 +2693,20 @@
       .map((url) => url.trim()).filter(Boolean).map((url) => ({ url }));
     const workflowIssues = Array.isArray(draftPackage?.gate?.workflow_issues)
       ? draftPackage.gate.workflow_issues : [];
+    const expertVerdict = draftPackage?.run?.result_json && typeof draftPackage.run.result_json === "object"
+      ? draftPackage.run.result_json : {};
+    const expertContract = expertVerdict.resolution_contract
+      && typeof expertVerdict.resolution_contract === "object"
+      && !Array.isArray(expertVerdict.resolution_contract)
+      ? expertVerdict.resolution_contract : {};
     state.radarPrefill = {
       candidateId,
       preparationRevision,
       eligibilityCheckId: null,
       origins: {},
       expertRunId: draftPackage?.run?.id || null,
+      contract: expertContract,
+      sources: Array.isArray(expertContract.sources) ? expertContract.sources : [],
       proposedFields: fields,
     };
     state.selected = {
@@ -2432,7 +2749,13 @@
     state.radar.groups = state.radar.groups.map((group) => {
       const candidates = Array.isArray(group.candidates) ? group.candidates.filter((candidate) => candidate.id !== candidateId) : [];
       const topCandidates = Array.isArray(group.top_candidates) ? group.top_candidates.filter((candidate) => candidate.id !== candidateId) : [];
-      return { ...group, candidates, top_candidates: topCandidates, child_count: candidates.length };
+      return {
+        ...group,
+        candidates,
+        top_candidates: topCandidates,
+        child_count: Number.isInteger(Number(group.provider_declared_child_count))
+          ? Number(group.provider_declared_child_count) : group.child_count,
+      };
     }).filter((group) => group.candidates.length);
   }
 
@@ -2904,10 +3227,22 @@
     if (target.dataset.recoverDraftEligibility) recoverDraftRadarEligibility(target.dataset.recoverDraftEligibility);
     if (target.dataset.radarRefresh !== undefined) {
       state.radar.parentOffset = 0;
+      state.radar.parentOffsetHistory = [];
+      state.radar.reconciliationOffset = 0;
       loadRadar(true);
     }
     if (target.dataset.radarPage !== undefined) {
-      state.radar.parentOffset = Math.max(0, Number(target.dataset.radarPage) || 0);
+      const nextOffset = Math.max(0, Number(target.dataset.radarPage) || 0);
+      if (nextOffset !== state.radar.parentOffset) state.radar.parentOffsetHistory.push(state.radar.parentOffset);
+      state.radar.parentOffset = nextOffset;
+      loadRadar(false);
+    }
+    if (target.dataset.radarPagePrevious !== undefined) {
+      state.radar.parentOffset = state.radar.parentOffsetHistory.pop() ?? 0;
+      loadRadar(false);
+    }
+    if (target.dataset.radarReconciliationPage !== undefined) {
+      state.radar.reconciliationOffset = Math.max(0, Number(target.dataset.radarReconciliationPage) || 0);
       loadRadar(false);
     }
     if (target.dataset.radarToggleGroup) {
@@ -2925,6 +3260,7 @@
       document.querySelector(".radar-rejections")?.scrollIntoView({ block: "nearest" });
     }
     if (target.dataset.radarDetails) openRadarDetails(target.dataset.radarDetails);
+    if (target.dataset.radarReconciliation) openRadarReconciliation(target.dataset.radarReconciliation);
     if (target.dataset.radarPrepare) prepareRadarCandidate(target.dataset.radarPrepare);
     if (target.dataset.radarDomainDecision) reviewRadarDomain(target.dataset.radarDomainDecision);
     if (target.dataset.radarDismiss) dismissRadarCandidate(target.dataset.radarDismiss);
@@ -2934,6 +3270,12 @@
       state.radar.selected = null;
       renderWorkspace();
       document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
+    if (target.dataset.radarCloseReconciliation !== undefined) {
+      const closedReconciliationId = state.radar.selectedReconciliation?.id || "";
+      state.radar.selectedReconciliation = null;
+      renderWorkspace();
+      document.querySelector(`[data-radar-reconciliation="${CSS.escape(closedReconciliationId)}"]`)?.focus();
     }
     if (target.dataset.observatoryRefresh !== undefined) loadObservatory({ refresh: true });
     if (target.dataset.observatoryTopGames !== undefined) loadTwitchTopGames();
@@ -2976,6 +3318,8 @@
         state.radar[name] = typeof value === "string" ? value.trim() : "";
       });
       state.radar.parentOffset = 0;
+      state.radar.parentOffsetHistory = [];
+      state.radar.reconciliationOffset = 0;
       loadRadar(false);
       return;
     }
@@ -3042,6 +3386,12 @@
       state.radar.selected = null;
       renderWorkspace();
       document.querySelector(`[data-radar-details="${CSS.escape(closedCandidateId)}"]`)?.focus();
+    }
+    if (event.key === "Escape" && state.radar.selectedReconciliation) {
+      const closedReconciliationId = state.radar.selectedReconciliation.id || "";
+      state.radar.selectedReconciliation = null;
+      renderWorkspace();
+      document.querySelector(`[data-radar-reconciliation="${CSS.escape(closedReconciliationId)}"]`)?.focus();
     }
     if (event.key === "Escape" && state.observatory.selected) {
       const closedSignalId = state.observatory.selected.signal?.id || "";

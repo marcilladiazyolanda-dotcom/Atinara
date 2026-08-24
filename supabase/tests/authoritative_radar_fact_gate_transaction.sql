@@ -814,10 +814,9 @@ begin
     where provider = 'kalshi' and external_id = cache_external_id
   ));
   if jsonb_array_length(list_result) <> 0
-     or not exists (
+     or exists (
        select 1 from jsonb_array_elements(rejected_result) item
        where item ->> 'external_id' = cache_external_id
-         and item ->> 'verification_status' = 'rejected_resolved'
      )
      or detail_result ->> 'verification_status' <> 'rejected_resolved'
      or coalesce((detail_result ->> 'fact_snapshot_current')::boolean, false) is not true then
@@ -845,7 +844,7 @@ begin
   );
   expected_failure := false;
   begin
-    perform public.save_market_draft_from_radar(
+    perform public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
       candidate_row.id, null, null,
       jsonb_build_object(
         '_idempotency_key', gen_random_uuid(),
@@ -1224,7 +1223,7 @@ begin
   -- Ni un id factual de discovery ni una revisión manipulada pueden guardar.
   expected_failure := false;
   begin
-    perform public.save_market_draft_from_radar(
+    perform public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
       candidate_row.id, null, null,
       draft_payload || jsonb_build_object('_radar_fact_check_id', discovery_fact_id::text)
     );
@@ -1235,7 +1234,7 @@ begin
   if not expected_failure then raise exception 'TEST_TAMPERED_FACT_ID_SAVE_ACCEPTED'; end if;
   expected_failure := false;
   begin
-    perform public.save_market_draft_from_radar(
+    perform public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
       candidate_row.id, null, null,
       draft_payload || jsonb_build_object('_radar_preparation_revision', (revision_value + 99)::text)
     );
@@ -1245,7 +1244,7 @@ begin
   end;
   if not expected_failure then raise exception 'TEST_TAMPERED_SAVE_REVISION_ACCEPTED'; end if;
 
-  save_result := public.save_market_draft_from_radar(
+  save_result := public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
     candidate_row.id, null, null, draft_payload
   );
   saved_draft_id := nullif(save_result #>> '{draft,id}', '')::uuid;

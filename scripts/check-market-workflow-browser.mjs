@@ -45,13 +45,25 @@ const issue = {
 };
 const candidate = {
   id: "22222222-2222-4222-8222-222222222222", provider: "kalshi",
-  external_id: "KX-FIXTURE", event_group_key: "kalshi:fixture", preparation_revision: 3,
+  external_id: "KX-FIXTURE", external_event_id: "KX-FIXTURE-EVENT",
+  event_group_key: "kalshi:fixture", preparation_revision: 3,
   source_title: "The Game Awards 2026", source_question: "Will Aurora win Game of the Year?",
   atinara_question: "¿Ganará Aurora el premio a juego del año?", atinara_category: "Reviews/Premios",
   atinara_resolution_criteria: "Sí si la fuente oficial proclama a Aurora.",
   source_probability_yes: null, quality_score: 88, quality_status: "needs_review",
   state: "needs_review", verification_status: "needs_review", eligibility_status: "technical_hold",
   eligibility_policy_version: "atinara-prediction-policy-v5", domain_status: "in_domain",
+  normalizer_version: "atinara-radar-v3", family_version: "atinara-market-family-v5",
+  raw_provider_child_label: "Aurora", canonical_child_label: "Aurora",
+  canonical_child_key: "option:aurora", identity_status: "resolved",
+  identity_classification: "identified_real_option", identity_source: "provider_contract_question",
+  identity_confidence: 100, canonical_projection_version: "atinara-radar-child-projection-v1",
+  parent_reconciliation_status: "complete",
+  parent_reconciliation_version: "atinara-radar-parent-reconciliation-v1",
+  parent_reconciliation_fingerprint: "9".repeat(64), provider_pagination_exhausted: true,
+  provider_declared_child_count: 1, provider_discovered_child_count: 1,
+  provider_accounted_child_count: 1, provider_identified_child_count: 1,
+  provider_unresolved_child_count: 0, provider_conflict_child_count: 0,
   workflow_issues: [issue], family_type: "categorical_outcomes", family_child_key: "option:aurora",
   family_child_label: "Aurora", external_event_url: "https://kalshi.com/markets/fixture",
 };
@@ -299,6 +311,176 @@ const domainCandidate = {
   workflow_issues: [domainIssue],
 };
 
+function reconciledOptionCandidate(index) {
+  const label = index === 1 ? "Marathon" : `Resolved Option ${index}`;
+  const legacyRaw = index <= 21 ? label
+    : index <= 47 ? `Game ${String.fromCharCode(64 + (index - 21))}` : "another game";
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return {
+    ...candidate,
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    provider: "polymarket", external_id: `polymarket:${3300000 + index}`,
+    external_market_id: String(3300000 + index), external_event_id: "800696",
+    event_group_key: "polymarket:800696",
+    source_title: "The Game Awards: Best Multiplayer",
+    source_question: `Will ${label} win Best Multiplayer at the 2026 Game Awards?`,
+    atinara_question: `¿Ganará ${label} el premio Mejor multijugador en The Game Awards 2026?`,
+    raw_provider_child_label: legacyRaw, canonical_child_label: label,
+    canonical_child_key: `option:${slug}`, family_child_key: `option:${slug}`,
+    family_child_label: label, family_type: "categorical_outcomes",
+    identity_status: "resolved", identity_classification: "identified_real_option",
+    identity_source: index <= 21 ? "provider_contract_question" : "polymarket_gamma_market_by_id",
+    identity_confidence: 100,
+    state: "available", verification_status: "verified_open", quality_status: "fit",
+    eligibility_status: "eligible", eligibility_checked_at: "2026-08-22T12:00:00Z",
+    eligibility_expires_at: "2027-08-22T12:00:00Z", current_eligibility_check_id: index,
+    workflow_issues: [], source_probability_yes: index / 100,
+    provider_declared_child_count: 48, provider_discovered_child_count: 48,
+    provider_accounted_child_count: 48, provider_identified_child_count: 48,
+    provider_unresolved_child_count: 0, provider_conflict_child_count: 0,
+    external_event_url: "https://polymarket.com/event/the-game-awards-best-multiplayer",
+  };
+}
+
+const reconciled48Candidates = Array.from({ length: 48 }, (_, index) => reconciledOptionCandidate(index + 1));
+const completeReconciliationChildren = reconciled48Candidates.map((item, index) => ({
+  id: index + 1, external_market_id: item.external_market_id,
+  condition_id: `condition-${index + 1}`, token_ids: [`yes-${index + 1}`, `no-${index + 1}`],
+  event_id: "800696", raw_provider_child_label: item.raw_provider_child_label,
+  canonical_child_label: item.canonical_child_label, canonical_child_key: item.canonical_child_key,
+  identity_classification: "identified_real_option", identity_status: "resolved",
+  availability_status: "open", identity_source: item.identity_source, identity_confidence: 100,
+  identity_evidence: [{
+    url: `https://gamma-api.polymarket.com/markets/${item.external_market_id}`,
+    result: "identity_resolved", content_sha256: "6".repeat(64), identity_sha256: "5".repeat(64),
+  }], present_in_current_snapshot: true, present_in_legacy_snapshot: index < 48,
+  transition: index < 21 ? "same" : "renamed", projection_version: "atinara-radar-child-projection-v1",
+  child_fingerprint: String(index % 10).repeat(64), checked_at: "2026-08-22T12:00:00Z",
+}));
+const completeParentReconciliation = {
+  id: "99999999-0000-4000-8000-000000000001", provider: "polymarket",
+  provider_parent_id: "800696", raw_provider_parent_label: "The Game Awards: Best Multiplayer",
+  canonical_parent_label: "The Game Awards · Mejor multijugador", category: "Reviews/Premios",
+  external_parent_url: "https://polymarket.com/event/the-game-awards-best-multiplayer",
+  provider_declared_child_count: 48, provider_discovered_child_count: 48,
+  provider_accounted_child_count: 48, provider_identified_child_count: 48,
+  provider_unresolved_child_count: 0, provider_removed_child_count: 0,
+  provider_closed_child_count: 0, provider_duplicate_child_count: 0,
+  provider_conflict_child_count: 0, provider_pagination_exhausted: true,
+  reconciliation_status: "complete", reconciliation_version: "atinara-radar-parent-reconciliation-v1",
+  normalizer_version: "atinara-radar-v3", family_version: "atinara-market-family-v5",
+  reconciliation_fingerprint: "8".repeat(64), checked_at: "2026-08-22T12:00:00Z",
+  source_refs: [{ url: "https://gamma-api.polymarket.com/events/800696", result: "parent_children_enumerated" }],
+};
+const complete48Discovery = {
+  ok: true, candidates: reconciled48Candidates,
+  groups: [{
+    event_group_key: "polymarket:800696", provider: "polymarket", external_event_id: "800696",
+    external_event_url: completeParentReconciliation.external_parent_url,
+    title: completeParentReconciliation.canonical_parent_label, category: "Reviews/Premios",
+    verification_status: "verified_open", quality_score: 95, child_count: 48,
+    provider_declared_child_count: 48, provider_accounted_child_count: 48,
+    provider_identified_child_count: 48, provider_unresolved_child_count: 0,
+    provider_pagination_exhausted: true, parent_reconciliation_status: "complete",
+    parent_reconciliation_version: "atinara-radar-parent-reconciliation-v1",
+    parent_reconciliation_fingerprint: completeParentReconciliation.reconciliation_fingerprint,
+    candidates: reconciled48Candidates, top_candidates: reconciled48Candidates.slice(0, 3),
+  }],
+  parent_reconciliations: [completeParentReconciliation],
+  reconciliation_page: { total: 1, offset: 0, limit: 20, previous_offset: null, next_offset: null, snapshot_available: true },
+  rejected: { total: 0, counts: {}, items: [] }, providers: [], candidate_providers: [],
+  enrichment_capabilities: [], provider_issues: [], enrichment_issues: [], quality_notices: [],
+  page: { parent_count: 1, parent_offset: 0, parent_limit: 60, previous_parent_offset: null, next_parent_offset: null },
+  cached: true, cached_authoritative: true, cooldown_seconds: 0,
+};
+const incompleteParentReconciliation = {
+  ...completeParentReconciliation,
+  id: "99999999-0000-4000-8000-000000000002",
+  provider_identified_child_count: 21, provider_unresolved_child_count: 27,
+  reconciliation_status: "incomplete_provider_metadata",
+  reconciliation_fingerprint: "7".repeat(64), next_retry_at: "2026-08-22T13:00:00Z",
+  issue: {
+    issue_id: "abababab-abab-4bab-8bab-abababababab", detected_by: "radar",
+    owner_stage: "radar", blocking_scope: "approval", next_action: "retry_provider_refresh",
+    status: "open", retryable: true,
+  },
+};
+const incompleteReconciliationChildren = completeReconciliationChildren.map((item, index) => index < 21 ? item : ({
+  ...item,
+  raw_provider_child_label: index < 47 ? `Game ${String.fromCharCode(65 + (index - 21))}` : "another game",
+  canonical_child_label: null, canonical_child_key: null,
+  identity_classification: "provider_placeholder_pending_resolution",
+  identity_status: "unresolved_placeholder", availability_status: "inactive",
+  identity_source: null, identity_confidence: 0, transition: "same",
+}));
+const incomplete48Discovery = {
+  ...complete48Discovery,
+  candidates: [], groups: [], parent_reconciliations: [incompleteParentReconciliation],
+  page: { parent_count: 0, parent_offset: 0, parent_limit: 60, previous_parent_offset: null, next_parent_offset: null },
+};
+function guardedDiscovery(guardedCandidate) {
+  return {
+    ...complete48Discovery,
+    candidates: [guardedCandidate],
+    groups: [{
+      ...complete48Discovery.groups[0], child_count: 1,
+      candidates: [guardedCandidate], top_candidates: [guardedCandidate],
+    }],
+    parent_reconciliations: [],
+    reconciliation_page: { total: 0, offset: 0, limit: 20, previous_offset: null, next_offset: null, snapshot_available: true },
+  };
+}
+const nullCountCandidate = {
+  ...reconciledOptionCandidate(1), id: "aaaaaaaa-0000-4000-8000-000000000001",
+  provider_declared_child_count: null, provider_discovered_child_count: null,
+  provider_accounted_child_count: null, provider_unresolved_child_count: null,
+  provider_conflict_child_count: null,
+};
+const temporalProjectionCandidate = {
+  ...reconciledOptionCandidate(1), id: "aaaaaaaa-0000-4000-8000-000000000002",
+  family_child_key: "deadline:lte:2027-01-01T04:59:59.000Z:year",
+  family_child_label: "lte 2027-01-01T04:59:59.000Z (ET, year)",
+};
+const inactiveRealOptionCandidate={
+  ...reconciledOptionCandidate(1),id:"aaaaaaaa-0000-4000-8000-000000000003",
+  state:"rejected",verification_status:"rejected_ineligible",
+  verification_reason_code:"PROVIDER_OPTION_INACTIVE",
+  eligibility_status:"inactive_option",eligibility_reason_code:"PROVIDER_OPTION_INACTIVE",
+  availability_status:"inactive",source_status:"inactive",
+};
+const inactiveRejectionDiscovery={
+  ...complete48Discovery,candidates:[],groups:[],
+  rejected:{total:1,counts:{PROVIDER_OPTION_INACTIVE:1},items:[inactiveRealOptionCandidate]},
+  page:{parent_count:0,parent_offset:0,parent_limit:60,previous_parent_offset:null,next_parent_offset:null},
+};
+function paginationDiscovery(offset) {
+  const pageCandidate = {
+    ...reconciledOptionCandidate(1),
+    id: `bbbbbbbb-0000-4000-8000-${String(offset + 1).padStart(12, "0")}`,
+    external_event_id: `page-parent-${offset}`,
+    event_group_key: `polymarket:page-parent-${offset}`,
+    parent_reconciliation_fingerprint: String((offset / 5) + 1).repeat(64),
+    provider_declared_child_count: 1, provider_discovered_child_count: 1,
+    provider_accounted_child_count: 1, provider_identified_child_count: 1,
+  };
+  return {
+    ...guardedDiscovery(pageCandidate),
+    groups: [{
+      ...complete48Discovery.groups[0],
+      event_group_key: pageCandidate.event_group_key,
+      external_event_id: pageCandidate.external_event_id,
+      title: `Página ${offset}`,
+      child_count: 1, provider_declared_child_count: 1, provider_accounted_child_count: 1,
+      provider_identified_child_count: 1, candidates: [pageCandidate], top_candidates: [pageCandidate],
+    }],
+    page: {
+      parent_count: 15, parent_offset: offset, parent_limit: 5,
+      previous_parent_offset: offset > 0 ? Math.max(0, offset - 60) : null,
+      next_parent_offset: offset < 10 ? offset + 5 : null,
+    },
+  };
+}
+
 const scenarios = {
   "draft-temporal": { activeDraft: draft, activePayload: draftPayload },
   "radar-temporal": { activeCandidate: candidate, activePackage: draftPackage },
@@ -348,12 +530,37 @@ const scenarios = {
   },
   "radar-terminal": { activeCandidate: terminalCandidate, activePackage: terminalPackage },
   "radar-domain-review": { activeCandidate: domainCandidate },
+  "radar-reconciled-48": {
+    radarDiscovery: complete48Discovery,
+    reconciliationDetails: { ...completeParentReconciliation, children: completeReconciliationChildren },
+  },
+  "radar-incomplete-48": {
+    radarDiscovery: incomplete48Discovery,
+    reconciliationDetails: { ...incompleteParentReconciliation, children: incompleteReconciliationChildren },
+  },
+  "radar-null-counts": { radarDiscovery: guardedDiscovery(nullCountCandidate) },
+  "radar-temporal-projection": { radarDiscovery: guardedDiscovery(temporalProjectionCandidate) },
+  "radar-inactive-rejection": {radarDiscovery:inactiveRejectionDiscovery},
+  "radar-pagination": {
+    paginationDiscoveries: {
+      0: paginationDiscovery(0),
+      5: paginationDiscovery(5),
+      10: paginationDiscovery(10),
+    },
+  },
+  "radar-reconciliation-pagination": {radarDiscovery:{
+    ...complete48Discovery,candidates:[],groups:[],
+    parent_reconciliations:[completeParentReconciliation],
+    reconciliation_page:{total:20,offset:0,limit:20,previous_offset:null,next_offset:20,snapshot_available:true},
+    page:{parent_count:0,parent_offset:0,parent_limit:60,previous_parent_offset:null,next_parent_offset:null},
+  }},
 };
 
 function initMock(input) {
   const {
     scenario, run, activeCandidate = null, activePackage = null,
     activeDraft = null, activePayload = null, recoveredPackage = null,
+    radarDiscovery = null, reconciliationDetails = null, paginationDiscoveries = null,
   } = input;
   window.__atinaraCalls = [];
   let currentPayload = activePayload;
@@ -364,7 +571,7 @@ function initMock(input) {
   const response = (name, args) => {
     if (name === "list_admin_market_drafts") return activeDraft ? [activeDraft] : [];
     if (name === "get_admin_market_draft_v2") return currentPayload;
-    if (name === "save_market_draft_from_expert_with_issues_v1") {
+    if (name === "save_market_draft_from_expert_with_issues_v2") {
       return { ok: true, draft: { id: "14141414-1414-4414-8414-141414141414" } };
     }
     if (name === "publish_market_draft_v2") {
@@ -383,13 +590,34 @@ function initMock(input) {
   const invoke = (name, body) => {
     window.__atinaraCalls.push({ name, action: body?.body?.action || "", body: body?.body || null });
     const action = body?.body?.action;
+    if (name === "market-radar" && action === "discover" && scenario === "radar-pagination") {
+      const offset = Number(body?.body?.parent_offset) || 0;
+      return {data:paginationDiscoveries?.[offset]||null,error:null};
+    }
+    if(name==="market-radar"&&action==="discover"&&scenario==="radar-reconciliation-pagination"){
+      const reconciliationOffset=Number(body?.body?.reconciliation_offset)||0;
+      const reconciliation=Array.isArray(radarDiscovery?.parent_reconciliations)
+        ? radarDiscovery.parent_reconciliations[0] : null;
+      return {data:{...radarDiscovery,
+        parent_reconciliations:reconciliationOffset===20||!reconciliation?[]:[reconciliation],
+        reconciliation_page:reconciliationOffset===20
+          ? {total:20,offset:20,limit:20,previous_offset:0,next_offset:null,snapshot_available:true}
+          : {total:20,offset:0,limit:20,previous_offset:null,next_offset:20,snapshot_available:true},
+      },error:null};
+    }
+    if (name === "market-radar" && action === "discover" && radarDiscovery) {
+      return { data: radarDiscovery, error: null };
+    }
     if (name === "market-radar" && action === "discover") return { data: {
       ok: true,
       candidates: currentCandidate ? [currentCandidate] : [],
       groups: currentCandidate ? [{ event_group_key: currentCandidate.event_group_key, provider: "kalshi", title: currentCandidate.source_title, category: currentCandidate.atinara_category, verification_status: currentCandidate.verification_status, quality_score: 88, child_count: 1, candidates: [currentCandidate], top_candidates: [currentCandidate] }] : [],
-      rejected: { total: scenario === "radar-terminal" ? 1 : 0, counts: scenario === "radar-terminal" ? { EVENT_ALREADY_RESOLVED: 1 } : {}, items: [] }, providers: [], candidate_providers: [], enrichment_capabilities: [], provider_issues: [], enrichment_issues: [], quality_notices: [], page: { parent_count: activeCandidate ? 1 : 0, parent_offset: 0, parent_limit: 60, next_parent_offset: null }, cached: true, cached_authoritative: true, cooldown_seconds: 0,
+      parent_reconciliations: [], reconciliation_page: { total: 0, offset: 0, limit: 20, previous_offset: null, next_offset: null, snapshot_available: true }, rejected: { total: scenario === "radar-terminal" ? 1 : 0, counts: scenario === "radar-terminal" ? { EVENT_ALREADY_RESOLVED: 1 } : {}, items: [] }, providers: [], candidate_providers: [], enrichment_capabilities: [], provider_issues: [], enrichment_issues: [], quality_notices: [], page: { parent_count: activeCandidate ? 1 : 0, parent_offset: 0, parent_limit: 60, previous_parent_offset: null, next_parent_offset: null }, cached: true, cached_authoritative: true, cooldown_seconds: 0,
     }, error: null };
     if (name === "market-radar" && action === "details") return { data: { ok: true, candidate: currentCandidate }, error: null };
+    if (name === "market-radar" && action === "reconciliation-details") {
+      return { data: { ok: true, reconciliation: reconciliationDetails }, error: null };
+    }
     if (name === "market-radar" && action === "review-domain") {
       currentCandidate = {
         ...currentCandidate,
@@ -512,22 +740,14 @@ try {
   });
   await draftCase.page.click(`[data-open-draft="${draft.id}"]`);
   await draftCase.page.waitForSelector(".admin-workflow-issues");
-  await draftCase.page.waitForFunction(() => {
-    const button=document.querySelector("[data-request-review]");
-    return button instanceof HTMLButtonElement && !button.disabled;
-  },null,{timeout:5_000}).catch(async () => {
-    throw new Error(`REVIEW_BUTTON_BLOCKED:${await draftCase.page.locator("[data-request-review]").evaluate((node) => node.outerHTML)}:${draftCase.errors.join("|")}`);
-  });
   await draftCase.page.waitForSelector("[data-expert-repair-panel]");
   assert.match(await draftCase.page.textContent(".admin-workflow-issues"), /Responsable: Corrector/);
   assert.match(await draftCase.page.textContent(".admin-workflow-issues"), /Siguiente acción:/);
-  assert.equal(await draftCase.page.locator("[data-request-review]").isEnabled(), true);
+  assert.equal(await draftCase.page.locator("[data-request-review]").count(), 0);
   assert.equal(await draftCase.page.locator("[data-expert-repair-panel]").count(), 1);
   assert.equal(await draftCase.page.locator("[data-confirm-review]").count(), 0);
   assert.equal(await draftCase.page.locator("[data-publish-draft]").count(), 0);
-  await draftCase.page.click("[data-request-review]");
-  await draftCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "validate-market-draft"));
-  assert.match(await draftCase.page.textContent("body"), /Validator conserva el borrador privado|Corrector/);
+  assert.match(await draftCase.page.textContent("body"), /Corrector/);
   assert.equal(await draftCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
   assert.deepEqual(draftCase.errors, []);
   await draftCase.context.close();
@@ -554,7 +774,7 @@ try {
   assert.equal(calls.some((call) => call.name === "market-expert" && ["analyze-origin", "revalidate-analysis"].includes(call.action)), false);
   assert.equal(await issueCase.page.locator("[data-save-draft]").isEnabled(), true);
   await issueCase.page.click("[data-save-draft]");
-  await issueCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v1"));
+  await issueCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"));
   assert.equal(await issueCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
   assert.deepEqual(issueCase.errors, []);
   await issueCase.context.close();
@@ -606,7 +826,7 @@ try {
   assert.equal(expiredFailureCalls.some((call) => call.name === "market-expert" && call.action === "revalidate-analysis"), false);
   assert.equal(await expiredFailureCase.page.locator("[data-save-draft]").isEnabled(), true);
   await expiredFailureCase.page.click("[data-save-draft]");
-  await expiredFailureCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v1"));
+  await expiredFailureCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"));
   assert.deepEqual(expiredFailureCase.errors, []);
   await expiredFailureCase.context.close();
 
@@ -650,7 +870,7 @@ try {
   await publicationCase.page.waitForFunction(() => /Puerta de publicación|Revalidar la evidencia temporal/.test(document.body.textContent || ""));
   const publicationCalls = await publicationCase.page.evaluate(() => window.__atinaraCalls);
   assert.equal(publicationCalls.filter((call) => call.name === "publish_market_draft_v2").length, 1);
-  assert.equal(publicationCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v1"), false);
+  assert.equal(publicationCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"), false);
   assert.deepEqual(publicationCase.errors, []);
   await publicationCase.context.close();
 
@@ -664,7 +884,7 @@ try {
   assert.equal(await terminalCase.page.locator("#admin-market-form").count(), 0);
   const terminalCalls = await terminalCase.page.evaluate(() => window.__atinaraCalls);
   assert.equal(terminalCalls.some((call) => call.name === "market-expert"), false);
-  assert.equal(terminalCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v1"), false);
+  assert.equal(terminalCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"), false);
   assert.deepEqual(terminalCase.errors, []);
   await terminalCase.context.close();
 
@@ -685,7 +905,7 @@ try {
   assert.equal(domainCalls.filter((call) => call.name === "market-radar" && call.action === "review-domain").length, 1);
   assert.equal(domainCalls.some((call) => call.name === "market-expert"
     && ["analyze-origin", "revalidate-analysis"].includes(call.action)), false);
-  assert.equal(domainCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v1"), false);
+  assert.equal(domainCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"), false);
   assert.equal(await domainCase.page.locator(`[data-expert-apply="${domainCandidate.id}"]:not([disabled])`).count(), 0);
   assert.equal(await domainCase.page.locator("#admin-market-form").count(), 0);
   assert.equal(await domainCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
@@ -707,8 +927,148 @@ try {
   assert.deepEqual(scheduledCase.errors, []);
   await scheduledCase.context.close();
 
+  // Caso 9 · padre 48/48: se proyectan identidades reales, nunca placeholders
+  // legacy ni una frontera temporal como identidad hija.
+  const reconciledCase = await pageFor("radar-reconciled-48", { width: 1366, height: 900 });
+  await reconciledCase.page.click('[data-admin-view="radar"]');
+  await reconciledCase.page.waitForSelector('[data-radar-toggle-group="polymarket:800696"]');
+  await reconciledCase.page.click('[data-radar-toggle-group="polymarket:800696"]');
+  assert.equal(await reconciledCase.page.locator(".radar-event-option").count(), 48);
+  const reconciledText = await reconciledCase.page.textContent("body");
+  assert.match(reconciledText, /48 opciones declaradas/);
+  assert.match(reconciledText, /Marathon/);
+  assert.match(reconciledText, /Resolved Option 48/);
+  assert.doesNotMatch(reconciledText, /\bGame A(?:\s|$)|\bGame Z(?:\s|$)|another game|deadline:|lte 2027/i);
+  await reconciledCase.page.click(`[data-radar-reconciliation="${completeParentReconciliation.id}"]`);
+  await reconciledCase.page.waitForSelector("#radar-reconciliation-detail").catch(async () => {
+    const debug = await reconciledCase.page.evaluate(() => ({
+      calls: window.__atinaraCalls,
+      notice: document.querySelector(".admin-status-message")?.textContent || "",
+      reconciliationButtons: [...document.querySelectorAll("[data-radar-reconciliation]")]
+        .map((node) => node.getAttribute("data-radar-reconciliation")),
+    }));
+    throw new Error(`RADAR_RECONCILIATION_DETAIL_FAILED:${JSON.stringify(debug)}:${reconciledCase.errors.join("|")}`);
+  });
+  assert.equal(await reconciledCase.page.evaluate(() => document.activeElement?.id),"radar-reconciliation-detail");
+  assert.equal(await reconciledCase.page.locator("#radar-reconciliation-detail .radar-reconciliation-card").count(), 48);
+  const reconciledDetailText = await reconciledCase.page.textContent("#radar-reconciliation-detail");
+  assert.match(reconciledDetailText, /Etiqueta original:\s*Game A/i);
+  assert.match(reconciledDetailText, /Identidad canónica Atinara|Marathon/i);
+  assert.match(reconciledDetailText,/endpoint|Hijas enumeradas en el padre|Identidad observada en el padre/i);
+  await reconciledCase.page.click("[data-radar-close-reconciliation]");
+  assert.equal(await reconciledCase.page.evaluate((id) =>
+    document.activeElement?.getAttribute("data-radar-reconciliation")===id,
+  completeParentReconciliation.id),true);
+  assert.equal(await reconciledCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+  assert.deepEqual(reconciledCase.errors, []);
+  await reconciledCase.context.close();
+
+  // Caso 10 · padre 21/48: una sola ficha de reconciliación, cero candidatas,
+  // cero rechazos falsos y ninguna etiqueta provisional en la vista normal.
+  const incompleteCase = await pageFor("radar-incomplete-48", { width: 390, height: 844 });
+  await incompleteCase.page.click('[data-admin-view="radar"]');
+  await incompleteCase.page.waitForSelector('[data-reconciliation="incomplete_provider_metadata"]');
+  const incompleteText = await incompleteCase.page.textContent("body");
+  assert.match(incompleteText, /48 opciones declaradas/);
+  assert.match(incompleteText, /21 identificadas/);
+  assert.match(incompleteText, /27 pendientes de identidad/);
+  assert.equal(await incompleteCase.page.locator(".radar-event-option").count(), 0);
+  assert.equal(await incompleteCase.page.locator("#radar-rejections-title").count(), 0);
+  assert.doesNotMatch(incompleteText, /\bGame A(?:\s|$)|\bGame Z(?:\s|$)|another game|deadline:|lte 2027/i);
+  assert.match(incompleteText, /Reintentar la actualización del proveedor|Siguiente acción/i);
+  assert.match(incompleteText,/Detectada por[\s\S]*Radar/i);
+  assert.match(incompleteText,/Alcance bloqueado[\s\S]*Aprobación/i);
+  assert.match(incompleteText,/Estado[\s\S]*Abierta/i);
+  await incompleteCase.page.click(`[data-radar-reconciliation="${incompleteParentReconciliation.id}"]`);
+  await incompleteCase.page.waitForSelector("#radar-reconciliation-detail").catch(async () => {
+    const debug = await incompleteCase.page.evaluate(() => ({
+      calls: window.__atinaraCalls,
+      notice: document.querySelector(".admin-status-message")?.textContent || "",
+      reconciliationButtons: [...document.querySelectorAll("[data-radar-reconciliation]")]
+        .map((node) => node.getAttribute("data-radar-reconciliation")),
+    }));
+    throw new Error(`RADAR_INCOMPLETE_DETAIL_FAILED:${JSON.stringify(debug)}:${incompleteCase.errors.join("|")}`);
+  });
+  const incompleteDetailText = await incompleteCase.page.textContent("#radar-reconciliation-detail");
+  assert.match(incompleteDetailText, /Game A/);
+  assert.match(incompleteDetailText, /another game/);
+  assert.match(incompleteDetailText, /Identidad pendiente/);
+  assert.equal(await incompleteCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+  assert.deepEqual(incompleteCase.errors, []);
+  await incompleteCase.context.close();
+
+  // Casos 11 y 12 de la puerta de proyección: null nunca equivale a cero y
+  // una frontera temporal jamás se presenta como identidad categórica.
+  for (const guardedScenario of ["radar-null-counts", "radar-temporal-projection"]) {
+    const guardedCase = await pageFor(guardedScenario, { width: 768, height: 900 });
+    await guardedCase.page.click('[data-admin-view="radar"]');
+    await guardedCase.page.waitForSelector("#market-radar-title");
+    assert.equal(await guardedCase.page.locator(".radar-event-option").count(), 0);
+    assert.equal(await guardedCase.page.locator("[data-radar-prepare]:not([disabled])").count(), 0);
+    const guardedText = await guardedCase.page.textContent("body");
+    assert.doesNotMatch(guardedText, /lte 2027|deadline:lte/i);
+    assert.equal(await guardedCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+    assert.deepEqual(guardedCase.errors, []);
+    await guardedCase.context.close();
+  }
+
+  const inactiveRejectionCase=await pageFor("radar-inactive-rejection",{width:768,height:900});
+  await inactiveRejectionCase.page.click('[data-admin-view="radar"]');
+  await inactiveRejectionCase.page.waitForSelector("#radar-rejections-title");
+  const inactiveRejectionText=await inactiveRejectionCase.page.textContent("#admin-markets-root");
+  assert.match(inactiveRejectionText,/Opción no disponible|Opción del proveedor inactiva|Inactiva/i);
+  assert.match(inactiveRejectionText,/Marathon/);
+  assert.doesNotMatch(inactiveRejectionText,/\bGame A(?:\s|$)|another game|deadline:/i);
+  assert.equal(await inactiveRejectionCase.page.locator("[data-radar-prepare]").count(),0);
+  assert.deepEqual(inactiveRejectionCase.errors,[]);
+  await inactiveRejectionCase.context.close();
+
+  const paginationCase = await pageFor("radar-pagination", { width: 1366, height: 900 });
+  await paginationCase.page.click('[data-admin-view="radar"]');
+  await paginationCase.page.waitForSelector('h3:has-text("Página 0")').catch(async () => {
+    const debug = await paginationCase.page.evaluate(() => ({
+      calls: window.__atinaraCalls,
+      notice: document.querySelector(".admin-status-message")?.textContent || "",
+      headings: [...document.querySelectorAll("h3")].map((node) => node.textContent),
+      options: document.querySelectorAll(".radar-event-option").length,
+    }));
+    throw new Error(`RADAR_PAGINATION_BOOT_FAILED:${JSON.stringify(debug)}:${paginationCase.errors.join("|")}`);
+  });
+  await paginationCase.page.click('[data-radar-page="5"]');
+  await paginationCase.page.waitForSelector('h3:has-text("Página 5")');
+  await paginationCase.page.click('[data-radar-page="10"]');
+  await paginationCase.page.waitForSelector('h3:has-text("Página 10")');
+  await paginationCase.page.click('[data-radar-page-previous]');
+  await paginationCase.page.waitForSelector('h3:has-text("Página 5")');
+  await paginationCase.page.click('[data-radar-page-previous]');
+  await paginationCase.page.waitForSelector('h3:has-text("Página 0")');
+  const requestedOffsets = (await paginationCase.page.evaluate(() => window.__atinaraCalls))
+    .filter((call) => call.name === "market-radar" && call.action === "discover")
+    .map((call) => Number(call.body?.parent_offset) || 0);
+  assert.deepEqual(requestedOffsets.slice(-5), [0, 5, 10, 5, 0]);
+  assert.deepEqual(paginationCase.errors, []);
+  await paginationCase.context.close();
+
+  const reconciliationPaginationCase=await pageFor("radar-reconciliation-pagination",{width:1366,height:900});
+  await reconciliationPaginationCase.page.click('[data-admin-view="radar"]');
+  await reconciliationPaginationCase.page.waitForSelector(`[data-radar-reconciliation="${completeParentReconciliation.id}"]`,{timeout:5_000}).catch(async()=>{
+    throw new Error(`RADAR_RECONCILIATION_PAGINATION_BOOT_FAILED:${JSON.stringify({
+      calls:await reconciliationPaginationCase.page.evaluate(()=>window.__atinaraCalls),
+      notice:await reconciliationPaginationCase.page.locator(".admin-status-message").textContent().catch(()=>""),
+      text:(await reconciliationPaginationCase.page.textContent("body"))?.slice(0,1200),
+      errors:reconciliationPaginationCase.errors,
+    })}`);
+  });
+  await reconciliationPaginationCase.page.click('[data-radar-reconciliation-page="20"]');
+  await reconciliationPaginationCase.page.waitForSelector('text=La consulta es válida y no contiene padres');
+  assert.equal(await reconciliationPaginationCase.page.locator('[data-radar-reconciliation-page="0"]').count(),1);
+  await reconciliationPaginationCase.page.click('[data-radar-reconciliation-page="0"]');
+  await reconciliationPaginationCase.page.waitForSelector(`[data-radar-reconciliation="${completeParentReconciliation.id}"]`);
+  assert.deepEqual(reconciliationPaginationCase.errors,[]);
+  await reconciliationPaginationCase.context.close();
+
   assert.equal(externalNetworkCalls, 0);
-  process.stdout.write(`MARKET_WORKFLOW_BROWSER_OK cases=11 viewports=390,768,1366 externalNetworkCalls=${externalNetworkCalls} blockedExternalAttempts=${blockedExternalAttempts}\n`);
+  process.stdout.write(`MARKET_WORKFLOW_BROWSER_OK cases=18 viewports=390,768,1366 externalNetworkCalls=${externalNetworkCalls} blockedExternalAttempts=${blockedExternalAttempts}\n`);
 } finally {
   await browser.close();
   await new Promise((resolveClose) => server.close(resolveClose));

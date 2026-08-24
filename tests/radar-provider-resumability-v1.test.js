@@ -124,7 +124,7 @@ test("la revalidación solo reutiliza una decisión humana ligada a la huella de
   const fingerprint = await radar.radarDomainFingerprintV1(base);
   const review = {
     provider:base.provider,external_id:base.external_id,domain_fingerprint:fingerprint,
-    decision:"in_domain",policy_version:"atinara-gaming-domain-v1",
+    decision:"in_domain",policy_version:"atinara-gaming-domain-v2",
     request_id:"11111111-1111-4111-8111-111111111111",evidence_refs:[],
   };
   const reviewed = radar.projectRadarDomainReview({ ...base,domain_review_fingerprint:fingerprint },review);
@@ -150,7 +150,7 @@ test("la revalidación solo reutiliza una decisión humana ligada a la huella de
   assert.equal(legacy.domain_status,"review_required");
   const domainGateCall = edge.indexOf("const currentProviderCandidate = providerCandidate");
   const eligibilityProjection = edge.indexOf("let eligibility = applyDeterministicRadarEligibility",domainGateCall);
-  const eligibilityWrite = edge.indexOf('apply_market_radar_prepare_eligibility_v1',eligibilityProjection);
+  const eligibilityWrite = edge.indexOf('apply_market_radar_prepare_eligibility_v4',eligibilityProjection);
   assert.ok(domainGateCall>=0 && domainGateCall<eligibilityProjection && eligibilityProjection<eligibilityWrite);
 });
 
@@ -227,10 +227,10 @@ test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => 
   assert.ok(runStart >= 0 && runEnd > runStart && activeIndex >= 0
     && beginIndex > activeIndex && discoverIndex > beginIndex);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
-  assert.match(edge, /process_market_radar_refresh_batch_v1/);
-  assert.match(edge, /split_market_radar_refresh_batch_v1/);
+  assert.match(edge, /complete_market_radar_candidate_refresh_v1/);
+  assert.doesNotMatch(edge, /process_market_radar_refresh_batch_v2|split_market_radar_refresh_batch_v1/);
   assert.match(edge, /defer_market_radar_refresh_v1/);
-  assert.match(edge, /finalize_market_radar_refresh_v3/);
+  assert.match(edge, /finalize_market_radar_refresh_v5/);
   assert.match(edge, /partial:\s*candidateProviderErrors\.length > 0/);
   assert.match(edge, /enrichment_issues:\s*enrichmentIssues/);
 });
@@ -257,5 +257,5 @@ test("UI elimina Tavily de tarjetas rojas y usa un único resumen expandible", (
   assert.match(admin, /Continuar actualización/);
   assert.doesNotMatch(admin, /class="radar-partial-error"/);
   assert.match(styles, /\.radar-operational-summary/);
-  assert.match(html, /radar-refresh-request\.js\?v=20260820-v6-market-cycle1/);
+  assert.match(html, /radar-refresh-request\.js\?v=20260823-v6-parent-reconciliation2/);
 });

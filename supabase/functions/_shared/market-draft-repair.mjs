@@ -1873,7 +1873,7 @@ export function inferSubject(context, archetype = null) {
   const familySemantics = isRecord(candidate.family_semantics) ? candidate.family_semantics : {};
   const familyEntity = titleCaseSubject(isRecord(candidate.family_semantics)
     ? candidate.family_semantics.entity_label : "");
-  const familyIdentityTrusted = candidate.family_version === "atinara-market-family-v4"
+  const familyIdentityTrusted = ["atinara-market-family-v4", "atinara-market-family-v5"].includes(candidate.family_version)
     && familySemantics.identity_ambiguous !== true
     && familyEntity.length >= 2
     && (!structured || evidenceMentionsSubject(structured, familyEntity));

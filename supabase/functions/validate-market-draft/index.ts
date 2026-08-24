@@ -189,7 +189,7 @@ async function beginDraftReview(
   authorization: string,
   request: ReviewRequest,
 ): Promise<JsonRecord> {
-  return rpc(env, "begin_market_draft_review_v2", {
+  return rpc(env, "begin_market_draft_review_v3", {
     draft_id_input: request.draftId,
     expected_version_input: request.expectedVersion,
     request_key_input: request.attemptId,
@@ -349,7 +349,8 @@ async function reviewWorkflowIssues(
 ): Promise<JsonRecord[]> {
   return Promise.all(issues.slice(0, 30).map(async (issue) => {
     const rawCode = text(issue.workflow_issue_code || issue.code, 100).toUpperCase();
-    const sourceIssue = /(?:SOURCE|EVIDENCE)/.test(rawCode);
+    const providerContractIssue = rawCode === "PROVIDER_CHILD_CONTRACT_CHANGED";
+    const sourceIssue = providerContractIssue || /(?:SOURCE|EVIDENCE)/.test(rawCode);
     const temporalIssue = /TEMPORAL|TIMEZONE|DATE/.test(rawCode);
     const technicalIssue = detectedBy === "internal_platform";
     const inconclusiveIssue = rawCode === "AUTOMATIC_REVIEW_INCONCLUSIVE";
@@ -581,10 +582,40 @@ async function validateDraft(request: Request, env: Environment, authorization: 
       message:"El expediente contiene una condición terminal auditada. Validator no inició una inferencia ni una revisión nueva.",
     },409);
   }
+  const preflightApprovalIssues = Array.isArray(preflightWorkflowRaw)
+    ? preflightWorkflowRaw.filter(isRecord).filter((issue) =>
+      !["resolved","superseded"].includes(text(issue.status,40))
+      && text(issue.blocking_scope,40)==="approval"
+      && !(text(issue.status,40)==="waiting"
+        && text(issue.owner_stage,40)==="validator"
+        && text(issue.next_action,100)==="request_market_validation")):[];
+  if (preflightApprovalIssues.length) {
+    const blockingIssue=preflightApprovalIssues[0];
+    return jsonResponse({
+      ok:false,status:"review_rejected_repairable",classification:"content",
+      workflow_issues:preflightApprovalIssues,
+      workflow_issue_count:preflightApprovalIssues.length,
+      owner_stage:text(blockingIssue.owner_stage,40)||"corrector",
+      next_action:text(blockingIssue.next_action,100)||"repair_draft_issues",
+      state_preserved:true,retryable:blockingIssue.retryable===true,zero_inference:true,
+      message:"El expediente conserva una incidencia reparable. Validator no inició una inferencia nueva.",
+    },409);
+  }
 
   const beginning = await beginDraftReview(env, authorization, reviewRequest);
 
   const beginStatus = text(beginning.status, 80);
+  if (beginStatus === "radar_revalidation_required") {
+    return jsonResponse({
+      ok:false,status:beginStatus,classification:"content",zero_inference:true,
+      state_preserved:true,retryable:beginning.retryable===true,
+      owner_stage:text(beginning.owner_stage,40)||"radar",
+      next_action:text(beginning.next_action,100)||"refresh_draft_eligibility",
+      workflow_issues:Array.isArray(beginning.workflow_issues)
+        ? beginning.workflow_issues.filter(isRecord):[],
+      message:text(beginning.message)||"Radar debe revalidar el expediente antes de iniciar Validator.",
+    },409);
+  }
   if (beginning.idempotency_replay === true && beginning.completed === true) {
     const classification = text(beginning.classification, 40);
     if (classification === "technical") {
@@ -699,8 +730,17 @@ async function validateDraft(request: Request, env: Environment, authorization: 
     ? await reviewWorkflowIssues([primarySourceIssue], attemptId, "validator") : [];
   const inheritedReviewIssues = inheritedWorkflowIssues.map((issue: JsonRecord) => {
     const issueCode = text(issue.issue_code, 100);
-    const temporal = /TEMPORAL|DATE|TIMEZONE/.test(issueCode);
-    const source = /SOURCE|EVIDENCE/.test(issueCode);
+    const currentValue = isRecord(issue.current_value) ? issue.current_value : {};
+    const providerChild = isRecord(currentValue.provider_child) ? currentValue.provider_child : {};
+    const priorContract = isRecord(providerChild.prior_provider_contract)
+      ? providerChild.prior_provider_contract : {};
+    const currentContract = isRecord(providerChild.provider_contract)
+      ? providerChild.provider_contract : {};
+    const providerContractChange = issueCode === "PROVIDER_CHILD_CONTRACT_CHANGED";
+    const temporal = /TEMPORAL|DATE|TIMEZONE/.test(issueCode) || (providerContractChange
+      && ["source_close_at","source_resolution_deadline"].some((field) =>
+        text(priorContract[field], 500) !== text(currentContract[field], 500)));
+    const source = providerContractChange || /SOURCE|EVIDENCE/.test(issueCode);
     return {
       code: temporal ? "TEMPORAL_INCOHERENCE" : source ? "INSUFFICIENT_EVIDENCE" : "INVALID_QUESTION",
       field: temporal ? "evaluation_ends_at" : source ? "primary_source" : "question",

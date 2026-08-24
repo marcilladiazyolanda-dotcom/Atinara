@@ -17,6 +17,7 @@ const repairSource = read("supabase/functions/_shared/market-draft-repair.mjs");
 const migration = read("supabase/migrations/20260809204739_close_expert_market_cycle_v2.sql");
 const hardeningMigration = read("supabase/migrations/20260811100833_harden_repair_evidence_and_idempotency_v3.sql");
 const radarIsolationMigration = read("supabase/migrations/20260811104727_isolate_radar_poison_records_v4.sql");
+const parentReconciliationMigration = read("supabase/migrations/20260822205445_add_radar_parent_reconciliation_v1.sql");
 const adminHtml = read("admin-markets.html");
 const adminAgentBridge = read("admin-agent-engine.js");
 const adminJs = read("admin-markets.js");
@@ -55,20 +56,63 @@ test("Radar · 429 respeta Retry-After, abre circuito y preserva last-known-good
 });
 
 test("Radar · un registro venenoso se aísla dentro de una sola RPC sin perder filas sanas", () => {
-  assert.match(radarEdge, /upsert_market_radar_batch_with_fact_checks_v2/);
-  assert.match(radarEdge, /acceptedCount \+ quarantined\.length !== entries\.length/);
-  assert.match(radarEdge, /outcome\.persistedCount \+= batchResult\.acceptedCount/);
-  assert.match(radarEdge, /outcome\.quarantined\.push\(\.\.\.batchResult\.quarantined\)/);
-  assert.match(radarEdge, /if \(entries\.length > 1\)/);
-  assert.match(radarEdge, /entries\.slice\(0, middle\)/);
-  assert.match(radarEdge, /entries\.slice\(middle\)/);
-  assert.match(radarEdge, /outcome\.quarantined\.push\(quarantine\)/);
+  assert.match(radarEdge, /complete_market_radar_candidate_refresh_v1/);
+  assert.doesNotMatch(radarEdge, /rpc\(environment, "upsert_market_radar_batch_with_(?:fact_checks|eligibility)/);
+  assert.match(parentReconciliationMigration, /public\.process_market_radar_refresh_batch_v1/);
+  assert.match(parentReconciliationMigration, /market_radar_candidate_quarantines/);
+  assert.match(radarIsolationMigration, /exception when others/);
+  assert.match(parentReconciliationMigration, /RADAR_CANDIDATE_RECONCILIATION_BINDING_INCOMPLETE/);
   assert.match(radarIsolationMigration, /database_subtransaction_v1/);
   assert.match(radarIsolationMigration, /exception when others/);
   assert.match(radarIsolationMigration, /market_radar_candidate_quarantines/);
   assert.match(radarIsolationMigration, /list_market_radar_candidate_quarantines_v1/);
   assert.match(adminJs, /Causas consultables/);
   assert.match(adminJs, /RADAR_QUARANTINE_DESCRIPTIONS/);
+});
+
+test("un issue-draft conserva el guard live y nunca se considera duplicado de sí mismo", () => {
+  assert.match(parentReconciliationMigration,
+    /intelligence_origin_type='radar_candidate'[\s\S]*?intelligence_origin_id=candidate_input\.id::text/);
+  assert.match(parentReconciliationMigration,
+    /RADAR_LEGACY_PREPARED_DRAFT_REQUIRED[\s\S]*?assert_market_radar_candidate_no_live_duplicate_v1\(candidate\)[\s\S]*?child_identity_issue_present/);
+  assert.match(parentReconciliationMigration,
+    /assert_market_radar_candidate_no_live_duplicate_v1[\s\S]*?pg_advisory_xact_lock[\s\S]*?RADAR_CONFIRMED_DUPLICATE/);
+});
+
+test("refresh y revalidación protegen el draft ligado sin loops de identidad o disponibilidad", () => {
+  assert.match(parentReconciliationMigration,
+    /get_market_radar_protected_candidate_identities_v1[\s\S]*?intelligence_origin_type='radar_candidate'/);
+  assert.match(parentReconciliationMigration,
+    /rebind_market_radar_protected_candidates_v1[\s\S]*?identity_changed[\s\S]*?CHILD_IDENTITY_MISMATCH/);
+  assert.match(parentReconciliationMigration,
+    /clear_market_radar_live_duplicate_v1[\s\S]*?live_duplicate_no_longer_present/);
+  assert.match(parentReconciliationMigration,
+    /sync_market_radar_revalidation_issues_v1[\s\S]*?provider_revalidation_recovered/);
+  assert.match(parentReconciliationMigration,/current_canonical_child_key/);
+  assert.match(parentReconciliationMigration,/current_parent_child_fingerprint/);
+  assert.equal((radarEdge.match(/get_market_radar_candidate_for_draft_revalidation_v3/g)||[]).length,2);
+  assert.doesNotMatch(radarEdge,/get_market_radar_candidate_for_draft_revalidation_v2/);
+  assert.match(parentReconciliationMigration,
+    /binding_status'<>'pending_recovery'[\s\S]*?has_active_radar_draft/);
+  assert.match(radarEdge,/\["prepared","rejected"\]\.includes\(cleanText\(candidate\.state, 40\)\)/);
+});
+
+test("Validator hace preflight Radar durable y cero inferencia antes del attempt", () => {
+  assert.match(validatorEdge,/begin_market_draft_review_v3/);
+  assert.doesNotMatch(validatorEdge,/begin_market_draft_review_v2/);
+  assert.match(parentReconciliationMigration,
+    /begin_market_draft_review_v3[\s\S]*?assert_market_radar_draft_eligibility_v1[\s\S]*?zero_inference/);
+  assert.match(validatorEdge,
+    /beginStatus === "radar_revalidation_required"[\s\S]*?zero_inference:true/);
+  assert.match(parentReconciliationMigration,
+    /publication_issue_pre_parent_reconciliation_v1[\s\S]*?RADAR_PARENT_RECONCILIATION_INCOMPLETE/);
+});
+
+test("issues Radar conservan identidad determinista y no mueven revisión por timestamps", () => {
+  assert.match(radarEdge,/deterministicRadarIssueId/);
+  assert.match(parentReconciliationMigration,/market_workflow_issue_deterministic_v1/);
+  assert.match(parentReconciliationMigration,
+    /market_candidate_preparation_projection[\s\S]*?workflow_issues[\s\S]*?-'issue_id'-'created_at'-'updated_at'/);
 });
 
 test("Editor · muestra la causa raíz sin cascada ni recuperación factual", () => {

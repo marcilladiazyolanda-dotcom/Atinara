@@ -363,7 +363,7 @@ begin
     jsonb_build_object('sub', admin_id, 'role', 'authenticated')::text,
     true
   );
-  first_save := public.save_market_draft_from_radar_intelligence(
+  first_save := public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
     first_id, null, null, draft_payload, expert_run_id, contract, sources
   );
   saved_draft_id := (first_save -> 'draft' ->> 'id')::uuid;
@@ -376,7 +376,7 @@ begin
     raise exception 'TEST_FIRST_EXPERT_SAVE_INVALID: %', first_save;
   end if;
 
-  replayed_save := public.save_market_draft_from_radar_intelligence(
+  replayed_save := public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
     first_id, null, null, draft_payload, expert_run_id, contract, sources
   );
   if not coalesce((replayed_save ->> 'idempotency_replay')::boolean, false)

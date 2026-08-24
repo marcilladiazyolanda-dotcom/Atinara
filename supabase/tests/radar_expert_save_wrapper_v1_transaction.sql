@@ -47,10 +47,10 @@ declare
     'public.save_market_draft_from_radar_intelligence_without_revision_guard(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)'
   );
   radar_writer regprocedure := to_regprocedure(
-    'public.save_market_draft_from_radar(uuid,uuid,bigint,jsonb)'
+    'public.save_market_draft_from_radar_pre_parent_reconciliation_v1(uuid,uuid,bigint,jsonb)'
   );
   expert_writer regprocedure := to_regprocedure(
-    'public.save_market_draft_from_radar_intelligence(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)'
+    'public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(uuid,uuid,bigint,jsonb,uuid,jsonb,jsonb)'
   );
 begin
   if internal_writer is null or radar_writer is null or expert_writer is null then
@@ -356,7 +356,7 @@ begin
     true
   );
 
-  manual_save := public.save_market_draft_from_radar(
+  manual_save := public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
     manual_candidate.id, null, null, manual_draft
   );
   manual_draft_id := nullif(manual_save #>> '{draft,id}', '')::uuid;
@@ -369,7 +369,7 @@ begin
     raise exception 'TEST_RADAR_MANUAL_FIRST_SAVE_INVALID: %', manual_save;
   end if;
 
-  manual_replay := public.save_market_draft_from_radar(
+  manual_replay := public.save_market_draft_from_radar_pre_parent_reconciliation_v1(
     manual_candidate.id, null, null, manual_draft
   );
   if not coalesce((manual_replay ->> 'idempotency_replay')::boolean, false)
@@ -380,7 +380,7 @@ begin
     raise exception 'TEST_RADAR_MANUAL_REPLAY_NOT_IDEMPOTENT: %', manual_replay;
   end if;
 
-  expert_save := public.save_market_draft_from_radar_intelligence(
+  expert_save := public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
     expert_candidate.id,
     null,
     null,
@@ -406,7 +406,7 @@ begin
     raise exception 'TEST_RADAR_EXPERT_FIRST_SAVE_INVALID: %', expert_save;
   end if;
 
-  expert_replay := public.save_market_draft_from_radar_intelligence(
+  expert_replay := public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
     expert_candidate.id,
     null,
     null,
@@ -428,7 +428,7 @@ begin
   end if;
 
   begin
-    perform public.save_market_draft_from_radar_intelligence(
+    perform public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
       expert_candidate.id,
       null,
       null,
@@ -448,7 +448,7 @@ begin
   end if;
 
   begin
-    perform public.save_market_draft_from_radar_intelligence(
+    perform public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
       expert_candidate.id,
       null,
       null,
@@ -468,7 +468,7 @@ begin
       jsonb_build_object('sub', gen_random_uuid(), 'role', 'authenticated')::text,
       true
     );
-    perform public.save_market_draft_from_radar_intelligence(
+    perform public.save_market_draft_from_radar_intelligence_pre_parent_reconciliation_v1(
       expert_candidate.id,
       null,
       null,

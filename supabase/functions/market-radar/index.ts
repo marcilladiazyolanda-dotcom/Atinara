@@ -7,7 +7,9 @@ import {
   RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES,
   RADAR_ELIGIBILITY_POLICY_VERSION,
   RADAR_FACT_POLICY_VERSION,
+  RADAR_CHILD_PROJECTION_VERSION,
   RADAR_NORMALIZER_VERSION,
+  RADAR_PARENT_RECONCILIATION_VERSION,
   RADAR_PROVIDER_ROLE_VERSION,
   RADAR_PROVIDERS,
   RADAR_REASON_CODES,
@@ -15,13 +17,16 @@ import {
   adaptPolymarketResponse,
   applyDeterministicRadarEligibility,
   applyEligibilityDecision,
+  bindRadarCandidatesToReconciledChildren,
   buildCacheKey,
+  buildRadarPersistenceBatches,
   buildCoverResolutionSignals,
   buildDraftPrefill,
   buildResolutionAuthorityEvidence,
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
+  collectProviderCursorPages,
   constrainRadarDiscoveryPayload,
   detectOfficialCoverEventResolution,
   detectOfficialCoverSelectionHold,
@@ -29,31 +34,42 @@ import {
   evidenceHasPotentialTerminalClaim,
   evaluateGamingDomain,
   evaluateProviderEligibility,
+  extractRadarOptionChild,
   extractOfficialHtmlText,
   extractOfficialRelatedUrls,
   groupCandidates,
   hasSpeculativeEvidenceLanguage,
   isAdaptedIdeaComplete,
   isBlockingDuplicateMatch,
+  isCanonicalRadarChildProjectionValid,
+  isProviderPlaceholderLabel,
+  isRadarParentComplete,
   isRecord,
   isResolutionAuthorityEvidence,
   isVerifiedOfficialEvidence,
   isVerifiedTerminalEvidence,
   normalizeProviderResult,
+  normalizeComparableText,
   normalizeRadarCandidatePresentation,
+  localizeRadarProviderLabel,
+  mergeProviderParentSelections,
   paginateMergedRadarParents,
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
   providerResolutionSourceUrls,
   providerResultLabel,
   projectRadarDiscoveryView,
+  projectRadarParentReconciliation,
   projectRadarDomainReview,
+  prioritizeProviderChildEvidenceAliases,
   publicProviderError,
   radarDomainFingerprintV1,
+  reconcileProviderParent,
   safeIsoDate,
   safeNumber,
   safePublicUrl,
   scoreCandidates,
+  selectWholeProviderParents,
   selectVerifiedResolutionUrl,
   summarizeRejections,
 } from "../_shared/market-radar.mjs";
@@ -78,23 +94,24 @@ const MAX_REQUEST_BYTES = 8_192;
 const OPERATION_TIMEOUT_MS = 135_000;
 const FINALIZATION_RESERVE_MS = 15_000;
 const PROVIDER_TIMEOUT_MS = 14_000;
-const MAX_PROVIDER_PAGES = 3;
-const MAX_NORMALIZED_PER_PROVIDER = 240;
+const MAX_PROVIDER_PAGES = 50;
+const MAX_NORMALIZED_PER_PROVIDER = 480;
 const RADAR_PERSISTENCE_BATCH_SIZE = 24;
 const MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER = 64;
 const PERSISTENCE_ISOLATION_BUDGET_MS = 20_000;
 const PERSISTENCE_RPC_START_MARGIN_MS = 750;
 const RADAR_REFRESH_REQUEST_VERSION = "atinara-radar-refresh-request-v1";
-const RADAR_REFRESH_MAX_PROCESS_CALLS = 24;
 const MAX_VISIBLE_GROUPS = 60;
 const MAX_AI_ENRICHMENT_GROUPS = 30;
 const MAX_AI_ENRICHMENT_CANDIDATES = 180;
 const AI_ENRICHMENT_BATCH_SIZE = 9;
 const TAVILY_CONCURRENCY = 4;
 const MAX_KALSHI_SERIES = 25;
-const KALSHI_CONCURRENCY = 4;
+// Kalshi aplica 429 con ráfagas pequeñas en producción. Dos workers conservan
+// el presupuesto del refresh y reducen retries sin sacrificar paginación.
+const KALSHI_CONCURRENCY = 2;
 const MAX_REJECTED_OUTCOME_RECONCILIATIONS = 16;
-const MAX_CANONICAL_EVENT_CHILDREN = 240;
+const MAX_CANONICAL_EVENT_CHILDREN = 480;
 const REFRESH_COOLDOWN_MS = 60_000;
 const VERIFICATION_TTL_MINUTES = 360;
 const FACT_CHECK_TTL_MINUTES = 20;
@@ -117,6 +134,7 @@ const PROVIDER_RETRY_JITTER_MS = 250;
 
 const KALSHI_API_ROOT = "https://api.elections.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA_ROOT = "https://gamma-api.polymarket.com";
+const POLYMARKET_CLOB_ROOT = "https://clob.polymarket.com";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -223,6 +241,7 @@ type FetchJsonOptions = {
 
 type RpcOptions = {
   signal?: AbortSignal;
+  timeoutPolicyMs?: number;
 };
 
 class ProviderRequestError extends Error {
@@ -329,9 +348,14 @@ function restHeaders(key: string, authorization?: string): Record<string, string
   return headers;
 }
 
-async function fetchInternal(environment: Environment, input: string, init: RequestInit): Promise<Response> {
+async function fetchInternal(
+  environment: Environment,
+  input: string,
+  init: RequestInit,
+  timeoutPolicyMs = 30_000,
+): Promise<Response> {
   return fetchWithinDeadline(input, init, environment.execution, {
-    timeoutPolicyMs: 30_000,
+    timeoutPolicyMs,
     finalizationReserveMs: FINALIZATION_RESERVE_MS,
   });
 }
@@ -350,7 +374,7 @@ async function rpc(
     headers: restHeaders(key, service ? undefined : authorization),
     body: JSON.stringify(args),
     signal: options.signal ?? environment.execution.signal,
-  });
+  }, options.timeoutPolicyMs ?? 30_000);
   const payload = await response.json().catch(() => ({})) as unknown;
   if (!response.ok) {
     const errorPayload = toRecord(payload);
@@ -371,6 +395,19 @@ async function rpc(
 function validUuid(value: unknown): value is string {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     .test(cleanText(value, 80));
+}
+
+function deterministicRadarIssueId(fingerprint: unknown): string {
+  const value=cleanText(fingerprint,64).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(value)) throw new Error("MARKET_WORKFLOW_ISSUE_FINGERPRINT_INVALID");
+  return `${value.slice(0,8)}-${value.slice(8,12)}-4${value.slice(13,16)}-8${value.slice(17,20)}-${value.slice(20,32)}`;
+}
+
+async function createRadarWorkflowIssue(
+  input: Parameters<typeof createMarketWorkflowIssue>[0],
+): Promise<JsonRecord> {
+  const issue=await createMarketWorkflowIssue(input) as JsonRecord;
+  return {...issue,issue_id:deterministicRadarIssueId(issue.fingerprint)};
 }
 
 function refreshIntentKey(provider: string, capability: string): string {
@@ -398,7 +435,7 @@ async function radarRefreshIssue({
   const nextAction = failureStage === "persistence"
     ? "resume_persistence_intent"
     : capability === "source_enrichment" ? "retry_source_enrichment" : "retry_provider_refresh";
-  return createMarketWorkflowIssue({
+  return createRadarWorkflowIssue({
     issueCode: code,
     detectedBy: "radar",
     ownerStage,
@@ -422,15 +459,80 @@ async function radarRefreshIssue({
   });
 }
 
+function parentReconciliationIssueCode(reconciliation: JsonRecord): string {
+  const status = cleanText(reconciliation.reconciliation_status, 80);
+  if (status === "inconsistent_provider_count") return RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT;
+  if (Number(reconciliation.provider_unresolved_child_count) > 0) {
+    return RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED;
+  }
+  return RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE;
+}
+
+async function recordParentReconciliations(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  reconciliations: JsonRecord[],
+): Promise<void> {
+  if (!intent.leaseToken) throw new Error("RADAR_PARENT_MANIFEST_REQUIRED");
+  const payloads = await Promise.all(reconciliations.map(async (reconciliation) => {
+    const reconciliationStatus = cleanText(reconciliation.reconciliation_status, 80);
+    const complete = reconciliationStatus === "complete";
+    const terminalCorruption = reconciliationStatus === "terminal_provider_corruption";
+    const issue = complete ? null : await createRadarWorkflowIssue({
+      issueCode: parentReconciliationIssueCode(reconciliation),
+      detectedBy: "radar",
+      ownerStage: terminalCorruption ? "provider" : "radar",
+      severity: "blocking",
+      repairability: terminalCorruption ? "terminal" : "auto_recoverable",
+      blockingScope: terminalCorruption ? "terminal" : "approval",
+      affectedFields: ["provider_parent", "provider_children", "canonical_child_identity"],
+      evidenceRefs: toRecordArray(reconciliation.source_refs).slice(0, 12).map((reference) => {
+        const { checked_at: _checkedAt, content_sha256: _contentSha256, ...material } = reference;
+        return material;
+      }),
+      currentValue: {
+        provider: reconciliation.provider,
+        provider_parent_id: reconciliation.provider_parent_id,
+        declared: reconciliation.provider_declared_child_count,
+        discovered: reconciliation.provider_discovered_child_count,
+        accounted: reconciliation.provider_accounted_child_count,
+        identified: reconciliation.provider_identified_child_count,
+        unresolved: reconciliation.provider_unresolved_child_count,
+        pagination_exhausted: reconciliation.provider_pagination_exhausted,
+        reconciliation_status: reconciliation.reconciliation_status,
+      },
+      proposedValue: {
+        provider_declared_child_count: reconciliation.provider_declared_child_count,
+        provider_accounted_child_count: reconciliation.provider_declared_child_count,
+        provider_unresolved_child_count: 0,
+        reconciliation_status: "complete",
+      },
+      confidence: 100,
+      policyVersion: RADAR_PARENT_RECONCILIATION_VERSION,
+      retryable: !terminalCorruption,
+      nextAction: terminalCorruption ? "inspect_provider_data_conflict" : "retry_provider_refresh",
+    });
+    return { ...reconciliation, issue };
+  }));
+  await renewRadarRefreshLease(environment, intent);
+  await rpc(environment, "record_market_radar_parent_reconciliations_v1", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+    reconciliations_input: payloads,
+  }, undefined, true);
+}
+
 const RADAR_TERMINAL_WORKFLOW_CODES = new Set<string>([
   RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED,
   RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT,
   RADAR_REASON_CODES.DUPLICATE_MARKET,
   RADAR_REASON_CODES.OUTSIDE_GAMING_DOMAIN,
-  RADAR_REASON_CODES.PROVIDER_NOT_OPEN,
-  RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
-  RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND,
-  RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND,
+]);
+const RADAR_PROVIDER_AVAILABILITY_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.PROVIDER_NOT_OPEN,RADAR_REASON_CODES.PROVIDER_OPTION_INACTIVE,
+  RADAR_REASON_CODES.PROVIDER_EVENT_NOT_FOUND,RADAR_REASON_CODES.PROVIDER_CHILD_NOT_FOUND,
 ]);
 const RADAR_SOURCE_CONTRACT_WORKFLOW_CODES = new Set<string>([
   RADAR_REASON_CODES.INVALID_OR_UNVERIFIED_SOURCE,
@@ -447,26 +549,36 @@ const RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES = new Set<string>([
   RADAR_REASON_CODES.VERIFICATION_REQUIRED,
   RADAR_REASON_CODES.VERIFICATION_EXPIRED,
 ]);
+const RADAR_PARENT_MANAGED_WORKFLOW_CODES = new Set<string>([
+  RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED,
+  RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE,
+  RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT,
+]);
 
 async function candidateDecisionWorkflowIssue(candidate: JsonRecord, code: string) {
   const terminal = RADAR_TERMINAL_WORKFLOW_CODES.has(code);
   const gamingReview = code === RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED;
-  const placeholder = code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER;
+  const placeholder = code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER
+    || code === RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED;
+  const parentIncomplete = code === RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE
+    || code === RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT;
   const sourceContract = RADAR_SOURCE_CONTRACT_WORKFLOW_CODES.has(code);
   const technicalHold = RADAR_TECHNICAL_HOLD_WORKFLOW_CODES.has(code);
+  const providerAvailability = RADAR_PROVIDER_AVAILABILITY_WORKFLOW_CODES.has(code);
   const ownerStage = terminal ? "radar" : gamingReview ? "human_review"
-    : sourceContract ? "editor" : technicalHold || placeholder ? "provider" : "radar";
+    : sourceContract ? "editor" : technicalHold || providerAvailability ? "provider" : "radar";
   const repairability = terminal ? "terminal" : gamingReview ? "human_editable"
     : sourceContract ? "waiting_authoritative_source" : "auto_recoverable";
-  const blockingScope = terminal ? "terminal" : gamingReview || sourceContract
-    || RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES.has(code)
+  const blockingScope = terminal ? "terminal" : gamingReview || sourceContract || placeholder || parentIncomplete
+    || providerAvailability || RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES.has(code)
     ? "approval" : "none";
   const nextAction = terminal ? "archive_terminal_candidate"
     : gamingReview ? "review_gaming_domain_manually"
     : sourceContract ? "repair_temporal_or_source_contract"
     : placeholder ? "recheck_provider_identity"
+    : parentIncomplete || providerAvailability ? "retry_provider_refresh"
     : technicalHold ? "retry_source_enrichment" : "refresh_draft_eligibility";
-  return createMarketWorkflowIssue({
+  return createRadarWorkflowIssue({
     issueCode: code,
     detectedBy: "radar",
     ownerStage,
@@ -478,7 +590,6 @@ async function candidateDecisionWorkflowIssue(candidate: JsonRecord, code: strin
     evidenceRefs: [{
       provider: cleanText(candidate.provider, 40),
       external_id: cleanText(candidate.external_id, 220),
-      eligibility_check_id: candidate.current_eligibility_check_id ?? null,
     }],
     currentValue: {
       eligibility_status: candidate.eligibility_status ?? null,
@@ -793,6 +904,7 @@ function safeFilters(body: JsonRecord) {
     horizon: ["30d", "90d", "180d", "365d"].includes(requestedHorizon) ? requestedHorizon : "180d",
     query: cleanText(body.query, 120),
     parent_offset: Math.max(0, Math.min(10_000, Math.floor(Number(body.parent_offset) || 0))),
+    reconciliation_offset: Math.max(0, Math.min(10_000, Math.floor(Number(body.reconciliation_offset) || 0))),
   };
 }
 
@@ -1093,6 +1205,10 @@ function compareUtf16Text(leftValue: unknown, rightValue: unknown): number {
 function canonicalEventProjection(event: JsonRecord, provider: "polymarket" | "kalshi"): JsonRecord[] {
   return toRecordArray(event.markets).map((market) => provider === "polymarket" ? {
     market_id: cleanText(market.id ?? market.conditionId ?? market.slug, 220),
+    condition_id: cleanText(market.conditionId, 220) || null,
+    market_slug: cleanText(market.slug, 400) || null,
+    raw_provider_child_label: cleanText(market.raw_provider_child_label ?? market.groupItemTitle, 240) || null,
+    canonical_child_label: cleanText(market.canonical_child_label, 240) || null,
     question: cleanText(market.question, 700),
     status: market.closed === true || market.archived === true || market.active === false || market.acceptingOrders === false ? "closed" : "open",
     result: normalizeProviderResult(market.result ?? market.resolutionResult ?? market.winningOutcome),
@@ -1100,6 +1216,9 @@ function canonicalEventProjection(event: JsonRecord, provider: "polymarket" | "k
     close_at: safeIsoDate(market.endDate ?? event.endDate),
   } : {
     market_id: cleanText(market.ticker ?? market.market_ticker, 220),
+    market_slug: cleanText(market.slug, 400) || null,
+    raw_provider_child_label: cleanText(market.raw_provider_child_label ?? market.yes_sub_title, 240) || null,
+    canonical_child_label: cleanText(market.canonical_child_label, 240) || null,
     question: cleanText(market.title ?? market.yes_sub_title, 700),
     yes_sub_title: cleanText(market.yes_sub_title, 500) || null,
     no_sub_title: cleanText(market.no_sub_title, 500) || null,
@@ -1110,25 +1229,992 @@ function canonicalEventProjection(event: JsonRecord, provider: "polymarket" | "k
   }).sort((left, right) => compareUtf16Text(left.market_id, right.market_id));
 }
 
+type ProviderDiscoveryResult = {
+  candidates: JsonRecord[];
+  reconciliations: JsonRecord[];
+  selection?: JsonRecord;
+};
+
+function providerChildLabel(record: JsonRecord): string | null {
+  const option = extractRadarOptionChild({
+    source_question: record.question ?? record.title,
+    canonical_child_label: record.canonical_child_label,
+    provider_payload: {
+      canonical_child_label: record.canonical_child_label,
+      yes_sub_title: record.groupItemTitle ?? record.yes_sub_title,
+    },
+  });
+  return option && !option.placeholder ? cleanText(option.label, 240) : null;
+}
+
+async function providerIdentityEvidence(
+  url: URL,
+  identifierType: string,
+  identifier: string,
+  record: JsonRecord | null,
+  result: string,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const marketProjection = (value: JsonRecord) => ({
+    id: cleanText(value.id ?? value.market_id ?? value.ticker ?? value.market_ticker, 220) || null,
+    condition_id: cleanText(value.conditionId ?? value.condition_id, 220) || null,
+    event_id: cleanText(value.event_id ?? value.eventId ?? value.event_ticker, 220) || null,
+    slug: cleanText(value.slug, 400) || null,
+    question: cleanText(value.question ?? value.title, 700) || null,
+    child_label: cleanText(value.groupItemTitle ?? value.yes_sub_title, 500) || null,
+    status: cleanText(value.status, 80) || null,
+    active: typeof value.active === "boolean" ? value.active : null,
+    closed: typeof value.closed === "boolean" ? value.closed : null,
+    archived: typeof value.archived === "boolean" ? value.archived : null,
+    accepting_orders: typeof value.acceptingOrders === "boolean" ? value.acceptingOrders : null,
+    result: normalizeProviderResult(value.result ?? value.resolutionResult ?? value.winningOutcome),
+    closes_at: safeIsoDate(value.endDate ?? value.close_time ?? value.latest_expiration_time),
+    resolution_rules: cleanText(
+      value.source_resolution_rules ?? value.rules_primary ?? value.rules_secondary
+        ?? value.resolution_rules ?? value.resolutionRules ?? value.resolutionCriteria,
+      5_000,
+    ) || null,
+    resolution_source_url: safePublicUrl(
+      value.source_resolution_url ?? value.resolution_source_url
+        ?? value.resolutionSource ?? value.resolution_source,
+    ),
+    token_ids: providerTokenIds(value.clobTokenIds ?? value.token_ids)
+      .concat(toRecordArray(value.tokens).map((token) => cleanText(token.token_id ?? token.id, 220)).filter(Boolean))
+      .filter((token, index, values) => values.indexOf(token) === index).toSorted(compareUtf16Text),
+  });
+  const root = record ? toRecord(record.event) ?? toRecord(record.market) ?? record : null;
+  const observedMarkets = root ? [
+    ...toRecordArray(root.markets ?? record?.markets),
+    ...(cleanText(root.id ?? root.ticker ?? root.market_ticker, 220)
+      && !Array.isArray(root.markets) ? [root] : []),
+  ] : [];
+  // Conserva primero una clave primaria de CADA hija. Ordenar y truncar todas
+  // las aliases juntas podía dejar sin evidencia a las últimas hijas de un
+  // padre grande aunque el endpoint hubiese devuelto las 480.
+  const observedChildIds = prioritizeProviderChildEvidenceAliases(observedMarkets, 1_920);
+  const observedParentIds = root ? [...new Set([
+    ...toRecordArray(root.events),
+    ...toRecordArray(root.markets).flatMap((market) => toRecordArray(market.events)),
+  ].map((event) => cleanText(event.id ?? event.event_ticker, 220)).filter(Boolean))].slice(0, 8) : [];
+  const identityProjection = root ? {
+    id: cleanText(root.id ?? root.event_ticker ?? root.ticker, 220) || null,
+    slug: cleanText(root.slug, 400) || null,
+    title: cleanText(root.title ?? root.sub_title, 700) || null,
+    category: cleanText(root.category, 120) || null,
+    markets: toRecordArray(root.markets ?? record?.markets)
+      .map(marketProjection)
+      .toSorted((left, right) => compareUtf16Text(
+        `${left.id}:${left.condition_id}`,
+        `${right.id}:${right.condition_id}`,
+      )),
+    market: marketProjection(root),
+  } : null;
+  return {
+    url: url.toString(),
+    endpoint: url.pathname,
+    identifier_type: identifierType,
+    identifier,
+    result,
+    content_sha256: record ? await sha256Hex(record) : null,
+    identity_sha256: identityProjection ? await sha256Hex(identityProjection) : null,
+    observed_parent_ids: observedParentIds,
+    observed_child_ids: observedChildIds,
+    checked_at: checkedAt,
+  };
+}
+
+function polymarketMarketId(record: JsonRecord | null): string {
+  return cleanText(record?.id ?? record?.market_id, 220);
+}
+
+function polymarketConditionId(record: JsonRecord | null): string {
+  return cleanText(record?.conditionId ?? record?.condition_id, 220);
+}
+
+function providerTokenIds(value: unknown): string[] {
+  let values: unknown[] = [];
+  if (Array.isArray(value)) values = value;
+  else if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) values = parsed;
+    } catch {
+      return [];
+    }
+  }
+  return [...new Set(values.map((item) => cleanText(item, 220)).filter(Boolean))].slice(0, 20);
+}
+
+function polymarketMarketBelongsToParent(record: JsonRecord, parentId: string): boolean {
+  const explicitParent = cleanText(record.event_id ?? record.eventId, 220);
+  if (explicitParent) return explicitParent === parentId;
+  const events = toRecordArray(record.events);
+  return events.length > 0 && events.some((event) => cleanText(event.id, 220) === parentId);
+}
+
+function polymarketParentRelation(record: JsonRecord, parentId: string): "match" | "conflict" | "unknown" {
+  const explicitParent = cleanText(record.event_id ?? record.eventId, 220);
+  if (explicitParent) return explicitParent === parentId ? "match" : "conflict";
+  const events = toRecordArray(record.events).map((event) => cleanText(event.id, 220)).filter(Boolean);
+  if (!events.length) return "unknown";
+  return events.includes(parentId) ? "match" : "conflict";
+}
+
+function polymarketGammaIdentifiersMatch(direct: JsonRecord, market: JsonRecord): boolean {
+  const expectedMarketId = cleanText(market.id ?? market.external_market_id ?? market.market_id, 220);
+  const expectedConditionId = cleanText(market.conditionId ?? market.condition_id, 220);
+  return Boolean(expectedMarketId && polymarketMarketId(direct) === expectedMarketId
+    && (!expectedConditionId || polymarketConditionId(direct) === expectedConditionId));
+}
+
+function polymarketDirectChildMatches(
+  surface: "gamma" | "clob",
+  direct: JsonRecord,
+  market: JsonRecord,
+  parentId: string,
+): boolean {
+  const expectedConditionId = cleanText(market.conditionId ?? market.condition_id, 220);
+  if (surface === "gamma") {
+    return polymarketGammaIdentifiersMatch(direct, market)
+      && polymarketMarketBelongsToParent(direct, parentId);
+  }
+  if (!expectedConditionId || polymarketConditionId(direct) !== expectedConditionId) return false;
+  const expectedTokens = new Set(providerTokenIds(market.clobTokenIds ?? market.token_ids));
+  const directTokens = new Set(toRecordArray(direct.tokens)
+    .map((token) => cleanText(token.token_id ?? token.id, 220)).filter(Boolean));
+  return expectedTokens.size === 0
+    || (expectedTokens.size === directTokens.size
+      && [...expectedTokens].every((token) => directTokens.has(token)));
+}
+
+async function fetchPolymarketKeysetMarket(
+  environment: Environment,
+  marketId: string,
+  checkedAt: string,
+  expectedParentId: string,
+): Promise<{ record: JsonRecord | null; evidence: JsonRecord }> {
+  const url = new URL(`${POLYMARKET_GAMMA_ROOT}/markets/keyset`);
+  url.searchParams.set("limit", "10");
+  url.searchParams.set("id", marketId);
+  try {
+    const payload = await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution });
+    const root = toRecord(payload);
+    const records = Array.isArray(payload) ? toRecordArray(payload)
+      : toRecordArray(root?.data ?? root?.markets);
+    const record = records.find((item) => polymarketMarketId(item) === marketId) ?? null;
+    return {
+      record,
+      evidence: await providerIdentityEvidence(
+        url, "external_market_id", marketId, record ? { markets: records } : root,
+        record ? polymarketParentRelation(record, expectedParentId) === "match"
+          ? "parent_binding_checked" : polymarketParentRelation(record, expectedParentId) === "conflict"
+            ? "parent_binding_conflict" : "parent_binding_unknown" : "provider_not_found", checkedAt,
+      ),
+    };
+  } catch (error) {
+    return {
+      record: null,
+      evidence: await providerIdentityEvidence(
+        url, "external_market_id", marketId, null, cleanText((error as Error)?.message, 80), checkedAt,
+      ),
+    };
+  }
+}
+
+async function resolvePolymarketChildIdentity(
+  environment: Environment,
+  market: JsonRecord,
+  parentId: string,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const rawLabel = cleanText(market.groupItemTitle, 240)
+    || cleanText(extractRadarOptionChild({ source_question: market.question })?.label, 240);
+  if (rawLabel && !isProviderPlaceholderLabel(rawLabel)) return market;
+  const marketId = cleanText(market.id, 220);
+  const conditionId = cleanText(market.conditionId, 220);
+  const evidence: JsonRecord[] = [];
+  let identityEndpointSucceeded = false;
+  let identityConflict = false;
+  let identitySurfaceUnavailable = false;
+  let parentBindingVerified = true;
+  if (marketId) {
+    const directUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/markets/${encodeURIComponent(marketId)}`);
+    try {
+      const direct = toRecord(await fetchJson(directUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+      identityEndpointSucceeded = Boolean(direct);
+      const relation = direct ? polymarketParentRelation(direct, parentId) : "unknown";
+      const bindingValid = Boolean(direct && polymarketGammaIdentifiersMatch(direct, market)
+        && relation !== "conflict");
+      if (direct && (!polymarketGammaIdentifiersMatch(direct, market) || relation === "conflict")) {
+        identityConflict = true;
+        parentBindingVerified = false;
+      }
+      const label = bindingValid && direct ? providerChildLabel(direct) : null;
+      evidence.push(await providerIdentityEvidence(
+        directUrl, "external_market_id", marketId, direct,
+        !bindingValid ? "provider_data_conflict" : label ? "identity_resolved" : "placeholder_confirmed", checkedAt,
+      ));
+      if (direct && label && !identityConflict && parentBindingVerified) return {
+        ...market,
+        ...direct,
+        _atinara_identity_resolution: true,
+        raw_provider_child_label: rawLabel || null,
+        canonical_child_label: label,
+        identity_source: "polymarket_gamma_market_by_id",
+        identity_evidence: evidence,
+      };
+    } catch (error) {
+      if (!providerHttpNotFound(error)) identitySurfaceUnavailable = true;
+      evidence.push(await providerIdentityEvidence(
+        directUrl, "external_market_id", marketId, null,
+        error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+      ));
+    }
+  }
+  if (marketId) {
+    const keyset = await fetchPolymarketKeysetMarket(environment, marketId, checkedAt, parentId);
+    evidence.push(keyset.evidence);
+    if (keyset.record) {
+      identityEndpointSucceeded = true;
+      const relation = polymarketParentRelation(keyset.record, parentId);
+      const bindingValid = polymarketGammaIdentifiersMatch(keyset.record, market)
+        && relation !== "conflict";
+      if (!bindingValid) {
+        identityConflict = true;
+        if (relation === "conflict") parentBindingVerified = false;
+      }
+      const label = bindingValid ? providerChildLabel(keyset.record) : null;
+      if (label && !identityConflict && parentBindingVerified) return {
+        ...market,
+        ...keyset.record,
+        _atinara_identity_resolution: true,
+        raw_provider_child_label: rawLabel || null,
+        canonical_child_label: label,
+        identity_source: "polymarket_gamma_keyset_by_market_id",
+        identity_evidence: evidence,
+      };
+    } else if (!["provider_not_found", "parent_binding_unknown"].includes(
+      cleanText(keyset.evidence.result, 80),
+    )) identitySurfaceUnavailable = true;
+  }
+  if (conditionId) {
+    const clobUrl = new URL(`${POLYMARKET_CLOB_ROOT}/markets/${encodeURIComponent(conditionId)}`);
+    try {
+      const direct = toRecord(await fetchJson(clobUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+      identityEndpointSucceeded = Boolean(direct) || identityEndpointSucceeded;
+      const bindingValid = Boolean(direct && polymarketDirectChildMatches("clob", direct, market, parentId));
+      if (direct && !bindingValid) identityConflict = true;
+      const label = bindingValid && direct ? providerChildLabel(direct) : null;
+      evidence.push(await providerIdentityEvidence(
+        clobUrl, "condition_id", conditionId, direct,
+        !bindingValid ? "provider_data_conflict" : label ? "identity_resolved" : "placeholder_confirmed", checkedAt,
+      ));
+      if (direct && label && !identityConflict && parentBindingVerified) return {
+        ...market,
+        _atinara_identity_resolution: true,
+        raw_provider_child_label: rawLabel || null,
+        canonical_child_label: label,
+        identity_source: "polymarket_clob_market_by_condition_id",
+        identity_evidence: evidence,
+      };
+    } catch (error) {
+      if (!providerHttpNotFound(error)) identitySurfaceUnavailable = true;
+      evidence.push(await providerIdentityEvidence(
+        clobUrl, "condition_id", conditionId, null,
+        error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+      ));
+    }
+  }
+  return {
+    ...market,
+    _atinara_identity_resolution: true,
+    raw_provider_child_label: rawLabel || null,
+    canonical_child_label: null,
+    identity_source: null,
+    identity_evidence: evidence,
+    identity_resolution_unavailable: identitySurfaceUnavailable || (evidence.length > 0 && !identityEndpointSucceeded),
+    identity_resolution_conflict: identityConflict,
+  };
+}
+
+async function resolvePolymarketEventIdentities(
+  environment: Environment,
+  event: JsonRecord,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const markets = toRecordArray(event.markets);
+  const parentId = cleanText(event.id ?? event.slug, 220);
+  const resolved = await mapWithConcurrency(markets, KALSHI_CONCURRENCY, async (market) =>
+    isProviderPlaceholderLabel(cleanText(market.groupItemTitle, 240)
+      || cleanText(extractRadarOptionChild({ source_question: market.question })?.label, 240))
+      ? resolvePolymarketChildIdentity(environment, market, parentId, checkedAt)
+      : market);
+  return {
+    ...event,
+    markets: resolved.map((result, index) => result.status === "fulfilled" ? result.value : {
+      ...markets[index],
+      _atinara_identity_resolution: true,
+      identity_resolution_unavailable: true,
+      identity_evidence: [{
+        identifier_type: "external_market_id",
+        identifier: cleanText(markets[index]?.id, 220),
+        result: "provider_unavailable",
+        checked_at: checkedAt,
+      }],
+    }),
+  };
+}
+
+async function resolveKalshiChildIdentity(
+  environment: Environment,
+  market: JsonRecord,
+  parentId: string,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const ticker = cleanText(market.ticker ?? market.market_ticker, 220);
+  const rawLabel = cleanText(market.yes_sub_title, 240)
+    || cleanText(extractRadarOptionChild({ source_question: market.title })?.label, 240);
+  if (!isProviderPlaceholderLabel(rawLabel) || !ticker) return market;
+  const evidence: JsonRecord[] = [];
+  let identityEndpointSucceeded = false;
+  let identityConflict = false;
+  let identitySurfaceUnavailable = false;
+  for (const historical of [false, true]) {
+    const url = new URL(`${KALSHI_API_ROOT}/${historical ? "historical/" : ""}markets/${encodeURIComponent(ticker)}`);
+    try {
+      const payload = toRecord(await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
+      const direct = toRecord(payload.market) ?? payload;
+      identityEndpointSucceeded = true;
+      const bindingValid = cleanText(direct.ticker ?? direct.market_ticker, 220) === ticker
+        && cleanText(direct.event_ticker, 220) === parentId;
+      if (!bindingValid) identityConflict = true;
+      const label = bindingValid ? providerChildLabel(direct) : null;
+      evidence.push(await providerIdentityEvidence(
+        url, "market_ticker", ticker, direct,
+        !bindingValid ? "provider_data_conflict" : label ? "identity_resolved" : "placeholder_confirmed", checkedAt,
+      ));
+      if (bindingValid && label) return {
+        ...market,
+        ...(historical ? {} : direct),
+        _atinara_identity_resolution: true,
+        raw_provider_child_label: rawLabel || null,
+        canonical_child_label: label,
+        identity_source: historical ? "kalshi_historical_market_by_ticker" : "kalshi_market_by_ticker",
+        identity_evidence: evidence,
+      };
+    } catch (error) {
+      evidence.push(await providerIdentityEvidence(
+        url, "market_ticker", ticker, null,
+        providerHttpNotFound(error) ? "provider_not_found" : cleanText((error as Error)?.message, 80), checkedAt,
+      ));
+      if (!providerHttpNotFound(error)) identitySurfaceUnavailable = true;
+    }
+  }
+  const metadataUrl = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(parentId)}/metadata`);
+  try {
+    const metadata = toRecord(await fetchJson(
+      metadataUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    ));
+    const metadataCandidates = [
+      ...toRecordArray(metadata?.markets),
+      ...toRecordArray(metadata?.market_metadata),
+      ...toRecordArray(metadata?.children),
+      ...toRecordArray(toRecord(metadata?.event)?.markets),
+    ];
+    const exact = metadataCandidates.find((item) =>
+      cleanText(item.ticker ?? item.market_ticker, 220) === ticker);
+    const exactParent = cleanText(exact?.event_ticker, 220);
+    const bindingValid = Boolean(exact && (!exactParent || exactParent === parentId));
+    if (exact && !bindingValid) identityConflict = true;
+    const label = bindingValid && exact ? providerChildLabel(exact) : null;
+    evidence.push(await providerIdentityEvidence(
+      metadataUrl, "market_ticker", ticker, metadata,
+      !bindingValid && exact ? "provider_data_conflict"
+        : label ? "identity_resolved" : "metadata_checked_no_identity", checkedAt,
+    ));
+    if (label && !identityConflict) return {
+      ...market,
+      _atinara_identity_resolution: true,
+      raw_provider_child_label: rawLabel || null,
+      canonical_child_label: label,
+      identity_source: "kalshi_event_metadata_by_ticker",
+      identity_evidence: evidence,
+    };
+  } catch (error) {
+    evidence.push(await providerIdentityEvidence(
+      metadataUrl, "event_ticker", parentId, null, cleanText((error as Error)?.message, 80), checkedAt,
+    ));
+    if (!providerHttpNotFound(error)) identitySurfaceUnavailable = true;
+  }
+  return {
+    ...market,
+    _atinara_identity_resolution: true,
+    raw_provider_child_label: rawLabel || null,
+    canonical_child_label: null,
+    identity_source: null,
+    identity_evidence: evidence,
+    identity_resolution_unavailable: identitySurfaceUnavailable || !identityEndpointSucceeded,
+    identity_resolution_conflict: identityConflict,
+  };
+}
+
+async function resolveKalshiEventIdentities(
+  environment: Environment,
+  event: JsonRecord,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const parentId = cleanText(event.event_ticker ?? event.ticker, 220);
+  const markets = toRecordArray(event.markets);
+  const resolved = await mapWithConcurrency(markets, KALSHI_CONCURRENCY, async (market) =>
+    isProviderPlaceholderLabel(cleanText(market.yes_sub_title, 240)
+      || cleanText(extractRadarOptionChild({ source_question: market.title })?.label, 240))
+      ? resolveKalshiChildIdentity(environment, market, parentId, checkedAt)
+      : market);
+  return {
+    ...event,
+    markets: resolved.map((result, index) => result.status === "fulfilled" ? result.value : {
+      ...markets[index],
+      _atinara_identity_resolution: true,
+      identity_resolution_unavailable: true,
+      identity_evidence: [{
+        identifier_type: "market_ticker",
+        identifier: cleanText(markets[index]?.ticker ?? markets[index]?.market_ticker, 220),
+        result: "provider_unavailable",
+        checked_at: checkedAt,
+      }],
+    }),
+  };
+}
+
+async function loadPreviousParentChildren(
+  environment: Environment,
+  provider: "polymarket" | "kalshi",
+  events: JsonRecord[],
+  requestId: string | null,
+): Promise<Map<string, JsonRecord[]>> {
+  const parentIds = events.map((event) => provider === "polymarket"
+    ? cleanText(event.id ?? event.slug, 220)
+    : cleanText(event.event_ticker ?? event.ticker, 220)).filter(Boolean);
+  if (!parentIds.length) return new Map();
+  const currentChildParents = new Map<string, Set<string>>();
+  const externalMarketIds = new Set<string>();
+  const conditionIds = new Set<string>();
+  const tokenIds = new Set<string>();
+  const childSlugs = new Set<string>();
+  const childIdentityKeys = new Set<string>();
+  const fallbackSlugs = new Map<string, { parentId: string; count: number }>();
+  for (const event of events) {
+    const parentId = provider === "polymarket"
+      ? cleanText(event.id ?? event.slug, 220)
+      : cleanText(event.event_ticker ?? event.ticker, 220);
+    if (!parentId) continue;
+    for (const market of toRecordArray(event.markets)) {
+      const externalId = providerMarketStableId(provider, market);
+      const conditionId = cleanText(market.conditionId ?? market.condition_id, 220);
+      const marketTokens = providerTokenIds(market.clobTokenIds ?? market.token_ids)
+        .concat(toRecordArray(market.tokens).map((token) => cleanText(token.token_id ?? token.id, 220)))
+        .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+        .toSorted(compareUtf16Text).slice(0, 20);
+      const childSlug = cleanText(market.child_slug ?? market.slug, 400);
+      const providerIdentityKey = cleanText(market.provider_child_identity_key, 500);
+      const explicitIdentityStrong = providerIdentityKey
+        && !providerIdentityKey.startsWith(`${provider}:slug:`);
+      const strongIdentities = [
+        externalId ? `market:${externalId}` : "",
+        conditionId ? `condition:${conditionId}` : "",
+        ...marketTokens.map((token) => `token:${token}`),
+        explicitIdentityStrong ? `identity:${providerIdentityKey}` : "",
+      ].filter(Boolean);
+      for (const identity of strongIdentities) {
+        if (!currentChildParents.has(identity)) currentChildParents.set(identity, new Set());
+        currentChildParents.get(identity)?.add(parentId);
+      }
+      if (externalId) externalMarketIds.add(externalId);
+      if (conditionId) conditionIds.add(conditionId);
+      marketTokens.forEach((token) => tokenIds.add(token));
+      if (!strongIdentities.length && childSlug) {
+        const prior = fallbackSlugs.get(childSlug);
+        fallbackSlugs.set(childSlug, {
+          parentId: prior?.parentId ?? parentId,
+          count: (prior?.count ?? 0) + 1,
+        });
+      }
+      const primaryIdentityKey = explicitIdentityStrong ? providerIdentityKey
+        || (externalId ? `${provider}:market:${externalId}` : "")
+        || (conditionId ? `${provider}:condition:${conditionId}` : "")
+        || (marketTokens[0] ? `${provider}:token:${marketTokens[0]}` : "")
+        : (externalId ? `${provider}:market:${externalId}` : "")
+          || (conditionId ? `${provider}:condition:${conditionId}` : "")
+          || (marketTokens[0] ? `${provider}:token:${marketTokens[0]}` : "");
+      if (primaryIdentityKey) childIdentityKeys.add(primaryIdentityKey);
+    }
+  }
+  for (const [slug, fallback] of fallbackSlugs) {
+    if (fallback.count !== 1) continue;
+    currentChildParents.set(`slug:${slug}`,new Set([fallback.parentId]));
+    childSlugs.add(slug);
+    childIdentityKeys.add(`${provider}:slug:${slug}`);
+  }
+  const rows = toRecordArray(await rpc(environment, "get_market_radar_children_for_reconciliation_v3", {
+    provider_input: provider,
+    parent_ids_input: [...new Set(parentIds)],
+    external_market_ids_input: [...externalMarketIds],
+    condition_ids_input: [...conditionIds],
+    token_ids_input: [...tokenIds],
+    child_slugs_input: [...childSlugs],
+    child_identity_keys_input: [...childIdentityKeys],
+    current_request_id_input: validUuid(requestId) ? requestId : null,
+  }, undefined, true));
+  const result = new Map<string, JsonRecord[]>(parentIds.map((parentId) => [parentId, []]));
+  const seen = new Map<string, Set<string>>(parentIds.map((parentId) => [parentId, new Set()]));
+  for (const row of rows) {
+    const historicalParent = cleanText(row.provider_parent_id, 220);
+    const targets = new Set<string>();
+    if (result.has(historicalParent)) targets.add(historicalParent);
+    const externalId = cleanText(row.external_market_id, 220);
+    const conditionId = cleanText(row.condition_id, 220);
+    const rowTokens = providerTokenIds(row.token_ids);
+    const rowSlug = cleanText(row.child_slug, 400);
+    const rowIdentityKey = cleanText(row.provider_child_identity_key, 500);
+    const rowIdentityStrong = rowIdentityKey
+      && !rowIdentityKey.startsWith(`${provider}:slug:`);
+    const strongRowIdentities = [
+      externalId ? `market:${externalId}` : "",
+      conditionId ? `condition:${conditionId}` : "",
+      ...rowTokens.map((token) => `token:${token}`),
+      rowIdentityStrong ? `identity:${rowIdentityKey}` : "",
+    ].filter(Boolean);
+    const rowIdentities = strongRowIdentities.length
+      ? strongRowIdentities : rowSlug ? [`slug:${rowSlug}`] : [];
+    for (const identity of rowIdentities) {
+      for (const parentId of currentChildParents.get(identity) ?? []) targets.add(parentId);
+    }
+    const rowOccurrenceIdentity = cleanText(row.child_occurrence_key ?? row.id ?? row.child_fingerprint
+      ?? `${historicalParent}:${externalId}:${conditionId}`, 500);
+    for (const target of targets) {
+      if (seen.get(target)?.has(rowOccurrenceIdentity)) continue;
+      seen.get(target)?.add(rowOccurrenceIdentity);
+      result.get(target)?.push(row);
+    }
+  }
+  return result;
+}
+
+function providerHttpNotFound(error: unknown): boolean {
+  return error instanceof Error && /(?:HTTP_404|\b404\b)/.test(error.message);
+}
+
+async function verifyMissingHistoricalChild(
+  environment: Environment,
+  provider: "polymarket" | "kalshi",
+  parentId: string,
+  previous: JsonRecord,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const existingEvidence = toRecordArray(previous.identity_evidence ?? previous.source_refs);
+  const externalId = cleanText(previous.external_market_id, 220);
+  const conditionId = cleanText(previous.condition_id, 220);
+  if (!externalId && provider === "polymarket" && conditionId) {
+    const clobUrl = new URL(`${POLYMARKET_CLOB_ROOT}/markets/${encodeURIComponent(conditionId)}`);
+    try {
+      const record = toRecord(await fetchJson(clobUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+      const bindingValid = Boolean(record && polymarketConditionId(record) === conditionId);
+      const closed = Boolean(record && (record.closed === true || record.active === false
+        || ["closed", "settled", "finalized"].includes(cleanText(record.status, 80).toLowerCase())));
+      const evidence = await providerIdentityEvidence(
+        clobUrl, "condition_id", conditionId, record,
+        bindingValid && closed ? "provider_closed_child" : "provider_data_conflict", checkedAt,
+      );
+      return {
+        ...previous,
+        closed_verified: bindingValid && closed,
+        identity_evidence: [...existingEvidence, evidence],
+      };
+    } catch (error) {
+      const removed = providerHttpNotFound(error);
+      const evidence = await providerIdentityEvidence(
+        clobUrl, "condition_id", conditionId, null,
+        removed ? "provider_removed_child" : cleanText((error as Error)?.message, 80), checkedAt,
+      );
+      return {
+        ...previous,
+        removed_verified: removed,
+        historical_verification_unavailable: !removed,
+        identity_evidence: [...existingEvidence, evidence],
+      };
+    }
+  }
+  if (!externalId) return previous;
+  if (provider === "polymarket") {
+    const gammaUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/markets/${encodeURIComponent(externalId)}`);
+    try {
+      const record = toRecord(await fetchJson(gammaUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+      let bindingValid = Boolean(record && polymarketDirectChildMatches("gamma", record, previous, parentId));
+      const bindingEvidence: JsonRecord[] = [];
+      let bindingUnavailable = false;
+      if (record && polymarketGammaIdentifiersMatch(record, previous)
+        && !polymarketMarketBelongsToParent(record, parentId)) {
+        const keyset = await fetchPolymarketKeysetMarket(environment, externalId, checkedAt, parentId);
+        bindingEvidence.push(keyset.evidence);
+        bindingValid = Boolean(keyset.record
+          && polymarketGammaIdentifiersMatch(keyset.record, previous)
+          && polymarketMarketBelongsToParent(keyset.record, parentId));
+        bindingUnavailable = !["parent_binding_checked", "parent_binding_conflict", "parent_binding_unknown", "provider_not_found"]
+          .includes(cleanText(keyset.evidence.result, 80));
+      }
+      const closed = Boolean(record && (record.closed === true || record.archived === true
+        || record.active === false || record.acceptingOrders === false));
+      const evidence = await providerIdentityEvidence(
+        gammaUrl, "external_market_id", externalId, record,
+        bindingValid && closed ? "provider_closed_child" : "provider_data_conflict", checkedAt,
+      );
+      return {
+        ...previous,
+        closed_verified: bindingValid && closed,
+        historical_verification_unavailable: bindingUnavailable,
+        identity_evidence: [...existingEvidence, evidence, ...bindingEvidence],
+      };
+    } catch (error) {
+      const gammaEvidence = await providerIdentityEvidence(
+        gammaUrl, "external_market_id", externalId, null,
+        providerHttpNotFound(error) ? "provider_removed_child" : cleanText((error as Error)?.message, 80), checkedAt,
+      );
+      if (!providerHttpNotFound(error)) return {
+        ...previous,
+        historical_verification_unavailable: true,
+        identity_evidence: [...existingEvidence, gammaEvidence],
+      };
+      if (!conditionId) return {
+        ...previous,
+        removed_verified: true,
+        identity_evidence: [...existingEvidence, gammaEvidence],
+      };
+      const clobUrl = new URL(`${POLYMARKET_CLOB_ROOT}/markets/${encodeURIComponent(conditionId)}`);
+      try {
+        const record = toRecord(await fetchJson(clobUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+        const evidence = await providerIdentityEvidence(
+          clobUrl, "condition_id", conditionId, record, "provider_data_conflict", checkedAt,
+        );
+        return { ...previous, identity_evidence: [...existingEvidence, gammaEvidence, evidence] };
+      } catch (clobError) {
+        const removed = providerHttpNotFound(clobError);
+        const evidence = await providerIdentityEvidence(
+          clobUrl, "condition_id", conditionId, null,
+          removed ? "provider_removed_child" : cleanText((clobError as Error)?.message, 80), checkedAt,
+        );
+        return {
+          ...previous,
+          removed_verified: removed,
+          historical_verification_unavailable: !removed,
+          identity_evidence: [...existingEvidence, gammaEvidence, evidence],
+        };
+      }
+    }
+  }
+  const liveUrl = new URL(`${KALSHI_API_ROOT}/markets/${encodeURIComponent(externalId)}`);
+  try {
+    const payload = toRecord(await fetchJson(liveUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
+    const record = toRecord(payload.market) ?? payload;
+    const closed = ["closed", "settled", "finalized", "determined"].includes(cleanText(record.status, 80).toLowerCase());
+    const sameParent = cleanText(record.event_ticker, 220) === parentId;
+    const evidence = await providerIdentityEvidence(
+      liveUrl, "market_ticker", externalId, record,
+      sameParent && closed ? "provider_closed_child" : "provider_data_conflict", checkedAt,
+    );
+    return {
+      ...previous,
+      closed_verified: sameParent && closed,
+      identity_evidence: [...existingEvidence, evidence],
+    };
+  } catch (error) {
+    if (!providerHttpNotFound(error)) return {
+      ...previous,
+      historical_verification_unavailable: true,
+      identity_evidence: [...existingEvidence, await providerIdentityEvidence(
+        liveUrl, "market_ticker", externalId, null, cleanText((error as Error)?.message, 80), checkedAt,
+      )],
+    };
+  }
+  const historicalUrl = new URL(`${KALSHI_API_ROOT}/historical/markets/${encodeURIComponent(externalId)}`);
+  try {
+    const payload = toRecord(await fetchJson(historicalUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
+    const record = toRecord(payload.market) ?? payload;
+    const sameParent = cleanText(record.event_ticker, 220) === parentId;
+    const evidence = await providerIdentityEvidence(
+      historicalUrl, "market_ticker", externalId, record,
+      sameParent ? "provider_closed_child" : "provider_data_conflict", checkedAt,
+    );
+    return { ...previous, closed_verified: sameParent, identity_evidence: [...existingEvidence, evidence] };
+  } catch (error) {
+    const removed = providerHttpNotFound(error);
+    const evidence = await providerIdentityEvidence(
+      historicalUrl, "market_ticker", externalId, null,
+      removed ? "provider_removed_child" : cleanText((error as Error)?.message, 80), checkedAt,
+    );
+    return {
+      ...previous,
+      removed_verified: removed,
+      historical_verification_unavailable: !removed,
+      identity_evidence: [...existingEvidence, evidence],
+    };
+  }
+}
+
+async function verifyMissingHistoricalChildren(
+  environment: Environment,
+  provider: "polymarket" | "kalshi",
+  parentId: string,
+  currentChildren: JsonRecord[],
+  previousChildren: JsonRecord[],
+  checkedAt: string,
+): Promise<JsonRecord[]> {
+  const currentExternal = new Set(currentChildren.map((child) => cleanText(child.external_market_id, 220)).filter(Boolean));
+  const currentConditions = new Set(currentChildren.map((child) => cleanText(child.condition_id, 220)).filter(Boolean));
+  const results = await mapWithConcurrency(previousChildren, KALSHI_CONCURRENCY, async (previous) => {
+    const sameExternal = currentExternal.has(cleanText(previous.external_market_id, 220));
+    const sameCondition = currentConditions.has(cleanText(previous.condition_id, 220));
+    if (sameExternal || sameCondition
+      || ["provider_removed_child", "provider_closed_child"].includes(cleanText(previous.identity_classification, 100))) {
+      return previous;
+    }
+    return verifyMissingHistoricalChild(environment, provider, parentId, previous, checkedAt);
+  });
+  return results.map((result, index) => result.status === "fulfilled" ? result.value : {
+    ...previousChildren[index], historical_verification_unavailable: true,
+  });
+}
+
+function reconciliationParentLabel(event: JsonRecord): string | null {
+  const raw = cleanText(event.title ?? event.sub_title, 500);
+  if (!raw) return null;
+  const presentation = normalizeRadarCandidatePresentation({ source_title: raw }) as JsonRecord;
+  return cleanText(presentation.atinara_group_title, 500)
+    || localizeRadarProviderLabel(raw).label;
+}
+
+async function reconcileCanonicalEvents(
+  environment: Environment,
+  provider: "polymarket" | "kalshi",
+  events: JsonRecord[],
+  candidates: JsonRecord[],
+  checkedAt: string,
+  requestId: string | null = null,
+): Promise<ProviderDiscoveryResult> {
+  const parentIds = events.map((event) => provider === "polymarket"
+    ? cleanText(event.id ?? event.slug, 220)
+    : cleanText(event.event_ticker ?? event.ticker, 220)).filter(Boolean);
+  const previous = await loadPreviousParentChildren(environment, provider, events, requestId);
+  const reconciliations: JsonRecord[] = [];
+  for (const event of events) {
+    const parentId = provider === "polymarket"
+      ? cleanText(event.id ?? event.slug, 220)
+      : cleanText(event.event_ticker ?? event.ticker, 220);
+    if (!parentId) continue;
+    const eventMarkets = toRecordArray(event.markets);
+    const parentCandidates = candidates.filter((candidate) =>
+      cleanText(candidate.external_event_id ?? candidate.external_event_slug, 220) === parentId);
+    const categoricalParent = event.mutually_exclusive === true || event.negRisk === true
+      || event.enableNegRisk === true;
+    const currentChildren = eventMarkets.map((market) => {
+      const marketId = provider === "polymarket"
+        ? cleanText(market.id ?? market.conditionId ?? market.slug, 220)
+        : cleanText(market.ticker ?? market.market_ticker, 220);
+      const conditionId = cleanText(market.conditionId ?? market.condition_id, 220);
+      const matchingCandidates = parentCandidates.filter((candidate) => {
+        const payload = toRecord(candidate.provider_payload) ?? {};
+        return [candidate.external_market_id,candidate.external_id,payload.id,payload.market_id,
+          payload.ticker,payload.market_ticker].map((value) => cleanText(value,220))
+          .filter(Boolean).includes(marketId)
+          || Boolean(conditionId && cleanText(payload.condition_id ?? payload.conditionId,220) === conditionId);
+      });
+      const adapted = matchingCandidates.length === 1 ? matchingCandidates[0] : null;
+      return {
+      ...market,
+      categorical_parent: categoricalParent,
+      provider_parent_id: parentId,
+      event_id: parentId,
+      external_event_id: parentId,
+      external_market_id: marketId,
+      condition_id: conditionId || null,
+      market_slug: cleanText(market.slug, 400) || null,
+      raw_provider_child_label: market._atinara_identity_resolution === true
+        ? cleanText(market.raw_provider_child_label ?? market.groupItemTitle ?? market.yes_sub_title, 240) || null
+        : cleanText(market.groupItemTitle ?? market.yes_sub_title, 240) || null,
+      canonical_child_label: market._atinara_identity_resolution === true
+        ? cleanText(market.canonical_child_label, 240) || null : null,
+      identity_source: market._atinara_identity_resolution === true
+        ? cleanText(market.identity_source, 120) || null : null,
+      identity_evidence: market._atinara_identity_resolution === true
+        ? toRecordArray(market.identity_evidence) : [],
+      identity_resolution_unavailable: market._atinara_identity_resolution === true
+        && market.identity_resolution_unavailable === true,
+      identity_resolution_conflict: market._atinara_identity_resolution === true
+        && market.identity_resolution_conflict === true,
+      status: provider === "polymarket"
+        ? (market.closed === true || market.archived === true ? "closed"
+          : market.active === false || market.acceptingOrders === false ? "inactive" : "open")
+        : cleanText(market.status, 80),
+      ...(adapted ? {
+        source_title: adapted.source_title,
+        source_question: adapted.source_question,
+        source_description: adapted.source_description,
+        source_resolution_rules: adapted.source_resolution_rules,
+        source_resolution_url: adapted.source_resolution_url,
+        source_close_at: adapted.source_close_at,
+        source_resolution_deadline: adapted.source_resolution_deadline,
+        source_status: adapted.source_status,
+        source_result: adapted.source_result,
+        external_event_slug: adapted.external_event_slug,
+        external_market_slug: adapted.external_market_slug,
+        external_event_url: adapted.external_event_url,
+        external_market_url: adapted.external_market_url,
+      } : {}),
+    };
+    });
+    const declaredValue = Number(event.provider_declared_child_count);
+    const declaredCount = Number.isSafeInteger(declaredValue) && declaredValue >= 0 ? declaredValue : null;
+    const atinaraCategory = cleanText(parentCandidates.find((candidate) => candidate.atinara_category)?.atinara_category, 120);
+    const horizonAt = parentCandidates.map((candidate) => safeIsoDate(candidate.source_close_at)).filter(Boolean)
+      .toSorted(compareUtf16Text)[0] ?? safeIsoDate(event.endDate ?? event.close_time ?? event.latest_expiration_time);
+    const sourceRefs = event._atinara_parent_enumeration === true
+      ? toRecordArray(event.parent_reconciliation_source_refs) : [];
+    const previousChildren = await verifyMissingHistoricalChildren(
+      environment, provider, parentId, currentChildren, previous.get(parentId) ?? [], checkedAt,
+    );
+    const reconciliation = await reconcileProviderParent({
+      provider,
+      provider_parent_id: parentId,
+      raw_provider_parent_label: cleanText(event.title ?? event.sub_title, 500),
+      canonical_parent_label: reconciliationParentLabel(event),
+      category: atinaraCategory || null,
+      raw_provider_category: cleanText(event.category, 120) || null,
+      atinara_category: atinaraCategory || null,
+      external_parent_url: safePublicUrl(event.external_event_url
+        ?? (provider === "polymarket" && event.slug ? `https://polymarket.com/event/${event.slug}` : null)),
+      horizon_at: horizonAt,
+      provider_declared_child_count: declaredCount,
+      provider_pagination_exhausted: event.provider_pagination_exhausted === true,
+      provider_unavailable: event.provider_parent_unavailable === true
+        || currentChildren.some((child) => child.identity_resolution_unavailable === true)
+        || previousChildren.some((child) => child.historical_verification_unavailable === true),
+      children: currentChildren,
+      previous_children: previousChildren,
+      checked_at: checkedAt,
+      source_refs: sourceRefs,
+    }) as JsonRecord;
+    reconciliations.push(reconciliation);
+  }
+  const byParent = new Map(reconciliations.map((reconciliation) => [
+    cleanText(reconciliation.provider_parent_id, 220), reconciliation,
+  ]));
+  const attachedChildren = new Map<JsonRecord, JsonRecord>();
+  for (const reconciliation of reconciliations) {
+    const parentId = cleanText(reconciliation.provider_parent_id, 220);
+    const parentCandidates = candidates.filter((candidate) =>
+      cleanText(candidate.external_event_id ?? candidate.external_event_slug, 220) === parentId);
+    const currentChildren = toRecordArray(reconciliation.children)
+      .filter((value) => value.present_in_current_snapshot === true);
+    const bindings = bindRadarCandidatesToReconciledChildren(parentCandidates, currentChildren);
+    parentCandidates.forEach((candidate, index) => {
+      const child = toRecord(bindings[index]);
+      if (child) attachedChildren.set(candidate, child);
+    });
+  }
+  const attached = candidates.map((candidate) => {
+    const parentId = cleanText(candidate.external_event_id ?? candidate.external_event_slug, 220);
+    const reconciliation = byParent.get(parentId);
+    const child = attachedChildren.get(candidate);
+    if (!reconciliation || !child) return {
+      ...candidate,
+      parent_reconciliation_status: "inconsistent_provider_count",
+      parent_reconciliation_version: RADAR_PARENT_RECONCILIATION_VERSION,
+      canonical_projection_version: RADAR_CHILD_PROJECTION_VERSION,
+      identity_status: "conflict",
+      identity_classification: "provider_data_conflict",
+    };
+    const parentSummary = { ...reconciliation };
+    delete parentSummary.children;
+    return {
+      ...candidate,
+      raw_provider_child_label: child.raw_provider_child_label,
+      canonical_child_label: child.canonical_child_label,
+      canonical_child_key: child.canonical_child_key,
+      identity_kind: child.identity_kind,
+      identity_classification: child.identity_classification,
+      identity_status: child.identity_status,
+      identity_source: child.identity_source,
+      identity_confidence: child.identity_confidence,
+      identity_evidence: child.identity_evidence,
+      availability_status: child.availability_status,
+      parent_child_occurrence_key: child.child_occurrence_key,
+      parent_child_identity_key: child.provider_child_identity_key,
+      parent_child_fingerprint: child.child_fingerprint,
+      provider_child_contract: child.provider_contract,
+      provider_child_contract_hash: child.provider_contract_hash,
+      canonical_projection_version: child.projection_version,
+      parent_reconciliation_status: reconciliation.reconciliation_status,
+      parent_reconciliation_version: reconciliation.reconciliation_version,
+      parent_reconciliation_fingerprint: reconciliation.reconciliation_fingerprint,
+      provider_declared_child_count: reconciliation.provider_declared_child_count,
+      provider_discovered_child_count: reconciliation.provider_discovered_child_count,
+      provider_accounted_child_count: reconciliation.provider_accounted_child_count,
+      provider_identified_child_count: reconciliation.provider_identified_child_count,
+      provider_unresolved_child_count: reconciliation.provider_unresolved_child_count,
+      provider_removed_child_count: reconciliation.provider_removed_child_count,
+      provider_closed_child_count: reconciliation.provider_closed_child_count,
+      provider_duplicate_child_count: reconciliation.provider_duplicate_child_count,
+      provider_conflict_child_count: reconciliation.provider_conflict_child_count,
+      provider_pagination_exhausted: reconciliation.provider_pagination_exhausted,
+      parent_reconciliation: parentSummary,
+      provider_payload: {
+        ...(toRecord(candidate.provider_payload) ?? {}),
+        raw_provider_child_label: child.raw_provider_child_label,
+        canonical_child_label: child.canonical_child_label,
+        identity_kind: child.identity_kind,
+        identity_classification: child.identity_classification,
+        identity_status: child.identity_status,
+        parent_child_occurrence_key: child.child_occurrence_key,
+        parent_child_identity_key: child.provider_child_identity_key,
+        parent_child_fingerprint: child.child_fingerprint,
+        provider_child_contract: child.provider_contract,
+        provider_child_contract_hash: child.provider_contract_hash,
+        parent_reconciliation_fingerprint: reconciliation.reconciliation_fingerprint,
+      },
+    };
+  }).filter((candidate) => !["provider_duplicate_child", "provider_data_conflict"]
+    .includes(cleanText(candidate.identity_classification, 100)));
+  return { candidates: attached, reconciliations };
+}
+
 async function attachCanonicalFactContext(
   candidates: JsonRecord[],
   events: JsonRecord[],
   provider: "polymarket" | "kalshi",
 ): Promise<JsonRecord[]> {
-  const contexts = new Map<string, JsonRecord[]>();
+  const contexts = new Map<string, {
+    children: JsonRecord[];
+    declaredCount: number | null;
+    paginationExhausted: boolean;
+  }>();
   for (const event of events) {
     const key = provider === "polymarket"
       ? cleanText(event.id ?? event.slug, 220)
       : cleanText(event.event_ticker ?? event.ticker, 220);
     const children = canonicalEventProjection(event, provider);
     if (!key || !children.length || children.length > MAX_CANONICAL_EVENT_CHILDREN) continue;
-    contexts.set(key, children);
+    const declaredValue = Number(event.provider_declared_child_count);
+    contexts.set(key, {
+      children,
+      declaredCount: Number.isSafeInteger(declaredValue) && declaredValue >= 0 ? declaredValue : null,
+      paginationExhausted: event.provider_pagination_exhausted === true,
+    });
   }
   const attached: JsonRecord[] = [];
   for (const candidate of candidates) {
     const key = cleanText(candidate.external_event_id ?? candidate.external_event_slug, 220);
-    const children = contexts.get(key);
-    if (!children) continue;
+    const context = contexts.get(key);
+    if (!context) continue;
+    const { children, declaredCount, paginationExhausted } = context;
     const providerPayload = toRecord(candidate.provider_payload) ?? {};
     const withContext = {
       ...candidate,
@@ -1136,8 +2222,10 @@ async function attachCanonicalFactContext(
         ...providerPayload,
         fact_context_schema_version: "atinara-radar-fact-context-v2",
         canonical_event_children: children,
-        canonical_event_children_total: children.length,
-        canonical_event_children_complete: true,
+        canonical_event_children_total: declaredCount,
+        canonical_event_children_complete: paginationExhausted
+          && declaredCount !== null && children.length === declaredCount,
+        provider_pagination_exhausted: paginationExhausted,
       },
     };
     const fingerprint = await sha256Hex(factContextSnapshot(withContext));
@@ -1287,7 +2375,208 @@ async function buildAuthoritativeFactCheck(
   };
 }
 
-async function discoverPolymarket(environment: Environment, now: string, filters: ReturnType<typeof safeFilters>) {
+function providerMarketStableId(provider: "polymarket" | "kalshi", market: JsonRecord): string {
+  return provider === "polymarket"
+    ? cleanText(market.id ?? market.conditionId ?? market.condition_id ?? market.slug, 220)
+    : cleanText(market.ticker ?? market.market_ticker, 220);
+}
+
+function mergeProviderMarketSurfaces(
+  provider: "polymarket" | "kalshi",
+  surfaces: JsonRecord[][],
+): { markets: JsonRecord[]; duplicateConflict: boolean; missingStableIdentity: boolean } {
+  const groupedSurfaces: Map<string, JsonRecord[]>[] = [];
+  let duplicateConflict = false;
+  let missingStableIdentity = false;
+  for (const surface of surfaces) {
+    const grouped = new Map<string, JsonRecord[]>();
+    for (const market of surface) {
+      const identity = providerMarketStableId(provider, market);
+      if (!identity) {
+        missingStableIdentity = true;
+        const anonymous = `__unidentified__:${grouped.size}`;
+        grouped.set(anonymous, [...(grouped.get(anonymous) ?? []), market]);
+        continue;
+      }
+      grouped.set(identity, [...(grouped.get(identity) ?? []), market]);
+    }
+    groupedSurfaces.push(grouped);
+  }
+  const identities = [...new Set(groupedSurfaces.flatMap((surface) => [...surface.keys()]))]
+    .toSorted(compareUtf16Text);
+  const markets: JsonRecord[] = [];
+  for (const identity of identities) {
+    const occurrenceCount = Math.max(...groupedSurfaces.map((surface) => surface.get(identity)?.length ?? 0));
+    for (let occurrence = 0; occurrence < occurrenceCount; occurrence += 1) {
+      const records = groupedSurfaces.flatMap((surface) => {
+        const record = surface.get(identity)?.[occurrence];
+        return record ? [record] : [];
+      });
+      const conditions = new Set(records.map((record) => cleanText(record.conditionId ?? record.condition_id, 220)).filter(Boolean));
+      const parents = new Set(records.map((record) => cleanText(
+        record.event_ticker ?? record.event_id ?? record.eventId, 220,
+      )).filter(Boolean));
+      const contractualQuestions = new Set(records.map((record) => normalizeComparableText(
+        cleanText(record.question ?? record.title, 700),
+      )).filter(Boolean));
+      const structuredLabels = new Set(records.map((record) => normalizeComparableText(
+        cleanText(record.groupItemTitle ?? record.yes_sub_title, 240),
+      )).filter(Boolean));
+      const slugs = new Set(records.map((record) => cleanText(record.slug, 400)).filter(Boolean));
+      const availabilityStates = new Set(records.map((record) => {
+        const status = cleanText(record.status, 80).toLowerCase();
+        if (record.closed === true || record.archived === true || record.active === false
+          || record.acceptingOrders === false
+          || ["closed", "settled", "finalized", "determined", "inactive"].includes(status)) return "closed";
+        if (record.active === true || record.acceptingOrders === true
+          || ["open", "active", "trading", "initialized"].includes(status)) return "open";
+        return "";
+      }).filter(Boolean));
+      const results = new Set(records.map((record) => normalizeProviderResult(
+        record.result ?? record.resolutionResult ?? record.winningOutcome,
+      )).filter(Boolean));
+      const contractualDates = new Set(records.map((record) => safeIsoDate(
+        record.endDate ?? record.close_time ?? record.latest_expiration_time,
+      )).filter(Boolean));
+      const tokenSets = new Set(records.map((record) => providerTokenIds(
+        record.clobTokenIds ?? record.token_ids,
+      ).toSorted(compareUtf16Text).join("|")));
+      const optionSemantics = new Set(records.map((record) => canonicalJson({
+        neg_risk_other: typeof record.negRiskOther === "boolean" ? record.negRiskOther : null,
+        is_other: typeof record.is_other === "boolean" ? record.is_other : null,
+        is_tie: typeof record.is_tie === "boolean" ? record.is_tie : null,
+        is_no_winner: typeof record.is_no_winner === "boolean" ? record.is_no_winner : null,
+        option_type: cleanText(record.option_type, 80) || null,
+      })));
+      if (conditions.size > 1 || parents.size > 1 || contractualQuestions.size > 1
+        || structuredLabels.size > 1 || slugs.size > 1 || availabilityStates.size > 1
+        || results.size > 1 || contractualDates.size > 1 || tokenSets.size > 1
+        || optionSemantics.size > 1) duplicateConflict = true;
+      markets.push(Object.assign({}, ...records));
+    }
+  }
+  return {
+    markets,
+    duplicateConflict,
+    missingStableIdentity,
+  };
+}
+
+function sameProviderMarketIdentitySet(
+  provider: "polymarket" | "kalshi",
+  left: JsonRecord[],
+  right: JsonRecord[],
+): boolean {
+  const identities = (values: JsonRecord[]) => values
+    .map((market) => providerMarketStableId(provider, market)).filter(Boolean).toSorted(compareUtf16Text);
+  const leftIds = identities(left);
+  const rightIds = identities(right);
+  return leftIds.length === left.length && rightIds.length === right.length
+    && leftIds.length === rightIds.length && leftIds.every((value, index) => value === rightIds[index]);
+}
+
+function polymarketParentContractProjection(event: JsonRecord): JsonRecord {
+  const nullableBoolean = (value: unknown) => typeof value === "boolean" ? value : null;
+  return {
+    id: cleanText(event.id, 220) || null,
+    slug: cleanText(event.slug, 400) || null,
+    title: cleanText(event.title, 700) || null,
+    category: cleanText(event.category, 120) || null,
+    subcategory: cleanText(event.subcategory, 120) || null,
+    resolution_source: safePublicUrl(event.resolutionSource ?? event.resolution_source),
+    end_at: safeIsoDate(event.endDate ?? event.end_date),
+    active: nullableBoolean(event.active),
+    closed: nullableBoolean(event.closed),
+    archived: nullableBoolean(event.archived),
+    neg_risk: nullableBoolean(event.negRisk),
+    enable_neg_risk: nullableBoolean(event.enableNegRisk),
+    show_all_outcomes: nullableBoolean(event.showAllOutcomes),
+    automatically_active: nullableBoolean(event.automaticallyActive),
+    series_slug: cleanText(event.seriesSlug, 220) || null,
+    parent_event: cleanText(event.parentEvent, 220) || null,
+  };
+}
+
+async function enumeratePolymarketEventChildren(
+  environment: Environment,
+  searchEvent: JsonRecord,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const parentId = cleanText(searchEvent.id, 220);
+  const slug = cleanText(searchEvent.slug, 400);
+  if (!parentId || !slug) throw new Error("PROVIDER_PARENT_IDENTITY_INVALID");
+  const bySlugUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(slug)}`);
+  const byIdUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/events/${encodeURIComponent(parentId)}`);
+  const refs: JsonRecord[] = [];
+  let bySlug: JsonRecord | null = null;
+  let byId: JsonRecord | null = null;
+  try {
+    bySlug = toRecord(await fetchJson(bySlugUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+    refs.push(await providerIdentityEvidence(
+      bySlugUrl, "event_slug", slug, bySlug,
+      bySlug ? "parent_children_enumerated" : "provider_invalid_response", checkedAt,
+    ));
+  } catch (error) {
+    refs.push(await providerIdentityEvidence(
+      bySlugUrl, "event_slug", slug, null,
+      error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+    ));
+  }
+  try {
+    byId = toRecord(await fetchJson(byIdUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+    refs.push(await providerIdentityEvidence(
+      byIdUrl, "event_id", parentId, byId,
+      byId ? "parent_children_enumerated" : "provider_invalid_response", checkedAt,
+    ));
+  } catch (error) {
+    refs.push(await providerIdentityEvidence(
+      byIdUrl, "event_id", parentId, null,
+      error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+    ));
+  }
+  const slugIdentityValid = Boolean(bySlug
+    && cleanText(bySlug.id, 220) === parentId && cleanText(bySlug.slug, 400) === slug);
+  const idIdentityValid = Boolean(byId
+    && cleanText(byId.id, 220) === parentId && cleanText(byId.slug, 400) === slug);
+  const slugMarkets = slugIdentityValid ? toRecordArray(bySlug?.markets) : [];
+  const idMarkets = idIdentityValid ? toRecordArray(byId?.markets) : [];
+  const merged = mergeProviderMarketSurfaces("polymarket", [slugMarkets, idMarkets]);
+  const parentContractAgreement = slugIdentityValid && idIdentityValid
+    && canonicalJson(polymarketParentContractProjection(bySlug ?? {}))
+      === canonicalJson(polymarketParentContractProjection(byId ?? {}));
+  const exactAgreement = slugIdentityValid && idIdentityValid
+    && sameProviderMarketIdentitySet("polymarket", slugMarkets, idMarkets)
+    && parentContractAgreement && !merged.duplicateConflict && !merged.missingStableIdentity;
+  if (slugIdentityValid && idIdentityValid && !parentContractAgreement) {
+    refs.push(await providerIdentityEvidence(
+      byIdUrl, "event_id", parentId, byId,
+      "parent_metadata_conflict", checkedAt,
+    ));
+  }
+  const publicUrl = await verifyPublicUrl(
+    `https://polymarket.com/event/${slug}`, "polymarket.com", environment.execution,
+  );
+  return {
+    ...(byId ?? bySlug ?? searchEvent),
+    id: parentId,
+    slug,
+    markets: merged.markets,
+    external_event_url: publicUrl,
+    canonical_url_verified: Boolean(publicUrl),
+    provider_declared_child_count: exactAgreement ? merged.markets.length : null,
+    provider_pagination_exhausted: exactAgreement,
+    provider_parent_unavailable: !bySlug || !byId,
+    parent_reconciliation_source_refs: refs,
+    _atinara_parent_enumeration: true,
+  };
+}
+
+async function discoverPolymarket(
+  environment: Environment,
+  now: string,
+  filters: ReturnType<typeof safeFilters>,
+  requestId: string,
+) {
   const categoryQueries: Record<string, string> = {
     Lanzamientos: "video game release delay",
     Eventos: "gaming event game awards",
@@ -1296,34 +2585,96 @@ async function discoverPolymarket(environment: Environment, now: string, filters
     "Reviews/Premios": "video game Metacritic Game Awards",
     YouTubers: "gaming YouTube creator",
   };
-  const url = new URL(`${POLYMARKET_GAMMA_ROOT}/public-search`);
-  url.searchParams.set("q", filters.query || categoryQueries[filters.category] || "video game gaming");
-  url.searchParams.set("events_status", "active");
-  url.searchParams.set("limit_per_type", "80");
-  url.searchParams.set("page", "1");
-  url.searchParams.set("keep_closed_markets", "0");
-  url.searchParams.set("search_profiles", "false");
-  const payload = toRecord(await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
-  const rawEvents = toRecordArray(payload.events);
-  const validatedEvents: JsonRecord[] = [];
-  for (const searchEvent of rawEvents.slice(0, 60)) {
-    const slug = cleanText(searchEvent.slug, 400);
-    if (!slug) continue;
-    try {
-      const canonical = toRecord(await fetchJson(new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(slug)}`), {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
-      if (!canonical || cleanText(canonical.id, 220) !== cleanText(searchEvent.id, 220)) continue;
-      const markets = toRecordArray(canonical.markets);
-      if (!markets.length || markets.length > MAX_CANONICAL_EVENT_CHILDREN) continue;
-      const canonicalUrl = await verifyPublicUrl(`https://polymarket.com/event/${slug}`, "polymarket.com", environment.execution);
-      if (!canonicalUrl) continue;
-      validatedEvents.push({ ...canonical, markets, canonical_url_verified: true });
-    } catch {
-      // Un evento inválido no invalida el resto del proveedor.
+  const searchUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/public-search`);
+  searchUrl.searchParams.set("q", filters.query || categoryQueries[filters.category] || "video game gaming");
+  searchUrl.searchParams.set("events_status", "active");
+  searchUrl.searchParams.set("limit_per_type", "80");
+  searchUrl.searchParams.set("keep_closed_markets", "0");
+  searchUrl.searchParams.set("search_profiles", "false");
+  const rawEvents: JsonRecord[] = [];
+  const seenEventIds = new Set<string>();
+  for (let page = 1; page <= MAX_PROVIDER_PAGES; page += 1) {
+    const pageUrl = new URL(searchUrl);
+    pageUrl.searchParams.set("page", String(page));
+    const payload = toRecord(await fetchJson(
+      pageUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    )) ?? {};
+    const pageEvents = toRecordArray(payload.events);
+    const pagination = toRecord(payload.pagination) ?? {};
+    const totalValue = Number(
+      pagination.totalResults ?? pagination.total_results
+        ?? payload.total ?? payload.total_events ?? payload.events_count,
+    );
+    const hasMoreValue = pagination.hasMore ?? pagination.has_more
+      ?? payload.has_more ?? payload.hasMore;
+    if (!pageEvents.length) {
+      if (hasMoreValue === true
+        || (Number.isSafeInteger(totalValue) && totalValue > rawEvents.length)) {
+        throw new Error("PROVIDER_PAGE_LOST");
+      }
+      break;
     }
+    let newEventCount = 0;
+    for (const event of pageEvents) {
+      const identity = cleanText(event.id ?? event.slug, 220);
+      if (!identity || seenEventIds.has(identity)) continue;
+      seenEventIds.add(identity);
+      rawEvents.push(event);
+      newEventCount += 1;
+    }
+    if (!newEventCount) throw new Error("PROVIDER_CURSOR_REPEATED");
+    const totalKnown = Number.isSafeInteger(totalValue) && totalValue >= 0;
+    const totalReached = totalKnown && rawEvents.length === totalValue;
+    const explicitTerminalPage = (Object.hasOwn(payload, "next_page") && payload.next_page === null)
+      || (Object.hasOwn(payload, "nextPage") && payload.nextPage === null);
+    if ((totalKnown && rawEvents.length > totalValue)
+      || (hasMoreValue === true && (totalReached || explicitTerminalPage))
+      || (hasMoreValue === false && totalKnown && !totalReached)
+      || (explicitTerminalPage && totalKnown && !totalReached)) {
+      throw new Error("PROVIDER_DATA_CONFLICT");
+    }
+    const paginationMetadataPresent = Object.keys(pagination).length > 0
+      || hasMoreValue !== undefined || totalKnown;
+    if ((hasMoreValue === false || explicitTerminalPage || totalReached)
+      || (!paginationMetadataPresent && pageEvents.length < 80)) break;
+    if (page === MAX_PROVIDER_PAGES) throw new Error("PROVIDER_PAGINATION_INCOMPLETE");
   }
-  const adapted = adaptPolymarketResponse({ events: validatedEvents }, { now, cacheMinutes: 20, canonicalUrlVerified: true })
-    .slice(0, MAX_NORMALIZED_PER_PROVIDER) as JsonRecord[];
-  return attachCanonicalFactContext(adapted, validatedEvents, "polymarket");
+  const indexedScope = selectWholeProviderParents(rawEvents, {
+    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
+    maxParents: 120,
+    maxTotalParents: 240,
+    countChildren: false,
+  });
+  const validationResults = await mapWithConcurrency(
+    indexedScope.selected, KALSHI_CONCURRENCY,
+    async (searchEvent): Promise<JsonRecord> => enumeratePolymarketEventChildren(environment, searchEvent, now),
+  );
+  const validatedEvents: JsonRecord[] = [];
+  for (const result of validationResults) {
+    if (result.status === "rejected") throw result.reason;
+    if (result.status === "fulfilled" && result.value) validatedEvents.push(result.value);
+  }
+  const childScope = selectWholeProviderParents(
+    validatedEvents, {
+      maxChildren: MAX_NORMALIZED_PER_PROVIDER,
+      maxParents: 120,
+      maxTotalParents: 120,
+    },
+  );
+  const selectedEvents = childScope.selected;
+  const selection = mergeProviderParentSelections(indexedScope.selection, childScope.selection);
+  const resolvedEvents: JsonRecord[] = [];
+  for (const event of selectedEvents) {
+    resolvedEvents.push(await resolvePolymarketEventIdentities(environment, event, now));
+  }
+  const adapted = adaptPolymarketResponse(
+    { events: resolvedEvents }, { now, cacheMinutes: 20 },
+  ) as JsonRecord[];
+  const contextual = await attachCanonicalFactContext(adapted, resolvedEvents, "polymarket");
+  const reconciled = await reconcileCanonicalEvents(
+    environment, "polymarket", resolvedEvents, contextual, now, requestId,
+  );
+  return { ...reconciled, selection };
 }
 
 function taxonomyValues(payload: unknown): { category: string; tag: string } | null {
@@ -1385,7 +2736,91 @@ async function kalshiTaxonomy(environment: Environment) {
   }
 }
 
-async function discoverKalshi(environment: Environment, now: string) {
+async function enumerateKalshiEventChildren(
+  environment: Environment,
+  listedEvent: JsonRecord,
+  checkedAt: string,
+): Promise<JsonRecord> {
+  const eventTicker = cleanText(listedEvent.event_ticker ?? listedEvent.ticker, 160);
+  if (!eventTicker) throw new Error("PROVIDER_PARENT_IDENTITY_INVALID");
+  const refs: JsonRecord[] = [];
+  const eventUrl = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(eventTicker)}`);
+  eventUrl.searchParams.set("with_nested_markets", "true");
+  let event: JsonRecord | null = null;
+  try {
+    const payload = toRecord(await fetchJson(eventUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
+    event = toRecord(payload.event) ?? payload;
+    refs.push(await providerIdentityEvidence(
+      eventUrl, "event_ticker", eventTicker, payload,
+      event ? "parent_children_enumerated" : "provider_invalid_response", checkedAt,
+    ));
+  } catch (error) {
+    refs.push(await providerIdentityEvidence(
+      eventUrl, "event_ticker", eventTicker, null,
+      error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+    ));
+  }
+  const nestedMarkets = event ? toRecordArray(event.markets) : [];
+  const collectSurface = async (historical: boolean) => {
+    const base = new URL(`${KALSHI_API_ROOT}/${historical ? "historical/" : ""}markets`);
+    base.searchParams.set("event_ticker", eventTicker);
+    base.searchParams.set("limit", "1000");
+    try {
+      const collection = await collectProviderCursorPages(async (cursor) => {
+        const pageUrl = new URL(base);
+        if (cursor) pageUrl.searchParams.set("cursor", cursor);
+        const payload = toRecord(await fetchJson(
+          pageUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+        )) ?? {};
+        refs.push(await providerIdentityEvidence(
+          pageUrl, "event_ticker", eventTicker, payload,
+          historical ? "historical_child_page_enumerated" : "current_child_page_enumerated", checkedAt,
+        ));
+        return payload;
+      }, { itemsField: "markets", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
+      return { markets: collection.items, exhausted: collection.provider_pagination_exhausted };
+    } catch (error) {
+      refs.push(await providerIdentityEvidence(
+        base, "event_ticker", eventTicker, null,
+        error instanceof Error ? cleanText(error.message, 80) : "provider_unavailable", checkedAt,
+      ));
+      return { markets: [] as JsonRecord[], exhausted: false };
+    }
+  };
+  const [current, historical] = await Promise.all([collectSurface(false), collectSurface(true)]);
+  const listed = mergeProviderMarketSurfaces("kalshi", [current.markets, historical.markets]);
+  const identityCounts = (markets: JsonRecord[]) => {
+    const counts = new Map<string, number>();
+    for (const market of markets) {
+      const identity = providerMarketStableId("kalshi", market);
+      if (identity) counts.set(identity, (counts.get(identity) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const listedCounts = identityCounts(listed.markets);
+  const nestedCounts = identityCounts(nestedMarkets);
+  const nestedAccounted = nestedCounts.size > 0 && nestedMarkets.length === [...nestedCounts.values()]
+    .reduce((total, value) => total + value, 0)
+    && [...nestedCounts].every(([identity, count]) => (listedCounts.get(identity) ?? 0) >= count);
+  const enumerationComplete = Boolean(event)
+    && cleanText(event?.event_ticker ?? event?.ticker, 160) === eventTicker
+    && current.exhausted && historical.exhausted && nestedAccounted
+    && listed.markets.every((market) => cleanText(market.event_ticker, 160) === eventTicker)
+    && !listed.duplicateConflict && !listed.missingStableIdentity;
+  const fallback = mergeProviderMarketSurfaces("kalshi", [listed.markets, nestedMarkets]);
+  return {
+    ...(event ?? listedEvent),
+    event_ticker: eventTicker,
+    markets: fallback.markets,
+    provider_declared_child_count: enumerationComplete ? listed.markets.length : null,
+    provider_pagination_exhausted: enumerationComplete && !fallback.duplicateConflict,
+    provider_parent_unavailable: !event || !current.exhausted || !historical.exhausted,
+    parent_reconciliation_source_refs: refs,
+    _atinara_parent_enumeration: true,
+  };
+}
+
+async function discoverKalshi(environment: Environment, now: string, requestId: string) {
   const exact = await kalshiTaxonomy(environment);
   const category = exact?.category ?? "Entertainment";
   const tag = exact?.tag ?? "Video games";
@@ -1394,19 +2829,31 @@ async function discoverKalshi(environment: Environment, now: string) {
   seriesUrl.searchParams.set("tags", tag);
   seriesUrl.searchParams.set("include_volume", "true");
   seriesUrl.searchParams.set("include_product_metadata", "true");
-  const seriesPayload = toRecord(await fetchJson(seriesUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
-  const series = toRecordArray(seriesPayload.series)
-    .sort((left, right) => seriesPriority(right) - seriesPriority(left))
-    .slice(0, MAX_KALSHI_SERIES);
+  seriesUrl.searchParams.set("limit", "200");
+  const seriesCollection = await collectProviderCursorPages(async (cursor) => {
+    const pageUrl = new URL(seriesUrl);
+    if (cursor) pageUrl.searchParams.set("cursor", cursor);
+    return toRecord(await fetchJson(
+      pageUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    )) ?? {};
+  }, { itemsField: "series", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
+  const allSeries: JsonRecord[] = [];
+  const seriesIdentities = new Set<string>();
+  for (const seriesItem of seriesCollection.items) {
+    const identity = cleanText(seriesItem.ticker, 120);
+    if (!identity || seriesIdentities.has(identity)) continue;
+    seriesIdentities.add(identity);
+    allSeries.push(seriesItem);
+  }
+  const prioritizedSeries = allSeries.sort((left, right) => seriesPriority(right) - seriesPriority(left));
+  const series = prioritizedSeries.slice(0, MAX_KALSHI_SERIES);
   if (!series.length) throw new Error("PROVIDER_INVALID_RESPONSE");
 
   const minimumClose = Math.floor(Date.now() / 1000);
-  const settled = await mapWithConcurrency(series, KALSHI_CONCURRENCY, async (seriesItem) => {
+  const indexedSettled = await mapWithConcurrency(series, KALSHI_CONCURRENCY, async (seriesItem) => {
     const ticker = cleanText(seriesItem.ticker, 120);
     if (!ticker) return [];
-    const events: JsonRecord[] = [];
-    let cursor = "";
-    for (let page = 0; page < MAX_PROVIDER_PAGES; page += 1) {
+    const eventCollection = await collectProviderCursorPages(async (cursor) => {
       const eventsUrl = new URL(`${KALSHI_API_ROOT}/events`);
       eventsUrl.searchParams.set("series_ticker", ticker);
       eventsUrl.searchParams.set("status", "open");
@@ -1414,44 +2861,67 @@ async function discoverKalshi(environment: Environment, now: string) {
       eventsUrl.searchParams.set("min_close_ts", String(minimumClose));
       eventsUrl.searchParams.set("limit", "200");
       if (cursor) eventsUrl.searchParams.set("cursor", cursor);
-      const pagePayload = toRecord(await fetchJson(eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
-      events.push(...toRecordArray(pagePayload.events));
-      cursor = cleanText(pagePayload.cursor, 500);
-      if (!cursor) break;
-    }
+      return toRecord(await fetchJson(
+        eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+      )) ?? {};
+    }, { itemsField: "events", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
+    const events = eventCollection.items;
     const seriesTitle = cleanText(seriesItem.title ?? seriesItem.name, 400);
     const seriesSlug = slugify(seriesTitle);
     const settlementSources = toRecordArray(seriesItem.settlement_sources).map((source) => safePublicUrl(source.url)).filter(Boolean);
-    const enriched: JsonRecord[] = [];
-    for (const listedEvent of events.slice(0, Math.ceil(MAX_NORMALIZED_PER_PROVIDER / MAX_KALSHI_SERIES))) {
+    return events.flatMap((listedEvent) => {
       const listedTicker = cleanText(listedEvent.event_ticker ?? listedEvent.ticker, 160);
-      if (!listedTicker) continue;
-      let event: JsonRecord;
-      try {
-        const canonicalUrl = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(listedTicker)}`);
-        canonicalUrl.searchParams.set("with_nested_markets", "true");
-        const canonicalPayload = toRecord(await fetchJson(canonicalUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
-        event = toRecord(canonicalPayload.event) ?? canonicalPayload;
-      } catch {
-        continue;
-      }
+      return listedTicker ? [{
+        ...listedEvent,
+        _atinara_series_context: {
+          category,
+          tags: Array.isArray(seriesItem.tags) ? seriesItem.tags : [tag],
+          series_ticker: ticker,
+          series_title: seriesTitle,
+          series_slug: seriesSlug,
+          settlement_sources: settlementSources,
+          raw_settlement_sources: seriesItem.settlement_sources,
+        },
+      }] : [];
+    });
+  });
+  const indexedEvents = indexedSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  if (indexedSettled.some((result) => result.status === "rejected")) throw new Error("PROVIDER_UNAVAILABLE");
+  const indexedScope = selectWholeProviderParents(indexedEvents, {
+    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
+    maxParents: 120,
+    maxTotalParents: 240,
+    countChildren: false,
+  });
+  const enumerated = await mapWithConcurrency(
+    indexedScope.selected,
+    KALSHI_CONCURRENCY,
+    async (indexedEvent): Promise<JsonRecord> => {
+      const context = toRecord(indexedEvent._atinara_series_context) ?? {};
+      const listedEvent = { ...indexedEvent };
+      delete listedEvent._atinara_series_context;
+      const listedTicker = cleanText(listedEvent.event_ticker ?? listedEvent.ticker, 160);
+      const event = await enumerateKalshiEventChildren(environment, listedEvent, now);
       const eventTicker = cleanText(event.event_ticker ?? event.ticker, 160);
       const canonicalMarkets = toRecordArray(event.markets);
-      if (!eventTicker || eventTicker !== listedTicker || !canonicalMarkets.length
-        || canonicalMarkets.length > MAX_CANONICAL_EVENT_CHILDREN) continue;
-      const guessed = `https://kalshi.com/markets/${ticker.toLowerCase()}/${seriesSlug}/${eventTicker.toLowerCase()}`;
-      // La existencia y pertenencia se validan en la API oficial de eventos. No se
-      // sondea una página HTML por evento: Kalshi limita esas peticiones y no debe
-      // convertir un 429 del sitio público en un catálogo vacío.
+      if (!eventTicker || eventTicker !== listedTicker) throw new Error("PROVIDER_PARENT_IDENTITY_INVALID");
+      if (canonicalMarkets.length > MAX_CANONICAL_EVENT_CHILDREN) {
+        throw new Error("PROVIDER_PARENT_CHILD_LIMIT_EXCEEDED");
+      }
+      const ticker = cleanText(context.series_ticker, 120);
+      const guessed = `https://kalshi.com/markets/${ticker.toLowerCase()}/${cleanText(context.series_slug, 220)}/${eventTicker.toLowerCase()}`;
       const canonicalUrl = safePublicUrl(guessed, ["kalshi.com"]);
-      if (!canonicalUrl) continue;
-      enriched.push({
+      if (!canonicalUrl) throw new Error("PROVIDER_CANONICAL_URL_INVALID");
+      const settlementSources = Array.isArray(context.settlement_sources)
+        ? context.settlement_sources.map((url) => safePublicUrl(url)).filter(Boolean) : [];
+      return {
         ...event,
-        category,
-        tags: Array.isArray(seriesItem.tags) ? seriesItem.tags : [tag],
+        category: cleanText(context.category, 120),
+        tags: Array.isArray(context.tags) ? context.tags : [tag],
         series_ticker: ticker,
-        series_title: seriesTitle,
-        settlement_sources: toRecordArray(event.settlement_sources).length ? event.settlement_sources : settlementSources.map((url) => ({ url })),
+        series_title: cleanText(context.series_title, 400),
+        settlement_sources: toRecordArray(event.settlement_sources).length
+          ? event.settlement_sources : settlementSources.map((url) => ({ url })),
         external_event_url: canonicalUrl,
         canonical_url_verified: true,
         markets: canonicalMarkets.map((market) => ({
@@ -1460,16 +2930,40 @@ async function discoverKalshi(environment: Environment, now: string) {
           external_event_url: canonicalUrl,
           external_market_url: canonicalUrl,
           canonical_url_verified: true,
-          settlement_sources: toRecordArray(market.settlement_sources).length ? market.settlement_sources : event.settlement_sources ?? seriesItem.settlement_sources,
+          settlement_sources: toRecordArray(market.settlement_sources).length
+            ? market.settlement_sources
+            : event.settlement_sources ?? context.raw_settlement_sources,
         })),
-      });
-    }
-    return enriched;
+      };
+    },
+  );
+  if (enumerated.some((result) => result.status === "rejected")) throw new Error("PROVIDER_UNAVAILABLE");
+  const events = enumerated.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const childScope = selectWholeProviderParents(events, {
+    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
+    maxParents: 120,
+    maxTotalParents: 120,
   });
-  const events = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-  if (!events.length && settled.some((result) => result.status === "rejected")) throw new Error("PROVIDER_UNAVAILABLE");
-  const adapted = adaptKalshiResponse({ events }, { now, category, cacheMinutes: 20 }).slice(0, MAX_NORMALIZED_PER_PROVIDER) as JsonRecord[];
-  return attachCanonicalFactContext(adapted, events, "kalshi");
+  const selectedEvents = childScope.selected;
+  const parentSelection = mergeProviderParentSelections(indexedScope.selection, childScope.selection);
+  const resolvedEvents: JsonRecord[] = [];
+  for (const event of selectedEvents) {
+    resolvedEvents.push(await resolveKalshiEventIdentities(environment, event, now));
+  }
+  const adapted = adaptKalshiResponse({ events: resolvedEvents }, { now, category, cacheMinutes: 20 }) as JsonRecord[];
+  const contextual = await attachCanonicalFactContext(adapted, resolvedEvents, "kalshi");
+  const reconciled = await reconcileCanonicalEvents(
+    environment, "kalshi", resolvedEvents, contextual, now, requestId,
+  );
+  return {
+    ...reconciled,
+    selection: {
+      ...parentSelection,
+      total_series_count: prioritizedSeries.length,
+      selected_series_count: series.length,
+      deferred_series_count: Math.max(0, prioritizedSeries.length - series.length),
+    },
+  };
 }
 
 async function fetchKalshiMarketRecord(environment: Environment, ticker: string): Promise<JsonRecord | null> {
@@ -2102,59 +3596,16 @@ type AuthoritativePersistenceBatchResult = {
 };
 
 async function writeAuthoritativePersistenceBatch(
-  environment: Environment,
-  provider: string,
-  cacheKey: string,
-  entries: AuthoritativePersistenceEntry[],
-  deadlineAt: number,
+  _environment: Environment,
+  _provider: string,
+  _cacheKey: string,
+  _entries: AuthoritativePersistenceEntry[],
+  _deadlineAt: number,
 ): Promise<AuthoritativePersistenceBatchResult> {
-  const remainingMs = Math.max(1, deadlineAt - Date.now());
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), remainingMs);
-  try {
-    const rawResult = await rpc(environment, "upsert_market_radar_batch_with_eligibility_v1", {
-      provider_input: provider,
-      cache_key_input: cacheKey,
-      normalizer_version_input: RADAR_NORMALIZER_VERSION,
-      candidates_input: entries.map(({ candidate }) => candidate),
-      eligibility_checks_input: entries.map(({ eligibilityCheck }) => eligibilityCheck),
-      eligibility_policy_version_input: RADAR_ELIGIBILITY_POLICY_VERSION,
-      provider_status_input: {
-        status: "partial_error",
-        is_cached: false,
-        error_code: "RADAR_REFRESH_IN_PROGRESS",
-        error_message: "La actualización del proveedor todavía no ha finalizado.",
-      },
-    }, undefined, true, {
-      signal: AbortSignal.any([controller.signal, environment.execution.signal]),
-    });
-    const result = toRecord(rawResult);
-    const acceptedCount = Math.max(0, Number(result?.accepted_count) || 0);
-    const quarantined = toRecordArray(result?.quarantined).map((item) => ({
-      provider: cleanText(item.provider, 40) || cleanText(provider, 40),
-      external_id: cleanText(item.external_id, 220),
-      fingerprint: /^[a-f0-9]{64}$/i.test(cleanText(item.fingerprint, 80))
-        ? cleanText(item.fingerprint, 80).toLowerCase()
-        : null,
-      stage: "authoritative_persistence" as const,
-      code: cleanText(item.code, 100) || "RADAR_CANDIDATE_DATA_INVALID",
-      database_code: /^[0-9A-Z]{5}$/.test(cleanText(item.database_code, 10))
-        ? cleanText(item.database_code, 10)
-        : null,
-      operation: "upsert_market_radar_batch_with_eligibility_v1",
-    }));
-    if (result?.ok !== true || acceptedCount + quarantined.length !== entries.length) {
-      throw new Error("RADAR_PERSISTENCE_RESULT_INVALID");
-    }
-    return { acceptedCount, quarantined };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("RADAR_PERSISTENCE_TIMEOUT");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  // Compatibilidad de símbolos para pruebas históricas: la ruta V1 queda
+  // inutilizable por código además de no tener EXECUTE. El único writer activo
+  // es el manifiesto durable + complete_market_radar_candidate_refresh_v1.
+  throw new Error("LEGACY_RADAR_WRITER_DISABLED");
 }
 
 function persistenceIsolationBudgetAvailable(budget: PersistenceIsolationBudget): boolean {
@@ -2370,7 +3821,12 @@ async function radarPersistenceEntries(
     const expiresAt = safeIsoDate(candidate.eligibility_expires_at ?? candidate.verification_expires_at)
       ?? new Date(Date.parse(checkedAt) + VERIFICATION_TTL_MINUTES * 60_000).toISOString();
     const evidence = toRecordArray(candidate.eligibility_evidence ?? candidate.verification_evidence).slice(0, 12);
-    const persistedCandidate = { ...candidate, cache_key: cacheKey };
+    const providerPayload = { ...(toRecord(candidate.provider_payload) ?? {}) };
+    delete providerPayload.canonical_event_children;
+    providerPayload.canonical_event_children_fingerprint = cleanText(
+      candidate.parent_reconciliation_fingerprint, 80,
+    ) || null;
+    const persistedCandidate = { ...candidate, provider_payload: providerPayload, cache_key: cacheKey };
     return {
       candidate: persistedCandidate,
       eligibility_check: {
@@ -2439,7 +3895,11 @@ async function persistProviderResultV2(
         expected_count_input: entries.length,
       }, undefined, true);
       rpcCalls += 1;
-      for (let offset = 0, ordinal = 0; offset < entries.length; offset += RADAR_PERSISTENCE_BATCH_SIZE, ordinal += 1) {
+      const persistenceBatches = buildRadarPersistenceBatches(entries, {
+        maxItems: RADAR_PERSISTENCE_BATCH_SIZE,
+        maxBytes: 700_000,
+      });
+      for (let ordinal = 0; ordinal < persistenceBatches.length; ordinal += 1) {
         await renewRadarRefreshLease(environment, intent);
         await rpc(environment, "stage_market_radar_refresh_batch_v1", {
           request_id_input: intent.requestId,
@@ -2447,7 +3907,7 @@ async function persistProviderResultV2(
           capability_input: intent.capability,
           lease_token_input: intent.leaseToken,
           batch_ordinal_input: ordinal,
-          items_input: entries.slice(offset, offset + RADAR_PERSISTENCE_BATCH_SIZE),
+          items_input: persistenceBatches[ordinal],
         }, undefined, true);
         rpcCalls += 1;
       }
@@ -2465,68 +3925,8 @@ async function persistProviderResultV2(
     phase = "persisting";
   }
 
-  const persistenceDeadline = Math.min(
-    Date.now() + PERSISTENCE_ISOLATION_BUDGET_MS,
-    environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS,
-  );
-  let lastResult: JsonRecord | null = null;
-  for (let call = 0; call < RADAR_REFRESH_MAX_PROCESS_CALLS; call += 1) {
-    if (Date.now() + PERSISTENCE_RPC_START_MARGIN_MS >= persistenceDeadline) break;
-    await renewRadarRefreshLease(environment, intent);
-    lastResult = toRecord(await rpc(environment, "process_market_radar_refresh_batch_v1", {
-      request_id_input: intent.requestId,
-      provider_input: intent.provider,
-      capability_input: intent.capability,
-      lease_token_input: intent.leaseToken,
-    }, undefined, true));
-    rpcCalls += 1;
-    if (lastResult?.ok === false) {
-      const batchId = cleanText(lastResult.batch_id, 80);
-      const itemCount = Math.max(0, Number(lastResult.item_count) || 0);
-      if (validUuid(batchId) && itemCount > 1) {
-        await renewRadarRefreshLease(environment, intent);
-        await rpc(environment, "split_market_radar_refresh_batch_v1", {
-          request_id_input: intent.requestId,
-          provider_input: intent.provider,
-          capability_input: intent.capability,
-          lease_token_input: intent.leaseToken,
-          batch_id_input: batchId,
-        }, undefined, true);
-        rpcCalls += 1;
-        continue;
-      }
-      break;
-    }
-    if (Math.max(0, Number(lastResult?.remaining_batches) || 0) === 0) break;
-  }
-
-  if (!lastResult || lastResult.ok === false || Math.max(0, Number(lastResult.remaining_batches) || 0) > 0) {
-    const code = cleanText(lastResult?.code, 100) || "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
-    const deferred = toRecord(await rpc(environment, "defer_market_radar_refresh_v1", {
-      request_id_input: intent.requestId,
-      provider_input: intent.provider,
-      capability_input: intent.capability,
-      lease_token_input: intent.leaseToken,
-      issue_code_input: code,
-    }, undefined, true));
-    const issue = toRecord(deferred?.issue) ?? await radarRefreshIssue({
-      requestId: intent.requestId,
-      provider: intent.provider,
-      capability: intent.capability,
-      code,
-      failureStage: "persistence",
-    });
-    return {
-      persistedCount: Math.max(0, Number(deferred?.processed_count) || 0),
-      quarantined: [], deferred: [], persistenceRpcCalls: rpcCalls + 1,
-      failure: publicProviderError(intent.provider, code, 202), issues: [issue],
-      inProgress: true, terminal: false,
-      quarantinedCount: Math.max(0, Number(deferred?.quarantined_count) || 0),
-    };
-  }
-
   await renewRadarRefreshLease(environment, intent);
-  const finalized = toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+  const finalized = toRecord(await rpc(environment, "complete_market_radar_candidate_refresh_v1", {
     request_id_input: intent.requestId,
     provider_input: intent.provider,
     capability_input: intent.capability,
@@ -2535,7 +3935,7 @@ async function persistProviderResultV2(
     error_code_input: null,
     failure_stage_input: null,
     retry_after_seconds_input: null,
-  }, undefined, true));
+  }, undefined, true, { timeoutPolicyMs: 90_000 }));
   const issue = toRecord(finalized?.issue);
   return {
     persistedCount: Math.max(0, Number(finalized?.accepted_count) || 0),
@@ -2565,7 +3965,7 @@ async function finalizeRadarRefreshFailureV2(
     };
   }
   await renewRadarRefreshLease(environment, intent);
-  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v5", {
     request_id_input: intent.requestId,
     provider_input: intent.provider,
     capability_input: intent.capability,
@@ -2586,7 +3986,7 @@ async function finalizeRadarEnrichmentSuccessV2(
   if (intent.terminal) return intent.responseSummary ?? {};
   if (intent.inProgress || !intent.leaseToken) return { outcome: "in_progress" };
   await renewRadarRefreshLease(environment, intent);
-  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v3", {
+  return toRecord(await rpc(environment, "finalize_market_radar_refresh_v5", {
     request_id_input: intent.requestId,
     provider_input: intent.provider,
     capability_input: intent.capability,
@@ -2649,8 +4049,8 @@ async function loadRadarView(
   filters: ReturnType<typeof safeFilters>,
   minimumDiscoveryCheckedAt: string | null = null,
 ) {
-  const [candidatesPayload, rejectedPayload, providers] = await Promise.all([
-    rpc(environment, "list_market_radar_candidates_v3", {
+  const [candidatesPayload, rejectedPayload, providers, parentReconciliationsPayload] = await Promise.all([
+    rpc(environment, "list_market_radar_candidates_v4", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       quality_filter: filters.quality,
@@ -2660,17 +4060,26 @@ async function loadRadarView(
       parent_limit_count: MAX_VISIBLE_GROUPS,
       parent_offset_count: filters.parent_offset,
     }, authorization),
-    rpc(environment, "list_market_radar_rejections", {
+    rpc(environment, "list_market_radar_rejections_v2", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       limit_count: 100,
       offset_count: 0,
     }, authorization).catch(() => []),
     rpc(environment, "get_market_radar_provider_status", {}, authorization),
+    rpc(environment, "list_market_radar_parent_reconciliations_v2", {
+      provider_filter: filters.provider === "all" ? null : filters.provider,
+      category_filter: filters.category || null,
+      query_filter: filters.query || null,
+      horizon_filter: filters.horizon,
+      limit_count: 20,
+      offset_count: filters.reconciliation_offset,
+    }, authorization),
   ]);
   const checkedAt = Date.now();
   const minimumCheckedAt = minimumDiscoveryCheckedAt ? Date.parse(minimumDiscoveryCheckedAt) : Number.NaN;
   const candidatePage = toRecord(candidatesPayload) ?? {};
+  const reconciliationPage = toRecord(parentReconciliationsPayload) ?? {};
   const candidates = toRecordArray(candidatePage.items)
     .filter((candidate) => cleanText(candidate.eligibility_policy_version, 80) === RADAR_ELIGIBILITY_POLICY_VERSION)
     .filter((candidate) => filters.quality !== "fit" || hasCurrentEligibility(candidate, checkedAt))
@@ -2687,11 +4096,33 @@ async function loadRadarView(
     groups,
     rejected: summarizeRejections(rejected),
     providers: toRecordArray(providers),
+    parent_reconciliations: toRecordArray(reconciliationPage.items)
+      .map((value) => projectRadarParentReconciliation(value)).filter(Boolean),
+    reconciliation_page: {
+      total: Math.max(0, Number(reconciliationPage.total) || 0),
+      offset: Math.max(0, Number(reconciliationPage.offset) || 0),
+      limit: Math.max(1, Number(reconciliationPage.limit) || 20),
+      previous_offset: reconciliationPage.previous_offset !== null
+        && reconciliationPage.previous_offset !== undefined
+        && Number.isInteger(Number(reconciliationPage.previous_offset))
+        ? Number(reconciliationPage.previous_offset) : null,
+      next_offset: reconciliationPage.next_offset !== null
+        && reconciliationPage.next_offset !== undefined
+        && Number.isInteger(Number(reconciliationPage.next_offset))
+        ? Number(reconciliationPage.next_offset) : null,
+      snapshot_available: reconciliationPage.snapshot_available === true,
+    },
     page: {
       parent_count: Math.max(0, Number(candidatePage.parent_count) || 0),
       parent_offset: Math.max(0, Number(candidatePage.parent_offset) || 0),
       parent_limit: Math.max(1, Number(candidatePage.parent_limit) || MAX_VISIBLE_GROUPS),
-      next_parent_offset: Number.isInteger(Number(candidatePage.next_parent_offset))
+      previous_parent_offset: candidatePage.previous_parent_offset !== null
+        && candidatePage.previous_parent_offset !== undefined
+        && Number.isInteger(Number(candidatePage.previous_parent_offset))
+        ? Number(candidatePage.previous_parent_offset) : null,
+      next_parent_offset: candidatePage.next_parent_offset !== null
+        && candidatePage.next_parent_offset !== undefined
+        && Number.isInteger(Number(candidatePage.next_parent_offset))
         ? Number(candidatePage.next_parent_offset) : null,
     },
   };
@@ -2778,9 +4209,17 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const requestedProviders = filters.provider === "all"
     ? [...RADAR_CANDIDATE_PROVIDERS]
     : RADAR_CANDIDATE_PROVIDERS.includes(filters.provider) ? [filters.provider] : [];
+  const protectedCandidateIdentities = new Set(toRecordArray(await rpc(
+    environment,
+    "get_market_radar_protected_candidate_identities_v1",
+    { provider_filter: filters.provider === "all" ? null : filters.provider },
+    undefined,
+    true,
+  )).map((candidate) => `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`));
   const candidateProviderErrors: JsonRecord[] = [];
   const providerIssues: JsonRecord[] = [];
   const enrichmentIssues: JsonRecord[] = [];
+  const providerSelections: JsonRecord[] = [];
   const providerIntents = new Map<string, RadarRefreshIntent>();
   for (const provider of requestedProviders) {
     const intent = await beginRadarRefreshIntent(
@@ -2789,6 +4228,8 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     providerIntents.set(provider, intent);
     const issue = toRecord(intent.responseSummary?.issue);
     if (issue) providerIssues.push(issue);
+    const replayedSelection = toRecord(intent.responseSummary?.provider_selection);
+    if (replayedSelection) providerSelections.push({ provider, ...replayedSelection });
     if (intent.inProgress) {
       candidateProviderErrors.push({
         ...publicProviderError(provider, "RADAR_REFRESH_ALREADY_RUNNING", 202),
@@ -2805,14 +4246,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   if (initialTavilyIssue) enrichmentIssues.push(initialTavilyIssue);
 
   const authoritativeDomains = await loadAuthoritativeSourceDomains(environment).catch(() => new Set<string>());
-  const kalshiIntent = providerIntents.get("kalshi");
-  const reconciledCandidates = kalshiIntent && !kalshiIntent.terminal && !kalshiIntent.inProgress
-    ? await reconcileRejectedKalshiOutcomes(
-      environment,
-      toRecordArray(current.rejected?.items),
-      now,
-    ).catch(() => [])
-    : [];
+  // V3 nunca mezcla una fila legacy rechazada con el manifest actual. Los
+  // hechos Kalshi se vuelven a observar dentro de su padre exhaustivamente
+  // reconciliado; una identidad diferida permanece histórica, no candidata.
+  const reconciledCandidates: JsonRecord[] = [];
   const reconciledProviderResults = reconciledCandidates.length;
   const existing = await loadExistingDefinitions(environment, authorization);
   const providers = requestedProviders.filter((provider) => {
@@ -2823,18 +4260,49 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         && intent.stagedCount === intent.expectedCount));
   });
   const discoveredByProvider = new Map<string, JsonRecord[]>();
-  const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => ({
-    provider,
-    candidates: provider === "polymarket"
-      ? await discoverPolymarket(environment, now, filters)
-      : await discoverKalshi(environment, now),
-  }));
+  const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => {
+    const discovery = provider === "polymarket"
+      ? await discoverPolymarket(environment, now, filters, refresh.requestId)
+      : await discoverKalshi(environment, now, refresh.requestId);
+    return { provider, ...discovery };
+  });
   for (let index = 0; index < discoveryResults.length; index += 1) {
     const result = discoveryResults[index];
     const provider = providers[index];
     if (result.status === "fulfilled") {
-      discoveredByProvider.set(result.value.provider, result.value.candidates as JsonRecord[]);
-      continue;
+      const intent = providerIntents.get(provider);
+      try {
+        if (!intent) throw new Error("RADAR_REFRESH_INTENT_REQUIRED");
+        if (isRecord(result.value.selection)) await rpc(
+          environment, "record_market_radar_provider_selection_v1", {
+            request_id_input: intent.requestId,
+            provider_input: intent.provider,
+            capability_input: intent.capability,
+            lease_token_input: intent.leaseToken,
+            selection_input: result.value.selection,
+          }, undefined, true,
+        );
+        await recordParentReconciliations(environment, intent, result.value.reconciliations as JsonRecord[]);
+        discoveredByProvider.set(result.value.provider, result.value.candidates as JsonRecord[]);
+        if (isRecord(result.value.selection)) providerSelections.push({
+          provider: result.value.provider,
+          ...result.value.selection,
+        });
+        continue;
+      } catch (error) {
+        const failure = providerFailure(error, provider);
+        const finalization = intent
+          ? await finalizeRadarRefreshFailureV2(environment, intent, failure, "persistence")
+          : {};
+        const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
+          requestId: refresh.requestId, provider, capability: "candidate_feed",
+          code: cleanText(failure.code, 100) || "RADAR_PARENT_RECONCILIATION_PERSISTENCE_FAILED",
+          failureStage: "persistence",
+        });
+        providerIssues.push(issue);
+        candidateProviderErrors.push({ ...failure, issue, state_preserved: true });
+        continue;
+      }
     }
     const failure = providerFailure(result.reason, provider);
     const intent = providerIntents.get(provider);
@@ -2860,6 +4328,19 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   }
 
   const qualityNotices: JsonRecord[] = [];
+  for (const selection of providerSelections) {
+    const deferredParents = Math.max(0, Number(selection.deferred_parent_count) || 0);
+    const deferredSeries = Math.max(0, Number(selection.deferred_series_count) || 0);
+    if (!deferredParents && !deferredSeries) continue;
+    qualityNotices.push({
+      provider: selection.provider,
+      code: "RADAR_PROVIDER_SCOPE_DEFERRED",
+      quarantined_count: 0,
+      degrades_provider: false,
+      selection,
+      message: `La consulta agotó la paginación oficial y seleccionó padres completos dentro del presupuesto: ${selection.selected_parent_count ?? 0} padres representados, ${deferredParents} padres y ${deferredSeries} series fuera de este alcance. Ningún padre fue truncado.`,
+    });
+  }
   const domainScopedCandidates: JsonRecord[] = await Promise.all(
     [...discoveredByProvider.values()].flat().map(async (candidate: JsonRecord): Promise<JsonRecord> => ({
       ...candidate,
@@ -3094,7 +4575,8 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     const workflowIssues = toRecordArray(candidate.workflow_issues);
     const workflowCodes = new Set(workflowIssues.map((issue) => cleanText(issue.issue_code, 100)));
     const decisionCode = cleanText(candidate.eligibility_reason_code || candidate.domain_reason_code, 100);
-    if (decisionCode && !workflowCodes.has(decisionCode)) {
+    if (decisionCode && !workflowCodes.has(decisionCode)
+        && !RADAR_PARENT_MANAGED_WORKFLOW_CODES.has(decisionCode)) {
       workflowIssues.push(await candidateDecisionWorkflowIssue(candidate, decisionCode));
       workflowCodes.add(decisionCode);
     }
@@ -3102,7 +4584,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       ? temporalContract.anomaly_codes.map((value) => cleanText(value, 100))
         .filter((value) => value.startsWith("TEMPORAL_")) : []) {
       if (workflowCodes.has(temporalCode)) continue;
-      workflowIssues.push(await createMarketWorkflowIssue({
+      workflowIssues.push(await createRadarWorkflowIssue({
         issueCode: temporalCode,detectedBy: "radar",ownerStage: "editor",
         severity: "blocking",repairability: "waiting_authoritative_source",blockingScope: "approval",
         affectedFields: ["evaluation_ends_at", "closes_at", "resolution_deadline", "timezone"],
@@ -3157,6 +4639,18 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       .filter((candidate) => candidate.provider === provider)
       .slice(0, MAX_NORMALIZED_PER_PROVIDER);
     const persistableCandidates = providerCandidates.filter((candidate) => {
+      const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
+      const lastKnownGood = currentCandidatesByIdentity.get(identity);
+      if (protectedCandidateIdentities.has(identity)
+        || (cleanText(lastKnownGood?.state, 40) === "prepared"
+          && validUuid(cleanText(lastKnownGood?.prepared_draft_id, 80)))) {
+        if (lastKnownGood) preservedCandidatesByIdentity.set(identity, {
+          ...lastKnownGood,
+          provider_refresh_checked_at: now,
+          provider_refresh_state: "legacy_prepared_preserved",
+        });
+        return false;
+      }
       if (cleanText(candidate.eligibility_status, 40) !== "technical_hold"
         || !new Set<string>([
           RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING,
@@ -3164,14 +4658,19 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         ]).has(cleanText(candidate.eligibility_reason_code, 100))) {
         return true;
       }
-      const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
-      const lastKnownGood = currentCandidatesByIdentity.get(identity);
       if (!lastKnownGood) return true;
       preservedCandidatesByIdentity.set(identity, {
         ...lastKnownGood,
         eligibility_state_preserved: true,
         provider_refresh_checked_at: now,
         provider_refresh_state: "source_enrichment_degraded",
+        // El padre vigente ya se ha reconciliado en esta ejecución, pero esta
+        // candidata no se promovió con él. Se conserva como LKG visible y se
+        // deshabilita expresamente para no simular una proyección corriente.
+        parent_reconciliation_status: "refresh_required",
+        provider_pagination_exhausted: false,
+        current_reconciliation_ready: false,
+        requires_provider_reconciliation: true,
       });
       return false;
     });
@@ -3267,7 +4766,17 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const preservedCandidates = [...preservedCandidatesByIdentity.entries()]
     .filter(([identity]) => !freshIdentities.has(identity))
     .map(([, candidate]) => candidate);
-  const mergedCandidates = [...freshView.candidates, ...preservedCandidates];
+  const catalogPreservedCandidates = preservedCandidates.filter((candidate) =>
+    cleanText(candidate.normalizer_version, 80) === RADAR_NORMALIZER_VERSION
+      && isRadarParentComplete(candidate)
+      && isCanonicalRadarChildProjectionValid(candidate));
+  const withheldPreservedCount = preservedCandidates.length - catalogPreservedCandidates.length;
+  if (withheldPreservedCount>0) qualityNotices.push({
+    code: "RADAR_PRESERVED_CANDIDATE_REFRESH_REQUIRED",
+    count: withheldPreservedCount,
+    message: `${withheldPreservedCount} expediente${withheldPreservedCount===1 ? " conservado queda" : "s conservados quedan"} fuera del catálogo hasta enlazarse con el snapshot padre vigente.`,
+  });
+  const mergedCandidates = [...freshView.candidates, ...catalogPreservedCandidates];
   const mergedGroups = groupCandidates(mergedCandidates).sort((left, right) => {
     const leftRank = Math.min(...left.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
     const rightRank = Math.min(...right.candidates.map((candidate: JsonRecord) => Number(candidate.parent_rank) || Number.MAX_SAFE_INTEGER));
@@ -3333,6 +4842,7 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     ),
     deferred_persistence_batches: deferredPersistenceBatches,
     reconciled_provider_results: reconciledProviderResults,
+    provider_selections: providerSelections,
     cooldown_seconds: Math.ceil(REFRESH_COOLDOWN_MS / 1000),
     cooldown_until: new Date(Date.now() + REFRESH_COOLDOWN_MS).toISOString(),
     limits: {
@@ -3349,6 +4859,16 @@ async function runDiscovery(environment: Environment, authorization: string, bod
 
 function candidatePreflight(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
   if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
+  if (!isRadarParentComplete(candidate)) return {
+    ok: false,
+    error: "RADAR_PARENT_RECONCILIATION_INCOMPLETE",
+    message: "El proveedor todavía no ha permitido reconciliar todas las hijas del evento.",
+  };
+  if (!isCanonicalRadarChildProjectionValid(candidate)) return {
+    ok: false,
+    error: "CANONICAL_CHILD_PROJECTION_INVALID",
+    message: "La identidad canónica de la opción no cumple el contrato vigente.",
+  };
   if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente. Actualiza el Radar." };
   const state = cleanText(candidate.state, 40);
   const terminalCodes = new Set([
@@ -3381,18 +4901,29 @@ function candidatePreflight(candidate: JsonRecord): { ok: true } | { ok: false; 
 }
 
 function candidateRevalidationPreflight(candidate: JsonRecord): { ok: true } | { ok: false; error: string; message: string } {
-  if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
-  if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente." };
   const state = cleanText(candidate.state, 40);
+  const legacyPrepared = cleanText(candidate.normalizer_version, 80) === "atinara-radar-v2"
+    && ["prepared","rejected"].includes(state) && Boolean(candidate.prepared_draft_id)
+    && cleanText(candidate.eligibility_status,40) !== "terminal";
+  if (cleanText(candidate.normalizer_version, 80) !== RADAR_NORMALIZER_VERSION && !legacyPrepared) return { ok: false, error: "NORMALIZER_OUTDATED", message: "La candidata debe actualizarse con el normalizador vigente." };
+  if (!legacyPrepared && (!isRadarParentComplete(candidate) || !isCanonicalRadarChildProjectionValid(candidate))) {
+    return { ok: false, error: "RADAR_PARENT_RECONCILIATION_INCOMPLETE", message: "El expediente actual del proveedor no acredita todavía todas las identidades hijas." };
+  }
+  if (cleanText(candidate.eligibility_policy_version, 80) !== RADAR_ELIGIBILITY_POLICY_VERSION) return { ok: false, error: "ELIGIBILITY_POLICY_OUTDATED", message: "La candidata debe revisarse con el criterio predictivo vigente." };
   const selfDuplicateRepair = state === "rejected"
     && cleanText(candidate.verification_status, 80) === "rejected_duplicate"
-    && Boolean(candidate.prepared_draft_id)
-    && !toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
-  const repairablePrepared = state === "prepared"
-    && Boolean(candidate.prepared_draft_id)
+    && Boolean(candidate.prepared_draft_id||candidate.has_active_radar_draft);
+  const repairablePrepared = (state === "prepared" || legacyPrepared || (
+    state === "rejected" && Boolean(candidate.prepared_draft_id||candidate.has_active_radar_draft)
+      && RADAR_PROVIDER_AVAILABILITY_WORKFLOW_CODES.has(cleanText(
+        candidate.eligibility_reason_code ?? candidate.verification_reason_code,100,
+      ))
+  ))
+    && Boolean(candidate.prepared_draft_id||candidate.has_active_radar_draft)
     && cleanText(candidate.eligibility_status, 40) !== "terminal"
     && !toRecordArray(candidate.duplicate_matches).some((match) => isBlockingDuplicateMatch(match));
-  if (!["available", "needs_review", "prepared"].includes(state) && !selfDuplicateRepair) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
+  if (!["available", "needs_review", "prepared"].includes(state)
+    && !selfDuplicateRepair && !repairablePrepared) return { ok: false, error: "CANDIDATE_NOT_REVALIDATABLE", message: "La candidata ya no admite una comprobación de elegibilidad." };
   const verificationStatus = cleanText(candidate.verification_status, 80);
   if (verificationStatus.startsWith("rejected_") && !selfDuplicateRepair && !repairablePrepared) {
     const rejection = prepareRevalidationError(candidate);
@@ -3457,23 +4988,24 @@ async function revalidateCurrentCandidateDomain(
 
 async function revalidatePolymarketCandidate(environment: Environment, candidate: JsonRecord): Promise<JsonRecord | null> {
   const eventSlug = cleanText(candidate.external_event_slug, 400);
+  const eventId = cleanText(candidate.external_event_id, 220);
   const marketId = cleanText(candidate.external_market_id, 220);
-  if (!eventSlug || !marketId) return null;
-  const event = toRecord(await fetchJson(
-    new URL(`${POLYMARKET_GAMMA_ROOT}/events/slug/${encodeURIComponent(eventSlug)}`),
-    {},
-    PROVIDER_TIMEOUT_MS,
-    { execution: environment.execution },
-  ));
-  const markets = toRecordArray(event?.markets);
-  if (!event || !markets.length || markets.length > MAX_CANONICAL_EVENT_CHILDREN) return null;
-  const canonicalEvent = { ...event, markets, canonical_url_verified: true };
-  const adapted = await attachCanonicalFactContext(
-    adaptPolymarketResponse({ events: [canonicalEvent] }, { now: new Date().toISOString(), cacheMinutes: 20, canonicalUrlVerified: true }) as JsonRecord[],
+  if (!eventSlug || !eventId || !marketId) return null;
+  const checkedAt = new Date().toISOString();
+  const enumerated = await enumeratePolymarketEventChildren(
+    environment, { id: eventId, slug: eventSlug }, checkedAt,
+  );
+  if (toRecordArray(enumerated.markets).length > MAX_CANONICAL_EVENT_CHILDREN) return null;
+  const canonicalEvent = await resolvePolymarketEventIdentities(environment, enumerated, checkedAt);
+  const contextual = await attachCanonicalFactContext(
+    adaptPolymarketResponse({ events: [canonicalEvent] }, { now: checkedAt, cacheMinutes: 20 }) as JsonRecord[],
     [canonicalEvent],
     "polymarket",
   );
-  const current = adapted.find((item) => cleanText(item.external_market_id, 220) === marketId);
+  const reconciled = await reconcileCanonicalEvents(
+    environment, "polymarket", [canonicalEvent], contextual, checkedAt,
+  );
+  const current = reconciled.candidates.find((item) => cleanText(item.external_market_id, 220) === marketId);
   return current ? {
     ...candidate,
     ...current,
@@ -3488,10 +5020,9 @@ async function revalidateKalshiCandidate(environment: Environment, candidate: Js
   const eventTicker = cleanText(candidate.external_event_id, 220);
   const marketTicker = cleanText(candidate.external_market_id, 220);
   if (!eventTicker || !marketTicker) return null;
-  const url = new URL(`${KALSHI_API_ROOT}/events/${encodeURIComponent(eventTicker)}`);
-  url.searchParams.set("with_nested_markets", "true");
-  const payload = toRecord(await fetchJson(url, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution })) ?? {};
-  const event = toRecord(payload.event) ?? payload;
+  const checkedAt = new Date().toISOString();
+  const enumeratedEvent = await enumerateKalshiEventChildren(environment, { event_ticker: eventTicker }, checkedAt);
+  const event = await resolveKalshiEventIdentities(environment, enumeratedEvent, checkedAt);
   const markets = toRecordArray(event.markets);
   if (cleanText(event.event_ticker ?? event.ticker, 220) !== eventTicker
     || !markets.length || markets.length > MAX_CANONICAL_EVENT_CHILDREN) return null;
@@ -3507,12 +5038,15 @@ async function revalidateKalshiCandidate(environment: Environment, candidate: Js
       canonical_url_verified: Boolean(externalEventUrl),
     })),
   };
-  const adapted = await attachCanonicalFactContext(
-    adaptKalshiResponse({ events: [canonicalEvent] }, { now: new Date().toISOString(), cacheMinutes: 20 }) as JsonRecord[],
+  const contextual = await attachCanonicalFactContext(
+    adaptKalshiResponse({ events: [canonicalEvent] }, { now: checkedAt, cacheMinutes: 20 }) as JsonRecord[],
     [canonicalEvent],
     "kalshi",
   );
-  const current = adapted.find((item) => cleanText(item.external_market_id, 220) === marketTicker);
+  const reconciled = await reconcileCanonicalEvents(
+    environment, "kalshi", [canonicalEvent], contextual, checkedAt,
+  );
+  const current = reconciled.candidates.find((item) => cleanText(item.external_market_id, 220) === marketTicker);
   return current ? {
     ...candidate,
     ...current,
@@ -3646,6 +5180,28 @@ async function revalidateCandidateForPreparation(
     }
   }
 
+  const revalidationManagedCodes = new Set<string>([
+    ...RADAR_TERMINAL_WORKFLOW_CODES,
+    ...RADAR_SOURCE_CONTRACT_WORKFLOW_CODES,
+    ...RADAR_TECHNICAL_HOLD_WORKFLOW_CODES,
+    ...RADAR_ELIGIBILITY_RECOVERY_WORKFLOW_CODES,
+    ...RADAR_PROVIDER_AVAILABILITY_WORKFLOW_CODES,
+    RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED,
+    RADAR_REASON_CODES.PROVIDER_PLACEHOLDER,
+    "RADAR_CANDIDATE_IDENTITY_STALE",
+  ]);
+  const revalidationWorkflowIssues = toRecordArray(candidate.workflow_issues)
+    .filter((issue) => !revalidationManagedCodes.has(cleanText(issue.issue_code,100)));
+  const revalidationDecisionCode = cleanText(
+    eligibility.eligibility_reason_code ?? eligibility.domain_reason_code,100,
+  );
+  if (cleanText(eligibility.eligibility_status,40) !== "eligible" && revalidationDecisionCode) {
+    revalidationWorkflowIssues.push(await candidateDecisionWorkflowIssue(
+      { ...candidate,...eligibility },revalidationDecisionCode,
+    ));
+  }
+  eligibility={...eligibility,workflow_issues:revalidationWorkflowIssues.slice(0,40)};
+
   const expectedRevision = Number(candidate.preparation_revision);
   const eligibilityEvidence = toRecordArray(eligibility.eligibility_evidence ?? eligibility.verification_evidence).slice(0, 12);
   const eligibilityCheck = {
@@ -3669,13 +5225,72 @@ async function revalidateCandidateForPreparation(
       checked_at: checkedAt,
     }),
   };
-  const applied = toRecord(await rpc(environment, "apply_market_radar_prepare_eligibility_v1", {
+  const legacyPrepared = cleanText(candidate.normalizer_version, 100) === "atinara-radar-v2"
+    && ["prepared","rejected"].includes(cleanText(candidate.state, 40))
+    && Boolean(cleanText(candidate.prepared_draft_id, 80))
+    && cleanText(candidate.eligibility_status,40) !== "terminal";
+  const identitySnapshot = legacyPrepared ? {
+    contract_version: "atinara-radar-prepared-legacy-identity-v1",
+    provider: cleanText(candidate.provider, 40),
+    external_id: cleanText(candidate.external_id, 220),
+    normalizer_version: cleanText(candidate.normalizer_version, 100),
+    family_version: cleanText(candidate.family_version, 100) || null,
+    family_key: cleanText(candidate.family_key, 300) || null,
+    family_type: cleanText(candidate.family_type, 80) || null,
+    family_child_key: cleanText(candidate.family_child_key, 260) || null,
+    family_child_label: cleanText(candidate.family_child_label, 240) || null,
+    prepared_draft_id: cleanText(candidate.prepared_draft_id, 80),
+    current_external_event_id: cleanText(eligibility.external_event_id,220),
+    current_external_market_id: cleanText(eligibility.external_market_id,220) || null,
+    current_source_question: cleanText(eligibility.source_question,700),
+    current_source_resolution_rules: cleanText(eligibility.source_resolution_rules,5_000) || null,
+    current_source_close_at: safeIsoDate(eligibility.source_close_at),
+    current_parent_reconciliation_version: cleanText(eligibility.parent_reconciliation_version,100),
+    current_parent_reconciliation_fingerprint: cleanText(eligibility.parent_reconciliation_fingerprint,80),
+    current_parent_child_occurrence_key: cleanText(eligibility.parent_child_occurrence_key,500),
+    current_parent_child_identity_key: cleanText(eligibility.parent_child_identity_key,500) || null,
+    current_parent_child_fingerprint: cleanText(eligibility.parent_child_fingerprint,80),
+    current_provider_child_contract_hash: cleanText(eligibility.provider_child_contract_hash,80),
+    current_canonical_child_key: cleanText(eligibility.canonical_child_key,260) || null,
+    current_canonical_child_label: cleanText(eligibility.canonical_child_label,240) || null,
+    current_identity_status: cleanText(eligibility.identity_status,80),
+    current_identity_classification: cleanText(eligibility.identity_classification,100),
+  } : {
+    contract_version: "atinara-radar-preparation-identity-v1",
+    provider: cleanText(eligibility.provider, 40),
+    external_id: cleanText(eligibility.external_id, 220),
+    external_event_id: cleanText(eligibility.external_event_id, 220),
+    external_market_id: cleanText(eligibility.external_market_id, 220) || null,
+    normalizer_version: cleanText(eligibility.normalizer_version, 100),
+    family_version: cleanText(eligibility.family_version, 100),
+    family_key: cleanText(eligibility.family_key, 300),
+    family_type: cleanText(eligibility.family_type, 80),
+    family_child_key: cleanText(eligibility.family_child_key, 260),
+    family_child_label: cleanText(eligibility.family_child_label, 240),
+    canonical_projection_version: cleanText(eligibility.canonical_projection_version, 100),
+    canonical_child_key: cleanText(eligibility.canonical_child_key, 260) || null,
+    canonical_child_label: cleanText(eligibility.canonical_child_label, 240) || null,
+    parent_reconciliation_version: cleanText(eligibility.parent_reconciliation_version, 100),
+    parent_reconciliation_fingerprint: cleanText(eligibility.parent_reconciliation_fingerprint, 80),
+    parent_reconciliation_integrity_hash: cleanText(
+      eligibility.parent_reconciliation_integrity_hash,80,
+    ),
+    parent_child_occurrence_key: cleanText(eligibility.parent_child_occurrence_key, 500),
+    parent_child_identity_key: cleanText(eligibility.parent_child_identity_key, 500) || null,
+    parent_child_fingerprint: cleanText(eligibility.parent_child_fingerprint, 80),
+    parent_child_integrity_hash: cleanText(eligibility.parent_child_integrity_hash,80),
+    provider_child_contract_hash: cleanText(eligibility.provider_child_contract_hash, 80),
+    identity_status: cleanText(eligibility.identity_status, 80),
+    identity_classification: cleanText(eligibility.identity_classification, 100),
+  };
+  const applied = toRecord(await rpc(environment, "apply_market_radar_prepare_eligibility_v4", {
     candidate_id_input: cleanText(candidate.id, 80),
     expected_preparation_revision_input: Number.isSafeInteger(expectedRevision) ? expectedRevision : null,
-    normalizer_version_input: RADAR_NORMALIZER_VERSION,
+    normalizer_version_input: legacyPrepared ? "atinara-radar-v2" : RADAR_NORMALIZER_VERSION,
     eligibility_checked_at_input: checkedAt,
     eligibility_input: eligibility,
     eligibility_check_input: eligibilityCheck,
+    identity_snapshot_input: identitySnapshot,
     reserve_for_prepare_input: purpose === "prepare",
   }, undefined, true));
   if (!applied?.ok) {
@@ -3771,6 +5386,8 @@ function eligibilityFailureResponse(error: unknown, operationId: string): Respon
     PREPARATION_REVISION_MISMATCH: { status: 409, message: "La candidata cambió durante la comprobación. Recarga su versión actual." },
     CANDIDATE_NOT_REVALIDATABLE: { status: 409, message: "La candidata ya no admite una comprobación de elegibilidad." },
     CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
+    RADAR_PARENT_RECONCILIATION_INCOMPLETE: { status: 409, message: "El proveedor todavía no ha permitido reconciliar todas las opciones del evento." },
+    CANONICAL_CHILD_PROJECTION_INVALID: { status: 409, message: "La identidad canónica de la opción no cumple el contrato vigente." },
   };
   if (error instanceof RadarRevalidationOutcomeError) {
     const failure = errors[error.code] ?? {
@@ -3820,6 +5437,17 @@ async function handleAction(
   if (action === "provider-status") {
     const providers = await rpc(environment, "get_market_radar_provider_status", {}, authorization);
     return jsonResponse({ ok: true, providers: toRecordArray(providers) });
+  }
+  if (action === "reconciliation-details") {
+    const reconciliationId = cleanText(body.reconciliation_id, 80);
+    if (!validUuid(reconciliationId)) {
+      return jsonResponse({ error: "INVALID_RECONCILIATION", message: "La reconciliación solicitada no es válida." }, 400);
+    }
+    const detail = toRecord(await rpc(environment, "get_market_radar_parent_reconciliation_v1", {
+      reconciliation_id_input: reconciliationId,
+    }, authorization));
+    if (!detail) return jsonResponse({ error: "RECONCILIATION_NOT_FOUND", message: "No se encontró la reconciliación." }, 404);
+    return jsonResponse({ ok: true, reconciliation: detail });
   }
   const candidateId = cleanText(body.candidate_id, 80);
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateId)) {
@@ -3918,9 +5546,40 @@ async function handleAction(
         ...replay,message:"La recuperación ya estaba registrada; no se repitió ninguna consulta externa.",
       });
     }
-    const candidate = toRecord(await rpc(
+    const eligibilityCheckpoint = toRecord(await rpc(
       environment,
-      "get_market_radar_candidate_for_draft_revalidation_v2",
+      "get_market_radar_eligibility_attempt_checkpoint_v1",
+      { candidate_id_input:candidateId,attempt_id_input:operationId },
+      undefined,true,
+    ));
+    if (eligibilityCheckpoint?.found===true) {
+      if (eligibilityCheckpoint.replayed!==true) {
+        return eligibilityFailureResponse(
+          new Error(cleanText(eligibilityCheckpoint.error,100)
+            || "RADAR_ELIGIBILITY_CHECKPOINT_SUPERSEDED"),
+          operationId,
+        );
+      }
+      try {
+        const recovery = toRecord(await rpc(environment, "recover_market_draft_radar_eligibility_v1", {
+          draft_id_input:draftId,expected_version_input:draftVersion,
+          expected_fingerprint_input:draftFingerprint,candidate_id_input:candidateId,
+          actor_id_input:adminId,attempt_id_input:operationId,
+        },undefined,true));
+        return jsonResponse({
+          ok:true,status:"eligibility_recovered",
+          candidate:toRecord(eligibilityCheckpoint.candidate) ?? {},recovery,
+          owner_stage:"validator",next_action:"request_market_validation",
+          state_preserved:true,eligibility_checkpoint_replay:true,
+          provider_calls_replayed:0,
+        });
+      } catch (error) {
+        return eligibilityFailureResponse(error,operationId);
+      }
+    }
+    const candidateResult = toRecord(await rpc(
+      environment,
+      "get_market_radar_candidate_for_draft_revalidation_v3",
       {
         candidate_id_input: candidateId,
         draft_id_input: draftId,
@@ -3930,6 +5589,8 @@ async function handleAction(
       undefined,
       true,
     ));
+    const candidate=candidateResult
+      ? {...candidateResult,has_active_radar_draft:true}:candidateResult;
     if (!candidate) return jsonResponse({ error: "CANDIDATE_NOT_FOUND", message: "No se encontró la candidata." }, 404);
     const preflight = candidateRevalidationPreflight(candidate);
     if (!preflight.ok) return jsonResponse({ error: preflight.error, message: preflight.message }, 409);
@@ -3970,7 +5631,7 @@ async function handleAction(
     const candidate = toRecord(await rpc(
       environment,
       draftScoped
-        ? "get_market_radar_candidate_for_draft_revalidation_v2"
+        ? "get_market_radar_candidate_for_draft_revalidation_v3"
         : "get_market_radar_candidate_for_revalidation_v1",
       draftScoped ? {
         candidate_id_input: candidateId,

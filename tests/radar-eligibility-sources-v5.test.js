@@ -77,8 +77,10 @@ test("Polymarket · una opción inactiva no convierte un evento padre futuro en 
     closed: false,
     archived: false,
     canonical_url_verified: true,
+    provider_declared_child_count: 2,
+    provider_pagination_exhausted: true,
     markets: [
-      polymarketOption("game-x", "Will Game X win Best Multiplayer at the 2026 Game Awards?"),
+      polymarketOption("game-x", "Will Marathon win Best Multiplayer at the 2026 Game Awards?"),
       polymarketOption("placeholder-y", "Will Game Y win Best Multiplayer at the 2026 Game Awards?", {
         active: false,
         acceptingOrders: false,
@@ -107,7 +109,8 @@ test("Polymarket · una opción inactiva no convierte un evento padre futuro en 
     now,
   );
   assert.equal(openDecision.eligibility_status, "eligible");
-  assert.equal(inactiveDecision.eligibility_status, "inactive_option");
+  assert.equal(inactiveDecision.eligibility_status, "technical_hold");
+  assert.equal(inactiveDecision.eligibility_reason_code, "PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED");
 });
 
 test("AuditorÃ­a histÃ³rica Â· una opciÃ³n inactiva no se presenta como cierre del evento padre", () => {
@@ -132,10 +135,8 @@ test("AuditorÃ­a histÃ³rica Â· una opciÃ³n inactiva no se presenta como 
   };
 
   const summary = radar.summarizeRejections([archivedCandidate]);
-  assert.equal(summary.counts.PROVIDER_OPTION_INACTIVE, 1);
-  assert.equal(summary.counts.PROVIDER_NOT_OPEN, undefined);
-  assert.equal(summary.items[0].verification_reason_code, "PROVIDER_OPTION_INACTIVE");
-  assert.equal(summary.items[0].recorded_verification_reason_code, "PROVIDER_NOT_OPEN");
+  assert.equal(summary.total, 0);
+  assert.deepEqual(summary.items, []);
 });
 
 test("Resolución conocida · una designación oficial exacta cierra toda la familia aunque el proveedor siga abierto", () => {
@@ -146,6 +147,8 @@ test("Resolución conocida · una designación oficial exacta cierra toda la fam
     active: true,
     closed: false,
     canonical_url_verified: true,
+    provider_declared_child_count: 3,
+    provider_pagination_exhausted: true,
     markets: [
       polymarketOption("caleb", "Will Caleb Williams be on the cover of Madden NFL 27?"),
       polymarketOption("aaron", "Will Aaron Rodgers be on the cover of Madden NFL 27?"),
@@ -278,7 +281,7 @@ test("Autoridad resolutiva · un endpoint genérico o la evidencia de otra opci�
   const candidate = {
     provider: "kalshi",
     external_id: "kalshi:half-life-3",
-    normalizer_version: "atinara-radar-v2",
+    normalizer_version: "atinara-radar-v3",
     source_question: "Will Half-Life 3 release this year?",
     family_title: "Video games released this year",
     source_resolution_rules: "If Half-Life 3 is released before Jan 1, 2027, the market resolves Yes; otherwise it resolves No.",
@@ -287,7 +290,7 @@ test("Autoridad resolutiva · un endpoint genérico o la evidencia de otra opci�
       provider: "kalshi",
       source_url: "https://store.steampowered.com/charts/mostplayed",
       upstream_field: "market.settlement_sources",
-      adapter_version: "atinara-radar-v2",
+      adapter_version: "atinara-radar-v3",
       declared_by_provider: true,
     },
   };
@@ -337,7 +340,7 @@ test("Autoridad resolutiva · un endpoint genérico o la evidencia de otra opci�
 
 test("UI · todas las opciones son desplegables y cada tarjeta conserva su altura", () => {
   assert.match(adminJs, /const candidates = expanded \? allCandidates : highlightedCandidates/);
-  assert.match(adminJs, /`Ver las \$\{childCount\} opciones`/);
+  assert.match(adminJs, /`Ver las \$\{allCandidates\.length\} opciones identificadas`/);
   assert.match(adminJs, /Probabilidad del proveedor:/);
   assert.match(styles, /\.radar-candidate-grid\s*\{[\s\S]*?align-items:\s*start/);
   assert.match(styles, /\.radar-candidate-card\s*\{[\s\S]*?align-self:\s*start/);
@@ -354,7 +357,11 @@ test("Estado · cambiar de pestaña no relanza Radar y el cooldown usa el instan
 test("Estado · una caída del enriquecimiento conserva el último expediente válido sin degradar al proveedor", () => {
   assert.match(radarEdge, /eligibility_state_preserved:\s*true/);
   assert.match(radarEdge, /provider_refresh_state:\s*"source_enrichment_degraded"/);
-  assert.match(radarEdge, /persistableCandidates[\s\S]*?RESOLUTION_SOURCE_AUTHORITY_PENDING[\s\S]*?currentCandidatesByIdentity/);
+  assert.match(radarEdge, /currentCandidatesByIdentity[\s\S]*?persistableCandidates/);
+  assert.match(radarEdge, /persistableCandidates[\s\S]*?RESOLUTION_SOURCE_AUTHORITY_PENDING/);
+  assert.match(radarEdge, /provider_refresh_state:\s*"source_enrichment_degraded"[\s\S]*?parent_reconciliation_status:\s*"refresh_required"/);
+  assert.match(radarEdge,/catalogPreservedCandidates[\s\S]*?isRadarParentComplete[\s\S]*?isCanonicalRadarChildProjectionValid/);
+  assert.match(radarEdge,/RADAR_PRESERVED_CANDIDATE_REFRESH_REQUIRED/);
   assert.match(radarEdge, /persistProviderResultV2\([\s\S]*?persistableCandidates/);
   assert.match(radarEdge, /enrichmentIssues\.push\(issue\)/);
   assert.match(radarEdge, /partial:\s*candidateProviderErrors\.length > 0/);
@@ -380,7 +387,7 @@ test("Contrato · la revisión factual operativa queda retirada y la elegibilida
   assert.match(migration, /then 'technical_hold'[\s\S]*?ELIGIBILITY_REFRESH_REQUIRED/);
   assert.match(migration, /candidate\.id, provenance_revision/);
   assert.match(migration, /where code = 'RADAR_FACTUAL_VERIFICATION_REQUIRED'/);
-  assert.match(adminHtml, /20260820-v6-market-cycle1/);
+  assert.match(adminHtml, /20260823-v6-parent-reconciliation2/);
 });
 
 test("Editor · la proyección segura conserva la elegibilidad autoritativa sin incluir leases en la huella", () => {

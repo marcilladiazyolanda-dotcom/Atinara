@@ -14,7 +14,7 @@ const validationUi = read("market-admin-validation.js");
 
 test("el puente del Agent Engine vive en un recurso externo ordenado y versionado", () => {
   assert.doesNotMatch(marketsHtml, /function\s+(?:invokeMarketExpert|installExpertPanel|renderExpertDossier)/);
-  assert.match(marketsHtml, /market-draft-fixer\.js\?v=20260820-v6-market-cycle1[\s\S]+admin-agent-engine\.js\?v=20260820-v6-market-cycle1/);
+  assert.match(marketsHtml, /market-draft-fixer\.js\?v=20260823-v6-parent-reconciliation2[\s\S]+admin-agent-engine\.js\?v=20260823-v6-parent-reconciliation2/);
   assert.match(editorBridge, /function initRadarExpertBridge/);
 });
 
@@ -53,8 +53,9 @@ test("todas las páginas que cargan observabilidad usan la misma release de recu
   assert.ok(consumers.length >= 10);
   consumers.forEach((name) => {
     const source = read(name);
-    assert.match(source, /styles\.css\?v=20260820-v6-market-cycle1/);
-    assert.match(source, /observability-config\.js\?v=20260820-v6-market-cycle1/);
-    assert.match(source, /monitoring\.js\?v=20260820-v6-market-cycle1/);
+    const version = "20260823-v6-parent-reconciliation2";
+    assert.match(source, new RegExp(`styles\\.css\\?v=${version}`));
+    assert.match(source, new RegExp(`observability-config\\.js\\?v=${version}`));
+    assert.match(source, new RegExp(`monitoring\\.js\\?v=${version}`));
   });
 });

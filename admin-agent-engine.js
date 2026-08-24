@@ -772,7 +772,7 @@
         || (Array.isArray(pkg?.gate?.workflow_issues) && pkg.gate.workflow_issues.length > 0);
       const repairMaterialization = pkg?.gate?.can_save_private_draft !== true
         && pkg?.gate?.can_materialize_private_repair_draft === true;
-      const rpcName = issueDraft ? "save_market_draft_from_expert_with_issues_v1"
+      const rpcName = issueDraft ? "save_market_draft_from_expert_with_issues_v2"
         : repairMaterialization ? "materialize_market_draft_for_repair_v1"
           : "save_market_draft_from_radar_intelligence";
       const rpcPayload = issueDraft ? {

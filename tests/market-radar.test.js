@@ -74,7 +74,7 @@ function polyMarket(id, slug, question, overrides = {}) {
 }
 
 function polyEvent(overrides = {}) {
-  return {
+  const event = {
     id: "499343",
     slug: "ea-sports-fc27-cover-athlete",
     title: "EA Sports FC27: Cover Athlete",
@@ -88,6 +88,11 @@ function polyEvent(overrides = {}) {
       polyMarket("m-diaz", "will-luis-diaz-be-on-the-cover-of-ea-sports-fc-27", "Will Luis Diaz be on the cover of EA Sports FC 27?", { outcomePrices: '["0.365","0.635"]' }),
     ],
     ...overrides,
+  };
+  return {
+    ...event,
+    provider_declared_child_count: overrides.provider_declared_child_count ?? event.markets.length,
+    provider_pagination_exhausted: overrides.provider_pagination_exhausted ?? true,
   };
 }
 
@@ -118,7 +123,7 @@ function resolvedFc27CoverEvent() {
 }
 
 function kalshiEvent(overrides = {}) {
-  return {
+  const event = {
     event_ticker: "KXPS6-26",
     series_ticker: "KXPS6",
     title: "PS6 announcement",
@@ -147,6 +152,11 @@ function kalshiEvent(overrides = {}) {
     }],
     ...overrides,
   };
+  return {
+    ...event,
+    provider_declared_child_count: overrides.provider_declared_child_count ?? event.markets.length,
+    provider_pagination_exhausted: overrides.provider_pagination_exhausted ?? true,
+  };
 }
 
 function completeCandidate(question, overrides = {}) {
@@ -174,10 +184,10 @@ function completeCandidate(question, overrides = {}) {
   return candidate;
 }
 
-test("el normalizador usa la versión v2", () => {
-  assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v2");
+test("el normalizador usa la versión v3", () => {
+  assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v3");
   assert.equal(radar.RADAR_ELIGIBILITY_POLICY_VERSION, "atinara-prediction-policy-v5");
-  assert.equal(radar.RADAR_FAMILY_VERSION, "atinara-market-family-v4");
+  assert.equal(radar.RADAR_FAMILY_VERSION, "atinara-market-family-v5");
   assert.equal(radar.RADAR_FACT_POLICY_VERSION, "atinara-terminal-fact-gate-v2");
 });
 
@@ -781,6 +791,7 @@ test("las URLs privadas, locales y protocolos inseguros se rechazan", () => {
   assert.deepEqual([...radar.RADAR_API_HOSTS].sort(), [
     "api.elections.kalshi.com",
     "api.tavily.com",
+    "clob.polymarket.com",
     "external-api.kalshi.com",
     "gamma-api.polymarket.com",
   ]);
@@ -811,7 +822,7 @@ test("el contrato Radar rechaza índices duplicados o alterados", () => {
 test("una actualización explícita nunca reutiliza un estado abierto y solo conserva rechazos terminales idénticos", () => {
   const candidate = { fingerprint: "fp-1", fact_context_fingerprint: "fact-fp-1", eligibility_policy_version: "atinara-prediction-policy-v5" };
   const verified = {
-    normalizer_version: "atinara-radar-v2",
+    normalizer_version: "atinara-radar-v3",
     eligibility_policy_version: "atinara-prediction-policy-v5",
     fingerprint: "fp-1",
     verification_status: "verified_open",
@@ -964,15 +975,17 @@ test("la Edge descubre taxonomía y eventos Kalshi sin límite arbitrario de cua
   assert.match(edge, /with_nested_markets/);
   assert.match(edge, /min_close_ts/);
   assert.match(edge, /limit", "200"/);
-  assert.match(edge, /KALSHI_CONCURRENCY = 4/);
+  assert.match(edge, /KALSHI_CONCURRENCY = 2/);
   assert.doesNotMatch(edge, /MAX_KALSHI_SERIES = 4/);
 });
 
 test("la Edge valida evento y pertenencia del hijo en Polymarket", () => {
   assert.match(edge, /events\/slug\//);
-  assert.match(edge, /const markets = toRecordArray\(canonical\.markets\)/);
-  assert.doesNotMatch(edge, /canonicalMarkets\.filter/);
-  assert.match(edge, /canonical_url_verified: true/);
+  assert.match(edge, /enumeratePolymarketEventChildren/);
+  assert.match(edge, /sameProviderMarketIdentitySet\("polymarket", slugMarkets, idMarkets\)/);
+  assert.match(edge, /markets\/keyset/);
+  assert.match(edge, /provider_pagination_exhausted: exactAgreement/);
+  assert.match(edge, /parent_reconciliation_source_refs: refs/);
   assert.doesNotMatch(edge, /polymarket\.com\/es\//);
 });
 
@@ -1011,7 +1024,7 @@ test("los descartes deterministas no consumen el enriquecedor y Kalshi reconcili
 test("la caché solo conserva decisiones de elegibilidad vigentes", () => {
   assert.match(edge, /function hasCurrentEligibility/);
   assert.match(edge, /filter\(\(candidate\) => filters\.quality !== "fit" \|\| hasCurrentEligibility\(candidate, checkedAt\)\)/);
-  assert.match(edge, /list_market_radar_candidates_v3/);
+  assert.match(edge, /list_market_radar_candidates_v4/);
   assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
 });
@@ -1037,7 +1050,7 @@ test("la preparación revalida proveedor y aplica elegibilidad en una transacci�
   assert.match(edge, /revalidatePolymarketCandidate/);
   assert.match(edge, /revalidateKalshiCandidate/);
   assert.match(edge, /revalidateCandidateForPreparation/);
-  assert.match(edge, /apply_market_radar_prepare_eligibility_v1/);
+  assert.match(edge, /apply_market_radar_prepare_eligibility_v4/);
   assert.match(edge, /expected_preparation_revision_input/);
   assert.match(edge, /PREPARATION_REVISION_MISMATCH/);
   assert.match(edge, /candidatePreflight/);
@@ -1065,6 +1078,14 @@ test("la migración v2 añade verificación, agrupación y URLs separadas", () =
   assert.match(v2Migration, /state not in \('prepared', 'dismissed'\)/);
   assert.match(v2Migration, /when verification = 'verified_open' then 'available'/);
   assert.match(v2Migration, /else 'rejected'/);
+});
+
+test("el historial usa slug solo como fallback único y nunca sobre IDs fuertes", () => {
+  assert.match(edge,/const fallbackSlugs = new Map/);
+  assert.match(edge,/if \(!strongIdentities\.length && childSlug\)/);
+  assert.match(edge,/if \(fallback\.count !== 1\) continue/);
+  assert.match(edge,/const rowIdentities = strongRowIdentities\.length[\s\S]*?: rowSlug/);
+  assert.match(edge,/token_ids_input: \[\.\.\.tokenIds\]/);
 });
 
 test("la revalidación factual admite needs_review sin abrir una puerta de publicación", () => {
@@ -1129,7 +1150,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260820-v6-market-cycle1/);
+  assert.match(adminHtml, /v=20260823-v6-parent-reconciliation2/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);
@@ -1155,7 +1176,7 @@ test("la respuesta discovery proyecta expedientes ligeros y limita por padres co
     quality_score: 90 - index,
     parent_rank: Math.floor(index / 4) + 1,
     state: "available",
-    normalizer_version: "atinara-radar-v2",
+    normalizer_version: "atinara-radar-v3",
     verification_status: "verified_open",
     eligibility_status: "eligible",
     eligibility_policy_version: "atinara-prediction-policy-v5",
@@ -1254,8 +1275,9 @@ test("el frontend nunca consulta directamente proveedores ni introduce secretos"
 });
 
 test("los límites, timeout y refresco siguen acotados sin Cron", () => {
-  assert.match(edge, /MAX_PROVIDER_PAGES = 3/);
-  assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 240/);
+  assert.match(edge, /MAX_PROVIDER_PAGES = 50/);
+  assert.match(edge, /MAX_NORMALIZED_PER_PROVIDER = 480/);
+  assert.match(edge, /buildRadarPersistenceBatches\(entries/);
   assert.match(edge, /MAX_VISIBLE_GROUPS = 60/);
   assert.match(edge, /RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES/);
   assert.equal(radar.RADAR_DISCOVERY_RESPONSE_BUDGET_BYTES, 900_000);

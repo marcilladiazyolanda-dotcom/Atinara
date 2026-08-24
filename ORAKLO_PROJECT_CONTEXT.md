@@ -1,17 +1,19 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 22 de agosto de 2026.
+Última actualización del contexto: 24 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras desplegar V6 y antes de su refresh:** Atinara Engine V2.1 usa `market-radar` v57,
+> **Estado productivo verificado tras desplegar V6 y antes de su refresh:** Atinara Engine V2.1 usa `market-radar` v58,
 > `market-draft-fixer` v21, `validate-market-draft` v30, `market-expert` v26 y
 > `analyze-market-resolution` v16, todas activas con `verify_jwt=true`. Las
 > cinco tareas están fijadas a `legacy_direct`; OpenRouter y NVIDIA NIM siguen
 > desactivados, sin rutas configuradas y con presupuesto cero. La puerta determinista de elegibilidad
 > v5 gobierna Radar, preparación y toda transición hacia publicación; la antigua
-> revisión factual ya no es un bloqueo operativo. La identidad familiar vigente
-> es v4 y la revisión automática del borrador usa política v3.
+> revisión factual ya no es un bloqueo operativo. Los artefactos existentes
+> conservan familia v4; toda candidata canónica nueva usa familia v5 y la cadena
+> de borrador/Corrector/publicación preserva exactamente la versión de origen.
+> La revisión automática del borrador usa política v3.
 > Los schedulers opcionales del Observatorio y del monitor siguen apagados. El
 > corte preservó exactamente mercados publicados, predicciones, Karma,
 > Prestigio, maker state e histórico; ninguna migración o Edge Function de este
@@ -19,10 +21,55 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > V6 constan una sola vez como `20260822164140` y `20260822164309`; sus tablas
 > nacieron vacías, sin backfill. El cron V6 está recuperado y responde 200 sin
 > borradores programados. El refresh productivo de Radar todavía no se ha
-> ejecutado: el smoke previo detectó una respuesta discovery sobredimensionada
-> y quedó detenido antes de cualquier escritura. Las tres migraciones V2.1 quedaron aplicadas una sola
+> ejecutado: tras cerrar el presupuesto de respuesta se detectó que un snapshot
+> legacy podía reducir un padre de 48 hijas a 21 candidatas y proyectar
+> `deadline:*` como identidad. El E2E sigue detenido antes de cualquier escritura
+> hasta subir y desplegar la reconciliación de padres v1. Las tres migraciones V2.1 quedaron aplicadas una sola
 > vez en producción el 13 de agosto de 2026 y no deben repetirse. No hacer push
 > directo a `main`.
+
+### Incidencia bloqueante de completitud e identidad del padre · 23 de agosto de 2026
+
+- `origin/main = 3d0db378d216c753635d066c86a31af24cf1fcea` contiene ya la
+  corrección del presupuesto de 900.000 bytes. Actions, Pages y Sonar quedaron
+  verdes; producción conserva `market-radar` v58 `ACTIVE`, `verify_jwt=true`.
+- El evento Polymarket `800696` conserva 48 snapshots del 11 de agosto: 21
+  preguntas nominales y 27 placeholders `Game A`–`Game Z`/`another game`. Las
+  48 filas son v2/familia v4 y usan incorrectamente `deadline:*`; todavía no
+  existe ninguna intención durable V6 en producción.
+- Los endpoints oficiales actuales de evento, market ID, keyset y CLOB
+  condition/token enumeran 48 IDs/conditions únicos. Las 21 etiquetas nominales
+  y la opción estructurada `Other` quedan identificadas; `Game A`–`Game Z`
+  siguen sin metadata resolutiva. No existe evidencia para inventarlas. El
+  estado actual seguro es 48 declaradas, 48 contabilizadas, 22 identificadas y
+  26 pendientes. El fixture 21/27 se conserva como caso adversarial histórico.
+- La rama `codex/atinara-v6-parent-reconciliation` añade normalizador v3,
+  dominio v2, reconciliación de padre/hija append-only, resolución por IDs,
+  paginación fail-closed, familia v5, proyección SQL v5/v3 y una sección
+  administrativa separada. Los triggers v4 quedan limitados a legacy; todos los
+  lotes candidatos se promueven en una sola transacción y preparación exige la
+  identidad fresca exacta antes de renovar elegibilidad.
+- La última revisión endurece además cobertura por occurrence/aliases del
+  snapshot anterior, fallback slug solo único, commit multi-batch con lease de
+  120 s, finalizador público v5 por capacidad, writers internos sin EXECUTE,
+  rebind seguro de candidatas preparadas y duplicado live V4/V5 durable hasta
+  confirmación/publicación. Añade binding V3 atómico, replay de eligibility por
+  checkpoint sin segunda llamada al proveedor y un orden único de locks para
+  Radar, Corrector y publicación, incluido scheduler `SKIP LOCKED` de dos
+  workers. Ninguno de esos cambios toca economía o Registry.
+- La nueva migración `20260822205445_add_radar_parent_reconciliation_v1.sql`
+  está sin aplicar y no contiene backfill. Producción, modos IA, Registry V2.1,
+  presupuestos, mercados, borradores, predicciones, perfiles, Karma, Prestigio,
+  LMSR e históricos permanecen intactos.
+- Evidencia local: 548/548 unitarias; las 9 Edge superan `deno check` con Deno
+  canónico 2.1.14; SQL estático 18/18; migración y prueba transaccional parseadas por PostgreSQL;
+  browser 18 casos en 390/768/1366 px, con fixtures 48/48 y 21/48 y cero red.
+  La ejecución SQL dinámica queda pendiente de una base desechable o del
+  despliegue post-subida; no se usó producción para fabricar la prueba.
+- Contrato, riesgos y secuencia de activación:
+  `docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`. El siguiente checkpoint es
+  preparar el ZIP incremental; después Yol debe subirlo antes de migrar,
+  desplegar y ejecutar el único refresh productivo autorizado.
 
 ### Despliegue V6 y checkpoint de presupuesto Radar · 22 de agosto de 2026
 
@@ -63,8 +110,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   TypeScript, Edge 9/9, SQL estático 17, navegador 11 casos/3 viewports y cero
   red externa, canonicalización Node/Deno con SHA idéntico y benchmark offline
   5/5. El scan diferencial Codex Security `e6c29c7e` cerró con cobertura completa
-  y cero hallazgos. Queda pendiente la subida manual del nuevo ZIP diferencial,
-  CI/Sonar, redeploy exclusivo de `market-radar` y reanudación del smoke.
+  y cero hallazgos. Ese ZIP ya fue subido y quedó canónico en `3d0db378`; el
+  smoke no se reanudó porque el preflight visual posterior detectó la incidencia
+  de completitud/identidad descrita arriba.
 
 ### Cierre sistémico local V6 de Radar y ciclo de mercado · 22 de agosto de 2026
 

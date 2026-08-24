@@ -8862,6 +8862,77 @@ body .market-price-ranges button[aria-pressed="true"] {
   gap: 10px;
 }
 
+.radar-reconciliation-section {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.radar-reconciliation-section > header {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.radar-reconciliation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.radar-reconciliation-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-lavender);
+  border-left: 4px solid var(--brand-violet);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.radar-reconciliation-card[data-reconciliation="complete"] {
+  border-left-color: var(--yes);
+}
+
+.radar-reconciliation-card[data-reconciliation]:not([data-reconciliation="complete"]) {
+  border-left-color: var(--warning, #b7791f);
+}
+
+.radar-reconciliation-card > header,
+.radar-reconciliation-card > header > div,
+.radar-reconciliation-links {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.radar-reconciliation-card > header {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.radar-reconciliation-card h4,
+.radar-reconciliation-card p,
+.radar-reconciliation-card code {
+  overflow-wrap: anywhere;
+}
+
+.radar-reconciliation-issue {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 9px;
+  background: var(--interactive-surface-hover);
+}
+
+.radar-reconciliation-children {
+  margin-top: 16px;
+}
+
 .radar-rejection-card {
   min-width: 0;
   padding: 14px;
@@ -9189,8 +9260,13 @@ body .market-price-ranges button[aria-pressed="true"] {
   }
 
   .radar-candidate-grid,
-  .radar-rejection-grid {
+  .radar-rejection-grid,
+  .radar-reconciliation-grid {
     grid-template-columns: 1fr;
+  }
+
+  .radar-reconciliation-section > header {
+    display: block;
   }
 
   .radar-event-option {

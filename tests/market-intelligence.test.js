@@ -36,7 +36,7 @@ test("el Observatorio, Radar y monitor conservan almacenamientos y responsabilid
   assert.match(migration, /private\.data_observatory_signals/);
   assert.match(migration, /private\.market_source_snapshots/);
   assert.doesNotMatch(migration, /alter table private\.external_market_candidates/);
-  assert.match(radarCore, /RADAR_NORMALIZER_VERSION = "atinara-radar-v2"/);
+  assert.match(radarCore, /RADAR_NORMALIZER_VERSION = "atinara-radar-v3"/);
   assert.match(radarCore, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5"/);
   assert.match(radarCore, /RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2"/);
   assert.match(expertEdge, /RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5"/);
@@ -372,6 +372,6 @@ test("la migración no toca economía, predicciones ni la migración viva aplica
 
 test("no existe una versión 18 ficticia ni nombres de secretos con valor", () => {
   const production = [observatoryEdge, expertEdge, monitorEdge, migration, adminUi].join("\n");
-  assert.doesNotMatch(production, /radar[-_ ]?v18|atinara-radar-v3/i);
+  assert.doesNotMatch(production, /radar[-_ ]?v18/i);
   assert.doesNotMatch(production, /TWITCH_CLIENT_SECRET\s*=\s*["'][^"']+|YOUTUBE_API_KEY\s*=\s*["'][^"']+/i);
 });

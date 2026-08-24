@@ -1,12 +1,16 @@
 import { nullableFiniteNumber } from "./nullable-number.mjs";
-import { sha256Hex } from "./ai/contracts.mjs";
+import { canonicalJson, sha256Hex } from "./ai/contracts.mjs";
 
-export const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
+export const RADAR_NORMALIZER_VERSION = "atinara-radar-v3";
 export const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
-export const RADAR_FAMILY_VERSION = "atinara-market-family-v4";
+export const RADAR_FAMILY_VERSION = "atinara-market-family-v5";
 export const RADAR_FACT_POLICY_VERSION = "atinara-terminal-fact-gate-v2";
-export const RADAR_DOMAIN_POLICY_VERSION = "atinara-gaming-domain-v1";
-export const RADAR_DOMAIN_FINGERPRINT_VERSION = "atinara-radar-domain-fingerprint-v1";
+export const RADAR_DOMAIN_POLICY_VERSION = "atinara-gaming-domain-v2";
+export const RADAR_DOMAIN_FINGERPRINT_VERSION = "atinara-radar-domain-fingerprint-v2";
+export const RADAR_PARENT_RECONCILIATION_VERSION = "atinara-radar-parent-reconciliation-v1";
+export const RADAR_CHILD_PROJECTION_VERSION = "atinara-radar-child-projection-v1";
+export const RADAR_PROVIDER_CHILD_CONTRACT_VERSION = "atinara-radar-provider-child-contract-v1";
+export const RADAR_PROVIDER_LABEL_CATALOG_VERSION = "atinara-radar-provider-labels-es-v1";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -33,6 +37,7 @@ export const RADAR_PROVIDERS = Object.freeze([
 ]);
 export const RADAR_API_HOSTS = Object.freeze([
   "gamma-api.polymarket.com",
+  "clob.polymarket.com",
   "external-api.kalshi.com",
   "api.elections.kalshi.com",
   "api.tavily.com",
@@ -67,6 +72,9 @@ export const RADAR_REASON_CODES = Object.freeze({
   PROVIDER_OPTION_INACTIVE: "PROVIDER_OPTION_INACTIVE",
   PROVIDER_EVENT_NOT_FOUND: "PROVIDER_EVENT_NOT_FOUND",
   PROVIDER_CHILD_NOT_FOUND: "PROVIDER_CHILD_NOT_FOUND",
+  PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED: "PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED",
+  RADAR_PARENT_RECONCILIATION_INCOMPLETE: "RADAR_PARENT_RECONCILIATION_INCOMPLETE",
+  PROVIDER_PARENT_COUNT_INCONSISTENT: "PROVIDER_PARENT_COUNT_INCONSISTENT",
   RESOLUTION_SOURCE_AUTHORITY_PENDING: "RESOLUTION_SOURCE_AUTHORITY_PENDING",
   OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "OFFICIAL_TERMINAL_SCAN_UNAVAILABLE",
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "OFFICIAL_SELECTION_RECHECK_REQUIRED",
@@ -119,6 +127,9 @@ const REASON_COPY = Object.freeze({
   PROVIDER_OPTION_INACTIVE: "La opción no está negociable, pero el evento padre puede seguir abierto.",
   PROVIDER_EVENT_NOT_FOUND: "El evento de origen ya no existe o no se pudo verificar.",
   PROVIDER_CHILD_NOT_FOUND: "La opción de mercado ya no pertenece al evento verificado.",
+  PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED: "La identidad de esta hija todavía no está demostrada por el proveedor.",
+  RADAR_PARENT_RECONCILIATION_INCOMPLETE: "El padre no puede proyectarse hasta contabilizar y reconciliar todas sus hijas.",
+  PROVIDER_PARENT_COUNT_INCONSISTENT: "El total declarado por el proveedor no coincide con las hijas observadas.",
   RESOLUTION_SOURCE_AUTHORITY_PENDING: "Atinara todavía no ha recuperado una fuente resolutiva oficial y exacta para esta opción.",
   OFFICIAL_TERMINAL_SCAN_UNAVAILABLE: "La comprobación oficial de resultados conocidos no terminó; Atinara conserva el último expediente válido y reintentará.",
   OFFICIAL_SELECTION_RECHECK_REQUIRED: "Una fuente oficial apunta a una selección ya publicada, pero Atinara debe completar su comprobación antes de volver a mostrar el evento.",
@@ -461,6 +472,12 @@ export async function radarDomainFingerprintV1(candidate) {
     family_key: cleanText(candidate?.family_key, 240),
     family_child_key: cleanText(candidate?.family_child_key, 240),
     family_child_label: normalizeComparableText(candidate?.family_child_label),
+    canonical_child_key: cleanText(candidate?.canonical_child_key, 240),
+    canonical_child_label: normalizeComparableText(candidate?.canonical_child_label),
+    identity_status: cleanText(candidate?.identity_status, 80),
+    identity_classification: cleanText(candidate?.identity_classification, 100),
+    identity_source: cleanText(candidate?.identity_source, 120),
+    parent_reconciliation_fingerprint: cleanText(candidate?.parent_reconciliation_fingerprint, 80),
   });
 }
 
@@ -487,24 +504,993 @@ const PROVIDER_PLACEHOLDER_PATTERNS = Object.freeze([
   /^(?:tbd|to be determined|por determinar|placeholder|unknown option)$/,
 ]);
 
+export const RADAR_PARENT_RECONCILIATION_STATUSES = Object.freeze([
+  "complete",
+  "incomplete_provider_metadata",
+  "inconsistent_provider_count",
+  "refresh_required",
+  "provider_unavailable",
+  "historical_mapping_required",
+  "terminal_provider_corruption",
+]);
+
+export const RADAR_PROVIDER_CHILD_CLASSIFICATIONS = Object.freeze([
+  "identified_real_option",
+  "provider_placeholder_pending_resolution",
+  "aggregate_other_option",
+  "tie_option",
+  "no_winner_option",
+  "provider_removed_child",
+  "provider_closed_child",
+  "provider_duplicate_child",
+  "provider_data_conflict",
+]);
+
+/**
+ * Consume un cursor oficial hasta agotarlo. Una página perdida, un cursor
+ * repetido o alcanzar el límite con `next_cursor` pendiente falla cerrado.
+ * @param {(cursor:string,page:number)=>Promise<any>} fetchPage
+ * @param {{itemsField?:string,cursorField?:string,maxPages?:number}} options
+ */
+export async function collectProviderCursorPages(fetchPage, options = {}) {
+  if (typeof fetchPage !== "function") throw new TypeError("PROVIDER_PAGE_FETCH_REQUIRED");
+  const itemsField = cleanText(options.itemsField, 80) || "items";
+  const cursorField = cleanText(options.cursorField, 80) || "cursor";
+  const maxPages = Math.max(1, Math.min(100, Math.floor(Number(options.maxPages) || 50)));
+  const items = [];
+  const seenCursors = new Set();
+  let cursor = "";
+  for (let page = 0; page < maxPages; page += 1) {
+    const payload = await fetchPage(cursor, page);
+    if (!isRecord(payload) || !Array.isArray(payload[itemsField])) {
+      throw new TypeError("PROVIDER_INVALID_RESPONSE");
+    }
+    items.push(...payload[itemsField].filter(isRecord));
+    const nextCursor = cleanText(payload[cursorField], 500);
+    if (!nextCursor) return { items, provider_pagination_exhausted: true, page_count: page + 1 };
+    if (seenCursors.has(nextCursor)) throw new TypeError("PROVIDER_CURSOR_REPEATED");
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw new TypeError("PROVIDER_PAGINATION_INCOMPLETE");
+}
+
+export function buildRadarPersistenceBatches(entries = [], options = {}) {
+  const maxItems = Math.max(1, Math.min(24, Math.floor(Number(options.maxItems) || 24)));
+  const maxBytes = Math.max(64_000, Math.min(1_000_000, Math.floor(Number(options.maxBytes) || 700_000)));
+  const source = Array.isArray(entries) ? entries : [];
+  const batches = [];
+  let current = [];
+  const bytes = (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  for (const entry of source) {
+    if (!isRecord(entry)) throw new TypeError("RADAR_PERSISTENCE_ENTRY_INVALID");
+    if (bytes([entry]) > maxBytes) throw new TypeError("RADAR_PERSISTENCE_ENTRY_TOO_LARGE");
+    const candidate = [...current, entry];
+    if (current.length && (candidate.length > maxItems || bytes(candidate) > maxBytes)) {
+      batches.push(current);
+      current = [entry];
+    } else current = candidate;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+export function selectWholeProviderParents(events = [], options = {}) {
+  const source = Array.isArray(events) ? events.filter(isRecord) : [];
+  const maxChildren = Math.max(1, Math.min(480, Math.floor(Number(options.maxChildren) || 480)));
+  const maxParents = Math.max(1, Math.min(120, Math.floor(Number(options.maxParents) || 120)));
+  const maxTotalParents = Math.max(maxParents, Math.min(240,
+    Math.floor(Number(options.maxTotalParents) || 240)));
+  const countChildren = options.countChildren !== false;
+  if (source.length > maxTotalParents) throw new TypeError("PROVIDER_PARENT_SCOPE_LIMIT_EXCEEDED");
+  const parentId = (event) => cleanText(
+    event.id ?? event.event_ticker ?? event.ticker ?? event.slug, 220,
+  );
+  const parentIds = source.map(parentId);
+  if (parentIds.some((identity) => !identity)
+    || new Set(parentIds).size !== parentIds.length) {
+    throw new TypeError("PROVIDER_PARENT_IDENTITY_CONFLICT");
+  }
+  const selected = [];
+  const deferred = [];
+  let selectedChildren = 0;
+  for (const event of source) {
+    const childCount = countChildren && Array.isArray(event.markets)
+      ? event.markets.filter(isRecord).length : 0;
+    if (childCount > maxChildren) throw new TypeError("PROVIDER_PARENT_CHILD_LIMIT_EXCEEDED");
+    if (selected.length < maxParents && selectedChildren + childCount <= maxChildren) {
+      selected.push(event);
+      selectedChildren += childCount;
+    } else deferred.push(event);
+  }
+  return {
+    selected,
+    selection: {
+      policy_version: "atinara-radar-parent-selection-v1",
+      total_parent_count: source.length,
+      selected_parent_count: selected.length,
+      deferred_parent_count: deferred.length,
+      selected_child_count: selectedChildren,
+      no_parent_truncated: true,
+      selected_parent_ids: selected.map(parentId),
+      deferred_parent_ids: deferred.map(parentId),
+    },
+  };
+}
+
+export function mergeProviderParentSelections(indexSelection = {}, childSelection = {}) {
+  const total = Math.max(0, Math.floor(Number(indexSelection.total_parent_count) || 0));
+  const selectedIds = Array.isArray(childSelection.selected_parent_ids)
+    ? childSelection.selected_parent_ids.map((value) => cleanText(value, 220)).filter(Boolean) : [];
+  const deferredIds = [...new Set([
+    ...(Array.isArray(childSelection.deferred_parent_ids) ? childSelection.deferred_parent_ids : []),
+    ...(Array.isArray(indexSelection.deferred_parent_ids) ? indexSelection.deferred_parent_ids : []),
+  ].map((value) => cleanText(value, 220)).filter(Boolean))];
+  if (selectedIds.length > 120 || total !== selectedIds.length + deferredIds.length
+    || selectedIds.some((identity) => deferredIds.includes(identity))) {
+    throw new TypeError("PROVIDER_PARENT_SELECTION_INCONSISTENT");
+  }
+  return {
+    policy_version: "atinara-radar-parent-selection-v1",
+    total_parent_count: total,
+    selected_parent_count: selectedIds.length,
+    deferred_parent_count: deferredIds.length,
+    selected_child_count: Math.max(0, Math.floor(Number(childSelection.selected_child_count) || 0)),
+    no_parent_truncated: indexSelection.no_parent_truncated === true
+      && childSelection.no_parent_truncated === true,
+    selected_parent_ids: selectedIds,
+    deferred_parent_ids: deferredIds,
+  };
+}
+
+const PROVIDER_OTHER_OPTION_PATTERNS = Object.freeze([
+  /^(?:other|all other|any other|otro|otra|todos los demas|todas las demas)(?: option| selection| opcion)?$/,
+]);
+const PROVIDER_TIE_OPTION_PATTERNS = Object.freeze([/^(?:tie|draw|empate)$/]);
+const PROVIDER_NO_WINNER_PATTERNS = Object.freeze([
+  /^(?:no winner|none|nobody|sin ganador|sin ganadora|ningun ganador|ninguna ganadora)$/,
+]);
+
+export function isProviderPlaceholderLabel(value) {
+  const label = normalizeComparableText(value);
+  return Boolean(label) && PROVIDER_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(label));
+}
+
+function radarSlugHash(value) {
+  let hash = 0x811c9dc5;
+  const signature = String(value ?? "").normalize("NFC").toLowerCase()
+    .replace(/[\u2018\u2019\u02bc\uff07]/g, "'")
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-");
+  for (const byte of new TextEncoder().encode(signature)) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+// Una opción puede mezclar escritura latina y no latina. Los caracteres que la
+// forma legible pierde (acentos, apóstrofes, guiones, signos o Unicode) añaden
+// una huella NFC. Así se conserva `marathon`, pero permutaciones o etiquetas
+// distintas nunca colisionan solo por folding tipográfico.
+export function radarOptionSlug(value, maxLength = 120) {
+  const bounded = Math.max(1, Math.min(240, Math.floor(Number(maxLength) || 120)));
+  const raw = cleanText(value, 500);
+  if (!raw) return "";
+  const folded = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const ascii = folded.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const encoded = [...raw.normalize("NFC").toLowerCase()]
+    .filter((character) => {
+      if (!/[\p{L}\p{N}]/u.test(character) || /[a-z0-9]/.test(character)) return false;
+      const latinFold = character.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return !/^[a-z0-9]$/i.test(latinFold);
+    })
+    .map((character) => character.codePointAt(0).toString(16))
+    .join("-");
+  let slug = ascii && encoded ? `${ascii}-u-${encoded}` : ascii || (encoded ? `u-${encoded}` : "");
+  const suffix = radarSlugHash(raw);
+  if (/[^A-Za-z0-9\s]/u.test(raw.normalize("NFC"))) slug = `${slug || "u"}-u-${suffix}`;
+  if (!slug || slug.length <= bounded) return slug;
+  if (bounded <= suffix.length) return suffix.slice(0, bounded);
+  slug = `${slug.slice(0, Math.max(1, bounded - suffix.length - 1)).replace(/-+$/g, "")}-${suffix}`;
+  return slug.slice(0, bounded);
+}
+
+function providerSemanticClassification(label) {
+  const normalized = normalizeComparableText(label);
+  if (!normalized) return null;
+  if (PROVIDER_OTHER_OPTION_PATTERNS.some((pattern) => pattern.test(normalized))) return "aggregate_other_option";
+  if (PROVIDER_TIE_OPTION_PATTERNS.some((pattern) => pattern.test(normalized))) return "tie_option";
+  if (PROVIDER_NO_WINNER_PATTERNS.some((pattern) => pattern.test(normalized))) return "no_winner_option";
+  return null;
+}
+
+function providerStructuredSemanticIdentity(child = {}) {
+  const type = normalizeComparableText(child.option_type ?? child.outcome_type ?? child.selection_type);
+  if (child.negRiskOther === true || child.is_other === true || type === "other") return "Other";
+  if (child.is_tie === true || child.is_draw === true || ["tie", "draw"].includes(type)) return "Tie";
+  if (child.is_no_winner === true || ["no winner", "none"].includes(type)) return "No winner";
+  return null;
+}
+
+function providerChildIdentifiers(child = {}) {
+  const tokenArray = (value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== "string" || !value.trim()) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+  const tokenValues = [
+    ...tokenArray(child.token_ids),
+    ...tokenArray(child.clobTokenIds),
+    ...(Array.isArray(child.tokens) ? child.tokens.map((token) => isRecord(token) ? token.token_id ?? token.id : token) : []),
+  ].map((value) => cleanText(value, 220)).filter(Boolean);
+  return {
+    external_market_id: cleanText(child.external_market_id ?? child.market_id ?? child.id ?? child.ticker ?? child.market_ticker, 220) || null,
+    condition_id: cleanText(child.condition_id ?? child.conditionId, 220) || null,
+    child_slug: cleanText(child.child_slug ?? child.market_slug ?? child.slug, 400) || null,
+    event_id: cleanText(child.event_id ?? child.external_event_id ?? child.event_ticker, 220) || null,
+    event_slug: cleanText(child.event_slug ?? child.external_event_slug, 400) || null,
+    token_ids: [...new Set(tokenValues)].sort(compareUtf16Binary).slice(0, 20),
+  };
+}
+
+// Contrato material y estable de una hija tal como lo expone el proveedor.
+// Se mantiene separado de la identidad: cambiar reglas, fuente o cierre debe
+// invalidar una preparación aunque market_id y option label sigan iguales.
+export function providerChildContractProjection(providerInput, child = {}) {
+  const provider = cleanText(providerInput, 40).toLowerCase();
+  if (isRecord(child.provider_contract)
+      && cleanText(child.provider_contract.contract_version, 100)
+        === RADAR_PROVIDER_CHILD_CONTRACT_VERSION
+      && cleanText(child.provider_contract.provider, 40).toLowerCase() === provider) {
+    return {
+      ...child.provider_contract,
+      provider,
+      provider_parent_id: cleanText(
+        child.provider_parent_id ?? child.provider_contract.provider_parent_id,
+        220,
+      ) || null,
+    };
+  }
+  const identifiers = providerChildIdentifiers(child);
+  const event = (Array.isArray(child.events) ? child.events.find(isRecord) : null)
+    ?? (isRecord(child.event) ? child.event : {});
+  const rules = [
+    child.source_resolution_rules,
+    child.rules_primary,
+    child.rules_secondary,
+    child.resolution_rules,
+    child.resolutionRules,
+    child.resolution_criteria,
+    child.resolutionCriteria,
+  ].map((value) => cleanText(value, 5_000)).filter(Boolean);
+  return {
+    contract_version: RADAR_PROVIDER_CHILD_CONTRACT_VERSION,
+    provider,
+    provider_parent_id: cleanText(
+      child.provider_parent_id ?? child.external_event_id ?? child.event_id
+        ?? child.event_ticker ?? event.id ?? event.event_ticker,
+      220,
+    ) || null,
+    external_market_id: identifiers.external_market_id,
+    condition_id: identifiers.condition_id,
+    token_ids: identifiers.token_ids,
+    child_slug: identifiers.child_slug,
+    event_slug: identifiers.event_slug || cleanText(event.slug, 400) || null,
+    external_event_url: safePublicUrl(
+      child.external_event_url ?? child.event_url ?? event.external_event_url ?? event.url,
+    ),
+    external_market_url: safePublicUrl(
+      child.external_market_url ?? child.market_url ?? child.external_url ?? child.url,
+    ),
+    source_title: cleanText(child.source_title ?? child.title ?? child.sub_title, 700) || null,
+    source_question: cleanText(child.source_question ?? child.question ?? child.title, 1_000) || null,
+    source_description: cleanText(child.source_description ?? child.description, 5_000) || null,
+    source_resolution_rules: [...new Set(rules)].join("\n\n") || null,
+    source_resolution_url: safePublicUrl(
+      child.source_resolution_url ?? child.resolution_source_url ?? child.resolutionSource
+        ?? child.resolution_source,
+    ),
+    source_close_at: safeIsoDate(
+      child.source_close_at ?? child.endDate ?? child.close_time
+        ?? child.latest_expiration_time ?? child.expected_expiration_time
+        ?? child.expiration_time,
+    ),
+    source_resolution_deadline: safeIsoDate(
+      child.source_resolution_deadline ?? child.resolution_deadline
+        ?? child.expected_settlement_time ?? child.settlement_time,
+    ),
+    source_status: cleanText(child.source_status ?? child.status, 80).toLowerCase() || null,
+    source_result: normalizeProviderResult(
+      child.source_result ?? child.result ?? child.resolutionResult ?? child.winningOutcome,
+    ),
+    raw_provider_child_label: providerChildRawLabel(child) || null,
+  };
+}
+
+// Solo los términos que pueden cambiar el significado resolutivo del contrato
+// invalidan una preparación. IDs, slugs, URLs de navegación, etiquetas raw y
+// estado operativo siguen auditados en provider_contract, pero pertenecen a
+// identidad/provenance/availability y no al hash editorial.
+export function providerChildMaterialContractProjection(contract = {}) {
+  return {
+    contract_version: cleanText(contract.contract_version, 100) || null,
+    provider: cleanText(contract.provider, 40).toLowerCase() || null,
+    source_question: cleanText(contract.source_question, 1_000) || null,
+    source_description: cleanText(contract.source_description, 5_000) || null,
+    source_resolution_rules: cleanText(contract.source_resolution_rules, 10_000) || null,
+    source_resolution_url: safePublicUrl(contract.source_resolution_url),
+    source_close_at: safeIsoDate(contract.source_close_at),
+    source_resolution_deadline: safeIsoDate(contract.source_resolution_deadline),
+  };
+}
+
+export function prioritizeProviderChildEvidenceAliases(children, limit = 1_920) {
+  const rows = (Array.isArray(children) ? children : []).filter(isRecord);
+  const aliases = rows.map((child) => {
+    const ids = providerChildIdentifiers(child);
+    const primary = ids.external_market_id ?? ids.condition_id ?? ids.token_ids[0] ?? ids.child_slug;
+    return {
+      primary,
+      all: [ids.external_market_id, ids.condition_id, ids.child_slug, ...ids.token_ids].filter(Boolean),
+    };
+  });
+  const bounded = Math.max(rows.length, Math.min(1_920, Math.max(0, Number(limit) || 0)));
+  return [...new Set([
+    ...aliases.map((item) => item.primary).filter(Boolean),
+    ...aliases.flatMap((item) => item.all).toSorted(compareUtf16Binary),
+  ])].slice(0, bounded);
+}
+
+function providerChildStableAliases(provider, child = {}) {
+  const ids = providerChildIdentifiers(child);
+  return [...new Set([
+    ids.external_market_id ? `${provider}:market:${ids.external_market_id}` : null,
+    ids.condition_id ? `${provider}:condition:${ids.condition_id}` : null,
+    ...ids.token_ids.map((value) => `${provider}:token:${value}`),
+    ids.child_slug ? `${provider}:slug:${ids.child_slug}` : null,
+  ].filter(Boolean))];
+}
+
+function providerChildIdentityKey(provider, child = {}) {
+  return providerChildStableAliases(provider, child)[0] ?? null;
+}
+
+function isGenericBinaryProviderLabel(value) {
+  return /^(?:yes|no|true|false|si|sí)$/i.test(normalizeComparableText(value));
+}
+
+function providerChildRawLabel(child = {}) {
+  const selection = isRecord(child.selection) ? child.selection : {};
+  const participant = isRecord(child.participant) ? child.participant : {};
+  const outcome = isRecord(child.outcome) ? child.outcome : {};
+  const explicit = cleanText(
+    child.raw_provider_child_label
+      ?? child.groupItemTitle
+      ?? child.yes_sub_title
+      ?? child.yes_subtitle
+      ?? selection.label ?? selection.name
+      ?? participant.label ?? participant.name
+      ?? outcome.label ?? outcome.name,
+    240,
+  );
+  const contractualQuestion = cleanText(child.question ?? child.title, 700);
+  const detectedDimension = familyDimension(contractualQuestion).dimension;
+  const parsed = optionLabelFromQuestion(
+    contractualQuestion,
+    ["outcome", "participant", "platform"].includes(detectedDimension) ? detectedDimension : "outcome",
+  );
+  if (parsed && /^(?:will|can|could|ganara|sera|¿)/i.test(explicit)) return parsed;
+  if (explicit && !isGenericBinaryProviderLabel(explicit)) return explicit;
+  return parsed;
+}
+
+function providerChildCanonicalIdentity(child = {}) {
+  const structuredSemantic = providerStructuredSemanticIdentity(child);
+  if (structuredSemantic) return {
+    label: structuredSemantic,
+    source: "provider_structured_semantic_option",
+    confidence: 100,
+  };
+  const explicit = cleanText(child.canonical_child_label, 240);
+  if (explicit && !isProviderPlaceholderLabel(explicit)) {
+    return {
+      label: explicit,
+      source: cleanText(child.identity_source, 120) || "provider_canonical_child",
+      confidence: 100,
+    };
+  }
+  const rawLabel = providerChildRawLabel(child);
+  if (rawLabel && !isProviderPlaceholderLabel(rawLabel)) {
+    return {
+      label: rawLabel,
+      source: cleanText(child.identity_source, 120) || (child.groupItemTitle || child.yes_sub_title
+        ? "provider_structured_child" : "provider_contract_question"),
+      confidence: 100,
+    };
+  }
+  const question = child.question ?? child.title;
+  const detectedDimension = familyDimension(question).dimension;
+  const questionLabel = optionLabelFromQuestion(
+    question,
+    ["outcome", "participant", "platform"].includes(detectedDimension) ? detectedDimension : "outcome",
+  );
+  if (questionLabel && !isProviderPlaceholderLabel(questionLabel)) {
+    return { label: questionLabel, source: "provider_contract_question", confidence: 100 };
+  }
+  return { label: null, source: null, confidence: 0 };
+}
+
+function providerAvailabilityStatus(child = {}) {
+  const status = cleanText(child.availability_status ?? child.status, 80).toLowerCase();
+  if (child.removed === true || status === "removed") return "removed";
+  if (child.closed === true || child.archived === true || child.active === false
+      || child.acceptingOrders === false || ["closed", "inactive", "settled", "determined", "finalized"].includes(status)) {
+    return status === "inactive" ? "inactive" : "closed";
+  }
+  if (["open", "active", "trading", "initialized"].includes(status)) return "open";
+  if (["unopened", "paused"].includes(status)) return status;
+  return "unknown";
+}
+
+function safeReconciliationEvidence(values) {
+  return (Array.isArray(values) ? values : []).filter(isRecord).map((value) => ({
+    url: safePublicUrl(value.url),
+    endpoint: cleanText(value.endpoint, 120) || null,
+    identifier_type: cleanText(value.identifier_type, 80) || null,
+    identifier: cleanText(value.identifier, 220) || null,
+    result: cleanText(value.result, 80) || null,
+    content_sha256: /^[a-f0-9]{64}$/.test(cleanText(value.content_sha256, 80))
+      ? cleanText(value.content_sha256, 80) : null,
+    identity_sha256: /^[a-f0-9]{64}$/.test(cleanText(value.identity_sha256, 80))
+      ? cleanText(value.identity_sha256, 80) : null,
+    observed_parent_ids: safeStringArray(value.observed_parent_ids, 8)
+      .map((item) => cleanText(item, 220)).filter(Boolean).toSorted(compareUtf16Binary),
+    observed_child_ids: safeStringArray(value.observed_child_ids, 1_920)
+      .map((item) => cleanText(item, 220)).filter(Boolean).toSorted(compareUtf16Binary),
+    checked_at: safeIsoDate(value.checked_at),
+  })).filter((value) => value.url || value.identifier || value.result)
+    .sort((left, right) => compareUtf16Binary(
+      [left.url, left.endpoint, left.identifier_type, left.identifier, left.result,
+        left.identity_sha256, left.content_sha256, left.observed_parent_ids.join("|"),
+        left.observed_child_ids.join("|")].join("\u0000"),
+      [right.url, right.endpoint, right.identifier_type, right.identifier, right.result,
+        right.identity_sha256, right.content_sha256, right.observed_parent_ids.join("|"),
+        right.observed_child_ids.join("|")].join("\u0000"),
+    )).slice(0, 24);
+}
+
+function authoritativeIdentityEvidence(values) {
+  const allowedResults = new Set([
+    "identity_resolved", "child_identity_observed_in_parent",
+    "provider_removed_child", "provider_closed_child",
+  ]);
+  return safeReconciliationEvidence(values).some((value) => Boolean(
+    value.url && value.identifier && (value.identity_sha256 || value.content_sha256)
+      && allowedResults.has(value.result ?? ""),
+  ));
+}
+
+function mergeReconciliationEvidence(...collections) {
+  const unique = new Map();
+  for (const value of collections.flatMap((items) => safeReconciliationEvidence(items))) {
+    const key = [value.url, value.endpoint, value.identifier_type, value.identifier,
+      value.result, value.identity_sha256, value.content_sha256,
+      value.observed_child_ids.join("|")].join("\u0000");
+    if (!unique.has(key)) unique.set(key, value);
+  }
+  return safeReconciliationEvidence([...unique.values()]);
+}
+
+function reconciliationEvidenceFingerprint(values) {
+  return safeReconciliationEvidence(values).map((value) => ({
+    url: value.url,
+    endpoint: value.endpoint,
+    identifier_type: value.identifier_type,
+    identifier: value.identifier,
+    result: value.result,
+    identity_sha256: value.identity_sha256 ?? value.content_sha256,
+    observed_parent_ids: value.observed_parent_ids,
+    observed_child_ids: value.observed_child_ids,
+  }));
+}
+
+function providerChildSortKey(provider, child = {}) {
+  return [
+    providerChildStableAliases(provider, child).join("|"),
+    normalizeComparableText(providerChildRawLabel(child)),
+    normalizeComparableText(child.canonical_child_label),
+    cleanText(child.question ?? child.title, 700),
+  ].join("\u0000");
+}
+
+function providerChildrenShareStableIdentity(provider, left = {}, right = {}) {
+  const rightAliases = new Set(providerChildStableAliases(provider, right));
+  return providerChildStableAliases(provider, left).some((value) => rightAliases.has(value));
+}
+
+function reconciliationBindingAliases(value = {}) {
+  const payload = isRecord(value.provider_payload) ? value.provider_payload : {};
+  const identifiers = providerChildIdentifiers({
+    ...payload,
+    ...value,
+    external_market_id: value.external_market_id ?? payload.external_market_id ?? payload.id,
+    condition_id: value.condition_id ?? payload.condition_id ?? payload.conditionId,
+    token_ids: value.token_ids ?? payload.token_ids ?? payload.clobTokenIds,
+    child_slug: value.child_slug ?? value.external_market_slug ?? payload.child_slug ?? payload.slug,
+  });
+  const strong = [
+    cleanText(value.parent_child_occurrence_key ?? value.child_occurrence_key, 500)
+      ? `occurrence:${cleanText(value.parent_child_occurrence_key ?? value.child_occurrence_key, 500)}` : "",
+    cleanText(value.parent_child_identity_key ?? value.provider_child_identity_key, 500)
+      ? `identity:${cleanText(value.parent_child_identity_key ?? value.provider_child_identity_key, 500)}` : "",
+    identifiers.external_market_id ? `market:${identifiers.external_market_id}` : "",
+    identifiers.condition_id ? `condition:${identifiers.condition_id}` : "",
+    ...identifiers.token_ids.map((token) => `token:${token}`),
+  ].filter(Boolean);
+  return new Set(strong.length ? strong
+    : identifiers.child_slug ? [`slug:${identifiers.child_slug}`] : []);
+}
+
+export function bindRadarCandidatesToReconciledChildren(candidates = [], children = []) {
+  const candidateList = Array.isArray(candidates) ? candidates.filter(isRecord) : [];
+  const childList = Array.isArray(children) ? children.filter(isRecord) : [];
+  const remaining = new Set(childList.map((_, index) => index));
+  return candidateList.map((candidate) => {
+    const aliases = reconciliationBindingAliases(candidate);
+    if (!aliases.size) return null;
+    const matches = [...remaining].filter((index) => {
+      const childAliases = reconciliationBindingAliases(childList[index]);
+      return [...aliases].some((alias) => childAliases.has(alias));
+    });
+    if (matches.length !== 1) return null;
+    remaining.delete(matches[0]);
+    return childList[matches[0]];
+  });
+}
+
+/**
+ * Contrato puro y provider-agnostic de reconciliación de un padre. No infiere
+ * identidades por orden, probabilidad o similitud: solo consume etiquetas e
+ * identificadores que la capa de proveedor ya acreditó.
+ */
+export async function reconcileProviderParent(input = {}) {
+  const provider = cleanText(input.provider, 40).toLowerCase();
+  const providerParentId = cleanText(input.provider_parent_id, 220);
+  if (!RADAR_CANDIDATE_PROVIDERS.includes(provider) || !providerParentId) {
+    throw new TypeError("RADAR_PARENT_IDENTITY_INVALID");
+  }
+  const checkedAt = safeIsoDate(input.checked_at) ?? new Date().toISOString();
+  const currentChildren = (Array.isArray(input.children) ? input.children : []).filter(isRecord)
+    .sort((left, right) => compareUtf16Binary(providerChildSortKey(provider, left), providerChildSortKey(provider, right)));
+  const previousChildren = (Array.isArray(input.previous_children) ? input.previous_children : []).filter(isRecord)
+    .sort((left, right) => compareUtf16Binary(providerChildSortKey(provider, left), providerChildSortKey(provider, right)));
+  const declaredValue = Number(input.provider_declared_child_count);
+  const declaredCount = Number.isSafeInteger(declaredValue) && declaredValue >= 0 ? declaredValue : null;
+  const paginationExhausted = input.provider_pagination_exhausted === true;
+  const parentEvidence = safeReconciliationEvidence(input.source_refs);
+  const seenAliases = new Map();
+  const seenCanonicalKeys = new Map();
+  const children = [];
+  let historicalMappingConflict = false;
+  let recoverableMetadataConflict = false;
+  let terminalProviderConflict = false;
+  const legacyAccounted = new Set();
+
+  for (let ordinal = 0; ordinal < currentChildren.length; ordinal += 1) {
+    const child = currentChildren[ordinal];
+    const ids = providerChildIdentifiers(child);
+    const stableAliases = providerChildStableAliases(provider, child);
+    const identityKey = providerChildIdentityKey(provider, child);
+    const rawLabel = providerChildRawLabel(child) || null;
+    const canonical = providerChildCanonicalIdentity(child);
+    const identityDimension = familyDimension(child.question ?? child.title).dimension;
+    const optionIdentityRequired = child.categorical_parent === true
+      || ["outcome", "participant", "platform"].includes(identityDimension)
+      || isProviderPlaceholderLabel(rawLabel);
+    const canonicalLabel = optionIdentityRequired ? canonical.label : null;
+    const availability = providerAvailabilityStatus(child);
+    const previousIndex = previousChildren.findIndex((value, index) =>
+      !legacyAccounted.has(index) && stableAliases.length > 0
+        && providerChildrenShareStableIdentity(provider, child, value));
+    const previous = previousIndex >= 0 ? previousChildren[previousIndex] : null;
+    if (previousIndex >= 0) legacyAccounted.add(previousIndex);
+    const previousParentId = cleanText(previous?.provider_parent_id ?? previous?.event_id ?? previous?.external_event_id, 220);
+    const previousIds = providerChildIdentifiers(previous ?? {});
+    const tokenSetsDiffer = ids.token_ids.length > 0 && previousIds.token_ids.length > 0
+      && (ids.token_ids.length !== previousIds.token_ids.length
+        || ids.token_ids.some((value) => !previousIds.token_ids.includes(value)));
+    const stableIdentifierConflict = Boolean(previous && (
+      (ids.external_market_id && previousIds.external_market_id
+        && ids.external_market_id !== previousIds.external_market_id)
+      || (ids.condition_id && previousIds.condition_id && ids.condition_id !== previousIds.condition_id)
+      || tokenSetsDiffer
+    ));
+    const canonicalSlug = canonicalLabel ? radarOptionSlug(canonicalLabel, 120) : null;
+    const canonicalKey = canonicalSlug ? `option:${canonicalSlug}` : null;
+    const duplicateByStableAlias = stableAliases.map((alias) => seenAliases.get(alias)).find(Boolean);
+    const canonicalCollision = canonicalKey ? seenCanonicalKeys.get(canonicalKey) : null;
+    // Una key textual igual no demuestra que el proveedor haya duplicado una
+    // hija. Solo una alias estable compartida permite esa clasificación; IDs
+    // fuertes distintos con la misma etiqueta son conflicto, nunca similitud.
+    const duplicate = duplicateByStableAlias;
+    const duplicateIds = providerChildIdentifiers(duplicate ?? {});
+    const duplicateTokenConflict = ids.token_ids.length > 0 && duplicateIds.token_ids.length > 0
+      && (ids.token_ids.length !== duplicateIds.token_ids.length
+        || ids.token_ids.some((value) => !duplicateIds.token_ids.includes(value)));
+    const duplicateIdentifierConflict = Boolean(duplicateByStableAlias && (
+      (ids.external_market_id && duplicateIds.external_market_id
+        && ids.external_market_id !== duplicateIds.external_market_id)
+      || (ids.condition_id && duplicateIds.condition_id && ids.condition_id !== duplicateIds.condition_id)
+      || duplicateTokenConflict
+    ));
+    const labelsConflict = duplicate?.canonical_child_label && canonicalLabel
+      && normalizeComparableText(duplicate.canonical_child_label) !== normalizeComparableText(canonicalLabel);
+    const movedParent = Boolean(previousParentId && previousParentId !== providerParentId);
+    const evidenceAliases = new Set([
+      ids.external_market_id,ids.condition_id,...ids.token_ids,ids.child_slug,
+    ].filter(Boolean));
+    const inheritedEvidence = parentEvidence.filter((value) => value.url && value.content_sha256
+      && value.observed_child_ids.some((identity) => evidenceAliases.has(identity))).map((value) => ({
+      ...value,
+      observed_child_ids: value.observed_child_ids.filter((identity) => evidenceAliases.has(identity)),
+      identifier_type: ids.external_market_id ? "external_market_id"
+        : ids.condition_id ? "condition_id" : ids.token_ids.length ? "token_id" : "child_slug",
+      identifier: ids.external_market_id ?? ids.condition_id ?? ids.token_ids[0] ?? ids.child_slug,
+      result: canonicalLabel || !optionIdentityRequired ? "child_identity_observed_in_parent" : value.result,
+    })).filter((value) => value.identifier);
+    const unidentifiedParentEvidence = evidenceAliases.size ? [] : parentEvidence
+      .filter((value) => value.url && (value.identity_sha256 || value.content_sha256))
+      .map((value) => ({
+        ...value,
+        identifier_type: "provider_parent_id",
+        identifier: providerParentId,
+        result: "provider_child_without_stable_identifier",
+        observed_child_ids: [],
+      }));
+    let evidence = mergeReconciliationEvidence(
+      child.identity_evidence ?? child.source_refs,
+      inheritedEvidence,
+      unidentifiedParentEvidence,
+    );
+    if (availability === "removed"
+        && !evidence.some((value) => value.result === "provider_removed_child")) {
+      const removalSource = evidence.find((value) => value.url
+        && (value.identity_sha256 || value.content_sha256));
+      if (removalSource) {
+        evidence = mergeReconciliationEvidence(evidence, [{
+          ...removalSource,
+          result: "provider_removed_child",
+          identifier_type: ids.external_market_id ? "external_market_id"
+            : ids.condition_id ? "condition_id" : ids.token_ids.length ? "token_id" : "child_slug",
+          identifier: ids.external_market_id ?? ids.condition_id ?? ids.token_ids[0] ?? ids.child_slug,
+        }]);
+      }
+    }
+    const identityProven = Boolean(identityKey)
+      && authoritativeIdentityEvidence(evidence)
+      && (!optionIdentityRequired || Boolean(canonicalLabel));
+    const removalProven = availability === "removed" && Boolean(identityKey)
+      && evidence.some((value) => value.url && value.result === "provider_removed_child");
+    let classification = child.identity_resolution_conflict === true
+      ? "provider_data_conflict"
+      : !identityKey
+      ? "provider_data_conflict"
+      : removalProven
+      ? "provider_removed_child"
+      : optionIdentityRequired && isProviderPlaceholderLabel(rawLabel) && !canonicalLabel
+      ? "provider_placeholder_pending_resolution"
+      : !identityProven
+        ? "provider_data_conflict"
+        : availability === "removed"
+            ? "provider_removed_child"
+          : (optionIdentityRequired ? providerSemanticClassification(canonicalLabel ?? rawLabel) : null)
+        ?? (availability === "closed" ? "provider_closed_child" : "identified_real_option");
+    if (canonicalCollision && !duplicateByStableAlias) classification = "provider_data_conflict";
+    if (duplicate) classification = labelsConflict || duplicateIdentifierConflict
+      ? "provider_data_conflict" : "provider_duplicate_child";
+    if (movedParent) {
+      classification = "provider_data_conflict";
+      historicalMappingConflict = true;
+    }
+    if (stableIdentifierConflict) classification = "provider_data_conflict";
+    if (child.identity_resolution_conflict === true || stableIdentifierConflict
+      || (canonicalCollision && !duplicateByStableAlias)
+      || duplicateIdentifierConflict || (duplicate && labelsConflict)) terminalProviderConflict = true;
+    if (!identityKey || (!identityProven && ![
+      "provider_duplicate_child", "provider_removed_child",
+    ].includes(classification))) {
+      recoverableMetadataConflict = true;
+    }
+    const identityStatus = classification === "provider_placeholder_pending_resolution" ? "unresolved_placeholder"
+      : classification === "provider_data_conflict" ? "conflict"
+        : classification === "provider_duplicate_child" ? "duplicate"
+          : classification === "provider_removed_child" ? "removed"
+            : "resolved";
+    const duplicateOrdinal = duplicate
+      ? children.filter((value) => value.provider_child_identity_key === duplicate.provider_child_identity_key
+        || (canonicalKey && value.canonical_child_key === canonicalKey)).length
+      : 0;
+    const occurrenceSeed = identityKey
+      ? `${identityKey}:${duplicateOrdinal}`
+      : `${provider}:unidentified:${await sha256Hex({ ids, rawLabel, question: cleanText(child.question ?? child.title, 700) })}`;
+    const identitySource = classification === "provider_removed_child"
+      ? "provider_removed_child_verification"
+      : classification === "provider_duplicate_child" ? "provider_stable_alias_duplicate"
+      : optionIdentityRequired ? canonical.source : "provider_contract_identity";
+    const identityConfidence = identityProven || [
+      "provider_duplicate_child", "provider_removed_child",
+    ].includes(classification) ? 100 : 0;
+    const presentInLegacySnapshot = Boolean(previous);
+    const transition = movedParent ? "moved_parent"
+      : !previous ? "new"
+        : previous && (
+          (canonicalLabel && normalizeComparableText(previous.canonical_child_label ?? previous.raw_provider_child_label)
+            !== normalizeComparableText(canonicalLabel))
+          || (ids.child_slug && cleanText(previous.child_slug ?? previous.market_slug ?? previous.slug, 400)
+            && ids.child_slug !== cleanText(previous.child_slug ?? previous.market_slug ?? previous.slug, 400))
+        ) ? "renamed" : "same";
+    const duplicateOfChildIdentityKey = classification === "provider_duplicate_child"
+      ? duplicate?.provider_child_identity_key ?? null : null;
+    const providerContract = providerChildContractProjection(provider, {
+      ...child,
+      provider_parent_id: providerParentId,
+    });
+    const providerContractMaterial = providerChildMaterialContractProjection(providerContract);
+    const providerContractCanonicalJson = canonicalJson(providerContractMaterial);
+    const providerContractHash = await sha256Hex(providerContractCanonicalJson);
+    const childFingerprintMaterial = {
+      version: RADAR_CHILD_PROJECTION_VERSION,
+      provider,
+      provider_parent_id: providerParentId,
+      occurrence_key: occurrenceSeed,
+      identity_key: identityKey,
+      identity_kind: optionIdentityRequired ? "option" : "contract",
+      identifiers: ids,
+      raw_provider_child_label: rawLabel,
+      canonical_child_label: canonicalLabel,
+      canonical_child_slug: canonicalSlug,
+      identity_classification: classification,
+      identity_status: identityStatus,
+      availability_status: availability,
+      identity_source: identitySource,
+      identity_confidence: identityConfidence,
+      present_in_current_snapshot: true,
+      present_in_legacy_snapshot: presentInLegacySnapshot,
+      transition,
+      duplicate_of_child_identity_key: duplicateOfChildIdentityKey,
+      provider_contract_hash: providerContractHash,
+      provider_state: {
+        source_status: providerContract.source_status,
+        source_result: providerContract.source_result,
+      },
+      evidence: reconciliationEvidenceFingerprint(evidence),
+    };
+    const reconciled = {
+      child_occurrence_key: occurrenceSeed,
+      provider_child_identity_key: identityKey,
+      identity_kind: optionIdentityRequired ? "option" : "contract",
+      ...ids,
+      raw_provider_child_label: rawLabel,
+      canonical_child_label: canonicalLabel,
+      canonical_child_slug: canonicalSlug,
+      canonical_child_key: canonicalKey,
+      identity_classification: classification,
+      identity_status: identityStatus,
+      availability_status: availability,
+      identity_source: identitySource,
+      identity_confidence: identityConfidence,
+      identity_evidence: evidence,
+      present_in_current_snapshot: true,
+      present_in_legacy_snapshot: presentInLegacySnapshot,
+      transition,
+      duplicate_of_child_identity_key: duplicateOfChildIdentityKey,
+      provider_contract: providerContract,
+      provider_contract_canonical_json: providerContractCanonicalJson,
+      provider_contract_hash: providerContractHash,
+      projection_version: RADAR_CHILD_PROJECTION_VERSION,
+      child_fingerprint: await sha256Hex(childFingerprintMaterial),
+      checked_at: checkedAt,
+    };
+    children.push(reconciled);
+    if (!duplicate) {
+      for (const alias of stableAliases) seenAliases.set(alias, reconciled);
+      if (canonicalKey) seenCanonicalKeys.set(canonicalKey, reconciled);
+    }
+  }
+
+  for (let ordinal = 0; ordinal < previousChildren.length; ordinal += 1) {
+    const previous = previousChildren[ordinal];
+    const identityKey = providerChildIdentityKey(provider, previous);
+    if (legacyAccounted.has(ordinal)) continue;
+    const ids = providerChildIdentifiers(previous);
+    const rawLabel = providerChildRawLabel(previous) || null;
+    const canonical = providerChildCanonicalIdentity(previous);
+    const previousDimension = familyDimension(previous.question ?? previous.title).dimension;
+    const previousIdentityKind = cleanText(previous.identity_kind, 40)
+      || (["outcome", "participant", "platform"].includes(previousDimension) ? "option" : "contract");
+    const previousCanonicalLabel = previousIdentityKind === "option" ? canonical.label : null;
+    const evidence = mergeReconciliationEvidence(previous.identity_evidence ?? previous.source_refs);
+    const removedVerified = (previous.removed_verified === true
+      || cleanText(previous.identity_classification, 100) === "provider_removed_child")
+      && evidence.some((value) => value.url && value.result === "provider_removed_child");
+    const closedVerified = (previous.closed_verified === true
+      || cleanText(previous.identity_classification, 100) === "provider_closed_child")
+      && evidence.some((value) => value.url && value.result === "provider_closed_child");
+    const canonicalIdentityProven = previousIdentityKind !== "option"
+      || Boolean(previousCanonicalLabel && canonical.source);
+    const classification = removedVerified ? "provider_removed_child"
+      : closedVerified && canonicalIdentityProven ? "provider_closed_child"
+        : closedVerified ? "provider_placeholder_pending_resolution"
+          : "provider_data_conflict";
+    const identityStatus = removedVerified ? "removed"
+      : closedVerified && canonicalIdentityProven ? "resolved"
+        : closedVerified ? "unresolved_placeholder" : "conflict";
+    if (removedVerified || (closedVerified && canonicalIdentityProven)) legacyAccounted.add(ordinal);
+    else historicalMappingConflict = true;
+    const previousOccurrence = cleanText(previous.child_occurrence_key, 500) || String(ordinal);
+    const occurrenceSeed = identityKey
+      ? `${identityKey}:${removedVerified ? "removed" : closedVerified ? "closed" : "missing"}:${previousOccurrence}`
+      : `${provider}:unidentified-legacy:${await sha256Hex({ ids, rawLabel, ordinal })}`;
+    const missingAvailability = removedVerified ? "removed" : closedVerified ? "closed" : "unknown";
+    const missingIdentitySource = removedVerified
+      ? "provider_removed_child_verification"
+      : canonicalIdentityProven
+        ? (previousIdentityKind === "option" ? canonical.source : "provider_contract_identity")
+        : null;
+    const missingIdentityConfidence = removedVerified
+      || (closedVerified && canonicalIdentityProven) ? 100 : 0;
+    const missingTransition = removedVerified || closedVerified ? "removed" : "same";
+    const providerContract = providerChildContractProjection(provider, {
+      ...previous,
+      provider_parent_id: providerParentId,
+    });
+    const providerContractMaterial = providerChildMaterialContractProjection(providerContract);
+    const providerContractCanonicalJson = canonicalJson(providerContractMaterial);
+    const providerContractHash = await sha256Hex(providerContractCanonicalJson);
+    const material = {
+      version: RADAR_CHILD_PROJECTION_VERSION,
+      provider,
+      provider_parent_id: providerParentId,
+      identity_key: identityKey,
+      identity_kind: previousIdentityKind,
+      identifiers: ids,
+      raw_provider_child_label: rawLabel,
+      canonical_child_label: previousCanonicalLabel,
+      identity_classification: classification,
+      identity_status: identityStatus,
+      availability_status: missingAvailability,
+      identity_source: missingIdentitySource,
+      identity_confidence: missingIdentityConfidence,
+      present_in_current_snapshot: false,
+      present_in_legacy_snapshot: true,
+      transition: missingTransition,
+      duplicate_of_child_identity_key: null,
+      provider_contract_hash: providerContractHash,
+      provider_state: {
+        source_status: providerContract.source_status,
+        source_result: providerContract.source_result,
+      },
+      evidence: reconciliationEvidenceFingerprint(evidence),
+    };
+    children.push({
+      child_occurrence_key: occurrenceSeed,
+      provider_child_identity_key: identityKey,
+      identity_kind: previousIdentityKind,
+      ...ids,
+      raw_provider_child_label: rawLabel,
+      canonical_child_label: previousCanonicalLabel,
+      canonical_child_slug: previousCanonicalLabel ? radarOptionSlug(previousCanonicalLabel, 120) : null,
+      canonical_child_key: previousCanonicalLabel ? `option:${radarOptionSlug(previousCanonicalLabel, 120)}` : null,
+      identity_classification: classification,
+      identity_status: identityStatus,
+      availability_status: missingAvailability,
+      identity_source: missingIdentitySource,
+      identity_confidence: missingIdentityConfidence,
+      identity_evidence: evidence,
+      present_in_current_snapshot: false,
+      present_in_legacy_snapshot: true,
+      transition: missingTransition,
+      duplicate_of_child_identity_key: null,
+      provider_contract: providerContract,
+      provider_contract_canonical_json: providerContractCanonicalJson,
+      provider_contract_hash: providerContractHash,
+      projection_version: RADAR_CHILD_PROJECTION_VERSION,
+      child_fingerprint: await sha256Hex(material),
+      checked_at: checkedAt,
+    });
+  }
+
+  const current = children.filter((child) => child.present_in_current_snapshot);
+  const unresolvedCount = current.filter((child) => ["unresolved_placeholder", "conflict"].includes(child.identity_status)).length;
+  const identifiedCount = current.filter((child) => child.identity_status === "resolved").length;
+  const removedCount = children.filter((child) => child.identity_classification === "provider_removed_child").length;
+  const duplicateCount = current.filter((child) => child.identity_classification === "provider_duplicate_child").length;
+  const conflictCount = current.filter((child) => child.identity_classification === "provider_data_conflict").length;
+  const closedCount = current.filter((child) => child.availability_status === "closed").length;
+  const sourceRefs = safeReconciliationEvidence(input.source_refs);
+  let status = "complete";
+  if (input.provider_unavailable === true) status = "provider_unavailable";
+  else if (!paginationExhausted) status = "refresh_required";
+  else if (declaredCount === null) status = "incomplete_provider_metadata";
+  else if (declaredCount !== current.length) status = "inconsistent_provider_count";
+  else if (historicalMappingConflict) status = "historical_mapping_required";
+  else if (terminalProviderConflict) status = "terminal_provider_corruption";
+  else if (recoverableMetadataConflict) status = "incomplete_provider_metadata";
+  else if (conflictCount > 0) status = "terminal_provider_corruption";
+  else if (unresolvedCount > 0) status = "incomplete_provider_metadata";
+  const nextRetryAt = ["complete", "terminal_provider_corruption"].includes(status)
+    ? null
+    : safeIsoDate(input.next_retry_at)
+      ?? new Date(Date.parse(checkedAt) + 60 * 60_000).toISOString();
+  const summary = {
+    provider,
+    provider_parent_id: providerParentId,
+    raw_provider_parent_label: cleanText(input.raw_provider_parent_label, 500) || null,
+    canonical_parent_label: cleanText(input.canonical_parent_label, 500) || null,
+    raw_provider_category: cleanText(input.raw_provider_category, 120) || null,
+    atinara_category: cleanText(input.atinara_category ?? input.category, 120) || null,
+    category: cleanText(input.atinara_category ?? input.category, 120) || null,
+    external_parent_url: safePublicUrl(input.external_parent_url),
+    horizon_at: safeIsoDate(input.horizon_at),
+    provider_declared_child_count: declaredCount,
+    provider_discovered_child_count: current.length,
+    provider_accounted_child_count: current.length,
+    provider_identified_child_count: identifiedCount,
+    provider_unresolved_child_count: unresolvedCount,
+    provider_removed_child_count: removedCount,
+    provider_closed_child_count: closedCount,
+    provider_duplicate_child_count: duplicateCount,
+    provider_conflict_child_count: conflictCount,
+    legacy_expected_child_count: previousChildren.length || null,
+    legacy_accounted_child_count: previousChildren.length ? legacyAccounted.size : null,
+    new_child_count: current.filter((child) => child.transition === "new").length,
+    provider_pagination_exhausted: paginationExhausted,
+    reconciliation_status: status,
+    reconciliation_version: RADAR_PARENT_RECONCILIATION_VERSION,
+    normalizer_version: RADAR_NORMALIZER_VERSION,
+    family_version: RADAR_FAMILY_VERSION,
+    checked_at: checkedAt,
+    next_retry_at: nextRetryAt,
+    source_refs: sourceRefs,
+  };
+  const reconciliationFingerprint = await sha256Hex({
+    ...summary,
+    checked_at: null,
+    next_retry_at: null,
+    source_refs: reconciliationEvidenceFingerprint(sourceRefs),
+    children: children.map((child) => child.child_fingerprint).sort(compareUtf16Binary),
+  });
+  return {
+    ...summary,
+    reconciliation_fingerprint: reconciliationFingerprint,
+    children,
+  };
+}
+
 function optionLabelFromQuestion(value, dimension = "outcome") {
-  const question = normalizeComparableText(value);
+  const question = cleanText(value, 1000).replace(/^¿\s*/, "");
   if (!question) return "";
   const patterns = dimension === "participant"
-    ? [
-        /^(?:will|can|could)\s+(.+?)\s+(?:attend|appear|participate|compete)\b/,
-        /^(?:asistira|aparecera|participara|competira)\s+(.+?)\b/,
+      ? [
+        /^(?:will|can|could)\s+(.+?)\s+(?:attend|appear|participate|compete)\b/i,
+        /^(?:will|can|could)\s+(.+?)\s+be\s+(?:(?:featured|shown)\s+)?on\s+(?:the\s+)?cover\b/i,
+        /^(?:asistir[aá]|aparecer[aá]|participar[aá]|competir[aá])\s+(.+?)\b/i,
       ]
     : dimension === "platform"
       ? [
-          /^(?:will|can|could)\s+(.+?)\s+(?:release|launch|appear|be available)\b/,
-          /^(?:se lanzara|aparecera|estara disponible)\s+(.+?)\b/,
+          /^(?:will|can|could)\s+(.+?)\s+(?:release|launch|appear|be available)\b/i,
+          /^(?:se lanzar[aá]|aparecer[aá]|estar[aá] disponible)\s+(.+?)\b/i,
         ]
       : [
-          /^(?:will|can|could)\s+(.+?)\s+(?:win|be named|be chosen|be awarded|receive|take home)\b/,
-          /^(?:ganara|sera nombrado|sera nombrada|sera elegido|sera elegida|recibira)\s+(.+?)\b/,
-          /^(?:will|can|could)\s+(.+?)\s+be\s+(?:the\s+)?(?:winner|game of the year)\b/,
-          /^(?:sera)\s+(.+?)\s+(?:el|la)\s+(?:ganador|ganadora)\b/,
+          /^(?:will|can|could)\s+(.+?)\s+(?:win|be named|be chosen|be awarded|receive|take home)\b/i,
+          /^(?:ganar[aá]|ser[aá] nombrado|ser[aá] nombrada|ser[aá] elegido|ser[aá] elegida|recibir[aá])\s+(.+?)\b/i,
+          /^(?:will|can|could)\s+(.+?)\s+be\s+(?:the\s+)?(?:winner|game of the year)\b/i,
+          /^(?:ser[aá])\s+(.+?)\s+(?:el|la)\s+(?:ganador|ganadora)\b/i,
         ];
   for (const pattern of patterns) {
     const match = question.match(pattern);
@@ -514,40 +1500,55 @@ function optionLabelFromQuestion(value, dimension = "outcome") {
   return "";
 }
 
+/**
+ * @param {Record<string, any>} candidate
+ * @param {"outcome"|"participant"|"platform"|null} dimension
+ */
 export function extractRadarOptionChild(candidate = {}, dimension = null) {
   const detectedDimension = dimension ?? familyDimension(
     candidate?.atinara_question ?? candidate?.question ?? candidate?.source_question ?? candidate?.title,
   ).dimension;
   if (!["outcome", "participant", "platform"].includes(detectedDimension)) return null;
+  if (["unresolved_placeholder", "conflict", "removed", "duplicate"].includes(
+    cleanText(candidate?.identity_status, 80),
+  )) return null;
   const payload = familyProviderPayload(candidate);
   const structured = cleanText(
-    payload.yes_sub_title ?? candidate?.yes_sub_title ?? candidate?.family_child_label,
+    candidate?.canonical_child_label
+      ?? payload.canonical_child_label
+      ?? payload.yes_sub_title
+      ?? candidate?.yes_sub_title
+      ?? candidate?.family_child_label,
     500,
   );
   const normalizedStructured = normalizeComparableText(structured);
   const ordinaryStructured = normalizedStructured
     && !/^(?:yes|si|true|no)$/.test(normalizedStructured);
-  const sourceField = ordinaryStructured
-    ? (payload.yes_sub_title ? "provider_payload.yes_sub_title"
-      : candidate?.yes_sub_title ? "yes_sub_title" : "family_child_label")
+  const questionLabel = optionLabelFromQuestion(
+    candidate?.source_question ?? candidate?.atinara_question ?? candidate?.question,
+    detectedDimension,
+  );
+  const structuredIsPlaceholder = ordinaryStructured && isProviderPlaceholderLabel(structured);
+  const questionResolvesPlaceholder = questionLabel && !isProviderPlaceholderLabel(questionLabel);
+  const sourceField = ordinaryStructured && (!structuredIsPlaceholder || !questionResolvesPlaceholder)
+    ? (candidate?.canonical_child_label ? "canonical_child_label"
+      : payload.canonical_child_label ? "provider_payload.canonical_child_label"
+        : payload.yes_sub_title ? "provider_payload.yes_sub_title"
+          : candidate?.yes_sub_title ? "yes_sub_title" : "family_child_label")
     : "source_question";
-  const rawLabel = ordinaryStructured
-    ? structured
-    : optionLabelFromQuestion(
-        candidate?.source_question ?? candidate?.atinara_question ?? candidate?.question,
-        detectedDimension,
-      );
+  const rawLabel = ordinaryStructured && (!structuredIsPlaceholder || !questionResolvesPlaceholder)
+    ? structured : questionLabel;
   const label = cleanText(rawLabel, 240);
   const normalizedLabel = normalizeComparableText(label);
-  const slug = familySlug(normalizedLabel, 120);
+  const slug = radarOptionSlug(label, 120);
   if (!label || !slug) return null;
   return {
     dimension: detectedDimension,
     label,
     slug,
     source_field: sourceField,
-    confidence: ordinaryStructured ? 100 : 92,
-    placeholder: PROVIDER_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(normalizedLabel)),
+    confidence: sourceField === "source_question" ? 92 : 100,
+    placeholder: isProviderPlaceholderLabel(normalizedLabel),
   };
 }
 
@@ -862,11 +1863,22 @@ export function adaptPolymarketResponse(payload, options = {}) {
     // Cada hija conserva una proyección acotada de TODAS las hijas canónicas,
     // incluidas las cerradas, para no perder un resultado ya publicado.
     const canonicalMarkets = markets.filter(isRecord);
-    const canonicalEventChildren = canonicalMarkets.slice(0, 160).map((item) => {
+    const declaredChildCountValue = Number(
+      event.provider_declared_child_count ?? event.market_count ?? event.markets_count,
+    );
+    const providerPaginationExhausted = event.provider_pagination_exhausted === true;
+    const declaredChildCount = Number.isSafeInteger(declaredChildCountValue) && declaredChildCountValue >= 0
+      ? declaredChildCountValue : providerPaginationExhausted ? canonicalMarkets.length : null;
+    const canonicalEventChildren = canonicalMarkets.map((item) => {
       const outcome = parsePolymarketOutcomes(item);
       const closed = item.closed === true || item.archived === true || item.acceptingOrders === false || item.active === false;
+      const rawLabel = providerChildRawLabel(item) || null;
       return {
         market_id: cleanText(item.id ?? item.conditionId ?? item.slug, 220),
+        condition_id: cleanText(item.conditionId, 220) || null,
+        market_slug: cleanText(item.slug, 400) || null,
+        token_ids: providerChildIdentifiers(item).token_ids,
+        raw_provider_child_label: rawLabel,
         question: cleanText(item.question, 700),
         status: closed ? "closed" : "open",
         result: normalizeProviderResult(item.result ?? item.resolutionResult ?? item.winningOutcome),
@@ -907,6 +1919,13 @@ export function adaptPolymarketResponse(payload, options = {}) {
       const resolutionUpstreamField = marketResolutionUrl
         ? "market.resolutionSource" : eventResolutionUrl ? "event.resolutionSource" : null;
       const parsed = parsePolymarketOutcomes(market);
+      const rawProviderChildLabel = providerChildRawLabel(market) || null;
+      const canonicalIdentity = providerChildCanonicalIdentity(market);
+      const identityDimension = familyDimension(market.question ?? event.title).dimension;
+      const optionIdentityRequired = event.negRisk === true || event.enableNegRisk === true
+        || ["outcome", "participant", "platform"].includes(identityDimension)
+        || isProviderPlaceholderLabel(rawProviderChildLabel);
+      const canonicalChildLabel = optionIdentityRequired ? canonicalIdentity.label : null;
       const childUnavailable = market.closed === true
         || market.archived === true
         || market.active === false
@@ -969,6 +1988,31 @@ export function adaptPolymarketResponse(payload, options = {}) {
           umaEndDate: market.umaEndDate ?? event.umaEndDate ?? null,
         },
       }, now, cacheMinutes);
+      candidate.raw_provider_child_label = rawProviderChildLabel;
+      candidate.identity_kind = optionIdentityRequired ? "option" : "contract";
+      candidate.canonical_child_label = canonicalChildLabel;
+      candidate.canonical_child_key = canonicalChildLabel
+        ? `option:${radarOptionSlug(canonicalChildLabel, 120)}` : null;
+      candidate.identity_status = !optionIdentityRequired || canonicalChildLabel ? "resolved" : "unresolved_placeholder";
+      candidate.identity_classification = !optionIdentityRequired || canonicalChildLabel
+        ? (optionIdentityRequired ? providerSemanticClassification(canonicalChildLabel) : null)
+          ?? (childUnavailable ? "provider_closed_child" : "identified_real_option")
+        : "provider_placeholder_pending_resolution";
+      candidate.identity_source = optionIdentityRequired ? canonicalIdentity.source : "provider_contract_identity";
+      candidate.identity_confidence = optionIdentityRequired ? canonicalIdentity.confidence : 100;
+      candidate.canonical_projection_version = RADAR_CHILD_PROJECTION_VERSION;
+      candidate.provider_payload = {
+        ...candidate.provider_payload,
+        raw_provider_child_label: rawProviderChildLabel,
+        identity_kind: candidate.identity_kind,
+        canonical_child_label: canonicalChildLabel,
+        identity_status: candidate.identity_status,
+        identity_classification: candidate.identity_classification,
+        canonical_event_children_total: declaredChildCount,
+        canonical_event_children_complete: providerPaginationExhausted
+          && declaredChildCount !== null && canonicalEventChildren.length === declaredChildCount,
+        provider_pagination_exhausted: providerPaginationExhausted,
+      };
       const closeMs = Date.parse(candidate.source_close_at ?? "");
       const nowMs = Date.parse(now);
       if (candidate.source_result || market.resolved === true || eventResolved) {
@@ -1085,6 +2129,35 @@ export function adaptKalshiResponse(payload, options = {}) {
         occurrence_datetime: market.occurrence_datetime ?? event.occurrence_datetime ?? null,
       },
     }, now, cacheMinutes);
+    const rawProviderChildLabel = providerChildRawLabel(market) || null;
+    const canonicalIdentity = providerChildCanonicalIdentity(market);
+    const marketUnavailable = !providerIsOpen(status);
+    const identityDimension = familyDimension(market.title ?? event.title).dimension;
+    const optionIdentityRequired = event.mutually_exclusive === true
+      || ["outcome", "participant", "platform"].includes(identityDimension)
+      || isProviderPlaceholderLabel(rawProviderChildLabel);
+    const canonicalChildLabel = optionIdentityRequired ? canonicalIdentity.label : null;
+    candidate.raw_provider_child_label = rawProviderChildLabel;
+    candidate.identity_kind = optionIdentityRequired ? "option" : "contract";
+    candidate.canonical_child_label = canonicalChildLabel;
+    candidate.canonical_child_key = canonicalChildLabel
+      ? `option:${radarOptionSlug(canonicalChildLabel, 120)}` : null;
+    candidate.identity_status = !optionIdentityRequired || canonicalChildLabel ? "resolved" : "unresolved_placeholder";
+    candidate.identity_classification = !optionIdentityRequired || canonicalChildLabel
+      ? (optionIdentityRequired ? providerSemanticClassification(canonicalChildLabel) : null)
+        ?? (marketUnavailable ? "provider_closed_child" : "identified_real_option")
+      : "provider_placeholder_pending_resolution";
+    candidate.identity_source = optionIdentityRequired ? canonicalIdentity.source : "provider_contract_identity";
+    candidate.identity_confidence = optionIdentityRequired ? canonicalIdentity.confidence : 100;
+    candidate.canonical_projection_version = RADAR_CHILD_PROJECTION_VERSION;
+    candidate.provider_payload = {
+      ...candidate.provider_payload,
+      raw_provider_child_label: rawProviderChildLabel,
+      identity_kind: candidate.identity_kind,
+      canonical_child_label: canonicalChildLabel,
+      identity_status: candidate.identity_status,
+      identity_classification: candidate.identity_classification,
+    };
     const marketType = cleanText(market.market_type, 80).toLowerCase();
     if (marketType && !["binary", "yes_no"].includes(marketType)) candidate.hard_reject_reasons.push(RADAR_REASON_CODES.EVENT_OUTSIDE_CONTRACT);
     if (candidate.source_result || ["determined", "finalized", "settled"].includes(status)) {
@@ -1182,7 +2255,24 @@ const FAMILY_UNIT_ALIASES = Object.freeze({
 });
 
 function familySlug(value, maxLength = 120) {
-  return normalizeComparableText(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, maxLength);
+  const bounded = Math.max(1, Math.min(240, Math.floor(Number(maxLength) || 120)));
+  const raw = cleanText(value, 500);
+  if (!raw) return "";
+  const folded = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const ascii = folded.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const encoded = [...raw.normalize("NFC").toLowerCase()]
+    .filter((character) => {
+      if (!/[\p{L}\p{N}]/u.test(character) || /[a-z0-9]/.test(character)) return false;
+      const latinFold = character.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return !/^[a-z0-9]$/i.test(latinFold);
+    })
+    .map((character) => character.codePointAt(0).toString(16)).join("-");
+  let slug = ascii && encoded ? `${ascii}-u-${encoded}` : ascii || (encoded ? `u-${encoded}` : "");
+  if (!slug || slug.length <= bounded) return slug;
+  const suffix = radarSlugHash(raw);
+  if (bounded <= suffix.length) return suffix.slice(0, bounded);
+  slug = `${slug.slice(0,Math.max(1,bounded-suffix.length-1)).replace(/-+$/g,"")}-${suffix}`;
+  return slug.slice(0,bounded);
 }
 
 function familyFoldText(value) {
@@ -2113,8 +3203,18 @@ function familyProviderPayload(candidate) {
 
 function familyStructuredChild(candidate, dimension) {
   const payload = familyProviderPayload(candidate);
+  const identityKind = cleanText(candidate?.identity_kind ?? payload.identity_kind, 40);
+  const effectiveDimension = identityKind === "option" && !["outcome", "participant", "platform"].includes(dimension)
+    ? "outcome" : dimension;
+  const optionDimension = identityKind === "option"
+    || ["outcome", "participant", "platform"].includes(effectiveDimension);
+  const identityStatus = cleanText(candidate?.identity_status ?? payload.identity_status, 80);
+  const identityClassification = cleanText(
+    candidate?.identity_classification ?? payload.identity_classification,
+    100,
+  );
   const rawYesLabel = cleanText(payload.yes_sub_title, 500);
-  let threshold = dimension === "threshold" && rawYesLabel
+  let threshold = identityKind !== "option" && effectiveDimension === "threshold" && rawYesLabel
     ? familyThreshold(rawYesLabel)
     : null;
   if (threshold?.unit === "count") {
@@ -2135,12 +3235,26 @@ function familyStructuredChild(candidate, dimension) {
       threshold,
     };
   }
-  const option = extractRadarOptionChild(candidate, dimension);
+  if (optionDimension && (["unresolved_placeholder", "conflict", "removed", "duplicate"].includes(identityStatus)
+      || identityClassification === "provider_placeholder_pending_resolution")) {
+    return {
+       dimension: effectiveDimension,
+       type: effectiveDimension === "outcome" ? "categorical_outcomes"
+         : effectiveDimension === "participant" ? "participant_options" : "platform_variants",
+      child_key: null,
+      child_label: null,
+      option_source_field: null,
+      option_confidence: 0,
+      option_placeholder: identityStatus === "unresolved_placeholder",
+    };
+  }
+  if (!optionDimension) return null;
+  const option = extractRadarOptionChild(candidate, effectiveDimension);
   if (option) {
     return {
-      dimension,
-      type: dimension === "outcome" ? "categorical_outcomes"
-        : dimension === "participant" ? "participant_options" : "platform_variants",
+      dimension: effectiveDimension,
+      type: effectiveDimension === "outcome" ? "categorical_outcomes"
+        : effectiveDimension === "participant" ? "participant_options" : "platform_variants",
       child_key: `option:${option.slug}`,
       child_label: option.label,
       option_source_field: option.source_field,
@@ -2167,14 +3281,15 @@ export function deriveMarketFamily(candidate) {
   const contentInvariant = contentContract
     ? `:${contentContract.kind}${contentContract.duration ? `:duration-${contentContract.duration.operator}-${contentContract.duration.value}-${contentContract.duration.unit}` : ""}`
     : "";
-  const familyKey = `atinara:v4:${familyEntityIdentity(entity)}:${dimension}${contentInvariant}`;
+  const familyKey = `atinara:v5:${familyEntityIdentity(entity)}:${dimension}${contentInvariant}`;
   const temporalChild = boundary
     ? (boundary.identity_ambiguous
       ? `deadline:ambiguous-timezone:${familySlug(boundary.timezone, 80)}:${familySlug(boundary.ambiguity_reason, 40)}:${boundary.canonical_operator}:${familySlug(boundary.canonical_local_instant ?? boundary.local_instant, 80)}:${boundary.granularity}`
       : `deadline:${boundary.canonical_operator}:${boundary.canonical_instant}:${boundary.granularity}`)
     : null;
-  let childKey = structuredChild?.child_key
-    ?? (threshold ? threshold.ambiguous
+  let childKey = structuredChild && Object.hasOwn(structuredChild, "child_key")
+    ? structuredChild.child_key
+    : (threshold ? threshold.ambiguous
       ? `threshold:ambiguous:${familySlug(threshold.raw_value, 80)}:${threshold.unit}`
       : `threshold:${threshold.operator}:${threshold.value}:${threshold.unit}`
       : temporalChild ?? `option:${familySlug(normalizedQuestion, 120)}`);
@@ -2182,7 +3297,9 @@ export function deriveMarketFamily(candidate) {
     const contentKind = contentContract?.kind ?? "trailer";
     childKey = `content:${contentKind}:${temporalChild ?? `option:${familySlug(normalizedQuestion, 120)}`}`;
   }
-  const childLabel = structuredChild?.child_label || (threshold
+  const childLabel = structuredChild && Object.hasOwn(structuredChild, "child_label")
+    ? structuredChild.child_label
+    : (threshold
     ? (threshold.ambiguous
       ? `Umbral ambiguo ${threshold.raw_value} ${threshold.unit}`
       : `Umbral ${threshold.operator} ${threshold.value} ${threshold.unit}`)
@@ -2466,6 +3583,36 @@ function providerEvidence(candidate) {
 
 export function evaluateProviderEligibility(candidate, now = new Date().toISOString()) {
   const hardReasons = new Set(candidate?.hard_reject_reasons ?? []);
+  const identityStatus = cleanText(candidate?.identity_status, 80);
+  const identityClassification = cleanText(candidate?.identity_classification, 100);
+  if (identityStatus === "unresolved_placeholder"
+      || identityClassification === "provider_placeholder_pending_resolution") {
+    return {
+      eligible: false,
+      conclusive: false,
+      reason_code: RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED,
+      reason: reasonCopy(RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED),
+      confidence: 100,
+      ttl_minutes: 60,
+      evidence: [],
+    };
+  }
+  const reconciliationStatus = cleanText(candidate?.parent_reconciliation_status, 80);
+  if (reconciliationStatus && reconciliationStatus !== "complete") {
+    return {
+      eligible: false,
+      conclusive: false,
+      reason_code: reconciliationStatus === "inconsistent_provider_count"
+        ? RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT
+        : RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE,
+      reason: reasonCopy(reconciliationStatus === "inconsistent_provider_count"
+        ? RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT
+        : RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE),
+      confidence: 100,
+      ttl_minutes: 60,
+      evidence: [],
+    };
+  }
   const sourceResult = normalizeProviderResult(candidate?.source_result);
   if (sourceResult || hardReasons.has(RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED)) {
     const resultCopy = sourceResult ? ` como «${providerResultLabel(sourceResult)}»` : "";
@@ -2551,8 +3698,8 @@ export function evaluateProviderEligibility(candidate, now = new Date().toISOStr
     return {
       eligible: false,
       conclusive: false,
-      reason_code: RADAR_REASON_CODES.PROVIDER_PLACEHOLDER,
-      reason: reasonCopy(RADAR_REASON_CODES.PROVIDER_PLACEHOLDER),
+      reason_code: RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED,
+      reason: reasonCopy(RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED),
       confidence: 100,
       ttl_minutes: 60,
       evidence: [],
@@ -2819,7 +3966,16 @@ export function groupCandidates(candidates = []) {
       category: lead?.atinara_category ?? lead?.source_category ?? "Industria",
       verification_status: sorted.some((item) => item.verification_status === "verified_open") ? "verified_open" : lead?.verification_status ?? "needs_review",
       quality_score: Math.max(...sorted.map((item) => safeNumber(item.quality_score) ?? 0), 0),
-      child_count: sorted.length,
+      child_count: Number.isSafeInteger(Number(lead?.provider_declared_child_count))
+        ? Number(lead.provider_declared_child_count) : sorted.length,
+      provider_declared_child_count: safeNumber(lead?.provider_declared_child_count),
+      provider_accounted_child_count: safeNumber(lead?.provider_accounted_child_count),
+      provider_identified_child_count: safeNumber(lead?.provider_identified_child_count),
+      provider_unresolved_child_count: safeNumber(lead?.provider_unresolved_child_count),
+      provider_pagination_exhausted: lead?.provider_pagination_exhausted === true,
+      parent_reconciliation_status: cleanText(lead?.parent_reconciliation_status, 80) || null,
+      parent_reconciliation_version: cleanText(lead?.parent_reconciliation_version, 100) || null,
+      parent_reconciliation_fingerprint: cleanText(lead?.parent_reconciliation_fingerprint, 80) || null,
       candidates: sorted,
       top_candidates: sorted.filter((item) => !RADAR_REJECTED_STATUSES.includes(item.verification_status)).slice(0, 3),
     };
@@ -2878,6 +4034,22 @@ const RADAR_LIST_TEXT_FIELDS = Object.freeze({
   prepared_draft_id: 80,
   provider_refresh_checked_at: 100,
   provider_refresh_state: 80,
+  raw_provider_child_label: 300,
+  canonical_child_label: 300,
+  canonical_child_key: 240,
+  identity_kind: 40,
+  identity_classification: 100,
+  identity_status: 80,
+  identity_source: 120,
+  availability_status: 80,
+  parent_child_occurrence_key: 500,
+  parent_child_identity_key: 500,
+  parent_child_fingerprint: 80,
+  canonical_projection_version: 100,
+  parent_reconciliation_id: 80,
+  parent_reconciliation_status: 80,
+  parent_reconciliation_version: 100,
+  parent_reconciliation_fingerprint: 80,
 });
 
 const RADAR_LIST_NUMBER_FIELDS = Object.freeze([
@@ -2887,12 +4059,64 @@ const RADAR_LIST_NUMBER_FIELDS = Object.freeze([
   "parent_rank",
   "preparation_revision",
   "current_eligibility_check_id",
+  "identity_confidence",
+  "provider_declared_child_count",
+  "provider_discovered_child_count",
+  "provider_accounted_child_count",
+  "provider_identified_child_count",
+  "provider_unresolved_child_count",
+  "provider_removed_child_count",
+  "provider_closed_child_count",
+  "provider_duplicate_child_count",
+  "provider_conflict_child_count",
 ]);
 
 const RADAR_LIST_BOOLEAN_FIELDS = Object.freeze([
   "is_stale",
   "eligibility_state_preserved",
+  "provider_pagination_exhausted",
 ]);
+
+const INVALID_CATEGORICAL_CHILD_LABEL = /(?:^\s*deadline:|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})|^\s*(?:lt|lte|gt|gte)\s+\d|^\s*(?:ET|year)\s*$|^\s*(?:before|after|by|on\s+or\s+before|on\s+or\s+after|during|in|antes\s+de|despu[eé]s\s+de|hasta|durante|en)\s+\d{4}(?:\s|$)|^\s*\d{4}(?:\s*\((?:ET|year)\))?\s*$)/i;
+
+export function isCanonicalRadarChildProjectionValid(candidate = {}) {
+  if (cleanText(candidate?.canonical_projection_version, 100) !== RADAR_CHILD_PROJECTION_VERSION) return false;
+  if (!["categorical_outcomes", "participant_options", "platform_variants"]
+    .includes(cleanText(candidate?.family_type, 80))) return true;
+  const classification = cleanText(candidate?.identity_classification, 100);
+  const familyKey = cleanText(candidate?.family_child_key, 240);
+  const canonicalKey = cleanText(candidate?.canonical_child_key, 240);
+  const familyLabel = cleanText(candidate?.family_child_label, 300);
+  const canonicalLabel = cleanText(candidate?.canonical_child_label, 300);
+  const expectedKey = canonicalLabel ? `option:${radarOptionSlug(canonicalLabel, 120)}` : "";
+  return [
+    "identified_real_option", "aggregate_other_option", "tie_option",
+    "no_winner_option", "provider_closed_child",
+  ].includes(classification)
+    && cleanText(candidate?.identity_status, 80) === "resolved"
+    && /^option:[a-z0-9][a-z0-9-]{0,237}$/.test(canonicalKey)
+    && familyKey === canonicalKey
+    && canonicalKey === expectedKey
+    && Boolean(canonicalLabel)
+    && normalizeComparableText(familyLabel) === normalizeComparableText(canonicalLabel)
+    && !INVALID_CATEGORICAL_CHILD_LABEL.test(canonicalLabel);
+}
+
+export function isRadarParentComplete(candidate = {}) {
+  const declared = safeNumber(candidate?.provider_declared_child_count);
+  const discovered = safeNumber(candidate?.provider_discovered_child_count);
+  const accounted = safeNumber(candidate?.provider_accounted_child_count);
+  return cleanText(candidate?.parent_reconciliation_status, 80) === "complete"
+    && cleanText(candidate?.parent_reconciliation_version, 100) === RADAR_PARENT_RECONCILIATION_VERSION
+    && /^[a-f0-9]{64}$/.test(cleanText(candidate?.parent_reconciliation_fingerprint, 80))
+    && Boolean(cleanText(candidate?.external_event_id ?? candidate?.provider_parent_id, 220))
+    && candidate?.provider_pagination_exhausted === true
+    && Number.isInteger(declared) && declared >= 0
+    && Number.isInteger(discovered) && discovered === declared
+    && Number.isInteger(accounted) && accounted === declared
+    && safeNumber(candidate?.provider_unresolved_child_count) === 0
+    && safeNumber(candidate?.provider_conflict_child_count) === 0;
+}
 
 function projectRadarListEvidenceLink(value) {
   if (!isRecord(value)) return null;
@@ -2948,6 +4172,8 @@ function projectRadarListWorkflowIssue(value) {
   return {
     issue_id: cleanText(value.issue_id, 80) || null,
     issue_code: cleanText(value.issue_code, 100) || null,
+    detected_by: cleanText(value.detected_by, 80) || null,
+    severity: cleanText(value.severity, 40) || null,
     blocking_scope: cleanText(value.blocking_scope, 40) || null,
     repairability: cleanText(value.repairability, 80) || null,
     status: cleanText(value.status, 40) || "open",
@@ -3007,8 +4233,58 @@ function projectRadarListGroup(group) {
     category: cleanText(group.category, 120) || "Industria",
     verification_status: cleanText(group.verification_status, 80) || "needs_review",
     quality_score: nullableFiniteNumber(group.quality_score) ?? 0,
-    child_count: candidates.length,
+    child_count: Math.max(candidates.length, Math.floor(nullableFiniteNumber(group.provider_declared_child_count) ?? 0)),
+    provider_declared_child_count: nullableFiniteNumber(group.provider_declared_child_count),
+    provider_accounted_child_count: nullableFiniteNumber(group.provider_accounted_child_count),
+    provider_identified_child_count: nullableFiniteNumber(group.provider_identified_child_count),
+    provider_unresolved_child_count: nullableFiniteNumber(group.provider_unresolved_child_count),
+    provider_pagination_exhausted: group.provider_pagination_exhausted === true,
+    parent_reconciliation_status: cleanText(group.parent_reconciliation_status, 80) || null,
+    parent_reconciliation_version: cleanText(group.parent_reconciliation_version, 100) || null,
+    parent_reconciliation_fingerprint: cleanText(group.parent_reconciliation_fingerprint, 80) || null,
     candidates,
+  };
+}
+
+export function projectRadarParentReconciliation(value = {}) {
+  if (!isRecord(value)) return null;
+  const number = (field) => {
+    const result = nullableFiniteNumber(value[field]);
+    return result === null ? null : Math.max(0, Math.floor(result));
+  };
+  return {
+    id: cleanText(value.id, 80) || null,
+    provider: cleanText(value.provider, 40),
+    provider_parent_id: cleanText(value.provider_parent_id, 220),
+    raw_provider_parent_label: cleanText(value.raw_provider_parent_label, 500) || null,
+    canonical_parent_label: cleanText(value.canonical_parent_label, 500) || null,
+    raw_provider_category: cleanText(value.raw_provider_category, 120) || null,
+    atinara_category: cleanText(value.atinara_category, 120) || null,
+    category: cleanText(value.category, 120) || null,
+    external_parent_url: safePublicUrl(value.external_parent_url),
+    horizon_at: safeIsoDate(value.horizon_at),
+    provider_declared_child_count: number("provider_declared_child_count"),
+    provider_discovered_child_count: number("provider_discovered_child_count"),
+    provider_accounted_child_count: number("provider_accounted_child_count"),
+    provider_identified_child_count: number("provider_identified_child_count"),
+    provider_unresolved_child_count: number("provider_unresolved_child_count"),
+    provider_removed_child_count: number("provider_removed_child_count"),
+    provider_closed_child_count: number("provider_closed_child_count"),
+    provider_duplicate_child_count: number("provider_duplicate_child_count"),
+    provider_conflict_child_count: number("provider_conflict_child_count"),
+    legacy_expected_child_count: number("legacy_expected_child_count"),
+    legacy_accounted_child_count: number("legacy_accounted_child_count"),
+    new_child_count: number("new_child_count"),
+    provider_pagination_exhausted: value.provider_pagination_exhausted === true,
+    reconciliation_status: cleanText(value.reconciliation_status, 80),
+    reconciliation_version: cleanText(value.reconciliation_version, 100),
+    normalizer_version: cleanText(value.normalizer_version, 100),
+    family_version: cleanText(value.family_version, 100),
+    reconciliation_fingerprint: cleanText(value.reconciliation_fingerprint, 80),
+    checked_at: safeIsoDate(value.checked_at),
+    next_retry_at: safeIsoDate(value.next_retry_at),
+    source_refs: safeReconciliationEvidence(value.source_refs).slice(0, 12),
+    issue: isRecord(value.issue) ? projectRadarListWorkflowIssue(value.issue) : null,
   };
 }
 
@@ -3041,17 +4317,33 @@ export function projectRadarDiscoveryView(view = {}) {
   const groups = (Array.isArray(source.groups) ? source.groups : [])
     .map(projectRadarListGroup).filter(Boolean);
   const candidates = radarCandidateFlatProjection(groups);
+  const parentReconciliations = (Array.isArray(source.parent_reconciliations)
+    ? source.parent_reconciliations : [])
+    .map(projectRadarParentReconciliation).filter(Boolean);
   const page = isRecord(source.page) ? source.page : {};
+  const reconciliationPage = isRecord(source.reconciliation_page) ? source.reconciliation_page : {};
   return {
     groups,
     candidates,
     candidate_count: candidates.length,
+    parent_reconciliations: parentReconciliations,
+    reconciliation_page: {
+      total: Math.max(parentReconciliations.length, Math.floor(nullableFiniteNumber(reconciliationPage.total) ?? 0)),
+      offset: Math.max(0, Math.floor(nullableFiniteNumber(reconciliationPage.offset) ?? 0)),
+      limit: Math.max(1, Math.floor(nullableFiniteNumber(reconciliationPage.limit) ?? 20)),
+      previous_offset: reconciliationPage.previous_offset === null
+        ? null : nullableFiniteNumber(reconciliationPage.previous_offset),
+      next_offset: reconciliationPage.next_offset === null
+        ? null : nullableFiniteNumber(reconciliationPage.next_offset),
+      snapshot_available: reconciliationPage.snapshot_available === true,
+    },
     rejected: projectRadarRejectionSummary(source.rejected),
     providers: Array.isArray(source.providers) ? source.providers.filter(isRecord) : [],
     page: {
       parent_count: Math.max(groups.length, Math.floor(nullableFiniteNumber(page.parent_count) ?? 0)),
       parent_offset: Math.max(0, Math.floor(nullableFiniteNumber(page.parent_offset) ?? 0)),
       parent_limit: Math.max(1, Math.floor(nullableFiniteNumber(page.parent_limit) ?? Math.max(groups.length, 1))),
+      previous_parent_offset: nullableFiniteNumber(page.previous_parent_offset),
       next_parent_offset: nullableFiniteNumber(page.next_parent_offset),
     },
   };
@@ -3193,7 +4485,10 @@ function rejectionPresentation(candidate, nowMs = Date.now()) {
 export function summarizeRejections(candidates = []) {
   const counts = {};
   const items = candidates
-    .filter((item) => RADAR_REJECTED_STATUSES.includes(item.verification_status))
+    .filter((item) => RADAR_REJECTED_STATUSES.includes(item.verification_status)
+      && cleanText(item.normalizer_version, 100) === RADAR_NORMALIZER_VERSION
+      && cleanText(item.identity_status, 80) === "resolved"
+      && cleanText(item.parent_reconciliation_status, 80) === "complete")
     .map((item) => rejectionPresentation(item));
   for (const item of items) {
     const code = item.verification_reason_code ?? "UNKNOWN";
@@ -3617,15 +4912,33 @@ function releaseDeadlinePresentation(candidate) {
   return temporalCopy ? `¿Se lanzará ${subject} ${temporalCopy}?` : null;
 }
 
+const RADAR_PROVIDER_LABELS_ES = Object.freeze({
+  "best multiplayer": "Mejor multijugador",
+});
+
+export function localizeRadarProviderLabel(value) {
+  const original = cleanText(value, 300);
+  const translated = RADAR_PROVIDER_LABELS_ES[normalizeComparableText(original)] ?? null;
+  return {
+    original,
+    label: translated ?? original,
+    translated: Boolean(translated),
+    catalog_version: RADAR_PROVIDER_LABEL_CATALOG_VERSION,
+  };
+}
+
 function awardOutcomePresentation(candidate) {
   const question = cleanText(candidate?.source_question ?? candidate?.atinara_question, 700)
     .replace(/^[¿\s]+|[?\s]+$/g, "");
   const match = question.match(/^will\s+(.+?)\s+win\s+(.+)$/i);
   if (!match || !/\b(?:award|awards|best|prize|premio)\b/i.test(match[2])) return null;
   const subject = cleanText(match[1], 240);
-  const award = cleanText(match[2]
-    .replace(/\s+at\s+the\s+(20\d{2})\s+game\s+awards$/i, " en The Game Awards $1")
-    .replace(/\s+at\s+the\s+game\s+awards$/i, " en The Game Awards"), 300);
+  const rawAward = cleanText(match[2], 300);
+  const gameAwards = rawAward.match(/^(.+?)\s+at\s+the\s+(?:(20\d{2})\s+)?game\s+awards$/i);
+  const localizedCategory = gameAwards ? localizeRadarProviderLabel(gameAwards[1]).label : null;
+  const award = gameAwards
+    ? `${localizedCategory} en The Game Awards${gameAwards[2] ? ` ${gameAwards[2]}` : ""}`
+    : localizeRadarProviderLabel(rawAward).label;
   return subject && award ? `¿Ganará ${subject} el premio ${award}?` : null;
 }
 
@@ -3640,7 +4953,7 @@ function radarGroupTitlePresentation(value) {
   const cover = title.match(/^(.+?)\s*:\s*(?:cover\s+athlete|cover\s+star)$/i);
   if (cover) return `${cleanText(cover[1], 300)} · Atleta de portada`;
   const award = title.match(/^(the\s+game\s+awards)\s*:\s*(.+)$/i);
-  if (award) return `The Game Awards · ${cleanText(award[2], 260)}`;
+  if (award) return `The Game Awards · ${localizeRadarProviderLabel(award[2]).label}`;
   return null;
 }
 
@@ -3669,6 +4982,7 @@ export function normalizeRadarCandidatePresentation(candidate) {
       ...candidate,
       ...(question ? { atinara_question: question } : {}),
       ...(groupTitle ? { atinara_group_title: groupTitle } : {}),
+      presentation_localization_version: RADAR_PROVIDER_LABEL_CATALOG_VERSION,
     }
     : candidate;
 }
@@ -3887,7 +5201,10 @@ export function applyDeterministicRadarEligibility(candidate, decision = null, n
     || code === RADAR_REASON_CODES.VERIFICATION_REQUIRED
     || code === RADAR_REASON_CODES.VERIFICATION_EXPIRED
     || code === RADAR_REASON_CODES.GAMING_DOMAIN_REVIEW_REQUIRED
-    || code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER;
+    || code === RADAR_REASON_CODES.PROVIDER_PLACEHOLDER
+    || code === RADAR_REASON_CODES.PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED
+    || code === RADAR_REASON_CODES.RADAR_PARENT_RECONCILIATION_INCOMPLETE
+    || code === RADAR_REASON_CODES.PROVIDER_PARENT_COUNT_INCONSISTENT;
   const status = eligible ? "verified_open"
     : code === RADAR_REASON_CODES.EVENT_ALREADY_RESOLVED ? "rejected_resolved"
       : code === RADAR_REASON_CODES.DUPLICATE_MARKET ? "rejected_duplicate"

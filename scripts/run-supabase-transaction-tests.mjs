@@ -14,6 +14,7 @@ const required = [
   "radar_expert_save_wrapper_v1_transaction.sql",
   "radar_provider_resumability_v1_transaction.sql",
   "radar_provider_resumability_v1_load_transaction.sql",
+  "radar_parent_reconciliation_v1_transaction.sql",
   "market_workflow_orchestration_v1_transaction.sql",
   "radar_refresh_timeout_transaction.sql",
   "expert_market_cycle_v2_transaction.sql",
@@ -44,6 +45,7 @@ const officialRequired = ["official_opportunity_idempotency_v2_transaction.sql"]
 const radarResilienceRequired = [
   "radar_provider_resumability_v1_transaction.sql",
   "radar_provider_resumability_v1_load_transaction.sql",
+  "radar_parent_reconciliation_v1_transaction.sql",
   "radar_refresh_timeout_transaction.sql",
   "expert_market_cycle_v2_transaction.sql",
   "radar_retryable_status_v10_transaction.sql",

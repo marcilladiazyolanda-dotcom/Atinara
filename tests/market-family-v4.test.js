@@ -46,14 +46,14 @@ function gtaTrailer(month, overrides = {}) {
   });
 }
 
-test("v4 agrupa cinco meses GTA como hermanos y nunca como duplicados", () => {
+test("v5 agrupa cinco meses GTA como hermanos y nunca como duplicados", () => {
   const months = ["Jul", "Aug", "Sep", "Oct", "Nov"];
   const fixtures = months.map((month, index) => gtaTrailer(month, { id: `gta-trailer-${index}` }));
   const families = fixtures.map((item) => radar.deriveMarketFamily(item));
 
   assert.equal(new Set(families.map((family) => family.family_key)).size, 1);
   assert.equal(new Set(families.map((family) => family.family_child_key)).size, months.length);
-  assert.ok(families.every((family) => family.family_version === "atinara-market-family-v4"));
+  assert.ok(families.every((family) => family.family_version === "atinara-market-family-v5"));
   assert.ok(families.every((family) => family.family_key.endsWith("official_content:trailer:duration-gte-30-seconds")));
 
   for (let index = 1; index < fixtures.length; index += 1) {
@@ -112,7 +112,11 @@ test("v4 usa la opción estructurada como identidad aunque exista una frontera t
   assert.equal(new Set(families.map((family) => family.family_key)).size, 1);
   assert.deepEqual(
     families.map((family) => family.family_child_key),
-    ["option:half-life-3", "option:saros", "option:slay-the-spire-2"],
+    [
+      `option:${radar.radarOptionSlug("Half-Life 3")}`,
+      "option:saros",
+      `option:${radar.radarOptionSlug("Slay the Spire 2")}`,
+    ],
   );
   assert.ok(families.every((family) => family.family_sort_at === "2027-01-01T00:00:00.000Z"));
   assert.equal(radar.classifyMarketRelations(nominees[1], [nominees[0]]).duplicates.length, 0);
@@ -129,9 +133,11 @@ test("v4 mantiene el mismo slug Unicode y rechaza etiquetas afirmativas genéric
     provider_payload: { yes_sub_title: label, no_sub_title: label },
   });
 
-  assert.equal(radar.deriveMarketFamily(candidate("Pokémon")).family_child_key, "option:pokemon");
-  assert.equal(radar.deriveMarketFamily(candidate("Poke\u0301mon")).family_child_key, "option:pokemon");
-  assert.equal(radar.deriveMarketFamily(candidate("İstanbul")).family_child_key, "option:istanbul");
+  const pokemonKey=`option:${radar.radarOptionSlug("Pokémon")}`;
+  assert.equal(radar.deriveMarketFamily(candidate("Pokémon")).family_child_key,pokemonKey);
+  assert.equal(radar.deriveMarketFamily(candidate("Poke\u0301mon")).family_child_key,pokemonKey);
+  assert.equal(radar.deriveMarketFamily(candidate("İstanbul")).family_child_key,
+    `option:${radar.radarOptionSlug("İstanbul")}`);
   for (const genericLabel of ["Yes!", "Sí!", "---"]) {
     assert.equal(
       radar.deriveMarketFamily(candidate(genericLabel)).family_child_key,
@@ -140,14 +146,14 @@ test("v4 mantiene el mismo slug Unicode y rechaza etiquetas afirmativas genéric
   }
 });
 
-test("v4 generaliza acrónimo y sufijo sin un registro hardcodeado", () => {
+test("v5 generaliza acrónimo y sufijo sin un registro hardcodeado", () => {
   const shortName = definition("Will TES VI be released before 2028?", { id: "tes-short" });
   const longName = definition("Will The Elder Scrolls VI be released before 2028?", { id: "tes-long" });
   const numericName = definition("Will The Elder Scrolls 6 be released before 2028?", { id: "tes-numeric" });
   const shortFamily = radar.deriveMarketFamily(shortName);
   const longFamily = radar.deriveMarketFamily(longName);
 
-  assert.equal(shortFamily.family_key, "atinara:v4:tesvi:release_date");
+  assert.equal(shortFamily.family_key, "atinara:v5:tesvi:release_date");
   assert.equal(shortFamily.family_key, longFamily.family_key);
   assert.equal(shortFamily.family_key, radar.deriveMarketFamily(numericName).family_key);
   assert.equal(radar.classifyMarketRelations(shortName, [longName]).duplicates.length, 1);
@@ -310,7 +316,7 @@ test("v4 separa el invariante de 30 segundos de los umbrales genuinos", () => {
   assert.doesNotMatch(thresholdFamily.family_key, /official_content/);
 });
 
-test("v4 recalcula payloads v2/v3 y solo bloquea exact_duplicate v4", () => {
+test("v5 recalcula payloads legacy y solo bloquea exact_duplicate v5", () => {
   const candidate = definition("Will GTA VI be released before October 1, 2026?", { id: "candidate" });
   const stale = {
     ...definition("Will Grand Theft Auto VI be released before November 1, 2026?", { id: "stale" }),
@@ -323,8 +329,9 @@ test("v4 recalcula payloads v2/v3 y solo bloquea exact_duplicate v4", () => {
   assert.deepEqual(relations.duplicates, []);
   assert.equal(relations.siblings[0].relationship, "sibling");
   assert.equal(radar.isBlockingDuplicateMatch({ relationship: "exact_duplicate", family_version: "atinara-market-family-v3", blocking: true }), false);
-  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "semantic_duplicate", family_version: "atinara-market-family-v4", blocking: true }), false);
-  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "exact_duplicate", family_version: "atinara-market-family-v4", blocking: true }), true);
+  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "semantic_duplicate", family_version: "atinara-market-family-v5", blocking: true }), false);
+  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "exact_duplicate", family_version: "atinara-market-family-v4", blocking: true }), false);
+  assert.equal(radar.isBlockingDuplicateMatch({ relationship: "exact_duplicate", family_version: "atinara-market-family-v5", blocking: true }), true);
 });
 
 test("la migración v4 es autoritativa, transaccional e inerte para la economía", () => {

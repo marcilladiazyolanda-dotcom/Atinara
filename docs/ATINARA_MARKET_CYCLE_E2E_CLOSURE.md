@@ -1,21 +1,28 @@
 # Atinara · cierre E2E del ciclo de mercado 13.5.2
 
-Última actualización: 22 de agosto de 2026.
+Última actualización: 24 de agosto de 2026.
 
 ## Estado de esta evidencia
 
 Este documento separa la candidata local, el despliegue y la demostración
-productiva. El paquete V6 y su corrección Sonar ya están en `origin/main`
-`0fa29d440e6cb63bf11aeb9c8b226fc8c0200942`; CI/Pages/Sonar están verdes,
-las dos migraciones y las seis Edge afectadas están desplegadas. El smoke se
-detuvo antes del refresh por una regresión de tamaño de respuesta cuya corrección
-diferencial todavía debe subir Yol. Por tanto, el veredicto actual es:
+productiva. El paquete V6, Sonar y el presupuesto de respuesta ya están en
+`origin/main = 3d0db378d216c753635d066c86a31af24cf1fcea`; CI/Pages/Sonar están
+verdes y producción conserva `market-radar` v58. El smoke sigue detenido antes
+del primer refresh: la comprobación posterior reveló que la proyección legacy
+no acreditaba completitud del padre, reducía 48 hijas a 21 opciones visibles y
+usaba `deadline:*` como identidad categórica. Por tanto, el veredicto actual es:
 
 **13.5.2 NO APTO PARA CIERRE · pendiente de checkpoint Radar y E2E productivo.**
 
+El checkpoint local actual sí está verde: 548/548 unitarias, 9/9 Edge con
+Deno 2.1.14, SQL estático 18/18, parser PostgreSQL y browser 18 casos. Esto no
+sustituye la aplicación transaccional ni el smoke autenticado en producción;
+la base productiva no se ha modificado durante esta reparación.
+
 Este estado no es un rechazo de la implementación. Impide presentar pruebas
 locales como evidencia de producción. Solo podrá cambiar a `APTO PARA CIERRE`
-después de publicar el checkpoint, redesplegar Radar, completar los smokes y un
+después de subir la reconciliación incremental, migrar, redesplegar Radar y el
+frontend, completar el único refresh/smoke y un
 recorrido real hasta `review_approved`. La confirmación humana se detiene para
 Yol; ninguna IA puede realizarla.
 
@@ -43,6 +50,9 @@ Yol; ninguna IA puede realizarla.
     lista plana como dentro del grupo, incluía payloads internos y añadía cien
     rechazos completos. El corpus real alcanzó 5.832.218 bytes y la Edge devolvió
     500 antes incluso de iniciar un refresh.
+12. El manifest durable solo probaba el array ya reunido; no existía un ledger
+    de total declarado, paginación agotada e identidad por hija. Los snapshots
+    v2 podían parecer vigentes y una inactividad ocultaba primero el placeholder.
 
 Las correcciones son reglas generales, no excepciones por título, proveedor o
 fixture. Registry V2.1 no se usa como ledger y conserva versión y huella.
@@ -63,6 +73,13 @@ fixture. Registry V2.1 no se usa como ledger y conserva versión y huella.
 - Fuente de publicación: una única check PRIMARY más reciente es autoritativa;
   su inserción se serializa con el lock del borrador y nunca se retrocede a una
   check anterior todavía fresca.
+- Reconciliación Radar: `atinara-radar-v3`,
+  `atinara-market-family-v5`,
+  `atinara-radar-parent-reconciliation-v1` y
+  `atinara-radar-child-projection-v1`; un padre incompleto solo aparece en la
+  sección técnica, nunca como catálogo reducido o rechazo falso. Los lotes se
+  promueven y finalizan en una sola transacción visible; preparación liga una
+  instantánea fresca exacta de padre e hija.
 
 ## Matriz de responsabilidades
 
@@ -77,6 +94,8 @@ fixture. Registry V2.1 no se usa como ledger y conserva versión y huella.
 | `ELIGIBILITY_EXPIRED` | Radar/publicación | Radar | aprobación o publicación | `refresh_draft_eligibility` | No usa Gemini sobre snapshot obsoleto; conserva expediente. |
 | `GAMING_DOMAIN_REVIEW_REQUIRED` | Radar | Revisión humana | aprobación | `review_gaming_domain_manually` | Una señal ambigua exige decisión administrativa auditada; no se trata como terminal. |
 | `PROVIDER_PLACEHOLDER` | Radar | Radar | ninguno | `recheck_provider_identity` | No Editor ni borrador hasta que exista una opción concreta. |
+| `PROVIDER_CHILD_IDENTITY_RESOLUTION_REQUIRED` | Radar | Radar | aprobación | `recheck_provider_identity` | Conserva IDs/raw y reintenta endpoints oficiales; no inventa ni crea rechazo. |
+| `RADAR_PARENT_RECONCILIATION_INCOMPLETE` | Radar | Radar | aprobación | `retry_provider_refresh` | El padre queda fuera del catálogo hasta declarado = contabilizado y cero identidades pendientes. |
 | `SOURCE_STALE` | publicación | Puerta de publicación/Corrector | publicación | `revalidate_temporal_evidence` | Conserva revisión/confirmación y vuelve al agente responsable. |
 | `PUBLICATION_EVIDENCE_BASELINE_MISSING` | publicación | Validator | aprobación | `request_market_validation` | Sin backfill: invalida autoridad no demostrable, conserva la check actual y exige nueva revisión y confirmación. |
 | `PUBLICATION_TECHNICAL_FAILURE` | publicación/scheduler | Plataforma interna | publicación | `retry_market_publication` | Backoff acotado e intento idempotente; no duplica mercado. |
@@ -113,20 +132,20 @@ temporalmente inaccesible o respuesta inválida nunca entra en esos estados.
 
 | Puerta | Resultado local |
 |---|---|
-| Base | `HEAD = origin/main = 1ca7f79…` antes de editar. |
-| Sintaxis | 126 archivos JavaScript. |
-| Unitarias | 490/490. |
+| Base | Rama incremental `codex/atinara-v6-parent-reconciliation` sobre `origin/main = 3d0db378…`; producción sin cambios. |
+| Sintaxis | 127 archivos JavaScript/ESM revisados; Edge Radar supera `deno check`. |
+| Unitarias | 548/548, incluidas cardinalidades 1/3/21/48/101/480, ledger combinado de 500 ocurrencias, transición legacy y familia v5. |
 | Canonical JSON | Node/Deno idénticos; 13 dominio, 10 golden, 22 inválidos, SHA `14141cff…`. |
 | TypeScript | `tsc --project tsconfig.json`. |
-| Edge | 9/9 con IA externa desactivada. |
-| SQL estático | 17/17. |
+| Edge | Las nueve Edge superan `deno check` con Deno 2.1.14; las modificadas por esta incidencia permanecen acotadas a Radar, Validator y Corrector. |
+| SQL estático | 18/18. Migración y test nuevo pasan el parser PostgreSQL real. |
 | Migraciones | 58 archivos; 57 aplicados desde cero en PostgreSQL 17. Se omite únicamente `20260809145000_reconcile_authoritative_radar_fact_gate_v2.sql`, reconciliación material histórica que exige manifiesto productivo. |
-| SQL dinámico | 17/17 dentro de `BEGIN/ROLLBACK`. |
+| SQL dinámico | La evidencia V6 anterior fue 17/17. La reconciliación nueva queda pendiente de una base desechable/local o del postflight post-subida; no se ensayó contra producción. |
 | Carga Radar | 240 candidatas dentro de límites. |
 | Concurrencia Radar | `started=1`, `in_progress=1`, dos proveedores bajo la UUID canónica, una finalización/replay y un único probe half-open. |
 | Concurrencia publicación | Dos sesiones con la misma UUID: un intento, un mercado, un borrador publicado y un replay; las checks se serializan y el retry técnico se resuelve; base desechable. |
 | Concurrencia Official Opportunity | Un run, una finalización, un replay y finalización tardía `interrupted`. |
-| Navegador local | Once casos de UI en 390/768/1366 px, sin overflow ni red externa. Auth, RPC y Edge son dobles controlados; no demuestra Browser→Edge→Postgres ni producción. |
+| Navegador local | Dieciocho casos en 390/768/1366 px, incluidos 48/48, 21/48, rechazo real, detalle técnico y paginación de padres/reconciliaciones con retorno desde página vacía, sin overflow ni red externa. Auth, RPC y Edge son dobles controlados; no demuestra Browser→Edge→Postgres ni producción. |
 | Benchmark | 5/5 técnico; `externalNetworkCalls=0`; cero ground truth aprobado. |
 | Dependencias | `npm audit --offline`: 0 vulnerabilidades. |
 | Codex | 10 skills, 4 subagentes, 25 reglas, 50 ejemplos. |

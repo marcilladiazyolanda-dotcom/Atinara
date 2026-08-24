@@ -583,7 +583,7 @@ test("Familias · los meses de tráiler GTA son hijos distintos y 30 segundos es
   const septemberFamily = radar.deriveMarketFamily(september);
   const octoberFamily = radar.deriveMarketFamily(october);
 
-  assert.equal(septemberFamily.family_version, "atinara-market-family-v4");
+  assert.equal(septemberFamily.family_version, "atinara-market-family-v5");
   assert.equal(septemberFamily.family_type, "deadline_ladder");
   assert.equal(septemberFamily.family_key, octoberFamily.family_key);
   assert.match(septemberFamily.family_key, /official_content:trailer:duration-gte-30-seconds$/);

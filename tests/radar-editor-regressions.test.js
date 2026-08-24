@@ -261,7 +261,7 @@ test("un estado abierto nunca se reutiliza; un rechazo terminal idéntico sí ca
     eligibility_policy_version: "atinara-prediction-policy-v5",
   };
   const verified = {
-    normalizer_version: "atinara-radar-v2",
+    normalizer_version: "atinara-radar-v3",
     eligibility_policy_version: "atinara-prediction-policy-v5",
     fingerprint: "fingerprint-1",
     verification_status: "verified_open",
