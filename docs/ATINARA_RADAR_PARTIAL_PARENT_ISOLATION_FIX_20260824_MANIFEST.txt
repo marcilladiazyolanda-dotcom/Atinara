@@ -1,0 +1,46 @@
+ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824
+Generated: 2026-08-24
+Base: origin/main 413b075058a32a1f106a320afdabe75f51ae1d32
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+A docs/ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824.md
+A docs/ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824_MANIFEST.txt
+A supabase/migrations/20260824180000_allow_partial_radar_parent_persistence_v1.sql
+M supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+M tests/radar-parent-reconciliation.test.js
+
+SHA-256 PAYLOAD FILES
+b97cea219d0204105a210142fbdedf6538784d55ca2865288f6dfd7e4c95e3bc  ORAKLO_PROJECT_CONTEXT.md
+6115f2dd63b632a2319d0d2f5ac7759b0239571f7bc133b7ccaed9a5e0fa7e3e  docs/ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824.md
+67a2a015af63611477f9c0d640546055c1f0264db389de32bb80fbf1f6a0e755  supabase/migrations/20260824180000_allow_partial_radar_parent_persistence_v1.sql
+260fc4de58f0b807ee928c1909b61fb95957b606f2f7063345c51eca76e741c3  supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+86852a0e6df132656e18017a07bcceecb85afe303f5f6e4a222973cfcf0c8ef4  tests/radar-parent-reconciliation.test.js
+
+MIGRATIONS
+20260824180000_allow_partial_radar_parent_persistence_v1.sql
+
+EDGE FUNCTIONS: none
+FRONTEND FILES: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+
+VERIFICATION
+- node --test tests/*.test.js: 552 passed, 0 failed
+- node --test tests/radar-parent-reconciliation.test.js: 53 passed, 0 failed
+- JavaScript syntax: 127 valid
+- SQL transaction structure: 18 valid, 0 invalid
+- exact migration plus full SQL transaction suite on production: passed, ROLLBACK
+- git diff --check: passed
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- confirm migration 20260824180000 absent and all three preflight hashes exact
+- apply only migration 20260824180000; no Edge or frontend deploy
+- resume request 2798d1af-9ccd-4b79-9be7-37d5876d9484 exactly once
+- verify five Kalshi batches, partial-parent isolation, replay, UI and invariants
+- continue Radar to Editor only after the smoke passes

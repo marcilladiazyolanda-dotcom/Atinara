@@ -17,6 +17,7 @@ declare
   incomplete_request_id uuid:=gen_random_uuid();
   legacy_partial_request_id uuid:=gen_random_uuid();
   rollback_request_id uuid:=gen_random_uuid();
+  pagination_partial_request_id uuid:=gen_random_uuid();
   lease_owner_value uuid:=gen_random_uuid();
   lease_token_value uuid;
   started jsonb;
@@ -30,10 +31,13 @@ declare
   incomplete_lease uuid;
   legacy_partial_lease uuid;
   rollback_lease uuid;
+  pagination_partial_lease uuid;
   incomplete_parent jsonb;
   incomplete_issue jsonb;
   process_parent jsonb;
   legacy_partial_parent jsonb;
+  pagination_partial_parent jsonb;
+  pagination_partial_result jsonb;
   candidate_value jsonb;
   valid_candidate jsonb;
   invalid_candidate jsonb;
@@ -1281,6 +1285,107 @@ begin
      or not exists(select 1 from private.market_radar_refresh_intents_v1
        where request_id=rollback_request_id and status='in_progress' and phase='persisting') then
     raise exception 'TEST_RADAR_ATOMIC_MULTI_BATCH_PARTIAL_WRITE';
+  end if;
+
+  -- Una página histórica temporalmente no disponible deja su padre incompleto,
+  -- pero no puede bloquear la promoción atómica de una hermana completa del
+  -- mismo proveedor. El resultado del proveedor debe ser parcial y reanudable,
+  -- y el replay no puede duplicar la candidata ya promovida.
+  perform public.finalize_market_radar_refresh_v5(
+    rollback_request_id,'polymarket','candidate_feed',rollback_lease,
+    'unavailable','RADAR_TEST_ABORT','persistence',null
+  );
+  perform set_config('request.jwt.claims',jsonb_build_object(
+    'sub',admin_id,'role','authenticated'
+  )::text,true);
+  perform public.claim_market_radar_provider_probe_v1(
+    'polymarket','candidate_feed',pagination_partial_request_id
+  );
+  process_started:=public.begin_market_radar_refresh_v2(
+    pagination_partial_request_id,'polymarket','candidate_feed',repeat('1',64),
+    'atinara-radar-v3:test-parent-pagination-partial','atinara-radar-v3',
+    'atinara-prediction-policy-v5',gen_random_uuid()
+  );
+  pagination_partial_lease:=(process_started ->> 'lease_token')::uuid;
+  incomplete_issue:=private.market_workflow_server_issue_v1(
+    'RADAR_PARENT_RECONCILIATION_INCOMPLETE','radar','provider',
+    'auto_recoverable','approval','retry_provider_refresh',
+    jsonb_build_object('provider_parent_id','parent-1','pagination_exhausted',false),
+    true,'atinara-radar-parent-reconciliation-v1'
+  );
+  pagination_partial_parent:=process_parent||jsonb_build_object(
+    'provider_pagination_exhausted',false,
+    'reconciliation_status','provider_unavailable',
+    'reconciliation_fingerprint',repeat('2',64),
+    'next_retry_at',clock_timestamp()+interval '5 minutes',
+    'issue',incomplete_issue
+  );
+  perform set_config('request.jwt.claims','{"role":"service_role"}',true);
+  perform public.record_market_radar_provider_selection_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
+    jsonb_build_object(
+      'policy_version','atinara-radar-parent-selection-v1','total_parent_count',2,
+      'selected_parent_count',2,'deferred_parent_count',0,'selected_child_count',4,
+      'no_parent_truncated',true,
+      'selected_parent_ids',jsonb_build_array('parent-1','parent-3'),
+      'deferred_parent_ids','[]'::jsonb
+    )
+  );
+  response:=public.record_market_radar_parent_reconciliations_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
+    jsonb_build_array(pagination_partial_parent,parent_value)
+  );
+  if response ->> 'incomplete_parent_count'<>'1'
+     or (select provider_pagination_exhausted
+       from private.market_radar_refresh_intents_v1
+       where request_id=pagination_partial_request_id) is not false then
+    raise exception 'TEST_RADAR_PARTIAL_PARENT_MANIFEST_INVALID:%',response;
+  end if;
+  valid_candidate:=valid_candidate||jsonb_build_object(
+    'cache_key','atinara-radar-v3:test-parent-pagination-partial'
+  );
+  perform public.declare_market_radar_refresh_manifest_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,1
+  );
+  perform public.stage_market_radar_refresh_batch_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,0,
+    jsonb_build_array(jsonb_build_object(
+      'candidate',valid_candidate,'eligibility_check',valid_eligibility
+    ))
+  );
+  perform public.seal_market_radar_refresh_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,1
+  );
+  pagination_partial_result:=public.complete_market_radar_candidate_refresh_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
+    'available',null,null,null
+  );
+  if pagination_partial_result ->> 'status'<>'partial_error'
+     or pagination_partial_result ->> 'outcome'<>'partial'
+     or pagination_partial_result #>> '{issue,issue_code}'
+       <>'RADAR_PARENT_RECONCILIATION_INCOMPLETE'
+     or pagination_partial_result ->> 'atomic_candidate_commit'<>'true'
+     or not exists (
+       select 1 from private.external_market_candidates candidate
+       join private.market_radar_parent_reconciliations_v1 parent_alias
+         on parent_alias.id=candidate.current_parent_reconciliation_id
+       where candidate.provider='polymarket' and candidate.external_id='3-1'
+         and parent_alias.request_id=pagination_partial_request_id
+         and parent_alias.reconciliation_status='complete'
+         and private.market_radar_candidate_reconciliation_ready_v1(candidate)
+     ) then
+    raise exception 'TEST_RADAR_PARTIAL_PARENT_DID_NOT_ISOLATE:%',pagination_partial_result;
+  end if;
+  replay:=public.complete_market_radar_candidate_refresh_v1(
+    pagination_partial_request_id,'polymarket','candidate_feed',pagination_partial_lease,
+    'available',null,null,null
+  );
+  if replay ->> 'status'<>'partial_error'
+     or replay ->> 'outcome'<>'partial'
+     or replay ->> 'replayed'<>'true'
+     or (select count(*) from private.external_market_candidates
+       where provider='polymarket' and external_id='3-1')<>1 then
+    raise exception 'TEST_RADAR_PARTIAL_PARENT_REPLAY_INVALID:%',replay;
   end if;
 
   select jsonb_build_object(

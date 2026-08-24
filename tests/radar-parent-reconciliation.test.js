@@ -34,6 +34,10 @@ const legacyRepresentationMigration = readFileSync(new URL(
   "../supabase/migrations/20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql",
   import.meta.url,
 ), "utf8");
+const partialParentPersistenceMigration = readFileSync(new URL(
+  "../supabase/migrations/20260824180000_allow_partial_radar_parent_persistence_v1.sql",
+  import.meta.url,
+), "utf8");
 
 function child(id, label, overrides = {}) {
   return {
@@ -94,6 +98,21 @@ test("la migración legacy es aditiva, bloquea drift y cuenta identidades lógic
   assert.match(legacyRepresentationMigration, /^commit;/m);
   assert.doesNotMatch(legacyRepresentationMigration,
     /\b(?:insert\s+into|update\s+private\.|delete\s+from|truncate\s+)\b/i);
+});
+
+test("la migración de padre parcial aísla el fallo sin volver candidate-ready al padre incompleto", () => {
+  assert.match(partialParentPersistenceMigration,
+    /RADAR_PARTIAL_PARENT_BATCH_PREFLIGHT_DRIFT/);
+  assert.match(partialParentPersistenceMigration,
+    /not provider_pagination_exhausted_value then 'partial_error'/);
+  assert.match(partialParentPersistenceMigration,
+    /RADAR_PARENT_RECONCILIATION_INCOMPLETE/);
+  assert.match(partialParentPersistenceMigration,
+    /coalesce\(intent\.response_summary,'\{\}'::jsonb\)/);
+  assert.match(partialParentPersistenceMigration, /^begin;/m);
+  assert.match(partialParentPersistenceMigration, /^commit;/m);
+  assert.doesNotMatch(partialParentPersistenceMigration,
+    /\b(?:insert\s+into|update\s+(?:public|private)\.|delete\s+from|truncate\s+)\b/i);
 });
 
 for (const count of [1, 3, 21, 48, 101, 480]) {

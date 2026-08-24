@@ -4,24 +4,61 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el primer refresh V6:** `origin/main` está
-> en `2ac36203ea4aae38b69d821828408cc12bf58e82`; `market-radar` v59 está
-> `ACTIVE` con `verify_jwt=true`. Las migraciones V6 constan una sola vez como
-> `20260822164140` y `20260822164309`, y la corrección SQL posterior figura como
-> `20260824124210 · fix_radar_parent_reconciliation_child_alias_v1`. Las cinco
-> tareas de IA siguen en `legacy_direct`; OpenRouter y NVIDIA NIM permanecen
-> desactivados, sin rutas y con presupuestos cero. El refresh administrativo sin
-> Gemini `93b078a3-a54c-49d3-bf62-e2438d6eae5a` creó intención durable y enumeró
-> todos los padres/hijas, pero Polymarket y Kalshi fallaron antes de los batches:
-> el primero por representaciones legacy duplicadas de una misma hija estable y
-> el segundo por una divergencia de espaciado entre contrato canónico y contrato
-> firmado. El E2E continúa detenido antes de Editor. Mercados, predicciones,
-> perfiles, Karma, Prestigio, LMSR, histórico y borradores permanecen intactos.
-> Está pendiente subir y desplegar el paquete incremental documentado en
-> `docs/ATINARA_RADAR_LIVE_RECONCILIATION_FIX_20260824.md`. No hacer push directo
-> a `main` ni repetir las migraciones ya aplicadas.
+> **Estado productivo verificado tras el segundo refresh V6:** `origin/main`
+> está en `413b075058a32a1f106a320afdabe75f51ae1d32`; la migración local
+> `20260824153000_fix_radar_legacy_representation_reconciliation_v1.sql` consta
+> aplicada una sola vez como `20260824153114`, y `market-radar` v60 está
+> `ACTIVE` con `verify_jwt=true`. Las cinco tareas de IA siguen en
+> `legacy_direct`; OpenRouter y NVIDIA NIM permanecen desactivados, sin rutas y
+> con presupuestos cero. El refresh administrativo sin Gemini
+> `2798d1af-9ccd-4b79-9be7-37d5876d9484` promovió las 74 hijas Polymarket, pero
+> Kalshi quedó durable y reanudable antes de los batches: siete padres están
+> completos y el padre `KXPS6-26` está correctamente `provider_unavailable`
+> porque una página histórica oficial respondió con limitación temporal. El
+> guard global `RADAR_PARENT_MANIFEST_REQUIRED` impide hoy promover también los
+> padres completos. El E2E continúa detenido antes de Editor y no debe pulsarse
+> otra continuación hasta aplicar el paquete incremental descrito en
+> `docs/ATINARA_RADAR_PARTIAL_PARENT_ISOLATION_FIX_20260824.md`. No repetir la
+> migración `20260824153000`, no redesplegar Edge y no iniciar un refresh nuevo.
 
-### Persistencia live de reconciliación · 24 de agosto de 2026
+### Aislamiento de padre parcial en la persistencia Radar · 24 de agosto de 2026
+
+- El segundo refresh V6 creó una única intención durable, con request ID
+  `2798d1af-9ccd-4b79-9be7-37d5876d9484`. Polymarket completó cinco batches:
+  74 esperadas, 74 procesadas, 74 aceptadas, cero cuarentenas y cero fallos.
+  Tavily falló técnicamente de forma aislada y sin datos. Kalshi declaró 105
+  candidatas y persistió el ledger completo de ocho padres y 109 hijas, pero
+  sus cinco batches permanecen pendientes.
+- Siete padres Kalshi agotaron paginación y quedaron completos. Para `KXPS6-26`,
+  los endpoints current y nested coincidieron en la hija `KXPS6-26-DEC31`; el
+  endpoint histórico oficial respondió `PROVIDER_RATE_LIMITED`. El padre quedó
+  honestamente `provider_unavailable`, con paginación no agotada, issue estable
+  y próximo reintento. No se inventó identidad ni se ocultó la hija.
+- La causa raíz restante está en los writers SQL: las guardas globales de
+  `process_market_radar_refresh_batch_v2` y
+  `finalize_market_radar_refresh_v4` exigían paginación completa de todos los
+  padres antes de procesar cualquier batch. Esa política fail-closed era
+  correcta para el padre incompleto, pero propagaba su indisponibilidad a los
+  siete padres independientes que sí cumplen el contrato.
+- La migración nueva
+  `20260824180000_allow_partial_radar_parent_persistence_v1.sql` no contiene DML
+  ni backfill. Mantiene las comprobaciones por candidata y por padre, promueve
+  únicamente candidatas ligadas a una reconciliación completa y finaliza la
+  capacidad como `partial_error/RADAR_PARENT_RECONCILIATION_INCOMPLETE` cuando
+  alguna paginación sigue abierta. El replay devuelve el resultado terminal
+  persistido y no repite candidatos ni efectos.
+- La migración se probó junto con toda la suite transaccional sobre producción
+  dentro de `BEGIN/ROLLBACK`: un proveedor con un padre completo y otro parcial
+  conserva el segundo no elegible, promueve el primero una sola vez y reanuda
+  idempotentemente. Localmente pasan 552 unitarias, sintaxis de 127 JavaScript,
+  18 matrices SQL y `git diff --check`.
+- El paquete no cambia Edge, frontend, secretos, Registry V2.1, IA, economía ni
+  datos de dominio. Tras su subida se aplicará solo la migración nueva y se
+  reanudará la misma UUID con «Continuar actualización»; no se ejecutará otro
+  refresh. Solo después se completarán el SELECT de aceptación, replay, smoke
+  visual y la continuidad Radar → Editor.
+
+### Persistencia live de reconciliación · corte previo del 24 de agosto de 2026
 
 - El refresh `93b078a3-a54c-49d3-bf62-e2438d6eae5a` enumeró 74 hijas de tres
   padres Polymarket y 109 hijas de ocho padres Kalshi, con paginación agotada y
