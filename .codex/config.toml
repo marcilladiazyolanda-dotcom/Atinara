@@ -29,8 +29,10 @@ default_tools_approval_mode = "writes"
 approvals_reviewer = "user"
 
 [agents]
-enabled = true
-# Los subagentes se reservan para investigación, revisión y pruebas independientes.
-# Cuatro hilos son un techo, no un objetivo: no se deben lanzar por rutina.
-max_concurrent_threads_per_session = 4
+# Por defecto, una orden de Yol se ejecuta en un único hilo principal.
+# Desactivar multiagente evita que una sola tarea genere subagentes y consumo paralelo.
+enabled = false
+# Defensa adicional si Yol autoriza reactivar multiagente para una tarea excepcional.
+# Este límite excluye el hilo principal.
+max_concurrent_threads_per_session = 1
 interrupt_message = true
