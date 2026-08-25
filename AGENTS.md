@@ -141,6 +141,17 @@ Pensar en el futuro B2B no autoriza a añadir funciones fuera del alcance. Oblig
 
 ## 7. Forma de trabajo acordada
 
+### Control de consumo y subagentes
+
+- Por defecto, cada tarea se ejecuta íntegramente en el hilo principal. Mantén `agents.enabled = false` en `.codex/config.toml`.
+- No crees, delegues ni lances subagentes, agentes auxiliares, tareas paralelas o ejecuciones independientes salvo autorización expresa de Yol en el prompt actual. La autorización general para implementar, revisar o usar Codex no autoriza multiagente.
+- El uso de un worktree solo aísla el checkout. No autoriza abrir otros chats, worktrees o hilos para el mismo encargo. Mantén un único chat activo por incidencia y no dupliques el prompt.
+- Los perfiles de `.codex/agents/*.toml` se conservan para usos excepcionales, pero su presencia no autoriza ejecutarlos.
+- Si Yol autoriza expresamente un subagente, limita la concurrencia a uno, úsalo solo para investigación, revisión o pruebas independientes de solo lectura y mantén un único implementador. Antes de lanzarlo, indica su función, alcance, modelo y razonamiento previstos.
+- Si el subagente no es imprescindible o no está autorizado, realiza investigación, implementación, pruebas y revisión de forma secuencial en el hilo principal. No lo lances solo para reducir tiempo de reloj.
+
+### Ejecución general
+
 - Un único implementador por tarea. No coordines dos agentes editando los mismos archivos simultáneamente.
 - Inspecciona antes de cambiar y limita el alcance a lo pedido.
 - Work puede haber revisado GitHub, Supabase, SQL, pruebas o producción. No repitas esas comprobaciones sin necesidad; reutiliza evidencia vigente y verifica solo lo afectado o riesgoso.
