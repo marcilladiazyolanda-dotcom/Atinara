@@ -38,7 +38,10 @@ consumió 25/25 series, descubrió 11 padres y 146 hijas y completó Tavily, per
 la escritura del ledger de padres falló antes de manifest o batches. El wrapper
 todavía degradó la regla SQL interna a `PROVIDER_UNAVAILABLE`; la corrección
 incremental conserva ahora `databaseMessage`, SQLSTATE y retryabilidad para
-revelar la causa exacta sin atribuir falsamente la caída al proveedor.
+revelar la causa exacta sin atribuir falsamente la caída al proveedor. La
+primera subida no se desplegó porque Deno detectó que su tipo `JsonRecord` no
+garantizaba el contrato estructurado de persistencia; el paquete actual corrige
+solo ese tipo y deja idéntico el comportamiento runtime.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -49,7 +52,7 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
-[`docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md`](docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md).
+[`docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md`](docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 

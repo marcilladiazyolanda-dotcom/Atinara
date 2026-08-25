@@ -5,7 +5,7 @@
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado productivo verificado tras aislar series Kalshi V6:**
-> `origin/main` está en `155b2c86a25d5a2c20f0345f687ae6b7a8a70da9`;
+> `origin/main` está en `0be8e614c686e6294260faddc2fb36b80da11955`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
 > sola vez y `market-radar` v65 está `ACTIVE`, `verify_jwt=true`, digest
 > `dcb6288f7e3f92dd6b3dfe08640a1b3ce5f7e2c33b3568d81fca1e527d5038c8`.
@@ -25,9 +25,26 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > 146 hijas, con `failed_series_count=0`. La escritura del ledger de padres falló
 > antes de manifest o batches y el wrapper aún sustituyó la regla SQL interna por
 > `PROVIDER_UNAVAILABLE`; no hubo escrituras Kalshi de candidatas, padres,
-> manifest ni batches. El E2E permanece pausado hasta desplegar la preservación
-> diagnóstica documentada en
-> `docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md`.
+> manifest ni batches. La preservación diagnóstica ya está en GitHub, pero no se
+> desplegó: CI detectó que su retorno `JsonRecord` era demasiado amplio para el
+> contrato tipado de persistencia. El E2E permanece pausado hasta subir la
+> corrección mínima documentada en
+> `docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md`.
+
+### Contrato TypeScript del error interno Radar · 25 de agosto de 2026
+
+- La subida `0be8e614c686e6294260faddc2fb36b80da11955` contiene exactamente los
+  seis archivos del paquete diagnóstico. Pages y benchmark finalizaron en verde.
+- La puerta funcional `Calidad de Atinara` falló en `npm run test:edge`:
+  Deno 2.1.14 emitió `TS2322` y `TS2345` porque `JsonRecord` no garantiza las
+  propiedades `provider`, `code`, `status` y `message` exigidas por
+  `RadarPersistenceError`.
+- La corrección declara el retorno como intersección entre
+  `ReturnType<typeof publicProviderError>` y `JsonRecord`. No usa cast, no cambia
+  el objeto en runtime y mantiene extensibles `retryable` y `database_code`.
+- El chequeo exacto pasa las nueve Edge; también pasan 562 unitarias, 128
+  archivos JavaScript y 19 contratos SQL. Producción continúa intacta en v65 y
+  no se ejecutó un nuevo refresh.
 
 ### Preservación de errores internos Radar · 25 de agosto de 2026
 

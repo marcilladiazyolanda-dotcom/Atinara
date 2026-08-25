@@ -862,7 +862,10 @@ function providerFailure(error: unknown, provider: string) {
   };
 }
 
-function internalRadarRpcFailure(error: unknown, provider: string): JsonRecord | null {
+function internalRadarRpcFailure(
+  error: unknown,
+  provider: string,
+): (ReturnType<typeof publicProviderError> & JsonRecord) | null {
   if (!(error instanceof RadarRpcError) || !error.databaseMessage) return null;
   const code = radarOperationalErrorCode(error, "RADAR_PERSISTENCE_FAILED");
   const timedOut = error.databaseCode === "57014" || error.status === 504

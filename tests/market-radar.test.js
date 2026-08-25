@@ -871,6 +871,7 @@ test("la revalidación conserva el código SQL de dominio y distingue identidad 
 
 test("discovery y persistencia conservan la regla SQL interna sin llamarla caída del proveedor", () => {
   assert.match(edge, /function internalRadarRpcFailure/);
+  assert.match(edge, /ReturnType<typeof publicProviderError> & JsonRecord/);
   assert.match(edge, /error instanceof RadarRpcError/);
   assert.match(edge, /radarOperationalErrorCode\(error, "RADAR_PERSISTENCE_FAILED"\)/);
   assert.match(edge, /database_code: error\.databaseCode \|\| null/);

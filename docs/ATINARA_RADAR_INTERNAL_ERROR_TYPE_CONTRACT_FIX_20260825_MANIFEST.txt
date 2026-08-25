@@ -1,0 +1,70 @@
+ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 0be8e614c686e6294260faddc2fb36b80da11955
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md
+A docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+79c70b36ac6efd5dc828f3f04a812d16921f5b084adc6ab66b082a542f9f6d0d  docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md
+9f78e06b41a8e3ce16f09e7e74f6e857fd822dd47db5ec1e09ba308adcb5795d  ORAKLO_PROJECT_CONTEXT.md
+a88d441df0156d01ad5a34e5ee72982115e9dcab5473cdb59695a1d902cc7038  README.md
+04e6943cf3dc5268bf0a771b872c221eee0411fe84aaed9f9bc2c85e341e7bcd  supabase/functions/market-radar/index.ts
+9360e4697c29155de1a22953bf5f7c05bdafe1fccc278634e90c3e078bba287b  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts only; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+ECONOMY: unchanged
+RUNTIME BEHAVIOR: unchanged; TypeScript contract only
+
+VERIFICATION
+- all unit tests: 562 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- Deno 2.1.14 Edge checks: 9 passed, 0 failed
+- market-radar TypeScript: passed
+- git diff --check: passed
+
+CI DIAGNOSIS
+- GitHub SHA 0be8e614c686e6294260faddc2fb36b80da11955
+- Pages: success
+- Benchmark IA offline: success
+- Calidad de Atinara run 32872289159: failed before deploy
+- failed step: Comprobar Edge Functions sin llamadas externas
+- reproduced TS2322 and TS2345 in market-radar with Deno 2.1.14
+- root cause: JsonRecord did not prove the publicProviderError fields
+- correction: ReturnType<typeof publicProviderError> & JsonRecord
+
+PRODUCTION CHECKPOINT
+- market-radar v65 ACTIVE verify_jwt=true digest dcb6288f7e3f92dd6b3dfe08640a1b3ce5f7e2c33b3568d81fca1e527d5038c8
+- no deploy or refresh executed after the CI failure
+- Kalshi UUID 0cfba4f3-c258-48cb-8c6c-4bde7afac576 remains terminal technical_failed
+- Tavily completed; Kalshi discovery reached 25/25 series, 11 parents and 146 children
+- zero Kalshi parent, manifest, batch or candidate writes in that UUID
+- markets=15, drafts=6, predictions=9, maker_state=15, price_history=17
+- Karma=2932, Prestige=40
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- require the GitHub Edge check to pass or reproduce the remote result locally
+- confirm production remains v65 and invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- respect cooldown and start exactly one Kalshi refresh
+- capture the preserved SQL rule and database_code
+- do not retry blindly after obtaining the exact rule
+- correct the exact persistence cause before the Radar-to-draft E2E
