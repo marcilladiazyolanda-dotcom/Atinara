@@ -1,23 +1,59 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 24 de agosto de 2026.
+Última actualización del contexto: 25 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el tercer intento durable V6:**
-> `origin/main` está en `0af8e8090cfe4ccb3eca73f0d75348c483fca15d`;
-> `20260824180000_allow_partial_radar_parent_persistence_v1.sql` consta aplicada
-> una sola vez como `20260824174351`, y `market-radar` v60 continúa `ACTIVE` con
-> `verify_jwt=true`. La misma intención sin Gemini
-> `2798d1af-9ccd-4b79-9be7-37d5876d9484` conserva Polymarket 74/74 y Kalshi
-> 105 staged, 0 procesadas, cinco batches pendientes y `claim_count=3`. La
-> continuación superó la guardia de padre parcial, pero PostgREST canceló la RPC
-> monolítica con `RADAR_PERSISTENCE_TIMEOUT`: el rol autenticador limita cada
-> sentencia a 8 s y el completion completo tarda 11,53 s. No hubo otra UUID,
-> batch parcial, cuarentena, borrador ni mutación económica. Está pendiente el
-> paquete incremental documentado en
-> `docs/ATINARA_RADAR_BATCH_RESUME_VISIBILITY_FIX_20260824.md`; no pulsar otra
-> continuación, no repetir `20260824180000` y no iniciar un refresh nuevo.
+> **Estado productivo verificado tras completar la intención durable V6:**
+> `origin/main` está en `5ad6ae96413c37bbecea69f4f18b391d994fa2b2`;
+> `20260825134153_harden_radar_batch_resume_visibility_v1` consta aplicada una
+> sola vez y `market-radar` v61 está `ACTIVE`, `verify_jwt=true`, digest
+> `75991fc5c8b66f616cfd7f126341b52a1618d89d49d16f48d5d10839e0471794`.
+> La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
+> `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
+> cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
+> endpoint histórico de Kalshi respondió 429; los siete padres completos no se
+> perdieron. La persistencia no cambió mercados, predicciones, perfiles,
+> borradores, Karma, Prestigio, LMSR ni histórico de precios.
+>
+> El postflight visual descubrió una incidencia posterior a la persistencia:
+> las RPC v4/v2 entregan 3,65 MB de candidatas y 2,89 MB de rechazos antes del
+> saneado Edge. La lectura termina en HTTP 500 aunque el commit de los batches
+> sea correcto. Además, la auditoría de reconciliación muestra Madden y FC27 sin
+> explicar en cada tarjeta que aportan cero oportunidades, lo que puede
+> confundirse con el catálogo. Ambos están correctamente terminales por
+> `EVENT_ALREADY_RESOLVED`: Madden aporta 17 terminales y 4 inactivas; FC27, 23
+> terminales; ninguno se proyecta como candidata. La corrección incremental está
+> documentada en `docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md`. No pulsar
+> de nuevo «Continuar actualización»: la intención ya es terminal. El E2E hacia
+> Editor permanece pausado hasta desplegar y verificar esa corrección.
+
+### Frontera ligera de catálogo y resultados públicos · 25 de agosto de 2026
+
+- El click productivo único reutilizó la UUID durable y completó los cinco
+  batches Kalshi 20/22/23/22/18. El error HTTP ocurrió después del commit, al
+  reconstruir la vista administrativa; no se repitió ningún batch.
+- La causa raíz general es una frontera mal situada: SQL devolvía expedientes
+  completos de dominio y la Edge los recortaba después de PostgREST. Con 88
+  candidatas no rechazadas y 65 rechazos actuales, esa frontera transportaba
+  6,54 MB. La nueva proyección SQL versionada reduce los tres inputs principales
+  a 835.015 bytes sobre los datos reales y deja que la paginación por padres
+  respete el presupuesto de respuesta de 900.000 bytes.
+- El contrato factual vigente no depende del estado `open` del proveedor. Una
+  evidencia oficial directa, exacta, recuperada y ligada al contrato marca
+  terminal anuncios, lanzamientos, hitos, premios, métricas y otros hechos. Los
+  rumores, predicciones, filtraciones o lenguaje especulativo nunca acreditan
+  resolución. La detección no usa Gemini ni nombres hardcodeados.
+- La UI separa «Auditoría de integridad» de «Oportunidades actuales» y recibe
+  por padre recuentos de catálogo, preparables, holds, terminales, resultados
+  públicos, inactivas, duplicadas e inválidas. Un padre ya resuelto se conserva
+  auditable, pero declara explícitamente cero oportunidades.
+- La cuadrícula usa un mínimo intrínseco de 520 px y `auto-fit`; una única
+  familia deja de comprimirse en media columna y conserva acciones legibles en
+  escritorio, tableta y móvil.
+- Evidencia actual: 558 pruebas unitarias, sintaxis de 128 JavaScript, 19
+  matrices SQL estáticas, 18 casos browser en 390/768/1366 px, migración y test
+  SQL exactos sobre producción con `ROLLBACK`, y `git diff --check` verde.
 
 ### Persistencia durable por batch y visibilidad atómica · 24 de agosto de 2026
 

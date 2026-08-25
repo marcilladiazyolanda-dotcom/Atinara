@@ -367,6 +367,11 @@ const completeParentReconciliation = {
   provider_unresolved_child_count: 0, provider_removed_child_count: 0,
   provider_closed_child_count: 0, provider_duplicate_child_count: 0,
   provider_conflict_child_count: 0, provider_pagination_exhausted: true,
+  catalog_candidate_count: 48, preparable_child_count: 48,
+  eligible_child_count: 48, technical_hold_child_count: 0,
+  terminal_child_count: 0, resolved_result_child_count: 0,
+  inactive_child_count: 0, duplicate_candidate_child_count: 0,
+  invalid_child_count: 0,
   reconciliation_status: "complete", reconciliation_version: "atinara-radar-parent-reconciliation-v1",
   normalizer_version: "atinara-radar-v3", family_version: "atinara-market-family-v5",
   reconciliation_fingerprint: "8".repeat(64), checked_at: "2026-08-22T12:00:00Z",
@@ -397,6 +402,8 @@ const incompleteParentReconciliation = {
   ...completeParentReconciliation,
   id: "99999999-0000-4000-8000-000000000002",
   provider_identified_child_count: 21, provider_unresolved_child_count: 27,
+  catalog_candidate_count: 0, preparable_child_count: 0,
+  eligible_child_count: 0, technical_hold_child_count: 0,
   reconciliation_status: "incomplete_provider_metadata",
   reconciliation_fingerprint: "7".repeat(64), next_retry_at: "2026-08-22T13:00:00Z",
   issue: {
@@ -936,9 +943,26 @@ try {
   assert.equal(await reconciledCase.page.locator(".radar-event-option").count(), 48);
   const reconciledText = await reconciledCase.page.textContent("body");
   assert.match(reconciledText, /48 opciones declaradas/);
+  assert.match(reconciledText, /48 opciones en catálogo/);
+  assert.match(reconciledText, /Oportunidades actuales/);
   assert.match(reconciledText, /Marathon/);
   assert.match(reconciledText, /Resolved Option 48/);
   assert.doesNotMatch(reconciledText, /\bGame A(?:\s|$)|\bGame Z(?:\s|$)|another game|deadline:|lte 2027/i);
+  const reconciledLayout = await reconciledCase.page.evaluate(() => {
+    const grid = document.querySelector(".radar-candidate-grid")?.getBoundingClientRect();
+    const card = document.querySelector(".radar-event-card")?.getBoundingClientRect();
+    const option = document.querySelector(".radar-event-option")?.getBoundingClientRect();
+    const copy = document.querySelector(".radar-event-option-copy")?.getBoundingClientRect();
+    const actions = document.querySelector(".radar-event-option-actions")?.getBoundingClientRect();
+    return {
+      gridWidth: grid?.width || 0, cardWidth: card?.width || 0,
+      optionWidth: option?.width || 0,
+      overlaps: Boolean(copy && actions && copy.right > actions.left + 1),
+    };
+  });
+  assert.ok(reconciledLayout.gridWidth > 0 && reconciledLayout.cardWidth >= reconciledLayout.gridWidth * 0.95);
+  assert.ok(reconciledLayout.optionWidth > 0);
+  assert.equal(reconciledLayout.overlaps, false);
   await reconciledCase.page.click(`[data-radar-reconciliation="${completeParentReconciliation.id}"]`);
   await reconciledCase.page.waitForSelector("#radar-reconciliation-detail").catch(async () => {
     const debug = await reconciledCase.page.evaluate(() => ({

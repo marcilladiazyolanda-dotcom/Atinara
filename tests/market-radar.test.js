@@ -1024,7 +1024,7 @@ test("los descartes deterministas no consumen el enriquecedor y Kalshi reconcili
 test("la caché solo conserva decisiones de elegibilidad vigentes", () => {
   assert.match(edge, /function hasCurrentEligibility/);
   assert.match(edge, /filter\(\(candidate\) => filters\.quality !== "fit" \|\| hasCurrentEligibility\(candidate, checkedAt\)\)/);
-  assert.match(edge, /list_market_radar_candidates_v4/);
+  assert.match(edge, /list_market_radar_candidates_v5/);
   assert.match(edge, /requires_eligibility_refresh: !cachedAuthoritative/);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
 });
@@ -1150,7 +1150,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260824-radar-batch-resume1/);
+  assert.match(adminHtml, /v=20260825-radar-catalog-bound1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

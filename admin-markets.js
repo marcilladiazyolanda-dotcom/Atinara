@@ -1339,6 +1339,27 @@
     return count === null ? "No disponible" : String(count);
   }
 
+  function radarReconciliationCatalogSummary(item) {
+    const catalog = radarIntegerCount(item?.catalog_candidate_count);
+    const preparable = radarIntegerCount(item?.preparable_child_count);
+    const resolved = radarIntegerCount(item?.resolved_result_child_count);
+    const terminal = radarIntegerCount(item?.terminal_child_count);
+    const inactive = radarIntegerCount(item?.inactive_child_count);
+    const holds = radarIntegerCount(item?.technical_hold_child_count);
+    if ([catalog, preparable, resolved, terminal, inactive, holds].every((value) => value === null)) return "";
+    const details = [];
+    if ((resolved || 0) > 0) details.push(`${resolved} con resultado oficial ya publicado`);
+    const otherTerminal = Math.max(0, (terminal || 0) - (resolved || 0));
+    if (otherTerminal > 0) details.push(`${otherTerminal} terminales por otra causa`);
+    if ((inactive || 0) > 0) details.push(`${inactive} inactivas en el proveedor`);
+    if ((holds || 0) > 0) details.push(`${holds} pendientes de comprobación`);
+    const lead = catalog === 0
+      ? "Sin oportunidades activas"
+      : `${catalog} ${catalog === 1 ? "opción en catálogo" : "opciones en catálogo"}`;
+    const preparation = preparable === null ? "" : ` · ${preparable} preparables`;
+    return `<p class="radar-reconciliation-catalog-summary" data-catalog-status="${catalog === 0 ? "no-opportunity" : "candidate"}"><strong>${escapeHtml(lead)}</strong>${escapeHtml(preparation)}${details.length ? ` · ${escapeHtml(details.join(" · "))}` : ""}.</p>`;
+  }
+
   function radarReconciliationIssueMarkup(issue) {
     if (!issue || typeof issue !== "object") return "";
     const stageLabels = { radar: "Radar", provider_refresh: "Actualización del proveedor" };
@@ -1383,7 +1404,7 @@
     </section>`;
     const incomplete = items.filter((item) => item.reconciliation_status !== "complete").length;
     return `<section class="radar-reconciliation-section" aria-labelledby="radar-reconciliation-title">
-      <header><div><p class="eyebrow">Integridad de catálogo</p><h3 id="radar-reconciliation-title">Reconciliación del proveedor</h3></div><p>${escapeHtml(radarCountText(page.total))} padres comprobados · ${escapeHtml(incomplete)} pendientes en esta página. Un padre incompleto no entra en candidatas ni en rechazos.</p></header>
+      <header><div><p class="eyebrow">Auditoría de integridad</p><h3 id="radar-reconciliation-title">Reconciliación del proveedor</h3></div><p>${escapeHtml(radarCountText(page.total))} padres auditados · ${escapeHtml(incomplete)} pendientes en esta página. Esta sección también conserva eventos ya resueltos; solo la sección «Oportunidades actuales» contiene candidatas.</p></header>
       <div class="radar-reconciliation-grid">${items.map((item) => {
         const canonicalTitle = String(item.canonical_parent_label || "").trim();
         return `<article class="radar-reconciliation-card" data-reconciliation="${escapeHtml(item.reconciliation_status)}">
@@ -1391,6 +1412,7 @@
           <h4>${escapeHtml(canonicalTitle || "Identidad canónica del padre pendiente")}</h4>
           ${canonicalTitle ? "" : `<p><strong>Título original:</strong> ${escapeHtml(item.raw_provider_parent_label || "No disponible")}</p>`}
           <p>${escapeHtml(radarCountText(item.provider_declared_child_count))} opciones declaradas · ${escapeHtml(radarCountText(item.provider_accounted_child_count))} contabilizadas · ${escapeHtml(radarCountText(item.provider_identified_child_count))} identificadas · ${escapeHtml(radarCountText(item.provider_unresolved_child_count))} pendientes de identidad.</p>
+          ${radarReconciliationCatalogSummary(item)}
           <p>${item.provider_pagination_exhausted === true ? "Paginación del proveedor agotada." : "La paginación del proveedor todavía no está agotada."}${item.next_retry_at ? ` Próximo reintento: ${escapeHtml(displayDate(item.next_retry_at))}.` : ""}</p>
           ${radarReconciliationIssueMarkup(item.issue)}
           <div class="radar-reconciliation-links">${item.id ? `<button class="primary-button" type="button" data-radar-reconciliation="${escapeHtml(item.id)}" aria-haspopup="dialog" aria-controls="radar-reconciliation-detail">Ver reconciliación</button>` : ""}${externalLink(item.external_parent_url, "Abrir evento original")}</div>
@@ -1622,7 +1644,7 @@
       ${operationalSummary}
       ${qualityNotices}
       ${radarReconciliationMarkup()}
-      <div class="radar-results-heading"><h3>${escapeHtml(groups.length)} eventos · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Las probabilidades y métricas externas son solo referencia administrativa.</p></div>
+      <div class="radar-results-heading"><h3>Oportunidades actuales · ${escapeHtml(groups.length)} ${groups.length === 1 ? "evento" : "eventos"} · ${escapeHtml(state.radar.candidates.length)} opciones</h3><p>Una tarjeta por evento padre. Los resultados públicos, opciones inactivas y padres incompletos nunca aparecen aquí.</p></div>
       ${cards}
       ${pageMarkup}
       ${radarRejectionsMarkup()}

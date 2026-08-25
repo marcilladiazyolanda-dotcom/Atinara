@@ -15,34 +15,35 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 22 de agosto usa Radar v58, Expert v26, Corrector v21, Validator v30 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v61, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Bloqueo vigente de 13.5.2 · reconciliación de padres Radar
+## Bloqueo vigente de 13.5.2 · frontera de catálogo Radar
 
-El E2E final está pausado antes del primer refresh durable V6. Un snapshot
-legacy podía presentar 21 opciones de un padre para el que Polymarket declaraba
-48 hijas, convertir otras 27 etiquetas provisionales en rechazos y usar una
-frontera `deadline:*` como identidad categórica. La reparación incremental está
-implementada localmente sobre `origin/main = 3d0db378…`, pero todavía no está
-subida ni desplegada y no ha modificado producción.
+El primer refresh durable V6 ya terminó sin Gemini. La UUID
+`2798d1af-9ccd-4b79-9be7-37d5876d9484` conserva Polymarket 74/74 y Kalshi
+105/105, sin cuarentenas ni fallos de candidata. Siete padres Kalshi quedaron
+completos; `KXPS6-26` permanece aislado porque su endpoint histórico respondió
+429, sin hacer incompletos a sus hermanos.
 
-El contrato nuevo exige total declarado = contabilizado, paginación agotada,
-identidad demostrada por hija y `option:*` para toda categórica visible. Las
-etiquetas provisionales se conservan con IDs/evidencia en un ledger privado y
-aparecen en una sección de reconciliación, nunca como nombres inventados o
-rechazos. Las familias nuevas usan v5; v4 queda solo para artefactos legacy. Los
-lotes candidatos se promueven atómicamente y la preparación liga una instantánea
-fresca exacta de padre/hija antes de renovar elegibilidad. La lectura oficial
-del 23 de agosto contabilizó 48 hijas actuales: 22 identificadas —incluida
-`Other`— y 26 placeholders aún no resolubles, sin inventar identidades.
-La entrega local del 24 de agosto supera 548/548 unitarias, las nueve Edge con
-Deno 2.1.14, SQL estático 18/18 y 18 escenarios browser; producción permanece
-intacta y el SQL transaccional dinámico se ejecutará únicamente tras la subida y
-el preflight autorizado.
-Especificación y activación:
+El E2E final está pausado por una incidencia posterior al commit: las RPC de
+lectura entregaban 6,5 MB de expedientes completos antes del saneado Edge y la
+respuesta terminaba en HTTP 500. La corrección incremental crea RPC ligeras que
+proyectan en SQL antes de PostgREST, separa visualmente auditoría y oportunidades
+y evita comprimir una única familia. Sobre el snapshot real reduce candidatas,
+rechazos y reconciliaciones a 835.015 bytes antes de la paginación final.
+
+Madden NFL 27 y EA Sports FC27 están correctamente marcados
+`EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
+mantenga abiertos; aportan cero candidatas. La regla es general para anuncios,
+lanzamientos, hitos, premios, métricas y otros hechos, y rechaza rumor o
+especulación como evidencia. No usa Gemini ni nombres hardcodeados.
+
+Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
+Incidencia y activación actual:
+[`docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md`](docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 
@@ -53,10 +54,10 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El backend coordinado está activo en producción. GitHub Pages continúa sirviendo
-el corte anterior `v=20260811-radar-eligibility2`; el frontend de este cierre usa
-`v=20260812-agent-engine2` y no debe declararse publicado hasta que Yol suba el
-ZIP incremental y se repita el smoke. El smoke autenticado contra Pages y el
+El backend coordinado está activo en producción. GitHub Pages sirve
+`v=20260824-radar-batch-resume1`; la corrección pendiente usa
+`v=20260825-radar-catalog-bound1` y no debe declararse publicada hasta que Yol
+suba el ZIP incremental y se repita el smoke. El smoke autenticado contra Pages y el
 backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.

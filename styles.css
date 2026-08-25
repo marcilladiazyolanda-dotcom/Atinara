@@ -8672,7 +8672,7 @@ body .market-price-ranges button[aria-pressed="true"] {
 
 .radar-candidate-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
   align-items: start;
   gap: 14px;
 }
@@ -8699,6 +8699,23 @@ body .market-price-ranges button[aria-pressed="true"] {
   margin: 0 0 12px;
   color: var(--secondary-text);
   font-size: 0.84rem;
+}
+
+.radar-reconciliation-catalog-summary {
+  padding: 10px 12px;
+  border: 1px solid var(--border-lavender);
+  border-radius: 9px;
+  color: var(--secondary-text);
+  background: var(--surface-lavender);
+}
+
+.radar-reconciliation-catalog-summary[data-catalog-status="no-opportunity"] {
+  border-color: var(--warning-border);
+  background: var(--warning-surface);
+}
+
+.radar-reconciliation-catalog-summary strong {
+  color: var(--theme-text);
 }
 
 .radar-event-options {
@@ -9242,7 +9259,7 @@ body .market-price-ranges button[aria-pressed="true"] {
   }
 
   .radar-candidate-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
   }
 }
 

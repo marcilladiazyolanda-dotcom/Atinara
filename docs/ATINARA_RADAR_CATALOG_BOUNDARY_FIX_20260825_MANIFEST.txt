@@ -1,0 +1,123 @@
+ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 5ad6ae96413c37bbecea69f4f18b391d994fa2b2
+Scope: incremental only
+
+INVENTORY
+M admin-community.html
+M admin-markets.html
+M admin-markets.js
+M admin-resolution.html
+M community.html
+A docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md
+A docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825_MANIFEST.txt
+M index.html
+M market-detail.html
+M my-predictions.html
+M ORAKLO_PROJECT_CONTEXT.md
+M profile.html
+M ranking.html
+M README.md
+M reset-password.html
+M scripts/check-market-workflow-browser.mjs
+M scripts/run-supabase-transaction-tests.mjs
+M styles.css
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260825160000_bound_market_radar_catalog_projection_v1.sql
+A supabase/tests/radar_catalog_projection_v1_transaction.sql
+M tests/agent-engine-frontend.test.js
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+A tests/radar-catalog-boundary.test.js
+M tests/radar-eligibility-sources-v5.test.js
+M tests/radar-provider-resumability-v1.test.js
+
+SHA-256 PAYLOAD FILES
+0640fa102d95c7474a0af4d3bf1593e855ed8eb11070a592bd3fb0cd53cee700  admin-community.html
+b9bd3d493fb4c6355f4d5b6c61bda413a28a97098fee773e0a6611aae0ceee41  admin-markets.html
+9dd2009f729a82575ec2db6355c1dbbe3b07ea07ad041376eb30174e20c6ec53  admin-markets.js
+2e3cb7c01ad6b64109ecda7c5df6cfa7c1d756e67878e943c367b476eb08df1e  admin-resolution.html
+7336e9992493db5d5dfa5d9ca08d62272679ef1800154373b183841aa18561d3  community.html
+d293efe4b66090e54e8939c1b2d9eda569bde20a7fc3bb3b5af5d3302e0064ac  docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md
+d902240ce4943423d73064f14ca6fea60a91b06d0a2ace59222f5f5d130453f3  index.html
+fb800704bd111555cf4d2cd799799f5c1d085d89905f5432a79b8750d4ea2826  market-detail.html
+bb5322f447cf1f0e0d32072adaea82857fb2bbadde85db6ed635374a2c4ab02c  my-predictions.html
+6c3226e581d1477b074fb6c9c0bf8182c544c8d80df8347c6224108cc60cf19f  ORAKLO_PROJECT_CONTEXT.md
+3cb8a5cfd7b72a9ab010954ebc2b682629a247fe5e15b56564faf0667d92b90f  profile.html
+1f7603ed18e3d27b1a426d462273aee7766b323c6fe861ff4818708386748f34  ranking.html
+fccaa47e1e61ceef14494ee1194c872b8baff437b5615d187341bcc9ef2534a8  README.md
+94134b8d8c80e21b094b641602b89bd1de6448bdf0c81bd9aee834199cecbea3  reset-password.html
+2d515f1616b091346781674ea79c11f578ab9a2e09d564c8c375da72407c0109  scripts/check-market-workflow-browser.mjs
+3b9a28090c3c22eea53219fda8b7edff3864ec0e26726c5dc3dae61cca907a6f  scripts/run-supabase-transaction-tests.mjs
+2f94fcf5b7523887f2887e4987cad4725c9434a7926e79a7f72bb9a82df11a67  styles.css
+79586ebc12bb9ba1666bdc5f585ea7fc6d44a45fc119cb1fb48747a5cdc25ff6  supabase/functions/_shared/market-radar.mjs
+de4c10f591368d5da7b4b3acf2d2817e8451f92ca15c13412992deba88ad282a  supabase/functions/market-radar/index.ts
+9d7bdd06d70e1a97badcad8ad5b85b643f893f542eaefdaaf78ad37200c1954f  supabase/migrations/20260825160000_bound_market_radar_catalog_projection_v1.sql
+fdfb9db5e99597e5748c50be77047946879d31faacb511c3e0c7f4297039399b  supabase/tests/radar_catalog_projection_v1_transaction.sql
+e35945a74014c1a54d61252e1a3ad462c73edb7fb97a28409ccdbdf1a8c430dd  tests/agent-engine-frontend.test.js
+73f3d2096b5d8cb6a883a15b814710f390249551113f612d24fd5e63fa94835e  tests/human-confirmation-flow.test.js
+8138b656e19f9bf679420e5a48598bde2eb52308d5d1458d7bd5745f6b8ef4cf  tests/market-radar.test.js
+5ee1bd47a934b7dba6856bd069c664392e78012814ae73dbacc54f1f76c6409c  tests/official-opportunity-discovery.test.js
+3363530d85f7a6c84a1aafd4b39208ed4a2110d86d3182273e677a7d51f619fe  tests/radar-catalog-boundary.test.js
+ed7ad7281c875a9be2476f6c3e6e5448454d68bf24c5b5a85c427cc87b28099f  tests/radar-eligibility-sources-v5.test.js
+93c0605a5cadaec27da2e22a630fba405b8e0cab9170c47eb16aa7d06ef798f3  tests/radar-provider-resumability-v1.test.js
+
+MIGRATIONS
+20260825160000_bound_market_radar_catalog_projection_v1.sql
+
+EDGE FUNCTIONS
+market-radar (index.ts plus _shared/market-radar.mjs; deploy with verify_jwt=true)
+
+FRONTEND
+- 10 HTML files share cache version 20260825-radar-catalog-bound1
+- admin-markets.js
+- styles.css
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- node --test all tests/*.test.js: 558 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid, 0 invalid
+- browser workflow: 18 cases at 390/768/1366 px, 0 overflow, 0 external calls
+- market-radar TypeScript parse: passed
+- exact migration and dedicated SQL test on production: passed, ROLLBACK
+- real pre-projection payload: 6,614,637 bytes before; 835,015 bytes after
+- terminal projection: Madden 0 catalog / 17 resolved / 4 inactive
+- terminal projection: FC27 0 catalog / 23 resolved / 0 inactive
+- generic terminal matrix: announcement, release, milestone, award, review and other passed; speculation rejected
+- full Deno graph: pending canonical CI/deploy gate because no local Deno runtime was available in this resumed app session
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 5ad6ae96413c37bbecea69f4f18b391d994fa2b2
+- migration 20260825134153 harden_radar_batch_resume_visibility_v1 is applied
+- migration 20260825160000 is absent
+- market-radar v61 ACTIVE verify_jwt=true digest 75991fc5c8b66f616cfd7f126341b52a1618d89d49d16f48d5d10839e0471794
+- request 2798d1af-9ccd-4b79-9be7-37d5876d9484 is terminal partial, claim_count=4
+- Kalshi batches 20/22/23/22/18 completed once; 105/105 accepted; 0 quarantined; 0 failed
+- KXPS6-26 remains isolated on historical PROVIDER_RATE_LIMITED
+- markets=15, predictions=9, profiles=2, drafts=6, maker_state=15, price_history=17
+- Karma total=2932; Prestige total=40
+- candidates=315 only through the authorized Radar refresh
+
+POST-UPLOAD
+- fetch and compare all 29 paths and contents
+- confirm migration 20260825160000 absent and production invariants unchanged
+- apply only migration 20260825160000
+- verify owner, SECURITY DEFINER, search_path, ACL, bodies and no DML/backfill
+- wait for Pages cache version 20260825-radar-catalog-bound1
+- deploy only market-radar with index.ts and shared module, verify_jwt=true
+- use Apply filters only; do not restart or resume the terminal refresh
+- require HTTP 200, 8 Kalshi parents audited and parent pagination without response budget failure
+- require Madden and FC27 only in audit with zero opportunities
+- verify desktop/mobile layout and no option/action overlap
+- continue Radar to Editor only after this smoke passes; Yol retains human confirmation

@@ -4081,7 +4081,7 @@ async function loadRadarView(
   minimumDiscoveryCheckedAt: string | null = null,
 ) {
   const [candidatesPayload, rejectedPayload, providers, parentReconciliationsPayload] = await Promise.all([
-    rpc(environment, "list_market_radar_candidates_v4", {
+    rpc(environment, "list_market_radar_candidates_v5", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       quality_filter: filters.quality,
@@ -4091,14 +4091,14 @@ async function loadRadarView(
       parent_limit_count: MAX_VISIBLE_GROUPS,
       parent_offset_count: filters.parent_offset,
     }, authorization),
-    rpc(environment, "list_market_radar_rejections_v2", {
+    rpc(environment, "list_market_radar_rejections_v3", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       limit_count: 100,
       offset_count: 0,
     }, authorization).catch(() => []),
     rpc(environment, "get_market_radar_provider_status", {}, authorization),
-    rpc(environment, "list_market_radar_parent_reconciliations_v2", {
+    rpc(environment, "list_market_radar_parent_reconciliations_v3", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       query_filter: filters.query || null,
