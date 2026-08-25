@@ -1,0 +1,63 @@
+ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main fc6220f06ecbd2dbc2afb57422540cd8287d87b4
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md
+A docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/market-radar/index.ts
+M tests/radar-provider-resumability-v1.test.js
+
+SHA-256 PAYLOAD FILES
+5659ecc9242e11ba1ec59353dce9c3f2172fe912ad2550b85bdfb66ae49239be  docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md
+a847c7666c24c067167e3fe51d1de5536a31b0cf22e472e7526551d7d40aa20b  ORAKLO_PROJECT_CONTEXT.md
+1f67e2e04537c2f0caae3580501d630342290552670f994937dde70e4157a66d  README.md
+c117589a6b9924fa73cf86b955b8f9ecbaded1e76dafca4347ed04aa597d371b  supabase/functions/market-radar/index.ts
+08d10ba911d28465ac5d2204adf6ec64d573ebee41c93cc6eac8c9aad6d4bfa6  tests/radar-provider-resumability-v1.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts only; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+TTL OR SQL LEASE POLICY: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- all unit tests: 560 passed, 0 failed
+- focused Radar/resumability tests: 84 passed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- market-radar TypeScript parse: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main fc6220f06ecbd2dbc2afb57422540cd8287d87b4
+- market-radar v63 ACTIVE verify_jwt=true digest 9c45bec7deca45724ddbb8d7c18303c5cedfd7034899dc1d55d4a52c32221c30
+- active refresh UUID 2a268e1d-b4d0-4b79-829d-03ab481015c3
+- Polymarket claimed/reclaimable, parent ledger 3/3 complete, no manifest
+- Tavily claimed/reclaimable, no manifest
+- Kalshi terminal technical_failed before manifest, parent ledger 11 with 1 incomplete
+- zero staged batches, processed candidates, quarantine or domain mutation for this UUID
+- PostgreSQL cause RADAR_REFRESH_LEASE_INVALID after 56.6 s vs 45 s TTL
+- markets=15, drafts=6, predictions=9, maker_state=15, price_history=17
+- Karma=2932, Prestige=40
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- confirm v63 and production invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- continue current UUID once to close Polymarket/Tavily
+- do not treat terminal Kalshi result as a fresh catalog
+- run a later fresh Kalshi refresh with heartbeat and require manifest/batches/finalization
+- select a candidate only from the new current snapshot
+- do not run Market Expert before current eligibility

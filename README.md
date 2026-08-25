@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v62, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v63, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -32,11 +32,12 @@ antes de PostgREST, separan visualmente auditoría y oportunidades y reducen los
 tres inputs reales a 835.015 bytes. El smoke pasa HTTP 200, paginación completa
 y layout de escritorio/móvil.
 
-El E2E final está pausado por una incidencia posterior: la revalidación detectó
-correctamente `RADAR_CANDIDATE_IDENTITY_STALE`, pero el wrapper Edge perdió el
-código SQL y lo presentó como un 503 técnico no reintentable. La corrección
-incremental conserva el código, fase y siguiente acción, sin cambiar SQL ni
-datos. Después exige un Radar fresco antes de ejecutar Market Expert.
+El contrato de errores de revalidación ya está desplegado. El Radar fresco
+posterior detectó una segunda incidencia: las leases duran 45 s y discovery más
+fuentes oficiales puede superar 56 s. PostgreSQL bloquea correctamente al owner
+expirado, pero la ejecución no tenía heartbeat durante esas fases largas. La
+corrección incremental renueva cada 15 s con el mismo token, sin ampliar el TTL
+ni permitir concurrencia adicional.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -47,7 +48,7 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
-[`docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md`](docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md).
+[`docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md`](docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 

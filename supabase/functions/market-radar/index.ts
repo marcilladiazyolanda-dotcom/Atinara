@@ -693,6 +693,44 @@ async function renewRadarRefreshLease(environment: Environment, intent: RadarRef
   }, undefined, true);
 }
 
+async function renewRadarRefreshLeases(
+  environment: Environment,
+  intents: RadarRefreshIntent[],
+): Promise<void> {
+  for (const intent of intents) {
+    if (intent.terminal || intent.inProgress || !intent.leaseToken) continue;
+    await renewRadarRefreshLease(environment, intent);
+  }
+}
+
+async function withRadarRefreshLeaseHeartbeat<T>(
+  environment: Environment,
+  intents: RadarRefreshIntent[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const renewable = intents.filter((intent) =>
+    !intent.terminal && !intent.inProgress && Boolean(intent.leaseToken));
+  if (!renewable.length) return operation();
+  await renewRadarRefreshLeases(environment, renewable);
+  const completed = Promise.resolve().then(operation).then(
+    (value) => ({ done: true as const, value }),
+    (error) => ({ done: true as const, error }),
+  );
+  while (true) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const heartbeat = new Promise<{ done: false }>((resolve) => {
+      timer = setTimeout(() => resolve({ done: false }), 15_000);
+    });
+    const outcome = await Promise.race([completed, heartbeat]);
+    if (outcome.done) {
+      if (timer !== null) clearTimeout(timer);
+      if ("error" in outcome) throw outcome.error;
+      return outcome.value;
+    }
+    await renewRadarRefreshLeases(environment, renewable);
+  }
+}
+
 async function authenticateAdmin(environment: Environment, authorization: string): Promise<{ adminId: string } | Response> {
   const response = await fetchInternal(environment, `${environment.supabaseUrl}/auth/v1/user`, {
     headers: { Authorization: authorization, apikey: environment.publishableKey },
@@ -4295,12 +4333,16 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         && intent.stagedCount === intent.expectedCount));
   });
   const discoveredByProvider = new Map<string, JsonRecord[]>();
-  const discoveryResults = await mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => {
-    const discovery = provider === "polymarket"
-      ? await discoverPolymarket(environment, now, filters, refresh.requestId)
-      : await discoverKalshi(environment, now, refresh.requestId);
-    return { provider, ...discovery };
-  });
+  const discoveryResults = await withRadarRefreshLeaseHeartbeat(
+    environment,
+    [...providerIntents.values(),tavilyIntent],
+    () => mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => {
+      const discovery = provider === "polymarket"
+        ? await discoverPolymarket(environment, now, filters, refresh.requestId)
+        : await discoverKalshi(environment, now, refresh.requestId);
+      return { provider, ...discovery };
+    }),
+  );
   for (let index = 0; index < discoveryResults.length; index += 1) {
     const result = discoveryResults[index];
     const provider = providers[index];
@@ -4463,7 +4505,17 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   if (scanCandidates.length && authoritativeDomains.size
       && !tavilyIntent.terminal && !tavilyIntent.inProgress) {
     try {
-      const research = await researchGroupsWithTavily(environment, environment.tavilyKey, scanCandidates, authoritativeDomains);
+      const researchIntents = [
+        ...[...discoveredByProvider.keys()].map((provider) => providerIntents.get(provider)),
+        tavilyIntent,
+      ].filter((intent): intent is RadarRefreshIntent => Boolean(intent));
+      const research = await withRadarRefreshLeaseHeartbeat(
+        environment,
+        researchIntents,
+        () => researchGroupsWithTavily(
+          environment, environment.tavilyKey, scanCandidates, authoritativeDomains,
+        ),
+      );
       evidenceByGroup = research.evidenceByGroup;
       sourceAgentExecution = research.agentExecution;
       incompleteOfficialResearchGroups = new Set(research.incompleteGroupKeys);

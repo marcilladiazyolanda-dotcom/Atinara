@@ -264,6 +264,15 @@ test("la reanudación confirma batches bajo el timeout y mantiene invisible la i
   assert.match(admin, /radarRequestCoordinator\.resume\(requestPayload, data\.refresh_request_id\)/);
 });
 
+test("descubrimiento y fuentes oficiales renuevan el lease antes de los 45 segundos", () => {
+  assert.match(edge, /async function withRadarRefreshLeaseHeartbeat/);
+  assert.match(edge, /setTimeout\(\(\) => resolve\(\{ done: false \}\), 15_000\)/);
+  assert.match(edge, /await renewRadarRefreshLeases\(environment, renewable\)/);
+  assert.match(edge, /const discoveryResults = await withRadarRefreshLeaseHeartbeat\([\s\S]+mapWithConcurrency\(providers/);
+  assert.match(edge, /const research = await withRadarRefreshLeaseHeartbeat\([\s\S]+researchGroupsWithTavily/);
+  assert.doesNotMatch(edge, /lease_expires_at\s*=|interval\s+'(?:[0-9]+ )?(?:minutes?|hours?)'/i);
+});
+
 test("SQL conserva v1, impone lease, replay, cuarentena única y finalización única", () => {
   assert.match(migration, /create table private\.market_radar_refresh_intents_v1/);
   assert.match(migration, /market_radar_refresh_active_provider_uidx/);

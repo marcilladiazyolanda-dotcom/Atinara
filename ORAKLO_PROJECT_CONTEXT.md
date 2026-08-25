@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras cerrar la frontera de catálogo V6:**
-> `origin/main` está en `013a3d986965664a3e68e23b5f41ae1d181de259`;
+> **Estado productivo verificado tras corregir el contrato de revalidación V6:**
+> `origin/main` está en `fc6220f06ecbd2dbc2afb57422540cd8287d87b4`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v62 está `ACTIVE`, `verify_jwt=true`, digest
-> `009b6196d2e3a22dc15316d8f3663e020e73ba7a354aeeac60cecc80767b41cb`.
+> sola vez y `market-radar` v63 está `ACTIVE`, `verify_jwt=true`, digest
+> `9c45bec7deca45724ddbb8d7c18303c5cedfd7034899dc1d55d4a52c32221c30`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -22,10 +22,36 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > dominio. Al intentar renovar una hija válida de Onimusha, PostgreSQL bloqueó
 > correctamente con `RADAR_CANDIDATE_IDENTITY_STALE`: el proveedor cambió un
 > dato material desde el snapshot del 24 de agosto y exige un Radar fresco. La
-> Edge perdió ese código dentro de `RadarRpcError` y respondió un 503 genérico,
-> registrándolo falsamente como no reintentable. El E2E hacia Editor permanece
-> pausado hasta desplegar la corrección de transporte documentada en
-> `docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md`.
+> La corrección de transporte ya está desplegada. Un refresh nuevo creó la UUID
+> `2a268e1d-b4d0-4b79-829d-03ab481015c3`, distinta de la terminal anterior. Los
+> ledgers enumeraron 3 padres Polymarket y 11 Kalshi, pero el transporte Edge
+> duró 56,6 s frente a leases de 45 s. PostgreSQL bloqueó escrituras posteriores
+> con `RADAR_REFRESH_LEASE_INVALID`: Kalshi terminó degradado antes de staging y
+> Polymarket/Tavily quedaron reclamables. No existen batches ni mutaciones de
+> candidatas para esta UUID. El E2E permanece pausado hasta desplegar el heartbeat
+> documentado en `docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md`.
+
+### Heartbeat de leases durante discovery · 25 de agosto de 2026
+
+- La primera llamada del refresh fresco persistió únicamente los ledgers de
+  padres y perdió el transporte. «Aplicar filtros» recuperó la UUID; una única
+  continuación reutilizó la intención y elevó `claim_count` a 2.
+- La segunda llamada confirmó la causa: la lease inicial vence a los 45 s,
+  mientras enumeración, resolución de identidades y búsqueda oficial consumen
+  hasta 56,6 s. Las renovaciones existentes ocurrían antes de registrar padres
+  y durante staging/persistencia, pero no mientras las operaciones de red largas
+  seguían activas.
+- `withRadarRefreshLeaseHeartbeat` renueva cada lease vigente a los 15 s usando
+  el mismo token y owner. Envuelve discovery de proveedores y research oficial;
+  no revive una lease expirada, no cambia TTL SQL, no permite doble owner y se
+  detiene inmediatamente al resolver o fallar la operación.
+- Los intents terminales, bloqueados o sin token no se renuevan. Antes de
+  research solo se incluyen proveedores cuya discovery se conservó más Tavily,
+  para no tocar una capacidad ya finalizada.
+- La corrección es únicamente Edge y no cambia migraciones, frontend, datos,
+  IA, Registry, rutas, presupuestos o economía. La UUID actual queda preservada
+  como evidencia recuperable; tras desplegar se completará Polymarket/Tavily y
+  se usará un refresh posterior para recuperar Kalshi de forma limpia.
 
 ### Contrato de errores de revalidación Radar · 25 de agosto de 2026
 
