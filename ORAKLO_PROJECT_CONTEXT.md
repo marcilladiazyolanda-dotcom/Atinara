@@ -60,6 +60,21 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   hijas, páginas, cursores, Unicode, placeholders, parciales, resultado público,
   Tavily caído, doble clic y reanudación.
 
+### Puerta CI del contrato v4 · 25 de agosto de 2026
+
+- El commit remoto `ca7ccf0d14ec18bc01a1a28c7c31f339316a137a` integró exactamente
+  la corrección v4, pero su primera Action `Calidad de Atinara` falló antes de
+  Deno por una aserción histórica de la suite global que todavía exigía una
+  llamada Edge a v3. Pages y el benchmark IA offline sí terminaron en verde.
+- El runtime ya llama v4 y el paquete original pasó sus 94 pruebas focalizadas;
+  la discrepancia era exclusivamente el contrato estático paraguas omitido de
+  aquel inventario. No se aplicó la migración ni se desplegó la Edge mientras
+  la Action permanecía roja.
+- La corrección incremental exige v4, exige el divisor durable y prohíbe una
+  llamada directa de la Edge a v3. No cambia código productivo, SQL, frontend,
+  configuración, presupuestos ni datos. Véase
+  `docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825.md`.
+
 ### Checkpoints durables de padres y proyección temprana · 25 de agosto de 2026
 
 - `authenticator` tiene `statement_timeout=8s`. Las siete ejecuciones exitosas

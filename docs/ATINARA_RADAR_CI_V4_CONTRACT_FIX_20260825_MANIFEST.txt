@@ -1,0 +1,70 @@
+ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main ca7ccf0d14ec18bc01a1a28c7c31f339316a137a
+Scope: incremental CI contract correction only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825.md
+A docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825_MANIFEST.txt
+M tests/expert-market-cycle-definitive.test.js
+
+SHA-256 PAYLOAD FILES
+9ff4b5034e3e9f2e279d143337191492f8e8f9158a3607bd95ba87629e3b25c7  ORAKLO_PROJECT_CONTEXT.md
+7a944fcb7abd303b75b8b19d72f12e2335d4be846544dfd45125633bec6dc10a  README.md
+271d59836c73fe65664ddd45ae41b82974487ce6c9227b28c8d4110f338c25f0  docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825.md
+80886758be2045d7b393f1302e574fe3e160f0192d44a30953dff83697c84b87  tests/expert-market-cycle-definitive.test.js
+
+REMOTE EVIDENCE
+- ca7ccf0d14ec18bc01a1a28c7c31f339316a137a matched the previous delivery
+  exactly across its ten allowlisted paths
+- Pages run 32892746422: success
+- Benchmark IA offline run 32892746822: success
+- Calidad de Atinara run 32892746856: failure
+- sole failure: tests/expert-market-cycle-definitive.test.js expected the old
+  process_market_radar_refresh_batch_v3 Edge call
+- the Deno step was skipped only because validate failed first
+
+CORRECTION
+- require process_market_radar_refresh_batch_v4 in the Edge
+- require split_market_radar_refresh_batch_v1 in the Edge
+- forbid a direct Edge RPC call to process_market_radar_refresh_batch_v3
+- preserve all existing quarantine, reconciliation and finalization checks
+
+VERIFICATION
+- focused umbrella test: 18 passed, 0 failed
+- global unit suite: 566 passed, 0 failed
+- JavaScript syntax: 128 files valid
+- Canonical JSON v1: Node 22.23.2 and Deno 2.1.14 matched
+- TypeScript monitoring config: passed
+- SQL transaction structure: 19 valid, 0 invalid
+- Edge Functions: 9 passed, 0 failed with Deno 2.1.14
+- npm audit --audit-level=high: 0 vulnerabilities
+- git diff --check: passed for this incremental range
+
+MIGRATIONS: none
+EDGE FUNCTIONS: none
+FRONTEND: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+AI BUDGET TABLES: unchanged
+ECONOMY: unchanged
+
+PRODUCTION
+- no production mutation was performed after the failed Action
+- market-radar remains v68 ACTIVE verify_jwt=true with digest
+  85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519
+- migration 20260825214500_isolate_market_radar_batch_timeouts_v1 remains pending
+- refresh 39a1656e-61af-4674-a4e0-fa0896236507 remains the only authorized UUID
+- do not continue it or create another refresh before the full Action is green
+
+POST-UPLOAD
+- fetch and compare exactly these five paths and their contents
+- require Calidad de Atinara green, including Deno
+- check Pages and Benchmark IA offline; do not use Sonar
+- only then resume the controlled production activation from the prior package
