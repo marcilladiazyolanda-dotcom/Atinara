@@ -34,6 +34,8 @@ declare
   stage jsonb;
   replay jsonb;
   sealed jsonb;
+  split_result jsonb;
+  first_processed jsonb;
   processed jsonb;
   finalized jsonb;
   batch_id_value uuid;
@@ -58,6 +60,8 @@ begin
       'public.begin_market_radar_refresh_v2(uuid,text,text,text,text,text,text,uuid,uuid)'::regprocedure::oid,
       'public.get_active_market_radar_refresh_v1(text,text)'::regprocedure::oid,
       'public.process_market_radar_refresh_batch_v1(uuid,text,text,uuid)'::regprocedure::oid,
+      'public.process_market_radar_refresh_batch_v4(uuid,text,text,uuid)'::regprocedure::oid,
+      'public.split_market_radar_refresh_batch_v1(uuid,text,text,uuid,uuid)'::regprocedure::oid,
       'public.finalize_market_radar_refresh_v3(uuid,text,text,uuid,text,text,text,integer)'::regprocedure::oid
     ) and (r.rolname<>'postgres' or not p.prosecdef
       or not (p.proconfig@>array['search_path=""']::text[]))
@@ -77,6 +81,16 @@ begin
        'public.process_market_radar_refresh_batch_v1(uuid,text,text,uuid)','execute')
      or has_function_privilege('service_role',
        'public.process_market_radar_refresh_batch_v1(uuid,text,text,uuid)','execute')
+     or has_function_privilege('authenticated',
+       'public.process_market_radar_refresh_batch_v4(uuid,text,text,uuid)','execute')
+     or not has_function_privilege('service_role',
+       'public.process_market_radar_refresh_batch_v4(uuid,text,text,uuid)','execute')
+     or has_function_privilege('service_role',
+       'public.process_market_radar_refresh_batch_v3(uuid,text,text,uuid)','execute')
+     or has_function_privilege('authenticated',
+       'public.split_market_radar_refresh_batch_v1(uuid,text,text,uuid,uuid)','execute')
+     or not has_function_privilege('service_role',
+       'public.split_market_radar_refresh_batch_v1(uuid,text,text,uuid,uuid)','execute')
      or has_table_privilege('service_role','private.market_radar_refresh_intents_v1','select')
      or has_table_privilege('service_role','private.market_radar_provider_runs','update')
      or has_table_privilege('service_role','private.market_radar_candidate_quarantines','insert') then
@@ -237,17 +251,61 @@ begin
     raise exception 'TEST_RADAR_RESUME_SEAL_REPLAY_INVALID: % %',sealed,replay;
   end if;
 
-  -- El primitive v1 permanece probado desde la sesión owner de esta matriz,
-  -- pero el cutover de reconciliación revoca su invocación directa a service_role.
-  processed:=public.process_market_radar_refresh_batch_v1(
+  -- Un timeout durable se divide por el batch exacto. El replay del mismo
+  -- parent es idempotente y los dos hijos conservan las cuatro entradas.
+  update private.market_radar_refresh_batches_v1 set
+    status='technical_failed',attempt_count=1,failed_count=4,
+    error_code='RADAR_PERSISTENCE_TIMEOUT',updated_at=clock_timestamp()
+  where id=batch_id_value;
+  split_result:=public.split_market_radar_refresh_batch_v1(
+    request_id_value,'kalshi','candidate_feed',lease_token_value,batch_id_value
+  );
+  replay:=public.split_market_radar_refresh_batch_v1(
+    request_id_value,'kalshi','candidate_feed',lease_token_value,batch_id_value
+  );
+  if not coalesce((split_result->>'ok')::boolean,false)
+     or coalesce((split_result->>'replayed')::boolean,true)
+     or (split_result->>'left_count')::integer<>2
+     or (split_result->>'right_count')::integer<>2
+     or not coalesce((replay->>'replayed')::boolean,false)
+     or replay->>'parent_batch_id' is distinct from batch_id_value::text then
+    raise exception 'TEST_RADAR_RESUME_SPLIT_REPLAY_INVALID: % %',split_result,replay;
+  end if;
+  if (select count(*) from private.market_radar_refresh_batches_v1 batch_alias
+      where batch_alias.parent_batch_id=batch_id_value)<>2
+     or (select count(*) from private.market_radar_refresh_batches_v1 batch_alias
+      where batch_alias.id=batch_id_value and batch_alias.status='superseded')<>1 then
+    raise exception 'TEST_RADAR_RESUME_SPLIT_LEDGER_INVALID';
+  end if;
+
+  first_processed:=public.process_market_radar_refresh_batch_v4(
+    request_id_value,'kalshi','candidate_feed',lease_token_value
+  );
+  if not coalesce((first_processed->>'ok')::boolean,false)
+     or (first_processed->>'accepted_count')::integer<>1
+     or (first_processed->>'quarantined_count')::integer<>1
+     or (first_processed->>'remaining_batches')::integer<>1
+     or first_processed->>'batch_timeout_isolation_version'
+       is distinct from 'atinara-radar-batch-timeout-isolation-v1' then
+    raise exception 'TEST_RADAR_RESUME_FIRST_SPLIT_PROCESS_INVALID: %',first_processed;
+  end if;
+  processed:=public.process_market_radar_refresh_batch_v4(
     request_id_value,'kalshi','candidate_feed',lease_token_value
   );
   if not coalesce((processed->>'ok')::boolean,false)
-     or (processed->>'accepted_count')::integer<>2
-     or (processed->>'quarantined_count')::integer<>2
+     or (processed->>'accepted_count')::integer<>1
+     or (processed->>'quarantined_count')::integer<>1
      or (processed->>'remaining_batches')::integer<>0 then
     raise exception 'TEST_RADAR_RESUME_PROCESS_INVALID: %',processed;
   end if;
+  if not exists (
+    select 1 from private.market_radar_refresh_intents_v1 intent_alias
+    where intent_alias.request_id=request_id_value
+      and intent_alias.accepted_count=2
+      and intent_alias.quarantined_count=2
+      and intent_alias.processed_count=4
+      and intent_alias.phase='finalizing'
+  ) then raise exception 'TEST_RADAR_RESUME_SPLIT_TOTALS_INVALID'; end if;
   select count(*) into count_value from private.external_market_candidates
   where provider='kalshi' and external_id in (
     candidate_a->>'external_id',candidate_b->>'external_id',candidate_c->>'external_id'
@@ -255,14 +313,14 @@ begin
   );
   if count_value<>2 then raise exception 'TEST_RADAR_RESUME_HEALTHY_ROWS_LOST: %',count_value; end if;
   select count(*) into count_value from private.market_radar_candidate_quarantines
-  where refresh_request_id=request_id_value and refresh_batch_id=batch_id_value;
+  where refresh_request_id=request_id_value;
   if count_value<>2 or not exists (
     select 1 from private.market_radar_candidate_quarantines
-    where refresh_request_id=request_id_value and refresh_batch_id=batch_id_value
+    where refresh_request_id=request_id_value
       and error_code='TEMPORAL_CONTRACT_INVALID'
   ) or not exists (
     select 1 from private.market_radar_candidate_quarantines
-    where refresh_request_id=request_id_value and refresh_batch_id=batch_id_value
+    where refresh_request_id=request_id_value
       and error_code='MARKET_WORKFLOW_ISSUE_INVALID'
   ) then raise exception 'TEST_RADAR_RESUME_QUARANTINE_COUNT_INVALID: %',count_value; end if;
   update private.external_market_candidates set

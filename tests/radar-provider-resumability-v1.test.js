@@ -12,6 +12,7 @@ const issuesUrl = pathToFileURL(join(root, "supabase/functions/_shared/market-wo
 const edge = read("supabase/functions/market-radar/index.ts");
 const migration = read("supabase/migrations/20260820163014_harden_radar_provider_resumability_v1.sql");
 const batchResumeMigration = read("supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql");
+const batchTimeoutIsolationMigration = read("supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql");
 const admin = read("admin-markets.js");
 const html = read("admin-markets.html");
 const styles = read("styles.css");
@@ -236,9 +237,10 @@ test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => 
   assert.ok(runStart >= 0 && runEnd > runStart && activeIndex >= 0
     && beginIndex > activeIndex && discoverIndex > beginIndex);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
-  assert.match(edge, /process_market_radar_refresh_batch_v3/);
+  assert.match(edge, /process_market_radar_refresh_batch_v4/);
+  assert.match(edge, /split_market_radar_refresh_batch_v1/);
   assert.match(edge, /complete_market_radar_candidate_refresh_v2/);
-  assert.doesNotMatch(edge, /"process_market_radar_refresh_batch_v2"|"complete_market_radar_candidate_refresh_v1"|split_market_radar_refresh_batch_v1/);
+  assert.doesNotMatch(edge, /"process_market_radar_refresh_batch_v[123]"|"complete_market_radar_candidate_refresh_v1"/);
   assert.match(edge, /defer_market_radar_refresh_v1/);
   assert.match(edge, /finalize_market_radar_refresh_v5/);
   assert.match(edge, /partial:\s*candidateProviderErrors\.length > 0/);
@@ -254,6 +256,11 @@ test("la reanudación confirma batches bajo el timeout y mantiene invisible la i
   assert.match(batchResumeMigration, /active_intent\.status=''in_progress''/);
   assert.match(batchResumeMigration, /RADAR_BATCH_RESUME_VISIBILITY_PATCH_MISSING/);
   assert.match(batchResumeMigration, /revoke all on function public\.process_market_radar_refresh_batch_v3[\s\S]*grant execute[\s\S]*to service_role/);
+  assert.match(batchTimeoutIsolationMigration, /process_market_radar_refresh_batch_v4/);
+  assert.match(batchTimeoutIsolationMigration, /exception when query_canceled/);
+  assert.match(batchTimeoutIsolationMigration, /RADAR_PERSISTENCE_TIMEOUT/);
+  assert.match(batchTimeoutIsolationMigration, /batch_id',batch\.id/);
+  assert.match(batchTimeoutIsolationMigration, /has_function_privilege\('service_role',[\s\S]+process_market_radar_refresh_batch_v3[\s\S]+execute/);
   assert.doesNotMatch(batchResumeMigration,
     /\b(?:insert\s+into|update\s+(?:public|private)\.|delete\s+from|truncate\s+)\b/i);
   const activeLookup = edge.indexOf('"get_active_market_radar_refresh_v1"');

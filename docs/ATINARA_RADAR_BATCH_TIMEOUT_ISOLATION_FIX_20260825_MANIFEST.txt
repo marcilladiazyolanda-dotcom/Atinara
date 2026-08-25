@@ -1,0 +1,118 @@
+ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md
+A docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825_MANIFEST.txt
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql
+M supabase/tests/radar_provider_resumability_v1_transaction.sql
+M tests/market-radar.test.js
+M tests/radar-provider-resumability-v1.test.js
+M tests/radar-refresh-resilience.test.js
+
+SHA-256 PAYLOAD FILES
+838113b6dd32456d7154456e481ccbd1e78b6052d7ef84eaf1106253156c5b19  ORAKLO_PROJECT_CONTEXT.md
+cd66669518bda24e115047589098b50bf7b245995ad669ef44fa5dc0ba0d4f8f  README.md
+9d49b83f110235eebc2c2a4dc2e64a8cfc376d43af744b09f6019c63388aed42  docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md
+b48c857ad6f9453ba33a5100eddb33632576b4f6d554bf8682932c6d9f59b3a7  supabase/functions/market-radar/index.ts
+9dadbe7f6b65f6b19555013971dcb7361882f58d4b5d1c5be38f8aa0235476c1  supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql
+141522861fed46f4fabf9009acfd1a4988ffe8c28442cadb6d2f77f74b02e3fa  supabase/tests/radar_provider_resumability_v1_transaction.sql
+f658e89791e9ab70c790e9fd0cdce60c87cbccd29289e6950f2f871417ede165  tests/market-radar.test.js
+138dab18937d6a53fc02a308e81166a140a087e95d50304391dabee1207c86f5  tests/radar-provider-resumability-v1.test.js
+65eb1a00faf3afaa108894888dedcdfe9a88802da94d61cc77aa31e5cb869b15  tests/radar-refresh-resilience.test.js
+
+MIGRATIONS
+20260825214500_isolate_market_radar_batch_timeouts_v1.sql
+
+EDGE FUNCTIONS
+market-radar (index.ts only; deploy with verify_jwt=true after applying the migration)
+
+FRONTEND: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+AI BUDGET TABLES: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- focused Radar/resumability/resilience: 94 passed, 0 failed
+- affected market-radar TypeScript graph: Deno 2.1.14 passed
+- SQL transaction structure: 19 valid, 0 invalid
+- migration preflight hashes verified read-only against production:
+  process v2 b5d75696bc3ad67e5f07b1cc4df25b0dfd606813d893e9e75b4fc1ecdcd0f6ed
+  process v3 0b02adeb99438932134c784001b55257a361573110925b2ec55a1724edd0a6ed
+  split v1 82e1561a35610bd8cfff19bc1825644127d4f458fdebbc0478d1d1f68a4951bb
+- split transaction fixture: 4 items -> 2+2, replay, 2 accepted,
+  2 quarantined, 4 processed, finalizing once
+- timeout contracts require exact batch id, child count conservation,
+  service_role-only v4, v3 cutover and no provider/event hardcodes
+- git diff --check: passed
+- exact migration execution remains pending until this package is uploaded and
+  Calidad de Atinara is green
+
+PRODUCTION CHECKPOINT
+- origin/main 4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d
+- market-radar v68 ACTIVE verify_jwt=true
+- market-radar digest 85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519
+- refresh UUID 39a1656e-61af-4674-a4e0-fa0896236507; no second fresh UUID
+- one continuation only; claim_count=2; status in_progress/persisting
+- Kalshi 109 total series, 25 selected, 84 deferred, 0 failed
+- 11 parents, 148 discovered/accounted/identified children, 0 unresolved
+- 9 complete parents; 2 provider_unavailable parents
+- parent manifest c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428
+- candidate expected=86, staged=86
+- candidate manifest 7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb
+- four batches: 24/24/24/14
+- ordinal 0 technical_failed, RADAR_PERSISTENCE_TIMEOUT, attempt_count=1
+- remaining three batches pending; processed=accepted=quarantined=0
+- finalization_hash null
+- Tavily technical_failed AI_DEADLINE_EXCEEDED, source_enrichment,
+  blocking_scope=none; did not block Kalshi manifest or batches
+- markets=15; predictions=9; profiles=2; maker_state=15; price_history=17; drafts=6
+- candidates=315; fact_checks=3306; eligibility_checks=3522
+- refresh_intents=22; parent_ledgers=47; provider_runs=49; issues=450
+- reviews=39; bindings=14; Karma=2932; Prestige=40
+- no market, prediction, profile, LMSR, price-history or draft count changed
+
+ROOT CAUSE
+- v1 already returned a durable timeout from its item loop
+- split_market_radar_refresh_batch_v1 already supported idempotent bisection
+- the active Edge threw every non-ok batch result and never invoked the split
+- a timeout in the v2 preflight escaped before v1 could return batch_id
+- continuing the UUID therefore repeated the same 24-item root batch
+- this is not a Kalshi, pagination, child-identity or Tavily failure
+
+CORRECTION
+- v4 reserves the exact next batch before the cancelable v3 subtransaction
+- outer query_canceled rolls back partial work and records that batch as timeout
+- Edge bisects only a retryable timeout with valid batch id and item_count > 1
+- split parent, child IDs and exact count conservation are mandatory
+- ambiguous split transport remains idempotently recoverable
+- existing finalization reserve and operation cap remain unchanged
+- single-item timeout remains explicit and reanudable, never a factual rejection
+- non-timeout SQL errors are propagated without reclassification
+- no provider, series, event or market hardcodes
+
+POST-UPLOAD
+- fetch and compare exactly these 10 paths and their contents
+- require Calidad de Atinara green, including Deno and SQL contracts
+- check Pages and offline benchmark; do not use Sonar
+- confirm the migration absent and market-radar still v68 before mutation
+- apply only migration 20260825214500; no backfill or manual DML
+- verify owner, SECURITY DEFINER, empty search_path, ACL and bodies
+- deploy only market-radar with verify_jwt=true
+- verify new version, ACTIVE state, JWT and digest
+- recheck protected invariants
+- continue only UUID 39a1656e-61af-4674-a4e0-fa0896236507 once
+- do not create a fresh refresh or repeat Continue blindly
+- require split/batch counts, terminal finalization and replay before Expert
+- then select one fresh valid gaming candidate and create exactly one private
+  draft through Market Expert/Editor; never publish or confirm it

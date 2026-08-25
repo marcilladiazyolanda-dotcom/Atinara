@@ -14,6 +14,7 @@ const baseMigration = readFileSync(join(root, "supabase/migrations/2026080419493
 const v2Migration = readFileSync(join(root, "supabase/migrations/20260806183627_harden_market_radar_quality_sources.sql"), "utf8");
 const visibilityMigration = readFileSync(join(root, "supabase/migrations/20260811123656_harden_radar_visibility_and_presentation_v5.sql"), "utf8");
 const revalidationMigration = readFileSync(join(root, "supabase/migrations/20260811155800_allow_needs_review_radar_revalidation_v6.sql"), "utf8");
+const batchTimeoutIsolationMigration = readFileSync(join(root, "supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql"), "utf8");
 const adminUi = readFileSync(join(root, "admin-markets.js"), "utf8");
 const adminHtml = readFileSync(join(root, "admin-markets.html"), "utf8");
 const adminAgentBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
@@ -900,6 +901,26 @@ test("cada padre se confirma como checkpoint y un timeout de persistencia conser
   assert.match(edge, /next_action: deferred \? "resume_persistence_intent"/);
   assert.match(edge, /status: deferral \? 202 : failure\.status/);
   assert.match(edge, /next_action: deferral \? "resume_persistence_intent"/);
+});
+
+test("un timeout exterior identifica, divide y reanuda únicamente el batch durable afectado", () => {
+  assert.match(edge, /"process_market_radar_refresh_batch_v4"/);
+  assert.match(edge, /batchCode === "RADAR_PERSISTENCE_TIMEOUT"/);
+  assert.match(edge, /timeoutItemCount > 1/);
+  assert.match(edge, /"split_market_radar_refresh_batch_v1"/);
+  assert.match(edge, /batch_id_input: timeoutBatchId/);
+  assert.match(edge, /splitParentId !== timeoutBatchId/);
+  assert.match(edge, /leftCount \+ rightCount === timeoutItemCount/);
+  assert.match(edge, /throw new Error\("RADAR_REFRESH_BATCH_SPLIT_INVALID"\)/);
+  assert.match(edge, /processedBatchCount \+= 1;[\s\S]+continue;/);
+  assert.match(batchTimeoutIsolationMigration, /exception when query_canceled/);
+  assert.match(batchTimeoutIsolationMigration, /for update skip locked/);
+  assert.match(batchTimeoutIsolationMigration, /attempt_count=batch_alias\.attempt_count\+1/);
+  assert.match(batchTimeoutIsolationMigration, /RADAR_REFRESH_BATCH_TIMEOUT_STATE_INVALID/);
+  assert.match(batchTimeoutIsolationMigration,
+    /revoke all on function public\.process_market_radar_refresh_batch_v3[\s\S]+grant execute on function public\.process_market_radar_refresh_batch_v4[\s\S]+to service_role/);
+  assert.doesNotMatch(batchTimeoutIsolationMigration,
+    /KX[A-Z0-9-]+|kalshi\.com\/markets|polymarket\.com\/event/i);
 });
 
 test("el enriquecimiento auxiliar tiene un deadline propio y siempre libera su contexto", () => {

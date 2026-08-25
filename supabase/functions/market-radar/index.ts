@@ -4107,7 +4107,7 @@ async function persistProviderResultV2(
   while (true) {
     if (processedBatchCount >= 512) throw new Error("RADAR_ATOMIC_CANDIDATE_COMMIT_LIMIT");
     await renewRadarRefreshLease(environment, intent);
-    const batchResult = toRecord(await rpc(environment, "process_market_radar_refresh_batch_v3", {
+    const batchResult = toRecord(await rpc(environment, "process_market_radar_refresh_batch_v4", {
       request_id_input: intent.requestId,
       provider_input: intent.provider,
       capability_input: intent.capability,
@@ -4115,7 +4115,56 @@ async function persistProviderResultV2(
     }, undefined, true, { timeoutPolicyMs: 30_000 }));
     rpcCalls += 2;
     if (batchResult?.ok !== true) {
-      throw new Error(cleanText(batchResult?.code, 100) || "RADAR_PERSISTENCE_FAILED");
+      const batchCode = cleanText(batchResult?.code, 100) || "RADAR_PERSISTENCE_FAILED";
+      const timeoutBatchId = cleanText(batchResult?.batch_id, 80).toLowerCase();
+      const timeoutItemCount = Number(batchResult?.item_count);
+      if (batchCode === "RADAR_PERSISTENCE_TIMEOUT"
+          && batchResult?.retryable === true
+          && validUuid(timeoutBatchId)
+          && Number.isInteger(timeoutItemCount)
+          && timeoutItemCount > 1
+          && timeoutItemCount <= MAX_NORMALIZED_PER_PROVIDER) {
+        await renewRadarRefreshLease(environment, intent);
+        const splitResult = toRecord(await rpc(
+          environment,
+          "split_market_radar_refresh_batch_v1",
+          {
+            request_id_input: intent.requestId,
+            provider_input: intent.provider,
+            capability_input: intent.capability,
+            lease_token_input: intent.leaseToken,
+            batch_id_input: timeoutBatchId,
+          },
+          undefined,
+          true,
+        ));
+        rpcCalls += 2;
+        const splitReplayed = splitResult?.replayed === true;
+        const splitParentId = cleanText(splitResult?.parent_batch_id, 80).toLowerCase();
+        const leftCount = Number(splitResult?.left_count);
+        const rightCount = Number(splitResult?.right_count);
+        const newSplitValid = splitReplayed || (
+          validUuid(splitResult?.left_batch_id)
+          && validUuid(splitResult?.right_batch_id)
+          && Number.isInteger(leftCount)
+          && Number.isInteger(rightCount)
+          && leftCount > 0
+          && rightCount > 0
+          && leftCount + rightCount === timeoutItemCount
+        );
+        if (splitResult?.ok !== true
+            || splitParentId !== timeoutBatchId
+            || !newSplitValid) {
+          throw new Error("RADAR_REFRESH_BATCH_SPLIT_INVALID");
+        }
+        processedBatchCount += 1;
+        if (Date.now() + PERSISTENCE_ISOLATION_BUDGET_MS
+            >= environment.execution.absoluteDeadlineAt - FINALIZATION_RESERVE_MS) {
+          throw new Error("RADAR_PERSISTENCE_TIMEOUT");
+        }
+        continue;
+      }
+      throw new Error(batchCode);
     }
     const remainingBatchCount = Math.max(0, Number(batchResult.remaining_batches) || 0);
     if (batchResult.processed === true) processedBatchCount += 1;

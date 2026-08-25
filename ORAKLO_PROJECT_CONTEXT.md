@@ -4,48 +4,61 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el smoke Radar v67:**
-> `origin/main` está en `0b11030e70b31cb5b174285715fc762e226f863b`;
-> `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v67 está `ACTIVE`, `verify_jwt=true`, digest
-> `df8a9d308e2ae8a72b466849b6d3fafc76c7e51620114168afb9571c627e2075`.
-> La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
-> `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
-> cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
-> endpoint histórico de Kalshi respondió 429; los siete padres completos no se
-> perdieron. La persistencia no cambió mercados, predicciones, perfiles,
-> borradores, Karma, Prestigio, LMSR ni histórico de precios.
+> **Estado productivo verificado tras el smoke Radar v68:**
+> `origin/main` está en `4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d`;
+> `20260825191649_checkpoint_market_radar_parent_persistence_v1` consta aplicada
+> una sola vez y `market-radar` v68 está `ACTIVE`, `verify_jwt=true`, digest
+> `85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519`.
+> Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
+> Resolución v16 permanecen sin cambios y con JWT obligatorio.
 >
-> El heartbeat ya se demostró en producción: la UUID
-> `2a268e1d-b4d0-4b79-829d-03ab481015c3` cerró Tavily y Polymarket 74/74 en cinco
-> batches, una sola ejecución por batch y cero cuarentenas. Kalshi conservó su
-> terminal técnico previo y no se proyectó como fresco. Un refresh posterior,
-> filtrado a Kalshi tras v65 creó `0cfba4f3-c258-48cb-8c6c-4bde7afac576`:
-> Tavily terminó, las 25/25 series respondieron y discovery produjo 11 padres y
-> 146 hijas, con `failed_series_count=0`. La escritura del ledger de padres falló
-> antes de manifest o batches y el wrapper aún sustituyó la regla SQL interna por
-> `PROVIDER_UNAVAILABLE`; no hubo escrituras Kalshi de candidatas, padres,
-> manifest ni batches. La preservación diagnóstica y su contrato tipado ya están
-> desplegados en v66.
+> El único refresh nuevo es `39a1656e-61af-4674-a4e0-fa0896236507` y solo se
+> continuó una vez esa misma UUID. Kalshi seleccionó 25 de 109 series, con cero
+> fallidas; persistió 11 padres y 148/148 hijas identificadas. Nueve padres son
+> `complete` y dos `provider_unavailable`; no hay identidades sin resolver. El
+> parent manifest es
+> `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
+> Tavily terminó `technical_failed/AI_DEADLINE_EXCEEDED` como enriquecimiento
+> auxiliar con `blocking_scope=none`, sin degradar Kalshi.
 >
-> El smoke v66 creó `e485f1ba-ddd8-4c61-8001-6ded4fc3abd7`. El primer tramo
-> aisló dos series fallidas, guardó selección, 11 padres y 148/148 hijas sin
-> pérdida; diez padres quedaron completos y uno `provider_unavailable`. Tavily,
-> aunque auxiliar, consumió después unos 39 s y la candidata no alcanzó manifest
-> ni batches antes de perder el transporte. La recuperación conservó la misma
-> UUID (`claim_count=2`) pero terminó sin candidatas. El E2E queda pausado hasta
-> subir el presupuesto aislado documentado en
-> `docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md`.
+> El feed alcanzó por primera vez su checkpoint de candidatas: expected y staged
+> son 86, el manifest es
+> `7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`
+> y existen cuatro batches de 24, 24, 24 y 14. El primero agotó el timeout,
+> quedó `technical_failed` con `attempt_count=1` y los otros tres permanecen
+> pendientes. La recuperación obtuvo HTTP 500 antes de entrar en el catcher v1;
+> la intención sigue `in_progress/persisting`, `claim_count=2`, sin
+> `finalization_hash`, candidatas aceptadas, cuarentenas ni nuevo borrador.
 >
-> El paquete exacto llegó después a `origin/main` y la Action funcional,
-> Pages y el benchmark offline quedaron verdes. Se desplegó únicamente
-> `market-radar` v67. El único refresh nuevo,
-> `b73e9718-7017-4af4-80d1-6ed470902061`, encontró 25/25 series Kalshi sanas,
-> 11 padres y 148 hijas, sin truncado ni pérdida. La selección respondió 200,
-> pero `record_market_radar_parent_reconciliations_v1` respondió 500 antes de
-> manifest; Tavily terminó correctamente y no fue la causa. La corrección local
-> pendiente está documentada en
-> `docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`.
+> La causa general es que el divisor durable ya existía pero no estaba conectado
+> a la ruta Edge v2, y el preflight exterior podía agotar el timeout sin devolver
+> `batch_id`. La corrección incremental está documentada en
+> `docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md`. No pulsar otra vez
+> «Continuar actualización» ni crear una intención nueva antes de integrar,
+> migrar y desplegar este paquete; después debe reanudarse exclusivamente la
+> misma UUID.
+
+### Aislamiento durable de timeouts de batch · 25 de agosto de 2026
+
+- `process_market_radar_refresh_batch_v4` conserva el primitive v3 y captura
+  únicamente `query_canceled` que escape del preflight v2. Reserva antes el
+  batch exacto con el mismo orden de locks, revierte el intento parcial y lo
+  deja `technical_failed/RADAR_PERSISTENCE_TIMEOUT` con contador de intentos.
+- La Edge solo divide una respuesta timeout reintentable con UUID válida y más
+  de un elemento. Valida parent, IDs hijos y suma exacta antes de continuar;
+  transportes ambiguos se recuperan por el replay idempotente del mismo ledger.
+- El margen global no cambia. Tras un split durable, si no quedan 20 s más la
+  reserva final, la invocación se difiere y otra recuperación de la misma UUID
+  continúa por sus hijos. Un batch unitario conserva el timeout explícito: no se
+  descarta, no se aprueba y no se convierte en error factual.
+- Los errores no timeout se propagan como tales. No se añaden hardcodes de
+  proveedor, serie, evento o mercado; tampoco cambian frontend, secretos, Auth,
+  RLS, IA, Registry, rutas, modelos, flags, presupuestos o economía.
+- La prueba focalizada cubre contrato Edge, catcher exterior, ACL, replay de
+  split 2+2, procesamiento v4 de ambos hijos, totales exactos y finalización
+  única. El mismo árbol conserva las matrices generales de 1, 3, 21, 48 y 100+
+  hijas, páginas, cursores, Unicode, placeholders, parciales, resultado público,
+  Tavily caído, doble clic y reanudación.
 
 ### Checkpoints durables de padres y proyección temprana · 25 de agosto de 2026
 
@@ -56,7 +69,7 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - La selección productiva es íntegra: 109 series totales, 25 seleccionadas,
   cero fallidas, 11 padres y 148 hijas. Los endpoints públicos de los once
   eventos respondieron y no existe evidencia de caída general de Kalshi.
-- La migración local mantiene la firma v1 y acepta subconjuntos estrictamente
+- La migración ya aplicada mantiene la firma v1 y acepta subconjuntos estrictamente
   incluidos en `selected_parent_ids`. Cada llamada persiste un padre completo;
   el intent conserva recuentos parciales y `parent_manifest_hash=null` hasta
   alcanzar exactamente padres, hijas e identidades seleccionadas.
@@ -71,10 +84,11 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   Una comparación de lectura sobre las 315 candidatas productivas dio cero
   diferencias entre el payload vigente y el nuevo.
 - No cambia frontend, secretos, Auth, RLS, proveedores, IA, Registry, rutas,
-  modelos, flags, presupuestos, economía ni datos. La migración y la Edge aún no
-  están activadas en producción; primero debe integrarse el paquete incremental.
-- Tras el smoke: `refresh_intents=20`, `issues=446`, `provider_runs=48`,
-  `candidates=315`, `fact_checks=3306`, `eligibility_checks=3522` y `drafts=6`.
+  modelos, flags, presupuestos, economía ni datos. El checkpoint y la Edge v68
+  están activos; queda pendiente el aislamiento de batches descrito arriba.
+- Tras el smoke v68: `refresh_intents=22`, `issues=450`, `provider_runs=49`,
+  `parent_ledgers=47`, `candidates=315`, `fact_checks=3306`,
+  `eligibility_checks=3522` y `drafts=6`.
   Los fingerprints de mercados, predicciones, perfiles, LMSR, precios y
   borradores, junto con Karma 2.932 y Prestigio 40, siguen idénticos.
 

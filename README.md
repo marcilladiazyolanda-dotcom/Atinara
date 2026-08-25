@@ -15,33 +15,39 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v67, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v68, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Bloqueo vigente de 13.5.2 · checkpoints de padres Radar
+## Bloqueo vigente de 13.5.2 · aislamiento durable de batches Radar
 
-El primer refresh durable V6 ya terminó sin Gemini. La UUID
-`2798d1af-9ccd-4b79-9be7-37d5876d9484` conserva Polymarket 74/74 y Kalshi
-105/105, sin cuarentenas ni fallos de candidata. Siete padres Kalshi quedaron
-completos; `KXPS6-26` permanece aislado porque su endpoint histórico respondió
-429, sin hacer incompletos a sus hermanos.
+El checkpoint de padres ya está integrado en `origin/main =
+4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d`, su migración consta aplicada en
+producción como `20260825191649_checkpoint_market_radar_parent_persistence_v1`
+y únicamente `market-radar` se desplegó como v68. El smoke autenticado creó una
+sola UUID, `39a1656e-61af-4674-a4e0-fa0896236507`, y una única continuación de
+esa misma intención; no se inició otro refresh.
 
-La frontera de catálogo desplegada reduce correctamente el payload que cruza
-PostgREST y separa visualmente auditoría y oportunidades. La inspección del
-smoke v67 demostró, sin embargo, que `list_market_radar_candidates_v5` todavía
-construye primero el expediente pesado de v4 y lo proyecta después dentro de la
-misma sentencia. Esa materialización puede rozar por sí sola el timeout de 8 s.
+Kalshi seleccionó 25 de 109 series, aplazó 84 y no registró series fallidas.
+Persistió 11 padres y 148/148 hijas identificadas, sin pérdida silenciosa:
+nueve padres están `complete` y dos `provider_unavailable`. El manifest de
+padres es `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
+Tavily terminó `AI_DEADLINE_EXCEEDED` como `source_enrichment`, con
+`blocking_scope=none`, y no impidió que Kalshi declarase y sellase 86 candidatas
+en cuatro batches de 24, 24, 24 y 14. El manifest de candidatas es
+`7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`.
 
-El deadline hijo de Tavily, el heartbeat y el aislamiento por series están ya
-desplegados en v67. El refresh único
-`b73e9718-7017-4af4-80d1-6ed470902061` obtuvo 25 series sanas, 11 padres y
-148 hijas sin pérdida, y guardó la selección. La RPC monolítica del ledger
-superó después el `statement_timeout=8s` de PostgREST: no dejó padres, manifest
-ni batches y finalizó técnicamente. La corrección pendiente convierte cada
-padre en un checkpoint append-only, sella el manifest solo con el conjunto
-exacto y empuja la proyección ligera antes de agregar JSON. Un timeout conserva
-la misma UUID como reanudable y nunca se presenta como caída de Kalshi.
+El primer batch agotó el `statement_timeout=8s` y quedó
+`technical_failed/RADAR_PERSISTENCE_TIMEOUT`, con `attempt_count=1`; los otros
+tres siguen pendientes y la intención continúa `in_progress`, sin finalización
+ni candidatas promovidas. La recuperación confirmó la causa general: el
+divisor durable `split_market_radar_refresh_batch_v1` existía, pero la Edge
+activa nunca lo invocaba; además, un timeout en el preflight v2 podía escapar
+antes del catcher interno v1. La corrección incremental añade el wrapper v4,
+liga cada timeout al batch exacto y biseca solo batches de más de un elemento.
+Un transporte ambiguo conserva idempotencia y el margen de finalización obliga
+a reanudar la misma UUID en otra invocación. Los errores SQL no temporales no se
+reclasifican ni se ocultan.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -52,6 +58,8 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
+[`docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md`](docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md).
+Checkpoint precedente:
 [`docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
@@ -65,8 +73,8 @@ schedulers de descubrimiento y monitorización continúan apagados.
 
 El backend coordinado está activo en producción. GitHub Pages sirve
 `v=20260825-radar-catalog-bound1` y el smoke autenticado confirmó la frontera de
-catálogo en escritorio y móvil. La corrección de checkpoints no modifica el
-frontend ni requiere republicar Pages. El smoke contra Pages y el
+catálogo en escritorio y móvil. La corrección de aislamiento de batches no
+modifica el frontend ni requiere republicar Pages. El smoke contra Pages y el
 backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.
