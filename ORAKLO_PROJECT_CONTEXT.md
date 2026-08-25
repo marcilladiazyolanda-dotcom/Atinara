@@ -5,10 +5,10 @@
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado productivo verificado tras aislar series Kalshi V6:**
-> `origin/main` está en `0be8e614c686e6294260faddc2fb36b80da11955`;
+> `origin/main` está en `c2ce6a96918e5e65074fc43218ea290cc9005493`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v65 está `ACTIVE`, `verify_jwt=true`, digest
-> `dcb6288f7e3f92dd6b3dfe08640a1b3ce5f7e2c33b3568d81fca1e527d5038c8`.
+> sola vez y `market-radar` v66 está `ACTIVE`, `verify_jwt=true`, digest
+> `cec6ccfeed2a467bcc87c11152ba3f85ecb0651159fa80ca6cabde28b64ab244`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -25,11 +25,42 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > 146 hijas, con `failed_series_count=0`. La escritura del ledger de padres falló
 > antes de manifest o batches y el wrapper aún sustituyó la regla SQL interna por
 > `PROVIDER_UNAVAILABLE`; no hubo escrituras Kalshi de candidatas, padres,
-> manifest ni batches. La preservación diagnóstica ya está en GitHub, pero no se
-> desplegó: CI detectó que su retorno `JsonRecord` era demasiado amplio para el
-> contrato tipado de persistencia. El E2E permanece pausado hasta subir la
-> corrección mínima documentada en
-> `docs/ATINARA_RADAR_INTERNAL_ERROR_TYPE_CONTRACT_FIX_20260825.md`.
+> manifest ni batches. La preservación diagnóstica y su contrato tipado ya están
+> desplegados en v66.
+>
+> El smoke v66 creó `e485f1ba-ddd8-4c61-8001-6ded4fc3abd7`. El primer tramo
+> aisló dos series fallidas, guardó selección, 11 padres y 148/148 hijas sin
+> pérdida; diez padres quedaron completos y uno `provider_unavailable`. Tavily,
+> aunque auxiliar, consumió después unos 39 s y la candidata no alcanzó manifest
+> ni batches antes de perder el transporte. La recuperación conservó la misma
+> UUID (`claim_count=2`) pero terminó sin candidatas. El E2E queda pausado hasta
+> subir el presupuesto aislado documentado en
+> `docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md`.
+
+### Presupuesto desacoplado del enriquecimiento Radar · 25 de agosto de 2026
+
+- La API demuestra que `record_market_radar_provider_selection_v1` y
+  `record_market_radar_parent_reconciliations_v1` respondieron HTTP 200 antes de
+  Tavily. El ledger nuevo contiene 11 padres, 148 descubiertas, 148
+  contabilizadas, 148 identificadas y cero identidades sin resolver.
+- `KXSWITCH2` y `KXMETACRITICSTALKER2` quedaron en
+  `failed_series_ids`; `provider_scope_partial=true` y
+  `no_parent_truncated=true`. Sus padres afectados permanecen incompletos sin
+  degradar los diez padres sanos.
+- Tavily finalizó como enriquecimiento no disponible después de varias
+  renovaciones de lease, pero el manifest de candidatas aún estaba aguas abajo.
+  Esta dependencia temporal obligó a reabrir discovery para recuperar la
+  intención aunque el catálogo del proveedor ya estaba contabilizado.
+- `withRadarEnrichmentBudget` crea un contexto hijo de 12 s, ligado al deadline
+  absoluto y con limpieza garantizada. El heartbeat del feed sigue siendo
+  independiente; un timeout auxiliar deja evidencia incompleta y permite que el
+  feed alcance manifest, batches y finalización.
+- `internalRadarOperationalFailure` conserva además códigos seguros de errores
+  locales, no solo `RadarRpcError`, para que un deadline o guard interno no se
+  vuelva a presentar como caída del proveedor.
+- La corrección es únicamente Edge y pruebas. Los fingerprints de mercados,
+  borradores, predicciones, perfiles, LMSR, precios, Karma y Prestigio quedaron
+  idénticos tras el smoke.
 
 ### Contrato TypeScript del error interno Radar · 25 de agosto de 2026
 

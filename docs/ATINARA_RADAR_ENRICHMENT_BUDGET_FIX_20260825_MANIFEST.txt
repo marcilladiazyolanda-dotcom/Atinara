@@ -1,0 +1,84 @@
+ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main c2ce6a96918e5e65074fc43218ea290cc9005493
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md
+A docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+11165a5f07374ff26866d7433b417892039d2e224dabd400973f3aa62aeff790  docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md
+82acef60ce70c7be8f99194c4651ee428f648e50e696505cbdcdcf181ff96546  ORAKLO_PROJECT_CONTEXT.md
+340843c15dd7990c589d446ca78f146be0775704909c698c863d9a69f9e3dd8e  README.md
+8731229c1b6bf0b565a0b5fd0066d41d2adae6af5e1a81673a8c2489e9a65b09  supabase/functions/market-radar/index.ts
+a31219a5b9e405a8aad82ea114ee1433707ee185845de0b901a236d3047c6f60  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts only; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+AI BUDGET TABLES: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- all unit tests: 563 passed, 0 failed
+- focused Radar/resumability tests: 87 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- Deno 2.1.14 Edge checks: 9 passed, 0 failed
+- market-radar TypeScript: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main c2ce6a96918e5e65074fc43218ea290cc9005493
+- GitHub Actions quality, Pages and offline benchmark: success
+- market-radar v66 ACTIVE verify_jwt=true digest cec6ccfeed2a467bcc87c11152ba3f85ecb0651159fa80ca6cabde28b64ab244
+- refresh UUID e485f1ba-ddd8-4c61-8001-6ded4fc3abd7 terminal; claim_count=2
+- 23 healthy Kalshi series; 2 isolated series: KXSWITCH2 and KXMETACRITICSTALKER2
+- provider_scope_partial=true; no_parent_truncated=true
+- 11 parent ledgers; 148 discovered, accounted and identified children; unresolved=0
+- 10 complete parents; 1 provider_unavailable parent
+- provider selection and parent reconciliation RPCs returned HTTP 200
+- Tavily terminal technical failure remained non-blocking but consumed about 39 seconds
+- no candidate manifest, batches or candidate writes for that UUID
+- markets=15, drafts=6, predictions=9, maker_state=15, price_history=17
+- candidates=315, fact_checks=3306, eligibility_checks=3522
+- Karma=2932, Prestige=40
+- all protected table fingerprints unchanged
+
+ROOT CAUSE
+- provider health isolation existed, but Tavily shared the bulk refresh time budget
+- candidate manifest was downstream from auxiliary enrichment
+- transport recovery had to repeat discovery after the parent ledger was already durable
+- plain internal deadline codes could still degrade to PROVIDER_UNAVAILABLE
+
+CORRECTION
+- RADAR_ENRICHMENT_BUDGET_MS=12000
+- child absolute deadline with parent signal and guaranteed cleanup
+- provider heartbeat remains on the global refresh context
+- auxiliary timeout permits fail-closed candidate persistence to continue
+- safe plain internal codes are preserved independently from RadarRpcError
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- require GitHub Edge/quality success or reproduce with Deno 2.1.14
+- confirm v66 and protected invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- respect cooldown and start exactly one fresh Kalshi refresh
+- require parent accounting plus expected_count, manifest_hash, staged batches and terminal finalization
+- accept Tavily failure only as non-blocking enrichment with explicit issue
+- do not repeat blindly if the provider feed still lacks a manifest
+- continue Radar to a fresh eligible candidate and one private draft only after the smoke passes
+- validate the generalized family, duplicate, public-resolution and agent-stage contracts

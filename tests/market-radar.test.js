@@ -871,13 +871,24 @@ test("la revalidación conserva el código SQL de dominio y distingue identidad 
 
 test("discovery y persistencia conservan la regla SQL interna sin llamarla caída del proveedor", () => {
   assert.match(edge, /function internalRadarRpcFailure/);
+  assert.match(edge, /function internalRadarOperationalFailure/);
   assert.match(edge, /ReturnType<typeof publicProviderError> & JsonRecord/);
   assert.match(edge, /error instanceof RadarRpcError/);
   assert.match(edge, /radarOperationalErrorCode\(error, "RADAR_PERSISTENCE_FAILED"\)/);
   assert.match(edge, /database_code: error\.databaseCode \|\| null/);
-  assert.match(edge, /function providerFailure[\s\S]+internalRadarRpcFailure\(error, provider\)/);
-  assert.match(edge, /function persistenceFailure[\s\S]+internalRadarRpcFailure\(error, provider\)/);
+  assert.match(edge, /function providerFailure[\s\S]+internalRadarOperationalFailure\(error, provider\)/);
+  assert.match(edge, /function persistenceFailure[\s\S]+internalRadarOperationalFailure\(error, provider\)/);
+  assert.match(edge, /code\.includes\("DEADLINE_EXCEEDED"\)/);
   assert.doesNotMatch(edge, /internalRadarRpcFailure[\s\S]+code:\s*"PROVIDER_UNAVAILABLE"/);
+});
+
+test("el enriquecimiento auxiliar tiene un deadline propio y siempre libera su contexto", () => {
+  assert.match(edge, /RADAR_ENRICHMENT_BUDGET_MS = 12_000/);
+  assert.match(edge, /async function withRadarEnrichmentBudget/);
+  assert.match(edge, /durationMs: Math\.min\(RADAR_ENRICHMENT_BUDGET_MS, remaining\)/);
+  assert.match(edge, /parentSignal: environment\.execution\.signal/);
+  assert.match(edge, /finally \{[\s\S]*scoped\.cleanup\(\)/);
+  assert.match(edge, /withRadarRefreshLeaseHeartbeat\([\s\S]+withRadarEnrichmentBudget\([\s\S]+researchGroupsWithTavily/);
 });
 
 test("la fuente de resolución exige evidencia oficial exacta y dominio autoritativo", () => {

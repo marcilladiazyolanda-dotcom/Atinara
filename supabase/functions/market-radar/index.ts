@@ -131,6 +131,7 @@ const MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP = 6;
 const TAVILY_SELECTION_FOLLOWUP_CONCURRENCY = 4;
 const TAVILY_SELECTION_FOLLOWUP_TIMEOUT_MS = 5_000;
 const OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS = 12_000;
+const RADAR_ENRICHMENT_BUDGET_MS = 12_000;
 const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
 const PROVIDER_RETRY_JITTER_MS = 250;
 
@@ -731,6 +732,27 @@ async function withRadarRefreshLeaseHeartbeat<T>(
   }
 }
 
+async function withRadarEnrichmentBudget<T>(
+  environment: Environment,
+  operation: (boundedEnvironment: Environment) => Promise<T>,
+): Promise<T> {
+  const remaining = Math.max(
+    1_000,
+    environment.execution.absoluteDeadlineAt - Date.now() - FINALIZATION_RESERVE_MS,
+  );
+  const scoped = createAbsoluteExecutionContext({
+    durationMs: Math.min(RADAR_ENRICHMENT_BUDGET_MS, remaining),
+    invocationId: environment.execution.invocationId,
+    agentRunId: environment.execution.agentRunId,
+    parentSignal: environment.execution.signal,
+  });
+  try {
+    return await operation({ ...environment, execution: scoped.context });
+  } finally {
+    scoped.cleanup();
+  }
+}
+
 async function authenticateAdmin(environment: Environment, authorization: string): Promise<{ adminId: string } | Response> {
   const response = await fetchInternal(environment, `${environment.supabaseUrl}/auth/v1/user`, {
     headers: { Authorization: authorization, apikey: environment.publishableKey },
@@ -845,7 +867,7 @@ async function verifyPublicUrl(
 }
 
 function providerFailure(error: unknown, provider: string) {
-  const internalFailure = internalRadarRpcFailure(error, provider);
+  const internalFailure = internalRadarOperationalFailure(error, provider);
   if (internalFailure) return internalFailure;
   const raw = error instanceof Error ? error.message : "PROVIDER_UNAVAILABLE";
   const code = raw.includes("TIMEOUT") ? "PROVIDER_TIMEOUT"
@@ -859,6 +881,26 @@ function providerFailure(error: unknown, provider: string) {
     retry_after_seconds: retryAfterMs === null ? null : Math.max(0, Math.ceil(retryAfterMs / 1_000)),
     retry_after_at: retryAfterMs === null ? null : new Date(Date.now() + retryAfterMs).toISOString(),
     retryable: ["PROVIDER_RATE_LIMITED", "PROVIDER_TIMEOUT", "PROVIDER_UNAVAILABLE", "PROVIDER_HTTP_5XX"].includes(code),
+  };
+}
+
+function internalRadarOperationalFailure(
+  error: unknown,
+  provider: string,
+): (ReturnType<typeof publicProviderError> & JsonRecord) | null {
+  if (error instanceof RadarRpcError) return internalRadarRpcFailure(error, provider);
+  const fallback = "RADAR_INTERNAL_OPERATION_FAILED";
+  const code = radarOperationalErrorCode(error, fallback);
+  if (code === fallback || code.startsWith("PROVIDER_")) return null;
+  const timedOut = code.includes("TIMEOUT") || code.includes("DEADLINE_EXCEEDED");
+  return {
+    ...publicProviderError(provider, code, timedOut ? 503 : 409),
+    retryable: timedOut || [
+      "RADAR_REFRESH_LEASE_INVALID",
+      "RADAR_REFRESH_LEASE_LOST",
+      "RADAR_PERSISTENCE_ISOLATION_DEFERRED",
+    ].includes(code),
+    database_code: null,
   };
 }
 
@@ -883,7 +925,7 @@ function internalRadarRpcFailure(
 }
 
 function persistenceFailure(error: unknown, provider: string) {
-  const internalFailure = internalRadarRpcFailure(error, provider);
+  const internalFailure = internalRadarOperationalFailure(error, provider);
   if (internalFailure) return internalFailure;
   const deferred = error instanceof Error
     && error.message === "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
@@ -4548,8 +4590,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       const research = await withRadarRefreshLeaseHeartbeat(
         environment,
         researchIntents,
-        () => researchGroupsWithTavily(
-          environment, environment.tavilyKey, scanCandidates, authoritativeDomains,
+        () => withRadarEnrichmentBudget(environment, (boundedEnvironment) =>
+          researchGroupsWithTavily(
+            boundedEnvironment, boundedEnvironment.tavilyKey, scanCandidates, authoritativeDomains,
+          )
         ),
       );
       evidenceByGroup = research.evidenceByGroup;
