@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v64, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v65, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -32,12 +32,13 @@ antes de PostgREST, separan visualmente auditoría y oportunidades y reducen los
 tres inputs reales a 835.015 bytes. El smoke pasa HTTP 200, paginación completa
 y layout de escritorio/móvil.
 
-El contrato de errores y el heartbeat ya están desplegados. Polymarket cerró
-74/74 con leases renovadas. El refresh Kalshi posterior detectó una tercera
-incidencia: una sola de 25 series rechazada derribaba todo el proveedor, aunque
-las demás pudieran estar sanas. La corrección incremental conserva las series
-válidas, contabiliza las fallidas y solo declara caída global cuando ninguna
-produce eventos.
+El contrato de errores, el heartbeat y el aislamiento por series ya están
+desplegados. Polymarket cerró 74/74 con leases renovadas. El refresh Kalshi v65
+consumió 25/25 series, descubrió 11 padres y 146 hijas y completó Tavily, pero
+la escritura del ledger de padres falló antes de manifest o batches. El wrapper
+todavía degradó la regla SQL interna a `PROVIDER_UNAVAILABLE`; la corrección
+incremental conserva ahora `databaseMessage`, SQLSTATE y retryabilidad para
+revelar la causa exacta sin atribuir falsamente la caída al proveedor.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -48,7 +49,7 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
-[`docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md`](docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md).
+[`docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md`](docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 
@@ -60,9 +61,9 @@ infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
 El backend coordinado está activo en producción. GitHub Pages sirve
-`v=20260824-radar-batch-resume1`; la corrección pendiente usa
-`v=20260825-radar-catalog-bound1` y no debe declararse publicada hasta que Yol
-suba el ZIP incremental y se repita el smoke. El smoke autenticado contra Pages y el
+`v=20260825-radar-catalog-bound1` y el smoke autenticado confirmó la frontera de
+catálogo en escritorio y móvil. El parche diagnóstico pendiente afecta solo a
+`market-radar`; no requiere republicar el frontend. El smoke contra Pages y el
 backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.

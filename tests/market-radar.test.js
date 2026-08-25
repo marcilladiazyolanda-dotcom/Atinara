@@ -869,6 +869,16 @@ test("la revalidación conserva el código SQL de dominio y distingue identidad 
   assert.match(edge, /RADAR_CANDIDATE_IDENTITY_STALE[\s\S]+retryable_input/);
 });
 
+test("discovery y persistencia conservan la regla SQL interna sin llamarla caída del proveedor", () => {
+  assert.match(edge, /function internalRadarRpcFailure/);
+  assert.match(edge, /error instanceof RadarRpcError/);
+  assert.match(edge, /radarOperationalErrorCode\(error, "RADAR_PERSISTENCE_FAILED"\)/);
+  assert.match(edge, /database_code: error\.databaseCode \|\| null/);
+  assert.match(edge, /function providerFailure[\s\S]+internalRadarRpcFailure\(error, provider\)/);
+  assert.match(edge, /function persistenceFailure[\s\S]+internalRadarRpcFailure\(error, provider\)/);
+  assert.doesNotMatch(edge, /internalRadarRpcFailure[\s\S]+code:\s*"PROVIDER_UNAVAILABLE"/);
+});
+
 test("la fuente de resolución exige evidencia oficial exacta y dominio autoritativo", () => {
   const authoritativeDomains = new Set(["ea.com", "thegameawards.com"]);
   const evidence = [

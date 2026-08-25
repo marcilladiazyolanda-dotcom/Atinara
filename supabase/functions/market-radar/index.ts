@@ -845,6 +845,8 @@ async function verifyPublicUrl(
 }
 
 function providerFailure(error: unknown, provider: string) {
+  const internalFailure = internalRadarRpcFailure(error, provider);
+  if (internalFailure) return internalFailure;
   const raw = error instanceof Error ? error.message : "PROVIDER_UNAVAILABLE";
   const code = raw.includes("TIMEOUT") ? "PROVIDER_TIMEOUT"
     : raw.includes("RATE_LIMITED") || raw.includes("429") ? "PROVIDER_RATE_LIMITED"
@@ -860,7 +862,26 @@ function providerFailure(error: unknown, provider: string) {
   };
 }
 
+function internalRadarRpcFailure(error: unknown, provider: string): JsonRecord | null {
+  if (!(error instanceof RadarRpcError) || !error.databaseMessage) return null;
+  const code = radarOperationalErrorCode(error, "RADAR_PERSISTENCE_FAILED");
+  const timedOut = error.databaseCode === "57014" || error.status === 504
+    || code.includes("TIMEOUT");
+  const retryable = timedOut || [
+    "RADAR_REFRESH_LEASE_INVALID",
+    "RADAR_REFRESH_LEASE_LOST",
+    "RADAR_PERSISTENCE_ISOLATION_DEFERRED",
+  ].includes(code);
+  return {
+    ...publicProviderError(provider, code, timedOut ? 503 : 409),
+    retryable,
+    database_code: error.databaseCode || null,
+  };
+}
+
 function persistenceFailure(error: unknown, provider: string) {
+  const internalFailure = internalRadarRpcFailure(error, provider);
+  if (internalFailure) return internalFailure;
   const deferred = error instanceof Error
     && error.message === "RADAR_PERSISTENCE_ISOLATION_DEFERRED";
   const timedOut = error instanceof RadarRpcError

@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras activar el heartbeat V6:**
-> `origin/main` está en `03e89696a3f8ea3269ecfe4f22bffc7dccb3fbf3`;
+> **Estado productivo verificado tras aislar series Kalshi V6:**
+> `origin/main` está en `155b2c86a25d5a2c20f0345f687ae6b7a8a70da9`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v64 está `ACTIVE`, `verify_jwt=true`, digest
-> `6bd6e422afeead349fbe548237d8d3f950c0917cf178f70d9e1d3a5d11cc2ec2`.
+> sola vez y `market-radar` v65 está `ACTIVE`, `verify_jwt=true`, digest
+> `dcb6288f7e3f92dd6b3dfe08640a1b3ce5f7e2c33b3568d81fca1e527d5038c8`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -20,11 +20,31 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `2a268e1d-b4d0-4b79-829d-03ab481015c3` cerró Tavily y Polymarket 74/74 en cinco
 > batches, una sola ejecución por batch y cero cuarentenas. Kalshi conservó su
 > terminal técnico previo y no se proyectó como fresco. Un refresh posterior,
-> filtrado a Kalshi, creó `30e26184-a974-4878-9a1b-39005b856fd8`; Tavily terminó,
-> pero una de las 25 series Kalshi falló y la regla actual derribó todo el
-> proveedor como `PROVIDER_UNAVAILABLE`. Los endpoints base responden 200. El
-> E2E permanece pausado hasta desplegar el aislamiento por series documentado en
-> `docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md`.
+> filtrado a Kalshi tras v65 creó `0cfba4f3-c258-48cb-8c6c-4bde7afac576`:
+> Tavily terminó, las 25/25 series respondieron y discovery produjo 11 padres y
+> 146 hijas, con `failed_series_count=0`. La escritura del ledger de padres falló
+> antes de manifest o batches y el wrapper aún sustituyó la regla SQL interna por
+> `PROVIDER_UNAVAILABLE`; no hubo escrituras Kalshi de candidatas, padres,
+> manifest ni batches. El E2E permanece pausado hasta desplegar la preservación
+> diagnóstica documentada en
+> `docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md`.
+
+### Preservación de errores internos Radar · 25 de agosto de 2026
+
+- El aislamiento por series está demostrado en producción: la UUID
+  `0cfba4f3-c258-48cb-8c6c-4bde7afac576` consumió 25/25 series Kalshi sin fallo,
+  descubrió 11 padres y 146 hijas y completó Tavily.
+- La primera escritura, el ledger de padres, falló antes de crear manifest o
+  batches. `providerFailure` y `persistenceFailure` inspeccionaban solo
+  `Error.message`; para `RadarRpcError` ese campo es el envoltorio HTTP y la
+  regla SQL real vive en `databaseMessage`.
+- `internalRadarRpcFailure` preserva esa regla, el SQLSTATE y su semántica de
+  retry. Ya no etiqueta un conflicto interno de persistencia como caída del
+  proveedor ni oculta el siguiente diagnóstico accionable.
+- La corrección es solo Edge y prueba de contrato. No cambia SQL, frontend,
+  datos, IA, Registry, rutas, presupuestos o economía. Tras desplegarla se hará
+  un único reintento Kalshi controlado para obtener la regla exacta y corregir
+  su causa raíz, sin insistir a ciegas.
 
 ### Aislamiento parcial de series Kalshi · 25 de agosto de 2026
 

@@ -1,0 +1,63 @@
+ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 155b2c86a25d5a2c20f0345f687ae6b7a8a70da9
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md
+A docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+b4e36590a84a9d17c8149c24a0afaf3752e3ce74fc0933e178b99f42ac356182  docs/ATINARA_RADAR_INTERNAL_ERROR_PRESERVATION_FIX_20260825.md
+f96c97e8987201cb7b0485e720d094b590d26cf3c1f5e84839e70ad5bffa3fca  ORAKLO_PROJECT_CONTEXT.md
+909261f4f9b0d5d561a8fe8839a76d45dd79fa9232ea469c54621d8724ee2589  README.md
+2867eeafb0c6bbed0c350b6ddf4a2bd7d2829e26d0caaec1cbb711416d0082e9  supabase/functions/market-radar/index.ts
+c0c1e2afacbd0b983e7e2df5867c1014e8cf08e75fb25a8278f75de1f14b09ef  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts only; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- all unit tests: 562 passed, 0 failed
+- focused market-radar tests: 73 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- market-radar TypeScript parse: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 155b2c86a25d5a2c20f0345f687ae6b7a8a70da9
+- market-radar v65 ACTIVE verify_jwt=true digest dcb6288f7e3f92dd6b3dfe08640a1b3ce5f7e2c33b3568d81fca1e527d5038c8
+- Kalshi-only UUID 0cfba4f3-c258-48cb-8c6c-4bde7afac576 terminal technical_failed
+- Tavily completed; Kalshi consumed 25/25 series with failed_series_count=0
+- discovery produced 11 parents and 146 children
+- persistence failed before parent ledger, manifest or batches
+- current wrapper obscured the internal SQL rule as PROVIDER_UNAVAILABLE
+- zero Kalshi parent, manifest, batch or candidate writes in that UUID
+- markets=15, drafts=6, predictions=9, maker_state=15, price_history=17
+- Karma=2932, Prestige=40
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- confirm v65 and production invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- respect cooldown and start exactly one Kalshi refresh
+- require 25/25 series or explicit partial-series accounting
+- capture the preserved SQL rule and database_code at parent-ledger persistence
+- do not repeat blindly if the rule fails again
+- diagnose and correct that exact root cause before any further Radar-to-publication E2E
+- do not run Gemini or Market Expert before a fresh current eligible candidate
