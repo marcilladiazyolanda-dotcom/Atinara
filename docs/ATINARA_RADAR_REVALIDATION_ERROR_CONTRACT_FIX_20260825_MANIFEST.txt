@@ -1,0 +1,65 @@
+ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 013a3d986965664a3e68e23b5f41ae1d181de259
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md
+A docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+b6bba800b69f3744cdf70274583a3c188544121ac020a17f4f7179910b591ce6  docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md
+395e97fac8e9500ca4cc9eb98a3cbad4726c91c31d1d27bea5f2296b7c0308be  ORAKLO_PROJECT_CONTEXT.md
+a23c05ad67843ed56dfb19c76b042b0463e29656214505c218d12684229d4dec  README.md
+aac9e295ebf7757c6c3307a6dd97b6bb22e6a9899224245d8aa20ca4e36be21d  supabase/functions/_shared/market-radar.mjs
+e8c158723f45a3a9c6184541a38ae05c75c890dd10e4ffd175cbc97ce6ee00b3  supabase/functions/market-radar/index.ts
+2d3b4aa245396f2214f0dbd82be9c9afb3b0bbdb6462214df11a9256d8ac35fc  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts plus _shared/market-radar.mjs; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- all unit tests: 559 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- focused market-radar suite: 71 passed
+- market-radar TypeScript parse: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 013a3d986965664a3e68e23b5f41ae1d181de259
+- migration 20260825150021 bound_market_radar_catalog_projection_v1 applied
+- market-radar v62 ACTIVE verify_jwt=true digest 009b6196d2e3a22dc15316d8f3663e020e73ba7a354aeeac60cecc80767b41cb
+- Pages 20260825-radar-catalog-bound1 active
+- catalog smoke HTTP 200; parents paginated 4+1+1; layout passed
+- Madden 0 opportunities / 17 resolved / 4 inactive
+- FC27 0 opportunities / 23 resolved
+- Onimusha revalidation attempt eb2be4b2-b40c-4284-b7c2-46ddf185ac91 failed closed
+- PostgreSQL cause RADAR_CANDIDATE_IDENTITY_STALE
+- candidate remains available, no prepared draft, drafts=6, markets=15
+- predictions=9, maker_state=15, price_history=17, Karma=2932, Prestige=40
+
+POST-UPLOAD
+- fetch and compare all 7 paths and contents
+- confirm v62 and production invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- verify only index.ts and shared market-radar module changed
+- execute one new controlled Radar refresh; do not resume the terminal old UUID
+- require a fresh candidate identity before Market Expert
+- if revalidation blocks again, require the exact domain code, phase and next_action
+- continue to proposal/draft/Validator only with current eligibility

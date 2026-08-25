@@ -64,6 +64,7 @@ import {
   projectRadarDomainReview,
   prioritizeProviderChildEvidenceAliases,
   publicProviderError,
+  radarOperationalErrorCode,
   radarDomainFingerprintV1,
   reconcileProviderParent,
   safeIsoDate,
@@ -5374,11 +5375,9 @@ async function recordTechnicalEligibilityAttempt(
   error: unknown,
 ): Promise<void> {
   if (error instanceof RadarRevalidationOutcomeError) return;
-  const rawCode = error instanceof Error ? cleanText(error.message, 100) : "RADAR_ELIGIBILITY_TECHNICAL_FAILURE";
-  const errorCode = /^[A-Z][A-Z0-9_]{2,100}$/.test(rawCode)
-    ? rawCode
-    : "RADAR_ELIGIBILITY_TECHNICAL_FAILURE";
-  const phase = errorCode === "PROVIDER_UNAVAILABLE"
+  const errorCode = radarOperationalErrorCode(error);
+  const phase = ["PROVIDER_UNAVAILABLE", "RADAR_CANDIDATE_IDENTITY_STALE",
+    "RADAR_PARENT_RECONCILIATION_INCOMPLETE"].includes(errorCode)
     ? "provider_revalidation"
     : errorCode === "ELIGIBILITY_SCAN_UNAVAILABLE"
       ? "official_terminal_scan"
@@ -5393,7 +5392,8 @@ async function recordTechnicalEligibilityAttempt(
       attempt_id_input: operationId,
       phase_input: phase,
       error_code_input: errorCode,
-      retryable_input: ["PROVIDER_UNAVAILABLE", "ELIGIBILITY_SCAN_UNAVAILABLE"].includes(errorCode),
+      retryable_input: ["PROVIDER_UNAVAILABLE", "ELIGIBILITY_SCAN_UNAVAILABLE",
+        "RADAR_CANDIDATE_IDENTITY_STALE", "RADAR_PARENT_RECONCILIATION_INCOMPLETE"].includes(errorCode),
     }, undefined, true);
   } catch (auditError) {
     console.warn("Radar eligibility attempt audit unavailable", auditError instanceof Error ? auditError.message : "AUDIT_UNAVAILABLE");
@@ -5401,7 +5401,7 @@ async function recordTechnicalEligibilityAttempt(
 }
 
 function eligibilityFailureResponse(error: unknown, operationId: string): Response {
-  const code = error instanceof Error ? cleanText(error.message, 100) : "RADAR_ELIGIBILITY_REQUIRED";
+  const code = radarOperationalErrorCode(error, "RADAR_ELIGIBILITY_REQUIRED");
   const errors: Record<string, { status: number; message: string }> = {
     PROVIDER_NOT_OPEN: { status: 409, message: "El mercado de origen ya no está abierto o no conserva la opción verificada." },
     PROVIDER_UNAVAILABLE: { status: 503, message: "El proveedor no respondió. Se conserva el último estado y puedes reintentar sin duplicar cambios." },
@@ -5421,6 +5421,7 @@ function eligibilityFailureResponse(error: unknown, operationId: string): Respon
     CANDIDATE_NOT_REVALIDATABLE: { status: 409, message: "La candidata ya no admite una comprobación de elegibilidad." },
     CONFIRMED_DUPLICATE: { status: 409, message: "La candidata coincide con un mercado o borrador existente." },
     RADAR_PARENT_RECONCILIATION_INCOMPLETE: { status: 409, message: "El proveedor todavía no ha permitido reconciliar todas las opciones del evento." },
+    RADAR_CANDIDATE_IDENTITY_STALE: { status: 409, message: "El proveedor cambió datos materiales de identidad o contrato. Actualiza el Radar antes de volver a preparar esta candidata." },
     CANONICAL_CHILD_PROJECTION_INVALID: { status: 409, message: "La identidad canónica de la opción no cumple el contrato vigente." },
   };
   if (error instanceof RadarRevalidationOutcomeError) {
@@ -5451,7 +5452,12 @@ function eligibilityFailureResponse(error: unknown, operationId: string): Respon
     attempt_id: operationId,
     phase: "eligibility_check",
     retryable: code === RADAR_REASON_CODES.RESOLUTION_SOURCE_AUTHORITY_PENDING
+      || ["RADAR_CANDIDATE_IDENTITY_STALE", "RADAR_PARENT_RECONCILIATION_INCOMPLETE"].includes(code)
       || failure.status === 429 || failure.status >= 500,
+    next_action: code === "RADAR_CANDIDATE_IDENTITY_STALE"
+      ? "refresh_radar_sources"
+      : code === "RADAR_PARENT_RECONCILIATION_INCOMPLETE"
+        ? "retry_provider_refresh" : null,
     state_preserved: true,
   }, failure.status);
 }

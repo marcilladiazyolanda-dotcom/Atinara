@@ -854,6 +854,21 @@ test("una actualización explícita nunca reutiliza un estado abierto y solo con
   assert.equal(radar.canReuseRadarVerification({ ...verified, eligibility_policy_version: "atinara-prediction-policy-v3" }, candidate, now), false);
 });
 
+test("la revalidación conserva el código SQL de dominio y distingue identidad stale de un 503 técnico", () => {
+  assert.equal(radar.radarOperationalErrorCode({
+    databaseMessage: "RADAR_CANDIDATE_IDENTITY_STALE",
+    message: "RADAR_RPC_409",
+  }), "RADAR_CANDIDATE_IDENTITY_STALE");
+  assert.equal(radar.radarOperationalErrorCode({
+    code: "PROVIDER_UNAVAILABLE",
+    message: "network failed",
+  }), "PROVIDER_UNAVAILABLE");
+  assert.equal(radar.radarOperationalErrorCode({ message: "texto no seguro" }),
+    "RADAR_ELIGIBILITY_TECHNICAL_FAILURE");
+  assert.match(edge, /RADAR_CANDIDATE_IDENTITY_STALE[\s\S]+refresh_radar_sources/);
+  assert.match(edge, /RADAR_CANDIDATE_IDENTITY_STALE[\s\S]+retryable_input/);
+});
+
 test("la fuente de resolución exige evidencia oficial exacta y dominio autoritativo", () => {
   const authoritativeDomains = new Set(["ea.com", "thegameawards.com"]);
   const evidence = [

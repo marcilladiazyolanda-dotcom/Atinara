@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v61, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v62, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -27,12 +27,16 @@ El primer refresh durable V6 ya terminó sin Gemini. La UUID
 completos; `KXPS6-26` permanece aislado porque su endpoint histórico respondió
 429, sin hacer incompletos a sus hermanos.
 
-El E2E final está pausado por una incidencia posterior al commit: las RPC de
-lectura entregaban 6,5 MB de expedientes completos antes del saneado Edge y la
-respuesta terminaba en HTTP 500. La corrección incremental crea RPC ligeras que
-proyectan en SQL antes de PostgREST, separa visualmente auditoría y oportunidades
-y evita comprimir una única familia. Sobre el snapshot real reduce candidatas,
-rechazos y reconciliaciones a 835.015 bytes antes de la paginación final.
+La frontera de catálogo ya está desplegada: las RPC ligeras proyectan en SQL
+antes de PostgREST, separan visualmente auditoría y oportunidades y reducen los
+tres inputs reales a 835.015 bytes. El smoke pasa HTTP 200, paginación completa
+y layout de escritorio/móvil.
+
+El E2E final está pausado por una incidencia posterior: la revalidación detectó
+correctamente `RADAR_CANDIDATE_IDENTITY_STALE`, pero el wrapper Edge perdió el
+código SQL y lo presentó como un 503 técnico no reintentable. La corrección
+incremental conserva el código, fase y siguiente acción, sin cambiar SQL ni
+datos. Después exige un Radar fresco antes de ejecutar Market Expert.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -43,7 +47,7 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
-[`docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md`](docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md).
+[`docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md`](docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 

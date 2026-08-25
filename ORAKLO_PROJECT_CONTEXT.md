@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras completar la intención durable V6:**
-> `origin/main` está en `5ad6ae96413c37bbecea69f4f18b391d994fa2b2`;
-> `20260825134153_harden_radar_batch_resume_visibility_v1` consta aplicada una
-> sola vez y `market-radar` v61 está `ACTIVE`, `verify_jwt=true`, digest
-> `75991fc5c8b66f616cfd7f126341b52a1618d89d49d16f48d5d10839e0471794`.
+> **Estado productivo verificado tras cerrar la frontera de catálogo V6:**
+> `origin/main` está en `013a3d986965664a3e68e23b5f41ae1d181de259`;
+> `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
+> sola vez y `market-radar` v62 está `ACTIVE`, `verify_jwt=true`, digest
+> `009b6196d2e3a22dc15316d8f3663e020e73ba7a354aeeac60cecc80767b41cb`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -16,17 +16,38 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > perdieron. La persistencia no cambió mercados, predicciones, perfiles,
 > borradores, Karma, Prestigio, LMSR ni histórico de precios.
 >
-> El postflight visual descubrió una incidencia posterior a la persistencia:
-> las RPC v4/v2 entregan 3,65 MB de candidatas y 2,89 MB de rechazos antes del
-> saneado Edge. La lectura termina en HTTP 500 aunque el commit de los batches
-> sea correcto. Además, la auditoría de reconciliación muestra Madden y FC27 sin
-> explicar en cada tarjeta que aportan cero oportunidades, lo que puede
-> confundirse con el catálogo. Ambos están correctamente terminales por
-> `EVENT_ALREADY_RESOLVED`: Madden aporta 17 terminales y 4 inactivas; FC27, 23
-> terminales; ninguno se proyecta como candidata. La corrección incremental está
-> documentada en `docs/ATINARA_RADAR_CATALOG_BOUNDARY_FIX_20260825.md`. No pulsar
-> de nuevo «Continuar actualización»: la intención ya es terminal. El E2E hacia
-> Editor permanece pausado hasta desplegar y verificar esa corrección.
+> El smoke autenticado de catálogo pasa HTTP 200, tres páginas de padres,
+> escritorio/móvil sin overflow y cero solapamientos. Madden y FC27 aparecen
+> solo en auditoría con 0 oportunidades. La migración no cambió ningún dato de
+> dominio. Al intentar renovar una hija válida de Onimusha, PostgreSQL bloqueó
+> correctamente con `RADAR_CANDIDATE_IDENTITY_STALE`: el proveedor cambió un
+> dato material desde el snapshot del 24 de agosto y exige un Radar fresco. La
+> Edge perdió ese código dentro de `RadarRpcError` y respondió un 503 genérico,
+> registrándolo falsamente como no reintentable. El E2E hacia Editor permanece
+> pausado hasta desplegar la corrección de transporte documentada en
+> `docs/ATINARA_RADAR_REVALIDATION_ERROR_CONTRACT_FIX_20260825.md`.
+
+### Contrato de errores de revalidación Radar · 25 de agosto de 2026
+
+- La candidata `9979db72-d498-41f7-bf26-226aba4846e0` corresponde a Onimusha:
+  hija `option:*`, padre Kalshi 19/19, gaming, futura y sin duplicado. No se
+  ejecutó Market Expert porque su elegibilidad estaba caducada.
+- La revalidación única terminó fail-closed. No abrió formulario ni borrador;
+  candidata `available`, `prepared_draft_id=null`, 6 borradores, 15 mercados,
+  9 predicciones, Karma 2932, Prestigio 40 y LMSR/histórico intactos.
+- PostgreSQL emitió `RADAR_CANDIDATE_IDENTITY_STALE`, pero `rpc()` lanzó
+  `RadarRpcError(message=RADAR_RPC_409,databaseMessage=RADAR_CANDIDATE_IDENTITY_STALE)`.
+  Auditoría y respuesta usaban solo `error.message`, degradando una transición
+  de dominio recuperable a `RADAR_ELIGIBILITY_TECHNICAL_FAILURE` 503.
+- El helper compartido nuevo prioriza `databaseMessage`, después `code` y solo
+  al final `message`. Identidad stale y padre incompleto se registran en fase
+  `provider_revalidation`, `retryable=true`, y devuelven 409 con siguiente
+  acción explícita de actualizar Radar. Proveedor/scan y fallos reales conservan
+  sus clasificaciones previas.
+- Esta corrección no cambia SQL, frontend, datos, IA, Registry, rutas,
+  presupuestos ni economía. Tras desplegarla se ejecutará una actualización
+  Radar nueva y controlada —no replay de la UUID terminal— para obtener una
+  identidad vigente antes de Market Expert.
 
 ### Frontera ligera de catálogo y resultados públicos · 25 de agosto de 2026
 

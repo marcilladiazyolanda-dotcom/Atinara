@@ -29,6 +29,18 @@ export const RADAR_PROVIDER_ROLES = Object.freeze({
   kalshi: Object.freeze({ role: "candidate_feed", affectsCatalogHealth: true }),
   tavily: Object.freeze({ role: "source_enrichment", affectsCatalogHealth: false }),
 });
+
+export function radarOperationalErrorCode(error, fallback = "RADAR_ELIGIBILITY_TECHNICAL_FAILURE") {
+  const source = error && typeof error === "object" ? error : {};
+  for (const value of [source.databaseMessage, source.code, source.message]) {
+    const code = String(value ?? "").trim();
+    if (/^[A-Z][A-Z0-9_]{2,100}$/.test(code)) return code;
+  }
+  const safeFallback = String(fallback ?? "").trim();
+  return /^[A-Z][A-Z0-9_]{2,100}$/.test(safeFallback)
+    ? safeFallback
+    : "RADAR_ELIGIBILITY_TECHNICAL_FAILURE";
+}
 // Unión conservada para adaptadores, URLs y respuestas legacy. La salud del
 // catálogo usa RADAR_CANDIDATE_PROVIDERS, nunca esta unión.
 export const RADAR_PROVIDERS = Object.freeze([
