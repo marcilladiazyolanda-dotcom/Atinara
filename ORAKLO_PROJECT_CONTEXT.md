@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras corregir el contrato de revalidación V6:**
-> `origin/main` está en `fc6220f06ecbd2dbc2afb57422540cd8287d87b4`;
+> **Estado productivo verificado tras activar el heartbeat V6:**
+> `origin/main` está en `03e89696a3f8ea3269ecfe4f22bffc7dccb3fbf3`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v63 está `ACTIVE`, `verify_jwt=true`, digest
-> `9c45bec7deca45724ddbb8d7c18303c5cedfd7034899dc1d55d4a52c32221c30`.
+> sola vez y `market-radar` v64 está `ACTIVE`, `verify_jwt=true`, digest
+> `6bd6e422afeead349fbe548237d8d3f950c0917cf178f70d9e1d3a5d11cc2ec2`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -16,20 +16,34 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > perdieron. La persistencia no cambió mercados, predicciones, perfiles,
 > borradores, Karma, Prestigio, LMSR ni histórico de precios.
 >
-> El smoke autenticado de catálogo pasa HTTP 200, tres páginas de padres,
-> escritorio/móvil sin overflow y cero solapamientos. Madden y FC27 aparecen
-> solo en auditoría con 0 oportunidades. La migración no cambió ningún dato de
-> dominio. Al intentar renovar una hija válida de Onimusha, PostgreSQL bloqueó
-> correctamente con `RADAR_CANDIDATE_IDENTITY_STALE`: el proveedor cambió un
-> dato material desde el snapshot del 24 de agosto y exige un Radar fresco. La
-> La corrección de transporte ya está desplegada. Un refresh nuevo creó la UUID
-> `2a268e1d-b4d0-4b79-829d-03ab481015c3`, distinta de la terminal anterior. Los
-> ledgers enumeraron 3 padres Polymarket y 11 Kalshi, pero el transporte Edge
-> duró 56,6 s frente a leases de 45 s. PostgreSQL bloqueó escrituras posteriores
-> con `RADAR_REFRESH_LEASE_INVALID`: Kalshi terminó degradado antes de staging y
-> Polymarket/Tavily quedaron reclamables. No existen batches ni mutaciones de
-> candidatas para esta UUID. El E2E permanece pausado hasta desplegar el heartbeat
-> documentado en `docs/ATINARA_RADAR_REFRESH_LEASE_HEARTBEAT_FIX_20260825.md`.
+> El heartbeat ya se demostró en producción: la UUID
+> `2a268e1d-b4d0-4b79-829d-03ab481015c3` cerró Tavily y Polymarket 74/74 en cinco
+> batches, una sola ejecución por batch y cero cuarentenas. Kalshi conservó su
+> terminal técnico previo y no se proyectó como fresco. Un refresh posterior,
+> filtrado a Kalshi, creó `30e26184-a974-4878-9a1b-39005b856fd8`; Tavily terminó,
+> pero una de las 25 series Kalshi falló y la regla actual derribó todo el
+> proveedor como `PROVIDER_UNAVAILABLE`. Los endpoints base responden 200. El
+> E2E permanece pausado hasta desplegar el aislamiento por series documentado en
+> `docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md`.
+
+### Aislamiento parcial de series Kalshi · 25 de agosto de 2026
+
+- `discoverKalshi` consulta hasta 25 series con concurrencia 2. La implementación
+  convertía cualquier elemento `rejected` de `indexedSettled` en un throw global,
+  aunque las demás series y sus padres estuvieran completos.
+- La corrección conserva los eventos de todas las series `fulfilled`; solo falla
+  el proveedor completo si ninguna serie produce eventos y existe al menos una
+  caída. La selección registra `failed_series_count`, IDs, alcance parcial y el
+  número real de series seleccionadas/diferidas.
+- La UI operativa recibe `RADAR_PROVIDER_SERIES_PARTIAL`: muestra cuántas series
+  se reintentarán y declara que ningún padre representado fue truncado. No oculta
+  el delta ni lo convierte en cuarentena o resultado factual.
+- Los endpoints de taxonomía y series respondieron HTTP 200 en la comprobación
+  externa posterior; por tanto, la caída observada fue parcial/intermitente y no
+  justifica invalidar todo Kalshi.
+- La corrección es solo Edge, sin migración, frontend, IA o economía. Tras el
+  despliegue se ejecutará otro refresh Kalshi controlado y se exigirá que las
+  series sanas produzcan padres, manifest y batches aunque una hermana falle.
 
 ### Heartbeat de leases durante discovery · 25 de agosto de 2026
 

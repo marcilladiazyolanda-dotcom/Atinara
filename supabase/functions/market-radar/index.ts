@@ -2930,7 +2930,12 @@ async function discoverKalshi(environment: Environment, now: string, requestId: 
     });
   });
   const indexedEvents = indexedSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-  if (indexedSettled.some((result) => result.status === "rejected")) throw new Error("PROVIDER_UNAVAILABLE");
+  const failedSeriesIds = indexedSettled.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [cleanText(series[index]?.ticker, 120)].filter(Boolean)
+      : []);
+  if (!indexedEvents.length && failedSeriesIds.length) throw new Error("PROVIDER_UNAVAILABLE");
+  const successfulSeriesCount = Math.max(0, series.length - failedSeriesIds.length);
   const indexedScope = selectWholeProviderParents(indexedEvents, {
     maxChildren: MAX_NORMALIZED_PER_PROVIDER,
     maxParents: 120,
@@ -3004,8 +3009,11 @@ async function discoverKalshi(environment: Environment, now: string, requestId: 
     selection: {
       ...parentSelection,
       total_series_count: prioritizedSeries.length,
-      selected_series_count: series.length,
-      deferred_series_count: Math.max(0, prioritizedSeries.length - series.length),
+      selected_series_count: successfulSeriesCount,
+      deferred_series_count: Math.max(0, prioritizedSeries.length - successfulSeriesCount),
+      failed_series_count: failedSeriesIds.length,
+      failed_series_ids: failedSeriesIds,
+      provider_scope_partial: failedSeriesIds.length > 0,
     },
   };
 }
@@ -4408,14 +4416,18 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   for (const selection of providerSelections) {
     const deferredParents = Math.max(0, Number(selection.deferred_parent_count) || 0);
     const deferredSeries = Math.max(0, Number(selection.deferred_series_count) || 0);
-    if (!deferredParents && !deferredSeries) continue;
+    const failedSeries = Math.max(0, Number(selection.failed_series_count) || 0);
+    if (!deferredParents && !deferredSeries && !failedSeries) continue;
+    const failureCopy = failedSeries
+      ? ` ${failedSeries} serie${failedSeries === 1 ? "" : "s"} seleccionada${failedSeries === 1 ? "" : "s"} no respondieron y se reintentarán sin descartar los padres sanos.`
+      : "";
     qualityNotices.push({
       provider: selection.provider,
-      code: "RADAR_PROVIDER_SCOPE_DEFERRED",
+      code: failedSeries ? "RADAR_PROVIDER_SERIES_PARTIAL" : "RADAR_PROVIDER_SCOPE_DEFERRED",
       quarantined_count: 0,
       degrades_provider: false,
       selection,
-      message: `La consulta agotó la paginación oficial y seleccionó padres completos dentro del presupuesto: ${selection.selected_parent_count ?? 0} padres representados, ${deferredParents} padres y ${deferredSeries} series fuera de este alcance. Ningún padre fue truncado.`,
+      message: `La consulta conservó padres completos dentro del presupuesto: ${selection.selected_parent_count ?? 0} padres representados, ${deferredParents} padres y ${deferredSeries} series fuera de este alcance.${failureCopy} Ningún padre representado fue truncado.`,
     });
   }
   const domainScopedCandidates: JsonRecord[] = await Promise.all(

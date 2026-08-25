@@ -1,0 +1,64 @@
+ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 03e89696a3f8ea3269ecfe4f22bffc7dccb3fbf3
+Scope: incremental only
+
+INVENTORY
+A docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md
+A docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825_MANIFEST.txt
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+3628aeefdf3b3c7d40fff4d3ec2aa75e7b4047900780251480c1ecfcf0ec525b  docs/ATINARA_KALSHI_SERIES_PARTIAL_ISOLATION_FIX_20260825.md
+14e2f0fb3d79fd0ffac7f7054accff4335ab8289b7519ce535d71cade8378518  ORAKLO_PROJECT_CONTEXT.md
+f09a103d40b3d8ab62e1b20197276610929f01344acf7c57e101babe7551f9bf  README.md
+75250c6ce92ac5f2dd73a03933a79da4d5c3b771cfa7fe9a1e28ba38c7630c69  supabase/functions/market-radar/index.ts
+26ef47e60de61512834fdf0170f47a54f1ba9edde810a8fb42627197cc9f069e  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+EDGE FUNCTIONS
+market-radar (index.ts only; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- all unit tests: 561 passed, 0 failed
+- focused Radar/resumability tests: 85 passed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- market-radar TypeScript parse: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 03e89696a3f8ea3269ecfe4f22bffc7dccb3fbf3
+- market-radar v64 ACTIVE verify_jwt=true digest 6bd6e422afeead349fbe548237d8d3f950c0917cf178f70d9e1d3a5d11cc2ec2
+- heartbeat demonstrated with Polymarket 74/74 and Tavily completed
+- intermediate UUID 2a268e1d-b4d0-4b79-829d-03ab481015c3 terminal
+- Kalshi-only UUID 30e26184-a974-4878-9a1b-39005b856fd8 technical_failed at fetch
+- Tavily for that UUID completed
+- zero Kalshi parents, manifest, batches or candidate writes in that UUID
+- official taxonomy and series endpoints returned HTTP 200 after the incident
+- root cause: any rejected one of 25 indexed series aborted all Kalshi
+- markets=15, drafts=6, predictions=9, maker_state=15, price_history=17
+- Karma=2932, Prestige=40
+
+POST-UPLOAD
+- fetch and compare all 6 paths and contents
+- confirm v64 and invariants unchanged
+- deploy only market-radar with verify_jwt=true
+- respect cooldown and start one Kalshi refresh
+- preserve successful series even if failed_series_count is positive
+- require failed_series_ids and provider_scope_partial audit fields
+- require parents, manifest and batches from healthy series
+- continue the same UUID to terminal without blind repeat
+- select candidate only from the new current snapshot

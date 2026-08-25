@@ -994,6 +994,17 @@ test("la Edge descubre taxonomía y eventos Kalshi sin límite arbitrario de cua
   assert.doesNotMatch(edge, /MAX_KALSHI_SERIES = 4/);
 });
 
+test("una serie Kalshi fallida no derriba los padres sanos ni desaparece del alcance", () => {
+  assert.match(edge, /const failedSeriesIds = indexedSettled\.flatMap/);
+  assert.match(edge, /if \(!indexedEvents\.length && failedSeriesIds\.length\) throw new Error\("PROVIDER_UNAVAILABLE"\)/);
+  assert.doesNotMatch(edge, /indexedSettled\.some\(\(result\) => result\.status === "rejected"\)\) throw/);
+  assert.match(edge, /failed_series_count: failedSeriesIds\.length/);
+  assert.match(edge, /failed_series_ids: failedSeriesIds/);
+  assert.match(edge, /provider_scope_partial: failedSeriesIds\.length > 0/);
+  assert.match(edge, /RADAR_PROVIDER_SERIES_PARTIAL/);
+  assert.match(edge, /se reintentarán sin descartar los padres sanos/);
+});
+
 test("la Edge valida evento y pertenencia del hijo en Polymarket", () => {
   assert.match(edge, /events\/slug\//);
   assert.match(edge, /enumeratePolymarketEventChildren/);
