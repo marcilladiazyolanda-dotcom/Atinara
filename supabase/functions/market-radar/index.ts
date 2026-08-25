@@ -477,7 +477,7 @@ async function recordParentReconciliations(
   reconciliations: JsonRecord[],
 ): Promise<void> {
   if (!intent.leaseToken) throw new Error("RADAR_PARENT_MANIFEST_REQUIRED");
-  const payloads = await Promise.all(reconciliations.map(async (reconciliation) => {
+  const payloads: JsonRecord[] = await Promise.all(reconciliations.map(async (reconciliation) => {
     const reconciliationStatus = cleanText(reconciliation.reconciliation_status, 80);
     const complete = reconciliationStatus === "complete";
     const terminalCorruption = reconciliationStatus === "terminal_provider_corruption";
@@ -515,16 +515,35 @@ async function recordParentReconciliations(
       retryable: !terminalCorruption,
       nextAction: terminalCorruption ? "inspect_provider_data_conflict" : "retry_provider_refresh",
     });
-    return { ...reconciliation, issue };
+    return { ...reconciliation, issue } as JsonRecord;
   }));
-  await renewRadarRefreshLease(environment, intent);
-  await rpc(environment, "record_market_radar_parent_reconciliations_v1", {
-    request_id_input: intent.requestId,
-    provider_input: intent.provider,
-    capability_input: intent.capability,
-    lease_token_input: intent.leaseToken,
-    reconciliations_input: payloads,
-  }, undefined, true);
+  payloads.sort((left, right) => {
+    const leftId = cleanText(left.provider_parent_id, 220);
+    const rightId = cleanText(right.provider_parent_id, 220);
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
+  const checkpoints = payloads.length ? payloads.map((payload) => [payload]) : [[]];
+  let checkpoint: JsonRecord | null = null;
+  for (const reconciliationBatch of checkpoints) {
+    await renewRadarRefreshLease(environment, intent);
+    checkpoint = toRecord(await rpc(
+      environment,
+      "record_market_radar_parent_reconciliations_v1",
+      {
+        request_id_input: intent.requestId,
+        provider_input: intent.provider,
+        capability_input: intent.capability,
+        lease_token_input: intent.leaseToken,
+        reconciliations_input: reconciliationBatch,
+      },
+      undefined,
+      true,
+    ));
+  }
+  if (checkpoint?.complete !== true
+      || !/^[a-f0-9]{64}$/.test(cleanText(checkpoint.parent_manifest_hash, 64))) {
+    throw new Error("RADAR_PARENT_MANIFEST_REQUIRED");
+  }
 }
 
 const RADAR_TERMINAL_WORKFLOW_CODES = new Set<string>([
@@ -908,23 +927,31 @@ function internalRadarRpcFailure(
   error: unknown,
   provider: string,
 ): (ReturnType<typeof publicProviderError> & JsonRecord) | null {
-  if (!(error instanceof RadarRpcError) || !error.databaseMessage) return null;
-  const code = radarOperationalErrorCode(error, "RADAR_PERSISTENCE_FAILED");
+  if (!(error instanceof RadarRpcError)) return null;
   const timedOut = error.databaseCode === "57014" || error.status === 504
-    || code.includes("TIMEOUT");
-  const retryable = timedOut || [
+    || error.databaseMessage.includes("TIMEOUT");
+  const code = timedOut ? "RADAR_PERSISTENCE_TIMEOUT"
+    : error.databaseMessage || "RADAR_PERSISTENCE_FAILED";
+  const retryable = timedOut || code === "RADAR_PERSISTENCE_FAILED" || [
     "RADAR_REFRESH_LEASE_INVALID",
     "RADAR_REFRESH_LEASE_LOST",
     "RADAR_PERSISTENCE_ISOLATION_DEFERRED",
   ].includes(code);
   return {
-    ...publicProviderError(provider, code, timedOut ? 503 : 409),
+    ...publicProviderError(
+      provider,
+      code,
+      timedOut ? 503 : code === "RADAR_PERSISTENCE_FAILED" ? 502 : 409,
+    ),
     retryable,
     database_code: error.databaseCode || null,
   };
 }
 
-function persistenceFailure(error: unknown, provider: string) {
+function persistenceFailure(
+  error: unknown,
+  provider: string,
+): ReturnType<typeof publicProviderError> & JsonRecord {
   const internalFailure = internalRadarOperationalFailure(error, provider);
   if (internalFailure) return internalFailure;
   const deferred = error instanceof Error
@@ -932,12 +959,45 @@ function persistenceFailure(error: unknown, provider: string) {
   const timedOut = error instanceof RadarRpcError
     ? error.databaseCode === "57014" || error.status === 504
     : error instanceof Error && /TIMEOUT|ABORT/i.test(error.message);
-  return publicProviderError(
-    provider,
-    deferred ? "RADAR_PERSISTENCE_ISOLATION_DEFERRED"
-      : timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
-    timedOut ? 503 : 502,
-  );
+  return {
+    ...publicProviderError(
+      provider,
+      deferred ? "RADAR_PERSISTENCE_ISOLATION_DEFERRED"
+        : timedOut ? "RADAR_PERSISTENCE_TIMEOUT" : "RADAR_PERSISTENCE_FAILED",
+      timedOut ? 503 : 502,
+    ),
+    retryable: true,
+  };
+}
+
+const RADAR_DEFERRABLE_PERSISTENCE_CODES = new Set<string>([
+  "RADAR_PERSISTENCE_TIMEOUT",
+  "RADAR_PERSISTENCE_ISOLATION_DEFERRED",
+  "RADAR_PERSISTENCE_FAILED",
+]);
+
+async function deferRadarRefreshPersistence(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  failure: ReturnType<typeof publicProviderError> & JsonRecord,
+): Promise<JsonRecord | null> {
+  const leaseToken = intent.leaseToken;
+  const code = cleanText(failure.code, 100);
+  if (!leaseToken || failure.retryable !== true
+      || !RADAR_DEFERRABLE_PERSISTENCE_CODES.has(code)) return null;
+  const deferral = toRecord(await rpc(environment, "defer_market_radar_refresh_v1", {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: leaseToken,
+    issue_code_input: code,
+  }, undefined, true));
+  if (deferral?.outcome !== "in_progress" || deferral.retryable !== true
+      || deferral.next_action !== "resume_persistence_intent"
+      || deferral.request_id !== intent.requestId) {
+    throw new Error("RADAR_REFRESH_DEFERRAL_INVALID");
+  }
+  return deferral;
 }
 
 const QUARANTINABLE_PERSISTENCE_RULES = new Set([
@@ -4441,17 +4501,28 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         });
         continue;
       } catch (error) {
-        const failure = providerFailure(error, provider);
-        const finalization = intent
+        const failure = persistenceFailure(error, provider);
+        const deferral = intent
+          ? await deferRadarRefreshPersistence(environment, intent, failure)
+          : null;
+        const deferred = Boolean(deferral);
+        const finalization = deferral ?? (intent
           ? await finalizeRadarRefreshFailureV2(environment, intent, failure, "persistence")
-          : {};
+          : {});
         const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
           requestId: refresh.requestId, provider, capability: "candidate_feed",
           code: cleanText(failure.code, 100) || "RADAR_PARENT_RECONCILIATION_PERSISTENCE_FAILED",
           failureStage: "persistence",
         });
         providerIssues.push(issue);
-        candidateProviderErrors.push({ ...failure, issue, state_preserved: true });
+        candidateProviderErrors.push({
+          ...failure,
+          status: deferred ? 202 : failure.status,
+          issue,
+          state_preserved: true,
+          refresh_request_id: intent?.requestId ?? refresh.requestId,
+          next_action: deferred ? "resume_persistence_intent" : failure.next_action,
+        });
         continue;
       }
     }
@@ -4884,20 +4955,13 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     } catch (error) {
       const failure = persistenceFailure(error, provider);
       const intent = providerIntents.get(provider);
-      const deferred = intent?.leaseToken ? toRecord(await rpc(
-        environment,
-        "defer_market_radar_refresh_v1",
-        {
-          request_id_input: intent.requestId,
-          provider_input: intent.provider,
-          capability_input: intent.capability,
-          lease_token_input: intent.leaseToken,
-          issue_code_input: cleanText(failure.code, 100) || "RADAR_PERSISTENCE_FAILED",
-        },
-        undefined,
-        true,
-      ).catch(() => null)) : null;
-      const issue = toRecord(deferred?.issue) ?? await radarRefreshIssue({
+      const deferral = intent
+        ? await deferRadarRefreshPersistence(environment, intent, failure)
+        : null;
+      const finalization = deferral ?? (intent
+        ? await finalizeRadarRefreshFailureV2(environment, intent, failure, "persistence")
+        : {});
+      const issue = toRecord(finalization.issue) ?? await radarRefreshIssue({
         requestId: refresh.requestId, provider, capability: "candidate_feed",
         code: cleanText(failure.code, 100) || "RADAR_PERSISTENCE_FAILED",
         failureStage: "persistence",
@@ -4905,12 +4969,12 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       providerIssues.push(issue);
       candidateProviderErrors.push({
         ...failure,
-        status: intent ? 202 : failure.status,
-        retryable: true,
+        status: deferral ? 202 : failure.status,
+        retryable: deferral ? true : failure.retryable === true,
         issue,
         state_preserved: true,
         refresh_request_id: intent?.requestId ?? refresh.requestId,
-        next_action: "resume_persistence_intent",
+        next_action: deferral ? "resume_persistence_intent" : failure.next_action,
       });
       for (const candidate of current.candidates.filter((item) => item.provider === provider)) {
         const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;

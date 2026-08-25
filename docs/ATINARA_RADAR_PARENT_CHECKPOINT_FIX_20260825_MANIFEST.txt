@@ -1,0 +1,110 @@
+ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825
+Generated: 2026-08-25
+Base: origin/main 0b11030e70b31cb5b174285715fc762e226f863b
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md
+A docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825_MANIFEST.txt
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260825193000_checkpoint_market_radar_parent_persistence_v1.sql
+M supabase/tests/radar_catalog_projection_v1_transaction.sql
+M supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+M tests/market-radar.test.js
+M tests/radar-catalog-boundary.test.js
+
+SHA-256 PAYLOAD FILES
+a8ec93ee266de5eddd6d6f61799381520381e2fbafcd7b62fc766dcac1f552e8  ORAKLO_PROJECT_CONTEXT.md
+a3bbad46a489f59f95c8d4f51ec8babb76c615b1e62656bcc7ab9da6efcc6c4f  README.md
+e514b50aca4b5c8b0cb38c2301b1bec85c7d3cf86a1bffaed61a05fd91a2b0f7  docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md
+a639fa25e1b82881338f29aef671facc2b37956a5b8cbff7f6a2aa8f46e882ee  supabase/functions/market-radar/index.ts
+23eaaf00c958b3777d9e37a23336828db9ac8cf1b90196ab875aaab561490b12  supabase/migrations/20260825193000_checkpoint_market_radar_parent_persistence_v1.sql
+9b3ab4700fd498193af2d8e7defcff3b8adc099b3b3de4556e31550d0644e535  supabase/tests/radar_catalog_projection_v1_transaction.sql
+33263bc246f75599a6bf6957ae783b9f224945761c2f0d16f4b22487a1538abf  supabase/tests/radar_parent_reconciliation_v1_transaction.sql
+c4e572a9ebb2fb1b84624528acb6cb48e234d5632e3a3ddbda0314d0ba50b7e3  tests/market-radar.test.js
+04533d1219f1c83d9eb3614986a7e9b41afdb47d6c2bdea7aa6b069ef87407f2  tests/radar-catalog-boundary.test.js
+
+MIGRATIONS
+20260825193000_checkpoint_market_radar_parent_persistence_v1.sql
+
+EDGE FUNCTIONS
+market-radar (index.ts only; deploy with verify_jwt=true after applying the migration)
+
+FRONTEND: none
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI: none
+REGISTRY OR AI SETTINGS: unchanged
+AI BUDGET TABLES: unchanged
+ECONOMY: unchanged
+
+VERIFICATION
+- focused Radar/catalog/resumability/Editor/Expert workflow: 187 passed, 0 failed
+- final market-radar TypeScript graph: Deno 2.1.14 passed
+- all 9 Edge graphs passed before the final market-radar-only hardening; affected graph rechecked
+- SQL transaction structure: 19 valid, 0 invalid
+- exact final migration on disposable PostgreSQL 17: preflight, patch, ACL and postflight passed
+- production parent writer preflight hash: 2b5ad04e780ad4f458db972cac82005c5ecc9afdd8508a8affee1d4a13352719
+- production catalog v5 preflight hash: 215070db328265aa2f24f86da634c3774b00c0775785077c4abcb02a5b3198d4
+- empty parent checkpoint replay: complete=true and 64-character manifest, transaction rolled back
+- 315 production candidates compared read-only: 0 projection differences
+- Unicode/apostrophe/hyphen/number projection fixture passed without raw provider payload
+- checkpoints cover 1, 3, 21, 48 and 101 children, intermediate rollback, replay and conflict
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 0b11030e70b31cb5b174285715fc762e226f863b
+- GitHub Calidad de Atinara, Pages and offline benchmark: success
+- market-radar v67 ACTIVE verify_jwt=true
+- market-radar digest df8a9d308e2ae8a72b466849b6d3fafc76c7e51620114168afb9571c627e2075
+- refresh UUID b73e9718-7017-4af4-80d1-6ed470902061 is terminal technical_failed
+- Kalshi selection: 109 total series, 25 selected, 0 failed
+- 11 selected parents and 148 discovered children; no parent truncation or provider data loss
+- provider selection HTTP 200; parent reconciliation HTTP 500 before any ledger or manifest
+- Tavily completed independently and was not the failure source
+- no manifest, batches or candidate writes for that UUID
+- refresh_intents=20; issues=446; provider_runs=48
+- markets=15; predictions=9; profiles=2; maker_state=15; price_history=17; drafts=6
+- candidates=315; fact_checks=3306; eligibility_checks=3522; reviews=39; bindings=14
+- Karma=2932; Prestige=40
+- protected fingerprints unchanged:
+  markets 9492f57e83361482b6a8e93b1bbe952a
+  predictions b6779fea5b37fe46e9c1aa121deaa970
+  profiles 567946b6282e3f8299bbad943220e123
+  market_maker_state 9fd7f403c21d98d91e630df234dcbfbe
+  market_price_history a0efeeb5c17a326b49ac23e77eb8efb7
+  drafts 4aefc961679689320eb2a5d3031ebbb2
+
+ROOT CAUSE
+- authenticator statement_timeout is 8 seconds
+- the parent writer persisted all selected parents in one transaction with no durable prefix
+- catalog v5 materialized the full v4 dossier before applying the bounded projection
+- the current 11-parent/148-child writer crossed the timeout after an intact Kalshi discovery
+- this was not a Kalshi outage, child loss or Tavily failure
+
+CORRECTION
+- one binary-ordered parent per RPC, with lease renewal before every checkpoint
+- append-only subset validation and exact sealing only after all selected IDs and counts match
+- partial counts remain explicit; parent_manifest_hash stays null until complete
+- SQLSTATE 57014 and HTTP 504 map to retryable RADAR_PERSISTENCE_TIMEOUT
+- generic ambiguous persistence failures remain retryable
+- HTTP 202 is emitted only after the deferral RPC confirms UUID, in_progress and next action
+- v5 filters and ranks a minimal candidate CTE, then loads and projects only paged rows
+- no provider, series, event or market hardcodes
+
+POST-UPLOAD
+- fetch and compare all 10 paths and contents against this manifest
+- require Calidad de Atinara green, including Deno and SQL contracts; check Pages and offline benchmark
+- confirm migration 20260825193000 absent and production invariants unchanged
+- apply only migration 20260825193000; no backfill or manual DML
+- verify owner, SECURITY DEFINER, empty search_path, ACL, bodies and v5 semantic parity
+- deploy only market-radar with verify_jwt=true and verify the new version and digest
+- do not reuse the terminal UUID as false success and do not start repeated blind refreshes
+- execute at most the single fresh Kalshi refresh needed after activation
+- require selection, all parent ledgers, expected_count, manifest, batches, terminal finalization and replay
+- validate UI search/filter/cooldown/recovery plus desktop and mobile before Market Expert
+- continue to exactly one fresh valid candidate and one private draft; never publish or confirm it

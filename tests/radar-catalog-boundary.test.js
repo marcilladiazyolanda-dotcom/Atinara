@@ -6,6 +6,10 @@ const { test } = require("node:test");
 const root = join(__dirname, "..");
 const read = (file) => readFileSync(join(root, file), "utf8");
 const migration = read("supabase/migrations/20260825160000_bound_market_radar_catalog_projection_v1.sql");
+const checkpointMigration = read("supabase/migrations/20260825193000_checkpoint_market_radar_parent_persistence_v1.sql");
+const checkpointV5 = checkpointMigration.match(
+  /create or replace function public\.list_market_radar_candidates_v5[\s\S]*?\$function\$;/,
+)?.[0] ?? "";
 const edge = read("supabase/functions/market-radar/index.ts");
 const shared = read("supabase/functions/_shared/market-radar.mjs");
 const admin = read("admin-markets.js");
@@ -21,6 +25,16 @@ test("la proyección ligera ocurre en SQL antes de cruzar PostgREST", () => {
   assert.match(migration, /resolution_source_evidence/);
   assert.doesNotMatch(migration, /\b(?:insert\s+into|update|delete\s+from)\b/i);
   assert.match(migration, /revoke all on function private\.market_radar_catalog_candidate_payload_v1[\s\S]+from public,anon,authenticated,service_role/);
+});
+
+test("la página acotada se proyecta antes de materializar el expediente completo", () => {
+  assert.match(checkpointMigration, /market_radar_catalog_candidate_row_payload_v1/);
+  assert.match(checkpointMigration, /select candidate\.id,candidate\.provider,candidate\.external_id/);
+  assert.match(checkpointMigration, /market_radar_catalog_candidate_row_payload_v1\([\s\S]*candidate_row,item\.parent_rank/);
+  assert.doesNotMatch(checkpointV5, /public\.list_market_radar_candidates_v4\(/);
+  assert.match(checkpointMigration, /RADAR_PARENT_CHECKPOINT_SELECTION_INVALID/);
+  assert.match(checkpointMigration, /'complete',checkpoint_complete_value/);
+  assert.match(checkpointMigration, /reconciled_child_count/);
 });
 
 test("la Edge consume únicamente las RPC acotadas y conserva el filtro de frescura", () => {

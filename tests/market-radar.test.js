@@ -874,12 +874,32 @@ test("discovery y persistencia conservan la regla SQL interna sin llamarla caíd
   assert.match(edge, /function internalRadarOperationalFailure/);
   assert.match(edge, /ReturnType<typeof publicProviderError> & JsonRecord/);
   assert.match(edge, /error instanceof RadarRpcError/);
-  assert.match(edge, /radarOperationalErrorCode\(error, "RADAR_PERSISTENCE_FAILED"\)/);
+  assert.match(edge, /const code = timedOut \? "RADAR_PERSISTENCE_TIMEOUT"/);
+  assert.match(edge, /error\.databaseMessage \|\| "RADAR_PERSISTENCE_FAILED"/);
+  assert.match(edge, /code === "RADAR_PERSISTENCE_FAILED"/);
   assert.match(edge, /database_code: error\.databaseCode \|\| null/);
   assert.match(edge, /function providerFailure[\s\S]+internalRadarOperationalFailure\(error, provider\)/);
   assert.match(edge, /function persistenceFailure[\s\S]+internalRadarOperationalFailure\(error, provider\)/);
   assert.match(edge, /code\.includes\("DEADLINE_EXCEEDED"\)/);
   assert.doesNotMatch(edge, /internalRadarRpcFailure[\s\S]+code:\s*"PROVIDER_UNAVAILABLE"/);
+});
+
+test("cada padre se confirma como checkpoint y un timeout de persistencia conserva la misma UUID", () => {
+  assert.match(edge, /payloads\.sort\(\(left, right\)/);
+  assert.match(edge, /payloads\.map\(\(payload\) => \[payload\]\)/);
+  assert.match(edge, /for \(const reconciliationBatch of checkpoints\)/);
+  assert.match(edge, /checkpoint\?\.complete !== true/);
+  assert.match(edge, /persistenceFailure\(error, provider\)/);
+  assert.match(edge, /async function deferRadarRefreshPersistence/);
+  assert.match(edge, /RADAR_DEFERRABLE_PERSISTENCE_CODES/);
+  assert.match(edge, /const deferral = toRecord\(await rpc\(environment, "defer_market_radar_refresh_v1"/);
+  assert.match(edge, /deferral\?\.outcome !== "in_progress"/);
+  assert.match(edge, /throw new Error\("RADAR_REFRESH_DEFERRAL_INVALID"\)/);
+  assert.doesNotMatch(edge, /defer_market_radar_refresh_v1[\s\S]{0,500}\.catch\(\(\) => null\)/);
+  assert.match(edge, /status: deferred \? 202 : failure\.status/);
+  assert.match(edge, /next_action: deferred \? "resume_persistence_intent"/);
+  assert.match(edge, /status: deferral \? 202 : failure\.status/);
+  assert.match(edge, /next_action: deferral \? "resume_persistence_intent"/);
 });
 
 test("el enriquecimiento auxiliar tiene un deadline propio y siempre libera su contexto", () => {

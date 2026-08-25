@@ -456,13 +456,57 @@ begin
       'deferred_parent_ids','[]'::jsonb
     )
   );
-  response:=public.record_market_radar_parent_reconciliations_v1(
-    request_id_value,'polymarket','candidate_feed',lease_token_value,reconciliations
-  );
+  -- Cada padre es un checkpoint transaccional independiente. Los tamaños
+  -- 1/3/21/48/101 cubren familias pequeñas, medianas y de 100+ hijas.
+  for child_index in 0..4 loop
+    response:=public.record_market_radar_parent_reconciliations_v1(
+      request_id_value,'polymarket','candidate_feed',lease_token_value,
+      jsonb_build_array(reconciliations -> child_index)
+    );
+    select count(*) into count_value
+    from private.market_radar_parent_reconciliations_v1
+    where request_id=request_id_value and provider='polymarket';
+    if response ->> 'provider_parent_count'<>'5'
+       or (response ->> 'reconciled_parent_count')::integer<>count_value
+       or (child_index<4 and (
+         response ->> 'complete'<>'false'
+         or response ->> 'parent_manifest_hash' is not null
+         or (select parent_manifest_hash from private.market_radar_refresh_intents_v1
+           where request_id=request_id_value and provider='polymarket') is not null
+         or (select provider_pagination_exhausted from private.market_radar_refresh_intents_v1
+           where request_id=request_id_value and provider='polymarket') is not false
+       )) or (child_index=4 and (
+         response ->> 'complete'<>'true'
+         or coalesce(response ->> 'parent_manifest_hash','')!~'^[a-f0-9]{64}$'
+       )) then
+      raise exception 'TEST_RADAR_PARENT_CHECKPOINT_INVALID:%:%',child_index,response;
+    end if;
+
+    -- Un checkpoint ajeno a la selección falla sin borrar el ya confirmado.
+    if child_index=0 then
+      expected_failure:=false;
+      begin
+        perform public.record_market_radar_parent_reconciliations_v1(
+          request_id_value,'polymarket','candidate_feed',lease_token_value,
+          jsonb_build_array(jsonb_set(
+            reconciliations -> 1,'{provider_parent_id}',to_jsonb('parent-not-selected'::text)
+          ))
+        );
+      exception when sqlstate '22023' then expected_failure:=true;
+      end;
+      select count(*) into count_value
+      from private.market_radar_parent_reconciliations_v1
+      where request_id=request_id_value and provider='polymarket';
+      if not expected_failure or count_value<>1 then
+        raise exception 'TEST_RADAR_PARENT_CHECKPOINT_ROLLBACK_INVALID:%',count_value;
+      end if;
+    end if;
+  end loop;
   replay:=public.record_market_radar_parent_reconciliations_v1(
     request_id_value,'polymarket','candidate_feed',lease_token_value,reconciliations
   );
   if response ->> 'parent_manifest_hash' is distinct from replay ->> 'parent_manifest_hash'
+     or replay ->> 'complete'<>'true'
      or (response ->> 'provider_parent_count')::integer<>5 then
     raise exception 'TEST_RADAR_PARENT_RECONCILIATION_REPLAY_INVALID:%:%',response,replay;
   end if;

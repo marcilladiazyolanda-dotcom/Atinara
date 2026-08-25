@@ -15,11 +15,11 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v66, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v67, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Bloqueo vigente de 13.5.2 · frontera de catálogo Radar
+## Bloqueo vigente de 13.5.2 · checkpoints de padres Radar
 
 El primer refresh durable V6 ya terminó sin Gemini. La UUID
 `2798d1af-9ccd-4b79-9be7-37d5876d9484` conserva Polymarket 74/74 y Kalshi
@@ -27,19 +27,21 @@ El primer refresh durable V6 ya terminó sin Gemini. La UUID
 completos; `KXPS6-26` permanece aislado porque su endpoint histórico respondió
 429, sin hacer incompletos a sus hermanos.
 
-La frontera de catálogo ya está desplegada: las RPC ligeras proyectan en SQL
-antes de PostgREST, separan visualmente auditoría y oportunidades y reducen los
-tres inputs reales a 835.015 bytes. El smoke pasa HTTP 200, paginación completa
-y layout de escritorio/móvil.
+La frontera de catálogo desplegada reduce correctamente el payload que cruza
+PostgREST y separa visualmente auditoría y oportunidades. La inspección del
+smoke v67 demostró, sin embargo, que `list_market_radar_candidates_v5` todavía
+construye primero el expediente pesado de v4 y lo proyecta después dentro de la
+misma sentencia. Esa materialización puede rozar por sí sola el timeout de 8 s.
 
-El contrato de errores, el heartbeat y el aislamiento por series están
-desplegados. El smoke v66 contabilizó 11 padres y 148/148 hijas Kalshi, aisló
-dos series fallidas y no truncó los diez padres completos. La causa restante es
-temporal: Tavily consumió unos 39 s antes del manifest de candidatas y obligó a
-recuperar la intención después de haber guardado el ledger. El paquete actual
-impone al enriquecimiento auxiliar un deadline hijo total de 12 s y preserva
-errores internos locales; así una caída de Tavily no impide que el feed llegue a
-manifest, batches y finalización.
+El deadline hijo de Tavily, el heartbeat y el aislamiento por series están ya
+desplegados en v67. El refresh único
+`b73e9718-7017-4af4-80d1-6ed470902061` obtuvo 25 series sanas, 11 padres y
+148 hijas sin pérdida, y guardó la selección. La RPC monolítica del ledger
+superó después el `statement_timeout=8s` de PostgREST: no dejó padres, manifest
+ni batches y finalizó técnicamente. La corrección pendiente convierte cada
+padre en un checkpoint append-only, sella el manifest solo con el conjunto
+exacto y empuja la proyección ligera antes de agregar JSON. Un timeout conserva
+la misma UUID como reanudable y nunca se presenta como caída de Kalshi.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -50,7 +52,7 @@ especulación como evidencia. No usa Gemini ni nombres hardcodeados.
 Especificación de la reconciliación:
 [`docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md`](docs/ATINARA_RADAR_PARENT_RECONCILIATION_V1.md).
 Incidencia y activación actual:
-[`docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md`](docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md).
+[`docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 
@@ -63,8 +65,8 @@ schedulers de descubrimiento y monitorización continúan apagados.
 
 El backend coordinado está activo en producción. GitHub Pages sirve
 `v=20260825-radar-catalog-bound1` y el smoke autenticado confirmó la frontera de
-catálogo en escritorio y móvil. El presupuesto de enriquecimiento pendiente
-afecta solo a `market-radar`; no requiere republicar el frontend. El smoke contra Pages y el
+catálogo en escritorio y móvil. La corrección de checkpoints no modifica el
+frontend ni requiere republicar Pages. El smoke contra Pages y el
 backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.

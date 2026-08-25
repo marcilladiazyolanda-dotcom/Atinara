@@ -4,8 +4,10 @@ do $test$
 declare
   payload jsonb;
   function_row record;
+  function_source text;
 begin
   if to_regprocedure('private.market_radar_catalog_candidate_payload_v1(jsonb,boolean)') is null
+     or to_regprocedure('private.market_radar_catalog_candidate_row_payload_v1(private.external_market_candidates,bigint)') is null
      or to_regprocedure('public.list_market_radar_candidates_v5(text,text,text,text,text,text,integer,integer)') is null
      or to_regprocedure('public.list_market_radar_rejections_v3(text,text,integer,integer)') is null
      or to_regprocedure('public.list_market_radar_parent_reconciliations_v3(text,text,text,text,integer,integer)') is null then
@@ -17,6 +19,7 @@ begin
     from pg_proc p
     where p.oid=any(array[
       'private.market_radar_catalog_candidate_payload_v1(jsonb,boolean)'::regprocedure::oid,
+      'private.market_radar_catalog_candidate_row_payload_v1(private.external_market_candidates,bigint)'::regprocedure::oid,
       'public.list_market_radar_candidates_v5(text,text,text,text,text,text,integer,integer)'::regprocedure::oid,
       'public.list_market_radar_rejections_v3(text,text,integer,integer)'::regprocedure::oid,
       'public.list_market_radar_parent_reconciliations_v3(text,text,text,text,integer,integer)'::regprocedure::oid
@@ -33,8 +36,20 @@ begin
      or not has_function_privilege('authenticated',
        'public.list_market_radar_candidates_v5(text,text,text,text,text,text,integer,integer)','execute')
      or has_function_privilege('authenticated',
-       'private.market_radar_catalog_candidate_payload_v1(jsonb,boolean)','execute') then
+       'private.market_radar_catalog_candidate_payload_v1(jsonb,boolean)','execute')
+     or has_function_privilege('service_role',
+       'private.market_radar_catalog_candidate_row_payload_v1(private.external_market_candidates,bigint)','execute') then
     raise exception 'TEST_RADAR_CATALOG_PROJECTION_ACL_INVALID';
+  end if;
+
+  select pg_get_functiondef(
+    'public.list_market_radar_candidates_v5(text,text,text,text,text,text,integer,integer)'::regprocedure
+  ) into function_source;
+  if function_source like '%public.list_market_radar_candidates_v4(%'
+     or function_source not like '%market_radar_catalog_candidate_row_payload_v1%'
+     or function_source not like '%select candidate.id,candidate.provider,candidate.external_id%'
+     or function_source like '%select candidate.*,%' then
+    raise exception 'TEST_RADAR_CATALOG_BOUNDARY_NOT_PUSHED_DOWN';
   end if;
 
   payload:=private.market_radar_catalog_candidate_payload_v1(jsonb_build_object(

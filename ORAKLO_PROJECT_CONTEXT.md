@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras aislar series Kalshi V6:**
-> `origin/main` está en `c2ce6a96918e5e65074fc43218ea290cc9005493`;
+> **Estado productivo verificado tras el smoke Radar v67:**
+> `origin/main` está en `0b11030e70b31cb5b174285715fc762e226f863b`;
 > `20260825150021_bound_market_radar_catalog_projection_v1` consta aplicada una
-> sola vez y `market-radar` v66 está `ACTIVE`, `verify_jwt=true`, digest
-> `cec6ccfeed2a467bcc87c11152ba3f85ecb0651159fa80ca6cabde28b64ab244`.
+> sola vez y `market-radar` v67 está `ACTIVE`, `verify_jwt=true`, digest
+> `df8a9d308e2ae8a72b466849b6d3fafc76c7e51620114168afb9571c627e2075`.
 > La intención sin Gemini `2798d1af-9ccd-4b79-9be7-37d5876d9484` terminó
 > `partial`: Polymarket 74/74 y Kalshi 105/105, cinco batches `completed`, cero
 > cuarentenas, cero fallos y `claim_count=4`. `KXPS6-26` sigue aislado porque el
@@ -36,6 +36,47 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > UUID (`claim_count=2`) pero terminó sin candidatas. El E2E queda pausado hasta
 > subir el presupuesto aislado documentado en
 > `docs/ATINARA_RADAR_ENRICHMENT_BUDGET_FIX_20260825.md`.
+>
+> El paquete exacto llegó después a `origin/main` y la Action funcional,
+> Pages y el benchmark offline quedaron verdes. Se desplegó únicamente
+> `market-radar` v67. El único refresh nuevo,
+> `b73e9718-7017-4af4-80d1-6ed470902061`, encontró 25/25 series Kalshi sanas,
+> 11 padres y 148 hijas, sin truncado ni pérdida. La selección respondió 200,
+> pero `record_market_radar_parent_reconciliations_v1` respondió 500 antes de
+> manifest; Tavily terminó correctamente y no fue la causa. La corrección local
+> pendiente está documentada en
+> `docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`.
+
+### Checkpoints durables de padres y proyección temprana · 25 de agosto de 2026
+
+- `authenticator` tiene `statement_timeout=8s`. Las siete ejecuciones exitosas
+  históricas del writer de padres tardaron hasta 5,99 s; la escritura actual de
+  11 padres/148 hijas cruzó el límite. La lectura v5 alcanzó 7,94 s en una
+  ejecución exitosa y el smoke registró también un 500 en esa ruta.
+- La selección productiva es íntegra: 109 series totales, 25 seleccionadas,
+  cero fallidas, 11 padres y 148 hijas. Los endpoints públicos de los once
+  eventos respondieron y no existe evidencia de caída general de Kalshi.
+- La migración local mantiene la firma v1 y acepta subconjuntos estrictamente
+  incluidos en `selected_parent_ids`. Cada llamada persiste un padre completo;
+  el intent conserva recuentos parciales y `parent_manifest_hash=null` hasta
+  alcanzar exactamente padres, hijas e identidades seleccionadas.
+- La Edge ordena de forma binaria, renueva el lease y llama una vez por padre.
+  El replay es idempotente; un timeout usa `defer_market_radar_refresh_v1`, deja
+  la misma UUID reanudable y conserva el código `RADAR_PERSISTENCE_TIMEOUT`.
+- La respuesta solo afirma HTTP 202 después de validar la confirmación durable
+  de esa deferral. Un fallo o payload ambiguo de la propia RPC ya no se absorbe
+  como si la reanudación hubiera quedado registrada.
+- La nueva implementación de v5 materializa solo IDs, filtros y puntuaciones;
+  carga y proyecta el expediente de las filas ya paginadas antes del `jsonb_agg`.
+  Una comparación de lectura sobre las 315 candidatas productivas dio cero
+  diferencias entre el payload vigente y el nuevo.
+- No cambia frontend, secretos, Auth, RLS, proveedores, IA, Registry, rutas,
+  modelos, flags, presupuestos, economía ni datos. La migración y la Edge aún no
+  están activadas en producción; primero debe integrarse el paquete incremental.
+- Tras el smoke: `refresh_intents=20`, `issues=446`, `provider_runs=48`,
+  `candidates=315`, `fact_checks=3306`, `eligibility_checks=3522` y `drafts=6`.
+  Los fingerprints de mercados, predicciones, perfiles, LMSR, precios y
+  borradores, junto con Karma 2.932 y Prestigio 40, siguen idénticos.
 
 ### Presupuesto desacoplado del enriquecimiento Radar · 25 de agosto de 2026
 
