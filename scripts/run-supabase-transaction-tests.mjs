@@ -17,6 +17,7 @@ const required = [
   "radar_parent_reconciliation_v1_transaction.sql",
   "radar_catalog_projection_v1_transaction.sql",
   "market_workflow_orchestration_v1_transaction.sql",
+  "market_draft_corrector_field_scope_v1_transaction.sql",
   "radar_refresh_timeout_transaction.sql",
   "expert_market_cycle_v2_transaction.sql",
   "radar_retryable_status_v10_transaction.sql",
@@ -54,7 +55,10 @@ const radarResilienceRequired = [
   "radar_source_authority_v9_transaction.sql",
   "radar_technical_hold_projection_v11_transaction.sql",
 ];
-const workflowRequired = ["market_workflow_orchestration_v1_transaction.sql"];
+const workflowRequired = [
+  "market_workflow_orchestration_v1_transaction.sql",
+  "market_draft_corrector_field_scope_v1_transaction.sql",
+];
 const executable = workflowOnly ? workflowRequired
   : officialOnly ? officialRequired
   : v2Only ? v2Required

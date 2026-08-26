@@ -3,6 +3,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   AUTONOMOUS_REPAIR_MAX_ROUNDS,
   AUTONOMOUS_REPAIR_VERSION,
+  PUBLIC_ACCOUNT_IDENTITY_SCOPE,
+  PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION,
   REPAIRABLE_ISSUE_CODES,
   VALIDATOR_CONTENT_ISSUE_CODES,
   applyRepairPatch,
@@ -21,6 +23,8 @@ import {
   mergeAlternativeSources,
   normalizePrimarySourceRegistry,
   primarySourceCandidates,
+  publicAccountProfileHandle,
+  projectDeterministicRepair,
   repairInferenceContext,
   safePublicUrl,
   validateRepairDraft,
@@ -28,7 +32,9 @@ import {
 import { createAtinaraAgentRunV2 } from "../_shared/atinara-agent-runtime-v2.mjs";
 import {
   ATINARA_AGENT_REGISTRY_VERSION,
+  assertAgentRepairFieldsAllowed,
   assertAgentRegistrySnapshot,
+  resolveAgentRepairWriteScope,
 } from "../_shared/atinara-agent-registries-v2.mjs";
 import { createAiGateway } from "../_shared/ai/gateway.mjs";
 import { AI_TASK_CONTRACTS } from "../_shared/ai/task-policy.mjs";
@@ -232,10 +238,10 @@ async function loadPrimarySourceRegistry(env: Environment): Promise<JsonRecord[]
 }
 
 async function loadAuthoritativeSourceDomains(env: Environment): Promise<Set<string>> {
-  const response = await fetchInternal(env, `${env.supabaseUrl}/rest/v1/rpc/get_market_radar_authoritative_source_domains_v1`, {
+  const response = await fetchInternal(env, `${env.supabaseUrl}/rest/v1/rpc/get_market_draft_authoritative_source_registry_v1`, {
     method: "POST",
     headers: restHeaders(env.secretKey),
-    body: "{}",
+    body: JSON.stringify({ role_input: "primary_resolution" }),
     signal: env.execution.signal,
   });
   const payload = await response.json().catch(() => []) as unknown;
@@ -506,8 +512,15 @@ async function discoverOfficialAlternatives(
     };
   }
   const existing = Array.isArray(draft.alternative_sources) ? draft.alternative_sources.filter(isRecord) : [];
+  const seenCandidates = new Set<string>();
   const candidates = [...existing, ...candidateSources(context), ...parentUrlCandidates(primaryUrl)]
-    .filter((item) => sourceIsRelevant(item, subject, archetype, primaryUrl, authoritativeDomains));
+    .filter((item) => {
+      const url = safePublicUrl(item.url);
+      if (!url || url === primaryUrl || seenCandidates.has(url)
+        || !authoritativeHost(url, authoritativeDomains)) return false;
+      seenCandidates.add(url);
+      return true;
+    });
   const warnings: string[] = [];
   const accepted: JsonRecord[] = [];
   const evidenceChecked: JsonRecord[] = [];
@@ -889,6 +902,9 @@ function compactPrimarySourceCheck(value: unknown): JsonRecord | null {
   const redirectChain = Array.isArray(value.redirect_chain)
     ? value.redirect_chain.map((url) => safePublicUrl(url)).filter(Boolean).slice(0, 5)
     : [];
+  const accountHandle = cleanText(value.account_handle, 20).toLowerCase();
+  const identityScope = cleanText(value.identity_scope, 80);
+  const accountScoped = parserVersion === PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION;
   if (!requestedUrl || !finalUrl
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(registrySourceId)
     || !Number.isFinite(new Date(checkedAt).getTime())
@@ -907,6 +923,9 @@ function compactPrimarySourceCheck(value: unknown): JsonRecord | null {
     || !/^[0-9a-f]{64}$/.test(excerptSha256)
     || !Number.isInteger(excerptChars) || excerptChars < 1 || excerptChars > MAX_SOURCE_EXCERPT_CHARS
     || validationVersion !== "atinara-primary-source-validation-v1"
+    || (accountScoped && (publicAccountProfileHandle(finalUrl) !== accountHandle
+      || identityScope !== PUBLIC_ACCOUNT_IDENTITY_SCOPE
+      || !matchedTokens.map((token) => token.toLowerCase()).includes(accountHandle)))
     || redirectChain[0] !== requestedUrl || redirectChain.at(-1) !== finalUrl) return null;
   return {
     kind: "primary_resolution",
@@ -929,6 +948,7 @@ function compactPrimarySourceCheck(value: unknown): JsonRecord | null {
     authority: "private_source_registry_primary_resolution_v1",
     relevance_basis: relevanceBasis,
     matched_tokens: matchedTokens,
+    ...(accountScoped ? { identity_scope: identityScope, account_handle: accountHandle } : {}),
     http_status: httpStatus,
     excerpt_sha256: excerptSha256,
     excerpt_chars: excerptChars,
@@ -1130,35 +1150,6 @@ async function dispatchCorrectorTool<T>(
     expectedSnapshotFingerprint: agent.snapshot().snapshot_fingerprint,
   });
   return result.value as T;
-}
-
-function selectCorrectorWriteStrategy(
-  registry: JsonRecord,
-  issueCodes: unknown,
-  changedFields: string[],
-): { strategyKey: string; strategyKeys: string[] } {
-  const codes = new Set(Array.isArray(issueCodes)
-    ? issueCodes.map((value) => cleanText(value, 100).toUpperCase()).filter(Boolean)
-    : []);
-  const strategies = new Map((Array.isArray(registry.strategies) ? registry.strategies : [])
-    .filter(isRecord)
-    .map((strategy) => [cleanText(strategy.strategy_key, 100), strategy]));
-  const strategyKeys = [...new Set((Array.isArray(registry.bindings) ? registry.bindings : [])
-    .filter(isRecord)
-    .filter((binding) => codes.has(cleanText(binding.issue_code, 100).toUpperCase()))
-    .map((binding) => cleanText(binding.strategy_key, 100))
-    .filter((key) => strategies.get(key)?.can_write === true))];
-  if (!strategyKeys.length) throw new Error("AGENT_STRATEGY_WRITE_FORBIDDEN");
-  const allowedFields = new Set(strategyKeys.flatMap((key) => {
-    const strategy = strategies.get(key);
-    return Array.isArray(strategy?.write_fields)
-      ? strategy.write_fields.map((field) => cleanText(field, 80)).filter(Boolean)
-      : [];
-  }));
-  if (changedFields.some((field) => !allowedFields.has(field))) {
-    throw new Error("AGENT_STRATEGY_FIELD_NOT_ALLOWED");
-  }
-  return { strategyKey: strategyKeys[0], strategyKeys };
 }
 
 async function executeRepairAndRevalidate(
@@ -1377,16 +1368,16 @@ async function executeRepairAndRevalidate(
     discovery.warnings.forEach((warning) => providerWarnings.add(warning));
     evidenceChecked = [...evidenceChecked, ...discovery.evidenceChecked].slice(-30);
     if (discovery.warnings.includes("SOURCE_VALIDATION_BUDGET_EXHAUSTED")) return budgetResponse();
-    const deterministic = buildDeterministicRepair(
+    const completeDeterministic = buildDeterministicRepair(
       repairContext,
       [...(primaryDiscovery.source ? [primaryDiscovery.source] : []), ...discovery.sources],
     );
-    archetype = deterministic.archetype;
-    if (deterministic.unresolved) {
+    archetype = completeDeterministic.archetype;
+    if (completeDeterministic.unresolved) {
       return jsonResponse({
         ok: false,
-        error: deterministic.unresolved.code,
-        escalation: { ...deterministic.unresolved, evidence: [...(deterministic.unresolved.evidence ?? []), ...evidenceChecked] },
+        error: completeDeterministic.unresolved.code,
+        escalation: { ...completeDeterministic.unresolved, evidence: [...(completeDeterministic.unresolved.evidence ?? []), ...evidenceChecked] },
         provider_warnings: [...providerWarnings],
         draft_private: true,
         publishes: false,
@@ -1394,6 +1385,13 @@ async function executeRepairAndRevalidate(
         resolves: false,
       }, 409);
     }
+    const issueCodes = isRecord(completeDeterministic.issue_plan)
+      ? completeDeterministic.issue_plan.codes : [];
+    const writeScope = resolveAgentRepairWriteScope(registry, issueCodes);
+    const deterministic = projectDeterministicRepair(
+      completeDeterministic,
+      writeScope.allowedFields,
+    );
 
     const semanticInvocationId = await deterministicRequestUuid(workflowRequestKey, `semantic:${round}`);
     const semantic = await semanticEdit(env, repairContext, deterministic, semanticInvocationId);
@@ -1459,6 +1457,7 @@ async function executeRepairAndRevalidate(
     seenRoundSignatures.add(roundSignature);
 
     const changed = changedRepairFields(draft, repaired);
+    assertAgentRepairFieldsAllowed(writeScope, changed);
     await dispatchCorrectorTool(agent, "validate_typed_patch", () => true, {
       round,
       actionKey: `validate:${round}`,
@@ -1479,8 +1478,6 @@ async function executeRepairAndRevalidate(
     evidenceChecked = evidenceChecked.map((item) => item === primaryDiscovery.checkSnapshot
       ? { ...item, snapshot_id: primarySourceCheckId } : item);
     if (changed.length) {
-      const issueCodes = isRecord(deterministic.issue_plan) ? deterministic.issue_plan.codes : [];
-      const writeStrategy = selectCorrectorWriteStrategy(registry, issueCodes, changed);
       const sources = resolutionSources(context, repaired, isRecord(deterministic.temporal_contract)
         ? deterministic.temporal_contract : null);
       const contract = buildResolutionPlan({
@@ -1510,7 +1507,7 @@ async function executeRepairAndRevalidate(
             primary_source_check_id: primarySourceCheckId,
             registry_version: registry.version,
             registry_hash: registry.hash,
-            strategy_keys: writeStrategy.strategyKeys,
+            strategy_keys: writeScope.strategyKeys,
           },
           workflow_attempt_id_input: workflowAttemptId,
           repair_round_input: round,
@@ -1520,14 +1517,14 @@ async function executeRepairAndRevalidate(
             ? context.workflow_issue_ids : [],
         }, authorization), {
           round,
-          strategyKey: writeStrategy.strategyKey,
+          strategyKey: writeScope.strategyKey,
           actionKey: `persist:${round}`,
           progressFingerprint: `persist:${round}:${expectedVersion}:${roundSignature}`,
           summarize: (value) => ({
             round,
             draft_version: Number((isRecord(value.draft) ? value.draft.content_version : null) ?? value.new_version),
             changed_field_count: changed.length,
-            strategy_key: writeStrategy.strategyKey,
+            strategy_key: writeScope.strategyKey,
           }),
           snapshotFingerprint: async (value) => sha256Hex({
             draft_id: draftId,

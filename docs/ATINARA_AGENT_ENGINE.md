@@ -6,6 +6,17 @@ de agosto de 2026 sin cambiar secretos, frontend, proveedor ni autoridad de domi
 
 Agent Engine V2.1 está activo como capa de contratos, runtime y persistencia, pero todas las tareas conservan `legacy_direct`. No están activados `gateway_gemini_parity`, `gateway_routing`, OpenRouter ni NVIDIA NIM. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
 
+> **Paquete local pendiente · Corrector por campo (26-08-2026):** el cambio
+> local aún no desplegado completa estrategias para los 23 campos editables de
+> un borrador y aplica el mismo flujo a procedencia manual o Radar. Los códigos
+> vigentes determinan una unión cerrada de `write_fields`; la propuesta completa
+> se proyecta a ese alcance y el delta real se verifica antes del único writer.
+> Una incidencia de fuente conserva solo su URL como candidata y exige una
+> atestación fresca. El parser nuevo de perfiles X acepta únicamente la cuenta
+> canónica ligada al `@handle` del sujeto y su registro solo concede
+> `primary_resolution`, nunca `radar_fact_evidence`. No cambia CAS, idempotencia,
+> privacidad ni las puertas humanas de confirmación y publicación.
+
 ## Transición V2.1
 
 V2.1 conserva los tres agentes y añade selección real de herramientas:

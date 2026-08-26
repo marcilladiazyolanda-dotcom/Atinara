@@ -17,6 +17,8 @@ export const STRATEGY_HANDLER_NAMES = Object.freeze([
   "block_exact_duplicate", "bounded_retry_backoff", "derive_edge_cases",
   "derive_evaluation_period", "derive_or_escalate_temporal_contract",
   "derive_public_criteria", "derive_resolution_deadline", "infer_canonical_subject",
+  "derive_description", "derive_delay_treatment", "derive_cancellation_treatment",
+  "derive_leak_treatment", "derive_rename_treatment", "derive_assumptions",
   "infer_category", "infer_metric_contract", "infer_or_escalate_subject",
   "isolate_and_retry_batch", "normalize_binary_options", "normalize_iana_timezone",
   "preserve_effective_review_and_retry", "preserve_last_known_good",
@@ -28,19 +30,23 @@ export const STRATEGY_HANDLER_NAMES = Object.freeze([
   "request_specific_contract_decision", "request_specific_editorial_decision",
   "request_specific_source_decision", "research_corroboration",
   "research_registered_primary", "research_registered_sources",
+  "apply_registered_primary", "apply_validated_alternatives", "apply_registered_sources",
   "retry_after_backoff", "retry_semantic_review",
   "suppress_when_causal_root_exists", "surface_invalid_repair_strategy",
   "surface_missing_repair_strategy", "surface_provider_configuration_defect",
-  "synchronize_temporal_fields",
+  "synchronize_temporal_fields", "normalize_market_slug",
 ]);
 
 const WRITE_CAPABLE_STRATEGIES = new Set([
   "derive_edge_cases", "derive_evaluation_period", "derive_or_escalate_temporal_contract",
   "derive_public_criteria", "derive_resolution_deadline", "infer_canonical_subject",
+  "derive_description", "derive_delay_treatment", "derive_cancellation_treatment",
+  "derive_leak_treatment", "derive_rename_treatment", "derive_assumptions",
   "infer_category", "infer_metric_contract", "infer_or_escalate_subject",
   "normalize_binary_options", "normalize_iana_timezone", "rebuild_binary_question",
   "rebuild_or_escalate_contract", "rebuild_or_escalate_criteria",
-  "rebuild_resolution_criteria", "synchronize_temporal_fields",
+  "rebuild_resolution_criteria", "synchronize_temporal_fields", "normalize_market_slug",
+  "apply_registered_primary", "apply_validated_alternatives", "apply_registered_sources",
 ]);
 
 export const STRATEGY_HANDLER_REGISTRY = Object.freeze(Object.fromEntries(
@@ -109,6 +115,39 @@ export function strategyAllowsWrite(strategyKey) {
   return STRATEGY_HANDLER_REGISTRY[text(strategyKey)]?.canWrite === true;
 }
 
+export function resolveAgentRepairWriteScope(snapshot, issueCodes) {
+  if (!record(snapshot)) throw new Error("AGENT_REGISTRY_INVALID");
+  const codes = new Set(Array.isArray(issueCodes)
+    ? issueCodes.map((value) => text(value, 100).toUpperCase()).filter(Boolean)
+    : []);
+  const strategies = new Map(rows(snapshot.strategies)
+    .map((strategy) => [text(strategy.strategy_key, 100), strategy]));
+  const strategyKeys = [...new Set(rows(snapshot.bindings)
+    .filter((binding) => codes.has(text(binding.issue_code, 100).toUpperCase()))
+    .map((binding) => text(binding.strategy_key, 100))
+    .filter((key) => strategies.get(key)?.can_write === true))];
+  if (!strategyKeys.length) throw new Error("AGENT_STRATEGY_WRITE_FORBIDDEN");
+  const allowedFields = [...new Set(strategyKeys.flatMap((key) =>
+    fields(strategies.get(key)?.write_fields)))];
+  if (!allowedFields.length || allowedFields.some((field) => !WRITER_FIELDS.has(field))) {
+    throw new Error("AGENT_STRATEGY_FIELD_NOT_ALLOWED");
+  }
+  return Object.freeze({
+    strategyKey: strategyKeys[0],
+    strategyKeys: Object.freeze(strategyKeys),
+    allowedFields: Object.freeze(allowedFields),
+  });
+}
+
+export function assertAgentRepairFieldsAllowed(scope, changedFields) {
+  const allowed = new Set(Array.isArray(scope?.allowedFields) ? scope.allowedFields : []);
+  if ((Array.isArray(changedFields) ? changedFields : [])
+    .some((field) => !allowed.has(text(field, 80)))) {
+    throw new Error("AGENT_STRATEGY_FIELD_NOT_ALLOWED");
+  }
+  return true;
+}
+
 export function assertRegistryIdentity(run, registryVersion, registryHash) {
   if (text(run?.registryVersion, 120) !== text(registryVersion, 120)
     || !/^[0-9a-f]{64}$/i.test(text(registryHash, 64))
@@ -118,8 +157,8 @@ export function assertRegistryIdentity(run, registryVersion, registryHash) {
   return true;
 }
 
-export async function agentRegistryHash(snapshot) {
-  assertAgentRegistrySnapshot(snapshot);
+export async function agentRegistryHash(snapshot, handlers = STRATEGY_HANDLER_REGISTRY) {
+  assertAgentRegistrySnapshot(snapshot, handlers);
   return sha256Hex(canonicalJson({
     version: ATINARA_AGENT_REGISTRY_VERSION,
     issues: rows(snapshot.issues),

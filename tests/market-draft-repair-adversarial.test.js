@@ -643,7 +643,8 @@ test("Corrector adversarial · una alternativa heredada no cuenta sin pruebas de
   assert.equal(repaired.unresolved, null);
   assert.equal(repaired.patch.alternative_sources[0].authority_verified, true);
   assert.equal(repaired.patch.alternative_sources[0].relevance_verified, true);
-  assert.match(fixerEdge, /get_market_radar_authoritative_source_domains_v1/);
+  assert.match(fixerEdge, /get_market_draft_authoritative_source_registry_v1/);
+  assert.doesNotMatch(fixerEdge, /get_market_radar_authoritative_source_domains_v1/);
   assert.match(fixerEdge, /include_domains: \[\.\.\.authoritativeDomains\]/);
   assert.match(fixerEdge, /relevance_basis: "fetched_content_v1"/);
   assert.match(fixerEdge, /return \{ sources: mergeAlternativeSources\(accepted\), warnings, evidenceChecked \}/);

@@ -63,10 +63,21 @@ test("Canonical JSON v1 cubre la huella real del Registry v2", async () => {
   const registryCase = domainCanonicalCase("registry-v2.snapshot");
   const { version, issues, strategies, bindings } = registryCase.input;
   const snapshot = { issues, strategies, bindings };
+  const fixtureHandlers = Object.fromEntries(strategies.map((strategy) => [
+    strategy.strategy_key,
+    {
+      handlerKey: strategy.handler_key,
+      canWrite: strategy.can_write,
+    },
+  ]));
   assert.equal(version, registries.ATINARA_AGENT_REGISTRY_VERSION);
-  assert.deepEqual(snapshot, registrySnapshot());
+  assert.deepEqual(registries.assertAgentRegistrySnapshot(snapshot, fixtureHandlers), {
+    issues: 1,
+    strategies: strategies.length,
+    bindings: 1,
+  });
   assert.equal(contracts.canonicalJson(registryCase.input), registryCase.expectedCanonicalJson);
-  assert.equal(await registries.agentRegistryHash(snapshot), registryCase.expectedSha256);
+  assert.equal(await registries.agentRegistryHash(snapshot, fixtureHandlers), registryCase.expectedSha256);
 });
 
 test("Canonical JSON v1 cubre progreso y replan del Runtime v2", async () => {

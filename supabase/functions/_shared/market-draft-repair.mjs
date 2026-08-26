@@ -2,6 +2,8 @@ export const AUTONOMOUS_REPAIR_VERSION = "atinara-draft-repair-v12";
 export const AUTONOMOUS_REPAIR_MAX_ROUNDS = 3;
 export const PRIMARY_SOURCE_REGISTRY_ROLE = "primary_resolution";
 export const PRIMARY_SOURCE_VALIDATION_VERSION = "atinara-primary-source-validation-v1";
+export const PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION = "atinara-public-account-source-v1";
+export const PUBLIC_ACCOUNT_IDENTITY_SCOPE = "public_account_path_v1";
 export const RESOLUTION_DEADLINE_POLICY = Object.freeze({
   version: "atinara-resolution-deadline-policy-v1",
   source_availability_delay_seconds: 300,
@@ -52,7 +54,11 @@ export const VALIDATOR_CONTENT_ISSUE_CODES = Object.freeze([
   "AMBIGUOUS_SUBJECT",
   "AUTOMATIC_REVIEW_INCONCLUSIVE",
   "CONTRADICTORY_CRITERIA",
+  "CANCELLATION_TREATMENT_REQUIRED",
+  "DELAY_TREATMENT_REQUIRED",
+  "DESCRIPTION_REQUIRED",
   "INSUFFICIENT_EVIDENCE",
+  "INVALID_MARKET_SLUG",
   "INVALID_METRIC",
   "INVALID_QUESTION",
   "INVALID_TIMEZONE",
@@ -61,6 +67,9 @@ export const VALIDATOR_CONTENT_ISSUE_CODES = Object.freeze([
   "MISSING_PUBLIC_CRITERIA",
   "MISSING_RESOLUTION_SOURCE",
   "NON_BINARY_OPTIONS",
+  "LEAK_TREATMENT_REQUIRED",
+  "RENAME_TREATMENT_REQUIRED",
+  "ASSUMPTIONS_REQUIRED",
   "TEMPORAL_INCOHERENCE",
   "UNRESOLVABLE_CONTRACT",
 ]);
@@ -280,9 +289,15 @@ export function primarySourceRegistryEntry(value, registry, category = /** @type
   if (!url) return null;
   const hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
   const normalizedCategory = normalize(cleanText(category, 120));
-  return normalizePrimarySourceRegistry(registry)
-    .find((entry) => (hostname === entry.canonical_domain || hostname.endsWith(`.${entry.canonical_domain}`))
-      && (entry.categories.length === 0 || (normalizedCategory && entry.categories.includes(normalizedCategory)))) ?? null;
+  const matches = normalizePrimarySourceRegistry(registry)
+    .filter((entry) => (hostname === entry.canonical_domain || hostname.endsWith(`.${entry.canonical_domain}`))
+      && (entry.categories.length === 0 || (normalizedCategory && entry.categories.includes(normalizedCategory))));
+  // Un dominio con un parser de cuenta pública no puede caer en un parser web
+  // genérico: así un post, una búsqueda o una ruta interna no se convierte en
+  // fuente primaria por compartir host con el perfil oficial.
+  return matches.find((entry) => entry.parser_version === PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION)
+    ?? matches[0]
+    ?? null;
 }
 
 export function primarySourceCandidates(context) {
@@ -411,6 +426,30 @@ export function primarySourceRelevance(value, context, subject = null, archetype
   archetype = cleanText(archetype, 80) || inferArchetype(context);
   const url = safePublicUrl(value?.url);
   if (!url || !cleanText(subject, 500)) return { accepted: false, basis: null, matched_tokens: [] };
+  if (cleanText(value?.parser_version ?? value?.registry_parser_version, 120)
+      === PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION) {
+    const accountHandle = publicAccountProfileHandle(url);
+    const declaredHandles = [...cleanText(subject, 500).matchAll(/@([A-Za-z0-9_]{1,15})\b/g)]
+      .map((match) => match[1].toLowerCase());
+    const excerpt = cleanText(value?.excerpt, 4_000);
+    const escapedHandle = accountHandle?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") ?? "";
+    const handleInContent = Boolean(accountHandle)
+      && new RegExp(`@${escapedHandle}\\b`, "i").test(excerpt);
+    const identityEvidence = primaryIdentityEvidence(subject, excerpt);
+    const accepted = Boolean(accountHandle)
+      && declaredHandles.includes(accountHandle)
+      && handleInContent
+      && identityEvidence.accepted;
+    return {
+      accepted,
+      basis: accepted ? "fetched_content_and_canonical_url_v1" : null,
+      matched_tokens: accepted
+        ? [...new Set([accountHandle, ...identityEvidence.matched_tokens])].slice(0, 8)
+        : identityEvidence.matched_tokens,
+      account_handle: accepted ? accountHandle : null,
+      identity_scope: accepted ? PUBLIC_ACCOUNT_IDENTITY_SCOPE : null,
+    };
+  }
   const parsed = new URL(url);
   // La query es controlable, mutable y no forma parte de la ruta canónica que
   // identifica el recurso; nunca aporta relevancia material.
@@ -602,7 +641,11 @@ export async function validateRegisteredPrimarySource(
         });
       }
       const excerpt = await readLimitedSourceExcerpt(response);
-      const relevance = primarySourceRelevance({ url: current, excerpt }, context);
+      const relevance = primarySourceRelevance({
+        url: current,
+        excerpt,
+        parser_version: registryEntry.parser_version,
+      }, context);
       const excerptSha256 = await sha256Text(excerpt);
       if (!relevance.accepted) {
         return primaryValidationFailure(candidate, "PRIMARY_SOURCE_IRRELEVANT", checkedAt, redirectChain, registryEntry, {
@@ -632,6 +675,10 @@ export async function validateRegisteredPrimarySource(
         authority: "private_source_registry_primary_resolution_v1",
         relevance_basis: relevance.basis,
         matched_tokens: relevance.matched_tokens,
+        ...(relevance.identity_scope ? {
+          identity_scope: relevance.identity_scope,
+          account_handle: relevance.account_handle,
+        } : {}),
         http_status: Number(response.status),
         excerpt_sha256: excerptSha256,
         excerpt_chars: excerpt.length,
@@ -661,6 +708,10 @@ export async function validateRegisteredPrimarySource(
           draft_category: cleanText(draftCategory, 120),
           authority_basis: "private_source_registry_primary_resolution_v1",
           relevance_basis: relevance.basis,
+          ...(relevance.identity_scope ? {
+            identity_scope: relevance.identity_scope,
+            account_handle: relevance.account_handle,
+          } : {}),
           validation_version: PRIMARY_SOURCE_VALIDATION_VERSION,
         },
         evidence,
@@ -1006,6 +1057,25 @@ function zonedDateTimeIso(year, month, day, hour, minute, timezone) {
   }
 }
 
+/**
+ * Extrae únicamente perfiles públicos canónicos de X. Las rutas de posts,
+ * búsquedas, mensajes o navegación nunca son una cuenta primaria.
+ */
+export function publicAccountProfileHandle(value) {
+  const url = safePublicUrl(value);
+  if (!url) return null;
+  const parsed = new URL(url);
+  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (hostname !== "x.com" || parsed.search) return null;
+  const match = parsed.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+  const handle = match?.[1]?.toLowerCase() ?? "";
+  if (!handle || new Set([
+    "home", "explore", "search", "notifications", "messages", "compose",
+    "settings", "login", "signup", "tos", "privacy", "i",
+  ]).has(handle)) return null;
+  return handle;
+}
+
 function versionedBoundRelativeDeadline(context, relative) {
   const draft = isRecord(context?.draft) ? context.draft : {};
   const binding = isRecord(context?.binding) ? context.binding : {};
@@ -1197,7 +1267,21 @@ export function repairInferenceContext(context) {
   const draft = { ...sourceDraft };
   for (const field of objectedFields) {
     const target = field === "evaluation_period" ? "evaluation_period_label" : field;
-    if (INFERENCE_DRAFT_FIELDS.has(target)) draft[target] = null;
+    if (!INFERENCE_DRAFT_FIELDS.has(target)) continue;
+    if (target === "primary_source") {
+      // La URL introducida por la administradora sigue siendo una candidata a
+      // investigar, pero se eliminan nombre, autoridad, reachability y demás
+      // banderas heredadas para impedir que se autocertifique.
+      const url = safePublicUrl(isRecord(sourceDraft.primary_source) ? sourceDraft.primary_source.url : null);
+      draft.primary_source = url ? { url } : null;
+      continue;
+    }
+    if (target === "alternative_sources") {
+      draft.alternative_sources = mergeAlternativeSources(sourceDraft.alternative_sources)
+        .map((source) => ({ url: source.url }));
+      continue;
+    }
+    draft[target] = null;
   }
   const output = isRecord(context.draft) ? { ...context, draft } : draft;
   Object.defineProperty(output, REPAIR_INFERENCE_CONTEXT, { value: true, enumerable: false });
@@ -2039,6 +2123,14 @@ export function isVerifiedPrimarySource(value, category = null) {
   const expectedCategory = cleanText(category, 120);
   const registryCategories = Array.isArray(value.registry_categories)
     ? value.registry_categories.map((item) => normalize(cleanText(item, 120))).filter(Boolean) : null;
+  const parserVersion = cleanText(value.registry_parser_version, 120);
+  const accountHandle = publicAccountProfileHandle(url);
+  const accountScoped = parserVersion === PUBLIC_ACCOUNT_SOURCE_PARSER_VERSION;
+  const accountIdentityMatches = !accountScoped || Boolean(
+    accountHandle
+    && cleanText(value.account_handle, 20).toLowerCase() === accountHandle
+    && cleanText(value.identity_scope, 80) === PUBLIC_ACCOUNT_IDENTITY_SCOPE
+  );
   const categoryMatches = Boolean(attestedCategory)
     && (!expectedCategory || normalize(expectedCategory) === normalize(attestedCategory))
     && Array.isArray(registryCategories)
@@ -2057,7 +2149,8 @@ export function isVerifiedPrimarySource(value, category = null) {
     && cleanText(value.validation_version, 120) === PRIMARY_SOURCE_VALIDATION_VERSION
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cleanText(value.registry_source_id, 80))
     && cleanText(value.registry_role, 80) === PRIMARY_SOURCE_REGISTRY_ROLE
-    && cleanText(value.registry_parser_version, 120)
+    && parserVersion
+    && accountIdentityMatches
     && ["fetched_content_v1", "fetched_content_and_canonical_url_v1"]
       .includes(cleanText(value.relevance_basis, 120)));
 }
@@ -2144,7 +2237,11 @@ export function inferPrimarySource(context, subject = null, archetype = null, di
       draft_category: cleanText(value.draft_category, 120),
       authority_basis: "private_source_registry_primary_resolution_v1",
       relevance_basis: cleanText(value.relevance_basis, 120),
-      validation_version: PRIMARY_SOURCE_VALIDATION_VERSION,
+      ...(cleanText(value.identity_scope, 80) ? {
+        identity_scope: cleanText(value.identity_scope, 80),
+        account_handle: cleanText(value.account_handle, 20).toLowerCase(),
+      } : {}),
+      validation_version: cleanText(value.validation_version, 120),
     };
   }
   return null;
@@ -2197,8 +2294,9 @@ function safeMarketSlug(value, subject, archetype, deadline) {
   return /^[a-z0-9][a-z0-9-]{2,119}$/.test(base) ? base : "market-definition-repair";
 }
 
-function commonTreatments(archetype) {
+function commonTreatments(archetype, timezone) {
   const content = archetype === "content_release";
+  const effectiveTimezone = validIanaTimezone(timezone) ? cleanText(timezone, 100) : "la zona horaria contractual";
   return {
     delay_treatment: "Los retrasos o anuncios de calendario no resuelven anticipadamente el mercado; se comprueba el hecho definido al finalizar el periodo.",
     cancellation_treatment: "Una cancelación oficial no equivale por sí sola al hecho afirmado. Si el periodo termina sin la evidencia exigida, el resultado es No.",
@@ -2206,7 +2304,7 @@ function commonTreatments(archetype) {
       ? "Filtraciones, copias no autorizadas y publicaciones de terceros no cuentan. Solo cuenta una publicación oficial y pública de la entidad responsable."
       : "Rumores, filtraciones, patentes, registros y material no autorizado no cuentan como anuncio o lanzamiento oficial.",
     rename_treatment: "Un cambio de nombre conserva la identidad únicamente cuando la fuente oficial confirma de forma inequívoca la continuidad del mismo producto o acontecimiento.",
-    assumptions: "Todas las horas se comparan en UTC. Una fuente retirada requiere evidencia fechada conservada y corroboración; un conflicto material entre fuentes primarias detiene la resolución para revisión humana específica.",
+    assumptions: `Todas las horas se interpretan en ${effectiveTimezone}, conforme a los instantes persistidos del contrato. Una fuente retirada requiere evidencia fechada conservada y corroboración; un conflicto material entre fuentes primarias detiene la resolución para revisión humana específica.`,
   };
 }
 
@@ -2685,7 +2783,7 @@ export function buildDeterministicRepair(context, discoveredSources = []) {
     })(),
     primary_source: primarySource,
     alternative_sources: alternatives,
-    ...commonTreatments(archetype),
+    ...commonTreatments(archetype, criteria.timezone || timezone),
   };
   return {
     archetype,
@@ -2713,13 +2811,15 @@ export function buildDeterministicRepair(context, discoveredSources = []) {
 
 const REQUIRED_TEXT_FIELDS = [
   "market_slug", "question", "subject", "category", "evaluation_period_label", "timezone",
-  "yes_criteria", "no_criteria", "edge_cases", "public_criteria",
+  "yes_criteria", "no_criteria", "edge_cases", "public_criteria", "description",
+  "delay_treatment", "cancellation_treatment", "leak_treatment", "rename_treatment", "assumptions",
 ];
 
 export function validateRepairDraft(draft) {
   const issues = [];
   for (const field of REQUIRED_TEXT_FIELDS) if (!cleanText(draft?.[field])) issues.push(`MISSING_${field.toUpperCase()}`);
   const question = cleanText(draft?.question, 700);
+  if (!/^[a-z0-9][a-z0-9-]{2,119}$/.test(cleanText(draft?.market_slug, 120))) issues.push("INVALID_MARKET_SLUG");
   if (question.length < 20) issues.push("QUESTION_REQUIRED");
   if (/\b(?:exito|importante|grande|pronto|el proximo|el ultimo|este evento)\b/.test(normalize(question))) {
     issues.push("QUESTION_AMBIGUOUS_TERM");
@@ -2736,7 +2836,27 @@ export function validateRepairDraft(draft) {
   if (!validIanaTimezone(draft?.timezone)) issues.push("TIMEZONE_INVALID");
   if (!isVerifiedPrimarySource(draft?.primary_source, draft?.category)) issues.push("PRIMARY_SOURCE_UNVERIFIED");
   if (!mergeVerifiedAlternativeSources(draft?.alternative_sources).length) issues.push("ALTERNATIVE_SOURCE_REQUIRED");
+  if (cleanText(draft?.description, 3_000).length < 30) issues.push("DESCRIPTION_REQUIRED");
+  for (const field of ["delay_treatment", "cancellation_treatment", "leak_treatment", "rename_treatment"]) {
+    if (cleanText(draft?.[field], 4_000).length < 30) issues.push(`${field.toUpperCase()}_REQUIRED`);
+  }
+  if (cleanText(draft?.assumptions, 4_000).length < 20) issues.push("ASSUMPTIONS_REQUIRED");
   return [...new Set(issues)];
+}
+
+/**
+ * Reduce una propuesta determinista al alcance que el registro de estrategias
+ * autoriza para las incidencias exactas de la ronda. El borrador completo se
+ * valida después de aplicar esta proyección, pero ningún campo sano se reescribe.
+ */
+export function projectDeterministicRepair(deterministic, allowedFields) {
+  const allowed = new Set((Array.isArray(allowedFields) ? allowedFields : [])
+    .map((field) => cleanText(field, 80)).filter(Boolean));
+  const patch = Object.fromEntries(Object.entries(isRecord(deterministic?.patch) ? deterministic.patch : {})
+    .filter(([field]) => allowed.has(field)));
+  const explanations = (Array.isArray(deterministic?.explanations) ? deterministic.explanations : [])
+    .filter((item) => isRecord(item) && allowed.has(cleanText(item.field, 80)));
+  return { ...deterministic, patch, explanations };
 }
 
 export function applyRepairPatch(draft, deterministic, modelPatch = {}) {

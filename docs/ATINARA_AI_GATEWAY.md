@@ -2,6 +2,14 @@
 
 Estado: implementado, verificado y desplegado en producción. Las cinco tareas permanecen en `legacy_direct`; Canonical JSON v1 se propagó a sus bundles el 14 de agosto de 2026. Gemini sigue siendo el único transporte activo mediante el adaptador de compatibilidad centralizado; `gateway_gemini_parity`, `gateway_routing`, OpenRouter y NVIDIA NIM permanecen sin activar.
 
+> **Delta local pendiente · Corrector/Validator (26-08-2026):** se amplía la
+> taxonomía cerrada con los códigos deterministas de `market_slug`, descripción,
+> retrasos, cancelación, filtraciones, cambios de nombre y supuestos. El editor
+> semántico recibe solo la propuesta acotada y continúa sin autoridad de
+> escritura: el servidor aplica el parche determinista proyectado por campo. No
+> cambian contrato, versión, modo, ruta, modelo, proveedor, fallback, presupuesto
+> ni telemetría del Gateway; este delta todavía no está desplegado.
+
 ## Fronteras
 
 - El dominio conserva reglas, evidencias, permisos, estados y confirmación humana.

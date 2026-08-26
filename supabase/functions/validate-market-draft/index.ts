@@ -303,6 +303,7 @@ function representationOnlyTemporalIssue(issue: JsonRecord, draft: JsonRecord): 
 
 function semanticDraft(draft: JsonRecord): JsonRecord {
   return {
+    market_slug: text(draft.market_slug),
     question: text(draft.question),
     subject: text(draft.subject),
     category: text(draft.category),
