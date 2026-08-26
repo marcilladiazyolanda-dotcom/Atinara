@@ -17,6 +17,7 @@ import {
 } from "../_shared/ai/execution-profile.mjs";
 import { createMarketWorkflowIssue } from "../_shared/market-workflow-issues.mjs";
 import { essentialMarketTextNotSpanish } from "../_shared/market-language.mjs";
+import { semanticDraft } from "../_shared/market-draft-validation.mjs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -299,34 +300,6 @@ function representationOnlyTemporalIssue(issue: JsonRecord, draft: JsonRecord): 
   } catch {
     return false;
   }
-}
-
-function semanticDraft(draft: JsonRecord): JsonRecord {
-  return {
-    market_slug: text(draft.market_slug),
-    question: text(draft.question),
-    subject: text(draft.subject),
-    category: text(draft.category),
-    yes_option: text(draft.yes_option),
-    no_option: text(draft.no_option),
-    evaluation_period_label: text(draft.evaluation_period_label),
-    evaluation_ends_at: text(draft.evaluation_ends_at),
-    closes_at: text(draft.closes_at),
-    timezone: text(draft.timezone),
-    resolution_deadline: text(draft.resolution_deadline),
-    yes_criteria: text(draft.yes_criteria),
-    no_criteria: text(draft.no_criteria),
-    edge_cases: text(draft.edge_cases),
-    primary_source: draft.primary_source,
-    alternative_sources: draft.alternative_sources,
-    delay_treatment: text(draft.delay_treatment),
-    cancellation_treatment: text(draft.cancellation_treatment),
-    leak_treatment: text(draft.leak_treatment),
-    rename_treatment: text(draft.rename_treatment),
-    assumptions: text(draft.assumptions),
-    public_criteria: text(draft.public_criteria),
-    description: text(draft.description),
-  };
 }
 
 type NormalizedReview = { result: string; issues: JsonRecord[]; notes: string[] };
