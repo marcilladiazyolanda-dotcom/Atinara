@@ -721,6 +721,61 @@ test("structured output rechaza claves extra y aceptación parcial", async () =>
   );
 });
 
+test("Validator corrige el segundo intento con una guía derivada de la fase segura", async () => {
+  const systemPrompts = [];
+  let count = 0;
+  const { gateway } = dependencies({
+    fetchImpl: async (_url, init) => {
+      count += 1;
+      const body = JSON.parse(init.body);
+      systemPrompts.push(body.systemInstruction?.parts?.[0]?.text ?? "");
+      return response(geminiEnvelope(count === 1
+        ? { ...VALID.market_draft_validation.output, unexpected: true }
+        : VALID.market_draft_validation.output));
+    },
+  });
+  const result = await gateway.generateStructured(productRequest("market_draft_validation"), context());
+  assert.equal(result.value.result, "approved");
+  assert.equal(count, 2);
+  assert.doesNotMatch(systemPrompts[0], /Reintento técnico del contrato/);
+  assert.match(systemPrompts[1], /Reintento técnico del contrato/);
+  assert.match(systemPrompts[1], /exactamente las claves result, issues y editorial_notes/);
+});
+
+test("Validator conserva una fase segura y específica para cada incumplimiento de salida", async () => {
+  const scenarios = [
+    {
+      output: { ...VALID.market_draft_validation.output, unexpected: true },
+      phase: "validator.top_level_keys",
+    },
+    {
+      output: { ...VALID.market_draft_validation.output, editorial_notes: [""] },
+      phase: "validator.editorial_notes",
+    },
+    {
+      output: {
+        result: "rejected",
+        issues: [{ code: "AMBIGUOUS_CRITERIA", field: "yes_criteria", message: "x".repeat(801) }],
+        editorial_notes: [],
+      },
+      phase: "validator.issue_message",
+    },
+  ];
+  for (const scenario of scenarios) {
+    const { gateway } = dependencies({
+      fetchImpl: async () => response(geminiEnvelope(scenario.output)),
+    });
+    await assert.rejects(
+      gateway.generateStructured(
+        productRequest("market_draft_validation"),
+        { ...context(), executionProfile: AI_EXECUTION_PROFILE_SINGLE_INFERENCE_SMOKE_V1 },
+      ),
+      (error) => error.code === AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID
+        && error.details?.phase === scenario.phase,
+    );
+  }
+});
+
 test("gateway_routing no busca otra respuesta por rechazo o incoherencia de dominio", async () => {
   for (const output of [
     { result: "rejected", issues: [{ code: "AMBIGUOUS_CRITERIA", field: "yes_criteria", message: "El criterio no identifica un hecho público inequívoco." }], editorial_notes: [] },

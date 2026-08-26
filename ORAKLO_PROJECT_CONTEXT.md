@@ -45,41 +45,48 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > expediente actual debe considerarse stale: después del despliegue hará falta
 > exactamente un refresh Kalshi nuevo, no una mutación ni un retry directo.
 
-### Corrección local del Corrector por campo y perfiles públicos · 26 de agosto de 2026
+### Corrector por campos desplegado y delta de reintento pendiente · 26 de agosto de 2026
 
-- El paquete local parte de `8025df43e898280d06c88c70c43a26dc8acba472`
-  y corrige el fallo observado al revalidar una fuente primaria manual: una
-  incidencia sobre `primary_source` eliminaba también su URL antes de la
-  investigación, X no tenía un parser de perfil y las estrategias de fuente no
-  tenían autoridad de escritura. Las URL objetadas se conservan ahora solo como
-  candidatas, sin reutilizar flags heredados de autoridad o alcance.
-- El registro incorpora perfiles canónicos `https://x.com/<handle>` únicamente
-  para `primary_resolution`. Edge y SQL exigen el mismo handle en la ruta, el
-  sujeto y la evidencia recuperada; posts, búsquedas, rutas internas, handles
-  distintos y la autoridad `radar_fact_evidence` quedan excluidos. Una lectura
-  pública real de `https://x.com/thsottiaux` superó el parser nuevo y ligó
-  `thsottiaux` y `tibo` sin escribir en Atinara ni Supabase.
-- El Corrector dispone de estrategias registradas para los 23 campos editables
-  del borrador. Cada ronda proyecta el parche a los `write_fields` de las
-  incidencias vigentes y comprueba el delta real antes del único writer; los
-  campos sanos quedan byte a byte intactos. El mismo contrato se aplica a
-  borradores manuales y a borradores con procedencia Radar.
-- La migración local pendiente
-  `20260826190000_fix_market_draft_corrector_field_scope_v1.sql` añade el
-  registro, el trigger de atestación, los códigos y bindings que faltaban y la
-  puerta determinista de todos los campos rellenables. No amplía confirmación,
-  programación, publicación, resolución, economía ni permisos públicos.
-- Evidencia local: 72/72 pruebas focales, 589/589 unitarias, sintaxis válida en
-  129 JavaScript, TypeScript verde, 9/9 Edge con Deno 2.1.14, 20 comprobaciones
-  SQL estáticas y benchmark offline 5/5 sin red externa de IA. El diff scan de
-  seguridad revisó ocho superficies y cerró sin hallazgos reportables. La
-  transacción SQL rollback no se ejecutó porque no existe
-  `ATINARA_TEST_DATABASE_URL` ni `psql` en este entorno.
-- El paquete no está desplegado. No se ejecutó SQL remoto, commit, push, PR,
-  publicación, confirmación, programación, resolución ni mutación del borrador.
-  Un despliegue futuro requiere autorización separada y debe respetar el orden
-  migración → `market-draft-fixer` → `validate-market-draft`, seguido de una
-  revalidación controlada del borrador privado.
+- `origin/main` integra los dos primeros paquetes en
+  `87a635e67a9438f6084c4e9cb40fd4ca7393f3fd`. La migración
+  `fix_market_draft_corrector_field_scope_v1` consta aplicada una sola vez como
+  `20260826161837`. `market-draft-fixer` v23 está `ACTIVE`, con JWT obligatorio
+  y digest `79898db878314f5c72843e353becbf9b5f691da6c2f5f1aaf185f9c3a23b83d0`;
+  `validate-market-draft` v33 está `ACTIVE`, con JWT obligatorio y digest
+  `a98999adf02c53f4a959fd9ae70ab92d2a9d82547863153d7fd8e7ff6ffa2d90`.
+- El Corrector dispone en producción de estrategias registradas para los 23
+  campos rellenables. Conserva las URL objetadas únicamente como candidatas,
+  valida perfiles públicos X contra el handle del sujeto y aplica la misma
+  puerta por campos a borradores manuales y de Radar. Validator v33 minimiza
+  las fuentes al contrato editorial `url`, `name`, `role` antes del Gateway.
+- El E2E controlado sobre el borrador privado
+  `ca6a10ea-ad48-4196-aab3-cc3141d3bde1` confirmó que el antiguo
+  `AI_INPUT_FIELD_NOT_ALLOWED` del Validator desapareció. La atestación vencida
+  se rechazó correctamente; el Corrector renovó la fuente X, creó la versión 3
+  y cambió solo `primary_source` y `alternative_sources`. La revisión posterior
+  falló de forma técnica y recuperable con `AI_OUTPUT_CONTRACT_INVALID`, y un
+  retry independiente reprodujo el mismo código.
+- La investigación local aisló dos defectos generales adicionales. El contexto
+  semántico del Corrector serializaba opcionales ausentes como `undefined` y su
+  propuesta incluía metadatos de fuente fuera de la allowlist. Además, el
+  segundo intento de salida inválida del Validator repetía el mismo prompt sin
+  conocer qué restricción determinista había incumplido la primera salida.
+- El delta local pendiente proyecta contexto y propuesta semánticos a contratos
+  mínimos: conserva los 23 campos rellenables, representa ausencias con cadena
+  vacía y limita cada fuente a `url`, `name`, `role`, sin UUID, publisher, flags
+  ni estado de workflow. El sanitizer distingue ahora un campo no autorizado de
+  un exceso real de tamaño. Validator persiste una fase segura del contrato y
+  el retry recibe una guía específica de claves, consistencia o longitud; la
+  validación determinista final continúa intacta y no se fabrica evidencia.
+- Evidencia del delta: 49/49 pruebas focales, 596/596 unitarias, sintaxis válida
+  en 131 JavaScript, TypeScript verde, 9/9 Edge con Deno 2.1.14, canonicalización
+  Node/Deno idéntica en 13 casos de dominio, 10 golden y 22 inválidos, 20
+  comprobaciones SQL estáticas y benchmark offline 5/5 sin red externa de IA.
+- Este último delta no contiene migración y todavía no está integrado ni
+  desplegado. Tras subirlo deben desplegarse exclusivamente
+  `market-draft-fixer` y `validate-market-draft` y repetirse un único E2E
+  controlado. El borrador sigue privado, sin confirmación humana, programación,
+  publicación, mercado público, resolución ni linaje Radar.
 
 ### Continuidad de evidencia oficial futura · 26 de agosto de 2026
 

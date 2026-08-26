@@ -8,6 +8,8 @@ const root = join(__dirname, "..");
 const repairPath = join(root, "supabase/functions/_shared/market-draft-repair.mjs");
 const registryPath = join(root, "supabase/functions/_shared/atinara-agent-registries-v2.mjs");
 const outputValidationPath = join(root, "supabase/functions/_shared/ai/task-output-validation.mjs");
+const sanitizerPath = join(root, "supabase/functions/_shared/ai/sanitize.mjs");
+const taskPolicyModulePath = join(root, "supabase/functions/_shared/ai/task-policy.mjs");
 const fixerEdge = readFileSync(join(root, "supabase/functions/market-draft-fixer/index.ts"), "utf8");
 const taskPolicy = readFileSync(join(root, "supabase/functions/_shared/ai/task-policy.mjs"), "utf8");
 const initialRegistryMigration = readFileSync(
@@ -26,11 +28,17 @@ const fieldScopeMigration = readFileSync(
 let repair;
 let registries;
 let outputValidation;
+let sanitizer;
+let taskPolicyModule;
 
 before(async () => {
-  repair = await import(pathToFileURL(repairPath).href);
-  registries = await import(pathToFileURL(registryPath).href);
-  outputValidation = await import(pathToFileURL(outputValidationPath).href);
+  [repair, registries, outputValidation, sanitizer, taskPolicyModule] = await Promise.all([
+    import(pathToFileURL(repairPath).href),
+    import(pathToFileURL(registryPath).href),
+    import(pathToFileURL(outputValidationPath).href),
+    import(pathToFileURL(sanitizerPath).href),
+    import(pathToFileURL(taskPolicyModulePath).href),
+  ]);
 });
 
 function sourceRegistry(
@@ -237,6 +245,95 @@ test("Corrector por campos · el borrador manual de Tibo cambia solo fuentes", (
     assert.deepEqual(repaired[field], draft[field], field);
   }
   assert.deepEqual(repair.validateRepairDraft(repaired), []);
+});
+
+test("Corrector semántico · manual y Radar usan un contrato mínimo sin undefined ni metadatos internos", () => {
+  const draft = tiboDraft();
+  const context = {
+    draft,
+    latest_review: {
+      blocking_reasons: [{
+        code: "INSUFFICIENT_EVIDENCE",
+        field: "primary_source",
+        message: "La fuente primaria necesita una atestación vigente.",
+        workflow_issue_code: "RESOLUTION_PRIMARY_SOURCE_REQUIRED",
+      }],
+    },
+    repairable_content_issues: [{
+      code: "INSUFFICIENT_EVIDENCE",
+      field: "primary_source",
+      message: "La fuente primaria necesita una atestación vigente.",
+    }],
+  };
+  const { scoped } = buildScopedTiboRepair(context);
+  const manualContext = repair.minimalSemanticRepairContext(context);
+  const proposal = repair.minimalSemanticRepairProposal(scoped);
+
+  assert.ok(Object.values(manualContext.source_contract).every((value) => value === ""));
+  assert.deepEqual(manualContext.blocking_reasons, [{
+    code: "INSUFFICIENT_EVIDENCE",
+    field: "primary_source",
+    message: "La fuente primaria necesita una atestación vigente.",
+  }]);
+  assert.doesNotMatch(JSON.stringify(proposal), /publisher|excerpt|registry_source_id|authority_verified/);
+  assert.deepEqual(Object.keys(proposal.patch).sort(), ["alternative_sources", "primary_source"]);
+
+  const sanitized = sanitizer.sanitizeTaskInput(
+    { context: manualContext, deterministic: proposal },
+    taskPolicyModule.AI_TASK_POLICY_CATALOG.market_draft_repair.inputProjection,
+  );
+  assert.deepEqual(sanitized.context, manualContext);
+  assert.deepEqual(sanitized.deterministic, proposal);
+
+  const radarContext = repair.minimalSemanticRepairContext({
+    ...context,
+    radar_candidate: {
+      source_question: "Will Tibo confirm the haircut?",
+      source_title: undefined,
+      source_resolution_rules: "Official public confirmation only.",
+    },
+  });
+  assert.equal(radarContext.source_contract.source_question, "Will Tibo confirm the haircut?");
+  assert.equal(radarContext.source_contract.source_title, "");
+  assert.equal(radarContext.source_contract.source_resolution_rules, "Official public confirmation only.");
+
+  assert.throws(
+    () => sanitizer.sanitizeTaskInput(
+      { context: { source_contract: { source_question: undefined } }, deterministic: {} },
+      taskPolicyModule.AI_TASK_POLICY_CATALOG.market_draft_repair.inputProjection,
+    ),
+    (error) => error?.code === "AI_INPUT_FIELD_NOT_ALLOWED"
+      && error?.details?.phase === "input.context.source_contract.source_question",
+  );
+});
+
+test("Corrector semántico · la proyección conserva los 23 campos rellenables autorizados", () => {
+  const fullPatch = Object.fromEntries(registries.MARKET_WRITER_FIELD_ALLOWLIST.map((field) => {
+    if (field === "primary_source") return [field, socialPrimary()];
+    if (field === "alternative_sources") {
+      return [field, [verifiedAlternative("https://x.com/thsottiaux/status/2092315945700381084")]];
+    }
+    return [field, `${field} editable`];
+  }));
+  const proposal = repair.minimalSemanticRepairProposal({
+    archetype: "generic_binary_event",
+    patch: fullPatch,
+    issue_plan: { codes: [], dispositions: {} },
+    explanations: [],
+  });
+  assert.deepEqual(
+    Object.keys(proposal.patch).sort(),
+    [...registries.MARKET_WRITER_FIELD_ALLOWLIST].sort(),
+  );
+  assert.doesNotMatch(JSON.stringify(proposal), /authority_verified|registry_source_id|validated_reachable/);
+  const sanitized = sanitizer.sanitizeTaskInput(
+    {
+      context: repair.minimalSemanticRepairContext({}),
+      deterministic: proposal,
+    },
+    taskPolicyModule.AI_TASK_POLICY_CATALOG.market_draft_repair.inputProjection,
+  );
+  assert.deepEqual(sanitized.deterministic, proposal);
 });
 
 test("Corrector por campos · la misma proyección conserva un borrador procedente de Radar", () => {

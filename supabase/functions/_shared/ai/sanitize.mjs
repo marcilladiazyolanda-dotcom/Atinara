@@ -118,7 +118,10 @@ function sanitizePublicJson(value, limits, path, depth) {
     if (value.length > limits.maxArrayItems) throw aiError(AI_ERROR_CODES.INPUT_TOO_LARGE, { httpStatus: 413, details: { phase: path } });
     return value.map((item, index) => sanitizePublicJson(item, limits, `${path}[${index}]`, depth + 1));
   }
-  if (!isRecord(value) || Object.keys(value).length > limits.maxObjectKeys) {
+  if (!isRecord(value)) {
+    throw aiError(AI_ERROR_CODES.INPUT_FIELD_NOT_ALLOWED, { httpStatus: 400, details: { phase: path } });
+  }
+  if (Object.keys(value).length > limits.maxObjectKeys) {
     throw aiError(AI_ERROR_CODES.INPUT_TOO_LARGE, { httpStatus: 413, details: { phase: path } });
   }
   const output = {};

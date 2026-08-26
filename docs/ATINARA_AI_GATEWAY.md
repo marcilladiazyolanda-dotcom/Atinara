@@ -2,13 +2,14 @@
 
 Estado: implementado, verificado y desplegado en producción. Las cinco tareas permanecen en `legacy_direct`; Canonical JSON v1 se propagó a sus bundles el 14 de agosto de 2026. Gemini sigue siendo el único transporte activo mediante el adaptador de compatibilidad centralizado; `gateway_gemini_parity`, `gateway_routing`, OpenRouter y NVIDIA NIM permanecen sin activar.
 
-> **Delta local pendiente · Corrector/Validator (26-08-2026):** se amplía la
-> taxonomía cerrada con los códigos deterministas de `market_slug`, descripción,
-> retrasos, cancelación, filtraciones, cambios de nombre y supuestos. El editor
-> semántico recibe solo la propuesta acotada y continúa sin autoridad de
-> escritura: el servidor aplica el parche determinista proyectado por campo. No
-> cambian contrato, versión, modo, ruta, modelo, proveedor, fallback, presupuesto
-> ni telemetría del Gateway; este delta todavía no está desplegado.
+> **Estado Corrector/Validator y delta local pendiente (26-08-2026):** Corrector
+> v23 y Validator v33 ya aplican la taxonomía cerrada de los 23 campos y la
+> minimización de fuentes. El E2E real alcanzó el proveedor, pero dos revisiones
+> consecutivas terminaron con `AI_OUTPUT_CONTRACT_INVALID`. El delta pendiente
+> reduce también contexto y propuesta del Corrector, corrige la clasificación de
+> `undefined` y pasa al segundo intento del Validator una fase segura y específica
+> del contrato incumplido. El servidor vuelve a validar la salida completa; no
+> cambian contrato, modo, ruta, modelo, proveedor, presupuesto ni autoridad.
 
 ## Fronteras
 
@@ -117,6 +118,14 @@ Atinara usa validadores deterministas específicos por tarea, no un validador JS
 - ausencia de claves de razonamiento oculto.
 
 El sanitizer aplica vocabulario cerrado en todos los niveles, límites de profundidad, arrays, strings, URLs y bytes. Rechaza identidad, contacto, sesiones, cookies, JWT, secretos, Karma, Prestigio, saldo, posiciones y predicciones privadas. Los IDs internos y el payload crudo de proveedor se eliminan de la proyección editorial.
+
+Para `market_draft_repair`, el contexto y la propuesta semánticos se proyectan
+por separado. Los 23 campos rellenables permanecen disponibles, pero una fuente
+solo puede aportar `url`, `name` y `role`; los opcionales ausentes se expresan
+como cadenas vacías y no atraviesan el Gateway UUID, publisher, atestaciones ni
+estado de workflow. La salida inválida del Validator conserva únicamente una
+fase segura de validación, que sirve para añadir al retry una instrucción
+acotada; el proveedor no recibe su salida anterior ni errores internos.
 
 En `market_expert_reasoning`, `origin.duplicate_matches` es dato ordinario de mercado: se valida siempre como array y admite tanto el array vacío como coincidencias saneadas producidas por la clasificación determinista. `PUBLIC_JSON` es el vocabulario transversal de campos de mercado, pero declarar esta clave no amplía la clase de datos ni las claves admitidas dentro de cada coincidencia. La proyección productiva elimina recursivamente `id` y claves `*_id`; el Gateway sigue rechazando identificadores no proyectados, PII, secretos y cualquier campo anidado fuera del vocabulario cerrado antes de reservar presupuesto o invocar al proveedor.
 

@@ -167,8 +167,10 @@ function endpointFallbackAllowed(spec, error) {
   return Array.isArray(spec.fallbackOnStatuses) && spec.fallbackOnStatuses.includes(status);
 }
 
-export async function invokeGeminiLegacy({ taskType, input, policy, route, apiKey, context, fetchImpl, parseOutput }) {
-  const specs = taskGeminiRequests(taskType, input, route.model.modelId);
+export async function invokeGeminiLegacy({
+  taskType, input, policy, route, apiKey, context, fetchImpl, parseOutput, outputRetryPhase = null,
+}) {
+  const specs = taskGeminiRequests(taskType, input, route.model.modelId, { outputRetryPhase });
   let lastError = null;
   for (let index = 0; index < specs.length; index += 1) {
     const spec = specs[index];

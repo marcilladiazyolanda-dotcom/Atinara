@@ -99,8 +99,12 @@ function usageNumbers(metadata) {
   };
 }
 
-async function invokeRoute({ route, taskType, input, policy, apiKey, context, fetchImpl, capability }) {
-  const base = { taskType, input, policy, route, apiKey, context, fetchImpl, capability };
+async function invokeRoute({
+  route, taskType, input, policy, apiKey, context, fetchImpl, capability, outputRetryPhase = null,
+}) {
+  const base = {
+    taskType, input, policy, route, apiKey, context, fetchImpl, capability, outputRetryPhase,
+  };
   if (route.adapter === "gemini_legacy") {
     return invokeGeminiLegacy({
       ...base,
@@ -130,13 +134,16 @@ function canRetryInvalidOutput(error, attempt, policy) {
 
 async function invokeWithOutputRetry(options) {
   let lastError;
+  let outputRetryPhase = null;
   for (let attempt = 0; attempt <= options.policy.invalidOutputRetries; attempt += 1) {
     try {
-      const result = await invokeRoute(options);
+      const result = await invokeRoute({ ...options, outputRetryPhase });
       return { ...result, metadata: { ...result.metadata, outputRetryCount: attempt } };
     } catch (error) {
       lastError = asAiGatewayError(error);
       if (!canRetryInvalidOutput(lastError, attempt, options.policy)) throw lastError;
+      outputRetryPhase = typeof lastError.details?.phase === "string"
+        ? lastError.details.phase.slice(0, 120) : "task_output";
       assertDeadlineBudget(options.context, options.policy.finalizationReserveMs);
     }
   }

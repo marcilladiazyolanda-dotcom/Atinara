@@ -171,6 +171,101 @@ export function cleanText(value, max = 4_000) {
     .slice(0, max);
 }
 
+const SEMANTIC_REPAIR_DRAFT_FIELDS = Object.freeze([
+  "question", "subject", "category", "evaluation_period_label", "evaluation_ends_at", "timezone",
+  "resolution_deadline", "yes_criteria", "no_criteria", "edge_cases", "public_criteria", "description",
+  "delay_treatment", "cancellation_treatment", "leak_treatment", "rename_treatment", "assumptions",
+]);
+
+const SEMANTIC_REPAIR_SOURCE_CONTRACT_FIELDS = Object.freeze([
+  "source_question", "source_title", "source_resolution_rules", "source_resolution_deadline",
+  "source_close_at", "atinara_resolution_criteria", "atinara_resolution_source_url",
+]);
+
+const SEMANTIC_REPAIR_PATCH_FIELDS = Object.freeze([
+  "market_slug", "question", "subject", "category", "yes_option", "no_option",
+  "evaluation_period_label", "evaluation_ends_at", "closes_at", "timezone", "resolution_deadline",
+  "yes_criteria", "no_criteria", "edge_cases", "primary_source", "alternative_sources",
+  "delay_treatment", "cancellation_treatment", "leak_treatment", "rename_treatment",
+  "assumptions", "public_criteria", "description",
+]);
+
+function semanticRepairFields(value, fields) {
+  const source = isRecord(value) ? value : {};
+  return Object.fromEntries(fields.map((field) => [field, cleanText(source[field], 4_000)]));
+}
+
+/**
+ * Proyecta exclusivamente texto semantico acotado para el modelo del Corrector.
+ * Los campos ausentes se representan como cadenas vacias: nunca se envia
+ * `undefined`, metadatos internos de fuentes ni objetos de workflow profundos.
+ */
+export function minimalSemanticRepairContext(context) {
+  const draft = isRecord(context?.draft) ? context.draft : {};
+  const candidate = isRecord(context?.radar_candidate) ? context.radar_candidate : {};
+  const review = isRecord(context?.latest_review) ? context.latest_review : {};
+  const rawIssues = Array.isArray(review.blocking_reasons) ? review.blocking_reasons
+    : Array.isArray(review.semantic_issues) ? review.semantic_issues : [];
+  const blockingReasons = rawIssues.slice(0, 30).filter(isRecord).map((issue) => ({
+    code: cleanText(issue.code, 100),
+    field: cleanText(issue.field, 100),
+    message: cleanText(issue.message, 800),
+  })).filter((issue) => issue.code || issue.field || issue.message);
+  return {
+    draft: semanticRepairFields(draft, SEMANTIC_REPAIR_DRAFT_FIELDS),
+    source_contract: semanticRepairFields(candidate, SEMANTIC_REPAIR_SOURCE_CONTRACT_FIELDS),
+    blocking_reasons: blockingReasons,
+  };
+}
+
+function semanticRepairSource(value) {
+  if (!isRecord(value)) return {};
+  const url = safePublicUrl(value.url);
+  const name = cleanText(value.name ?? value.title, 500);
+  const role = cleanText(value.role ?? value.registry_role, 120);
+  return {
+    ...(url ? { url } : {}),
+    ...(name ? { name } : {}),
+    ...(role ? { role } : {}),
+  };
+}
+
+/**
+ * Reduce la propuesta determinista al contrato editorial que el modelo puede
+ * revisar. La escritura sigue dependiendo del registro y del servidor; esta
+ * proyeccion no transporta atestaciones, extractos, UUID ni banderas internas.
+ */
+export function minimalSemanticRepairProposal(deterministic) {
+  const source = isRecord(deterministic) ? deterministic : {};
+  const sourcePatch = isRecord(source.patch) ? source.patch : {};
+  const patch = {};
+  for (const field of SEMANTIC_REPAIR_PATCH_FIELDS) {
+    if (!Object.hasOwn(sourcePatch, field)) continue;
+    if (field === "primary_source") patch[field] = semanticRepairSource(sourcePatch[field]);
+    else if (field === "alternative_sources") {
+      patch[field] = Array.isArray(sourcePatch[field])
+        ? sourcePatch[field].map(semanticRepairSource).filter((item) => item.url).slice(0, 8) : [];
+    } else patch[field] = cleanText(sourcePatch[field], 4_000);
+  }
+  const issuePlan = isRecord(source.issue_plan) ? source.issue_plan : {};
+  const dispositions = isRecord(issuePlan.dispositions) ? issuePlan.dispositions : {};
+  const issues = (Array.isArray(issuePlan.codes) ? issuePlan.codes : []).map((value) => {
+    const code = cleanText(value, 100).toUpperCase();
+    return { code, disposition: cleanText(dispositions[code], 120) };
+  }).filter((issue) => issue.code);
+  const explanations = (Array.isArray(source.explanations) ? source.explanations : [])
+    .filter(isRecord).map((item) => ({
+      field: cleanText(item.field, 80),
+      reason: cleanText(item.reason, 800),
+    })).filter((item) => item.field && item.reason).slice(0, 30);
+  return {
+    archetype: cleanText(source.archetype, 100),
+    patch,
+    issues,
+    explanations,
+  };
+}
+
 function blockedIpv4Literal(host) {
   const parts = host.split(".");
   if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return false;

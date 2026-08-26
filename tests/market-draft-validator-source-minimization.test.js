@@ -140,6 +140,7 @@ test("Validator · la procedencia manual o Radar no cambia la proyección semán
   });
   assert.deepEqual(projection.semanticDraft(manual), projection.semanticDraft(radar));
   assert.match(validatorEdge, /import \{ semanticDraft \} from "\.\.\/_shared\/market-draft-validation\.mjs"/);
+  assert.match(validatorEdge, /error_phase: errorPhase/);
   assert.doesNotMatch(validatorEdge, /primary_source:\s*draft\.primary_source/);
   assert.doesNotMatch(validatorEdge, /alternative_sources:\s*draft\.alternative_sources/);
 });

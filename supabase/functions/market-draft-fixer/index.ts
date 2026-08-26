@@ -21,6 +21,8 @@ import {
   inferSubject,
   isRecord,
   mergeAlternativeSources,
+  minimalSemanticRepairContext,
+  minimalSemanticRepairProposal,
   normalizePrimarySourceRegistry,
   primarySourceCandidates,
   publicAccountProfileHandle,
@@ -609,25 +611,6 @@ async function discoverOfficialAlternatives(
   return { sources: mergeAlternativeSources(accepted), warnings, evidenceChecked };
 }
 
-function minimalSemanticContext(context: JsonRecord): JsonRecord {
-  const draft = isRecord(context.draft) ? context.draft : {};
-  const candidate = isRecord(context.radar_candidate) ? context.radar_candidate : {};
-  const review = isRecord(context.latest_review) ? context.latest_review : {};
-  return {
-    draft: Object.fromEntries([
-      "question", "subject", "category", "evaluation_period_label", "evaluation_ends_at", "timezone",
-      "resolution_deadline", "yes_criteria", "no_criteria", "edge_cases", "public_criteria", "description",
-      "delay_treatment", "cancellation_treatment", "leak_treatment", "rename_treatment", "assumptions",
-    ].map((field) => [field, draft[field]])),
-    source_contract: Object.fromEntries([
-      "source_question", "source_title", "source_resolution_rules", "source_resolution_deadline",
-      "source_close_at", "atinara_resolution_criteria", "atinara_resolution_source_url",
-    ].map((field) => [field, candidate[field]])),
-    blocking_reasons: Array.isArray(review.blocking_reasons) ? review.blocking_reasons
-      : Array.isArray(review.semantic_issues) ? review.semantic_issues : [],
-  };
-}
-
 const WORKFLOW_TO_REGISTRY_ISSUE = Object.freeze({
   TEMPORAL_SOURCE_SEMANTICS_MISMATCH: "TEMPORAL_INCOHERENCE",
   TEMPORAL_AUTHORITATIVE_DATE_REQUIRED: "TEMPORAL_INCOHERENCE",
@@ -758,7 +741,10 @@ async function semanticEdit(
     const result = await gateway.generateStructured({
       taskType: "market_draft_repair",
       ...AI_TASK_CONTRACTS.market_draft_repair,
-      input: { context: minimalSemanticContext(context), deterministic },
+      input: {
+        context: minimalSemanticRepairContext(context),
+        deterministic: minimalSemanticRepairProposal(deterministic),
+      },
     }, { ...env.execution, invocationId });
     return {
       value: result.value as JsonRecord,

@@ -435,6 +435,7 @@ async function providerReview(
     };
   } catch (error) {
     const gatewayError = asAiGatewayError(error);
+    const errorPhase = text(gatewayError.details?.phase, 120);
     return {
       review: null,
       technicalStatus: gatewayTechnicalStatus(gatewayError.code),
@@ -446,6 +447,7 @@ async function providerReview(
         telemetry_status: gatewayError.telemetryStatus ?? "unknown",
         warnings: gatewayError.warnings ?? [],
         error_code: gatewayError.code,
+        ...(errorPhase ? { error_phase: errorPhase } : {}),
       },
     };
   }

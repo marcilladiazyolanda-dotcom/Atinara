@@ -25,6 +25,15 @@ const VALIDATOR_CODES = new Set([
   "UNRESOLVABLE_CONTRACT",
 ]);
 
+export const VALIDATOR_OUTPUT_LIMITS = Object.freeze({
+  maxIssues: 30,
+  maxEditorialNotes: 20,
+  issueField: 100,
+  issueMessageMin: 8,
+  issueMessageMax: 800,
+  editorialNote: 500,
+});
+
 const RADAR_REASON_CODES = new Set([
   "EVENT_ALREADY_RESOLVED",
   "SOURCE_STALE",
@@ -189,16 +198,44 @@ function validateExpert(value) {
 }
 
 function validateDraftReview(value) {
-  if (!exactKeys(value, ["result", "issues", "editorial_notes"])
-    || !["approved", "rejected"].includes(value.result)
-    || !Array.isArray(value.issues) || value.issues.length > 30
-    || !validStringArray(value.editorial_notes, 20, 500)) fail();
+  if (!exactKeys(value, ["result", "issues", "editorial_notes"])) {
+    fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.top_level_keys");
+  }
+  if (!["approved", "rejected"].includes(value.result)) {
+    fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.result");
+  }
+  if (!Array.isArray(value.issues) || value.issues.length > VALIDATOR_OUTPUT_LIMITS.maxIssues) {
+    fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.issues");
+  }
+  if (!validStringArray(
+    value.editorial_notes,
+    VALIDATOR_OUTPUT_LIMITS.maxEditorialNotes,
+    VALIDATOR_OUTPUT_LIMITS.editorialNote,
+  )) {
+    fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.editorial_notes");
+  }
   for (const issue of value.issues) {
-    if (!exactKeys(issue, ["code", "field", "message"]) || !VALIDATOR_CODES.has(issue.code)
-      || !validString(issue.field, 1, 100) || !validString(issue.message, 8, 800)) fail();
+    if (!exactKeys(issue, ["code", "field", "message"])) {
+      fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.issue_keys");
+    }
+    if (!VALIDATOR_CODES.has(issue.code)) {
+      fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.issue_code");
+    }
+    if (!validString(issue.field, 1, VALIDATOR_OUTPUT_LIMITS.issueField)) {
+      fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.issue_field");
+    }
+    if (!validString(
+      issue.message,
+      VALIDATOR_OUTPUT_LIMITS.issueMessageMin,
+      VALIDATOR_OUTPUT_LIMITS.issueMessageMax,
+    )) {
+      fail(AI_ERROR_CODES.OUTPUT_CONTRACT_INVALID, "validator.issue_message");
+    }
   }
   if ((value.result === "approved" && value.issues.length !== 0)
-    || (value.result === "rejected" && value.issues.length === 0)) fail(AI_ERROR_CODES.OUTPUT_DOMAIN_INVALID);
+    || (value.result === "rejected" && value.issues.length === 0)) {
+    fail(AI_ERROR_CODES.OUTPUT_DOMAIN_INVALID, "validator.result_issue_consistency");
+  }
   return value;
 }
 
