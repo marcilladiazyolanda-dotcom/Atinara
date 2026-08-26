@@ -19,10 +19,10 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Estado operativo de 13.5.2 · Radar v69 terminal y cobertura pendiente
+## Estado operativo de 13.5.2 · Radar v69 terminal y corrección CI pendiente
 
 El corte remoto vigente es `origin/main =
-addfc0b372bc45c572a843f3cec7893b3e41e06c`. La migración de aislamiento de
+ddf61bb7667fc209377f2ea120d469b66f2ad65f`. La migración de aislamiento de
 batches consta aplicada una sola vez en producción como `20260825203949` y solo
 `market-radar` se desplegó como v69. El refresh administrativo
 `39a1656e-61af-4674-a4e0-fa0896236507` terminó `partial/terminal` con
@@ -50,7 +50,7 @@ las 215 series, con backoff de 429, 515 padres únicos y cero errores finales;
 un escaneo global sin `series_ticker` no es utilizable porque siguió abierto tras
 10.000 eventos y 50 páginas.
 
-La corrección incremental pendiente sella primero un checkpoint privado,
+El commit remoto integra la corrección que sella primero un checkpoint privado,
 append-only y service-only de hasta 2.000 series/padres, libera el lease y
 reanuda la misma UUID para enumerar familias sin repetir el catálogo. Incluye
 Video games y Esports, reintenta solo series fallidas, registra todos los IDs en
@@ -65,13 +65,17 @@ tanto, navegar conserva la misma actualización activa. Una recarga recupera de
 la sesión solo UUID y filtros, nunca credenciales ni respuestas, y los reconcilia
 mediante lectura antes de ofrecer una acción nueva.
 
-Este paquete aún no está desplegado ni aplicado. Deno 2.1.14 está verde; pasan
-153 pruebas focalizadas, 183 pruebas de las cinco suites afectadas, 232
-regresiones de Radar→Expert/Editor/Corrector y 19
-contratos SQL estáticos. La migración completa se ejecutó contra PostgreSQL real
-dentro de una transacción terminada en `ROLLBACK`, y se comprobó que tabla y
-funciones no quedaron instaladas. No se inició otro refresh, no se llamó Market
-Expert y los seis borradores productivos permanecen intactos.
+El contenido remoto coincide byte por byte con las 16 rutas entregadas, pero no
+está desplegado ni aplicado: la Action funcional del commit falló antes de Deno
+porque `admin-markets.html` mezcló dos versiones de caché pública. La corrección
+incremental pendiente eleva de forma atómica los recursos compartidos de las
+diez páginas bajo `20260825-radar-provider-checkpoint1`. La implementación Radar conserva Deno
+2.1.14 verde, 153 pruebas focalizadas, 183 pruebas de las cinco suites
+afectadas, 232 regresiones de Radar→Expert/Editor/Corrector y 19 contratos SQL
+estáticos. La migración completa se ejecutó contra PostgreSQL real dentro de
+una transacción terminada en `ROLLBACK`, y se comprobó que tabla y funciones no
+quedaron instaladas. No se inició otro refresh, no se llamó Market Expert y los
+seis borradores productivos permanecen intactos.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -89,6 +93,8 @@ Checkpoint precedente:
 [`docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md).
 Corrección pendiente de cobertura y reanudación:
 [`docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md).
+Corrección incremental de la puerta CI y caché pública:
+[`docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md`](docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 
@@ -99,13 +105,12 @@ compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
 infraestructura principal de este hito está activada en producción; los
 schedulers de descubrimiento y monitorización continúan apagados.
 
-El backend coordinado está activo en producción. GitHub Pages sirve
-`v=20260825-radar-catalog-bound1` y el smoke autenticado confirmó la frontera de
-catálogo en escritorio y móvil. El paquete pendiente versiona únicamente
-`radar-refresh-request.js` y `admin-markets.js` como
-`20260825-radar-provider-checkpoint1`; Pages no debe considerarse actualizado
-hasta que GitHub integre ese inventario exacto. El smoke contra Pages y el
-backend vigente confirmó el refresco real, el cooldown en tiempo real, el
+El backend coordinado está activo en producción. El build de GitHub Pages para
+`ddf61bb` terminó correctamente, pero el HTML publicado mezcla
+`20260825-radar-catalog-bound1` y `20260825-radar-provider-checkpoint1`; no debe
+considerarse una entrega funcional aprobada hasta integrar la corrección que
+unifica el corte de recursos en las diez páginas. El smoke anterior contra
+Pages y el backend vigente confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.
 

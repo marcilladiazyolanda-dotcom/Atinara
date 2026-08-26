@@ -1,0 +1,101 @@
+ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826
+Generated: 2026-08-26
+Base: origin/main ddf61bb7667fc209377f2ea120d469b66f2ad65f
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M admin-community.html
+M admin-markets.html
+M admin-resolution.html
+M community.html
+A docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md
+A docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826_MANIFEST.txt
+M index.html
+M market-detail.html
+M my-predictions.html
+M profile.html
+M ranking.html
+M reset-password.html
+M tests/agent-engine-frontend.test.js
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+M tests/radar-catalog-boundary.test.js
+M tests/radar-eligibility-sources-v5.test.js
+
+SHA-256 PAYLOAD FILES
+95d35120e023eeb8d675b600039fff82555d675b75019376d5e95e8be5f1c519  ORAKLO_PROJECT_CONTEXT.md
+18bff5f89aa557161352a08347dace9e1c894083806c2f3a292f37bc40027ee2  README.md
+8b21e86556e9a1c0f4bf4300bd19a3e44e517de09e3d1214807cd96b30bd37e6  admin-community.html
+76bf7b819cdce51a97ea4c5796e60941e345eb7fa011541a451e5b7cd77d3d11  admin-markets.html
+888c3f55882a1079565f40d33b996d625ea18c6ebadedd27fad76f02d727f9e5  admin-resolution.html
+1e86cd43e56659378e984b77b295eadbeabc5e408f821d222b79b379ee31e567  community.html
+82c2c6811350657605af4b9b2ba6850a1c081840f2579487cab7a31c61b58b3b  docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md
+937e8925b5e60af765dbcb516dcf9cc0da3ab5e6ca25f2584c1f9aa7330abdc1  index.html
+a28192939afad13031de826b69a175d7eb8681da739428a1683cab4da39d8e32  market-detail.html
+3d2a290dbf947b2ed79efe74e18e98cef72e9253e91f7034f9168917836799f7  my-predictions.html
+256b66f0fb8732c0a498ef0ff4f270690decebeb19725c7b6ab270c8ef3ddfd1  profile.html
+ab0a953688798fce30f5762b16a59e7facf6f4a6965fe51f4924ecf97eb729d4  ranking.html
+0214bdefc0e690c0d35712fe5113c590c45af06d74f5dabf545118df08106f10  reset-password.html
+317d1eb4a0c44f5c0bbdd0d52fe528fe6c67d9728ddd54fed16dc6bcf5c04497  tests/agent-engine-frontend.test.js
+8a38c5028222f6913d4d14da01a7749aa9493e3ac6e4fbc017d7f3bc8884ec07  tests/human-confirmation-flow.test.js
+b13922b8a9c22daa36176e5c929d2583e83bd8694fc0dcd35da78595312b59d8  tests/market-radar.test.js
+d6c6b90f8c4ca0a20f519348fcac072cf32d3726de21bcf4d450b816e61cb049  tests/official-opportunity-discovery.test.js
+d4e73266b5cc5309b8e5ced0c440f692ab2e53b6acdf1c48ba8c2a25ad4a0937  tests/radar-catalog-boundary.test.js
+7d31077df393a6f573d178e7d88f2b4a5fc5ae23ccb12868c24c1569a724236a  tests/radar-eligibility-sources-v5.test.js
+
+MIGRATIONS: none
+EDGE FUNCTIONS: none
+FRONTEND
+admin-community.html
+admin-markets.html
+admin-resolution.html
+community.html
+index.html
+market-detail.html
+my-predictions.html
+profile.html
+ranking.html
+reset-password.html
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+REMOTE GATE AT BASE
+- exact previous upload: 16/16 blobs identical
+- GitHub Pages run 32955814594: success
+- offline benchmark run 32955816132: success
+- Calidad de Atinara run 32955816058: failure before Deno
+- exact cause: admin-markets.html contained two public cache versions
+
+CORRECTION
+- all 110 local resource references in 10 HTML files use 20260825-radar-provider-checkpoint1
+- 6 static release contracts now require that same current version
+- no production JavaScript, backend, SQL or provider logic changed
+
+LOCAL VERIFICATION
+- 8 focused cache and consumer suites: 144 passed, 0 failed
+- complete unit suite: 577 passed, 0 failed
+- JavaScript syntax: 128 valid
+- canonical JSON Node and Deno 2.1.14: passed with identical fingerprint
+- monitoring TypeScript: passed
+- SQL transaction structure: 19 valid
+- Deno 2.1.14 Edge checks: 9 passed
+- git diff --check: passed
+
+POST-UPLOAD
+- fetch and compare exactly these 5 paths and contents
+- require Calidad de Atinara, Edge Deno, Pages and offline benchmark success
+- do not use Sonar
+- only after green CI continue the pending migration and market-radar-only deploy
+- preserve exactly one fresh Kalshi UUID and create at most one private draft
+- never confirm, publish, resolve or settle the draft or a market

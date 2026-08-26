@@ -1,11 +1,11 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 25 de agosto de 2026.
+Última actualización del contexto: 26 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado productivo verificado tras el smoke Radar v69:**
-> `origin/main` está en `addfc0b372bc45c572a843f3cec7893b3e41e06c`;
+> `origin/main` está en `ddf61bb7667fc209377f2ea120d469b66f2ad65f`;
 > `20260825203949` consta aplicada una sola vez y `market-radar` v69 está
 > `ACTIVE`, `verify_jwt=true`, digest
 > `7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265`.
@@ -30,13 +30,19 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > completaron; los raíces de 24 y 14 también terminaron. Se promovieron 86
 > candidatas, ninguna elegible, y continuaron exactamente seis borradores.
 >
-> La limitación pendiente ya no es persistencia: v69 solo prioriza 25 de 109
-> series Video games y omite el alcance Esports. Una auditoría pública agotó 215
+> El commit remoto integra byte por byte las 16 rutas del checkpoint de
+> discovery, pero no está activado: `Calidad de Atinara` falló antes de Deno
+> porque `admin-markets.html` mezcló dos versiones de caché. Pages sí construyó
+> el SHA. No aplicar la migración, desplegar la Edge ni iniciar otro refresh
+> hasta integrar la corrección incremental de caché y obtener CI verde.
+>
+> La limitación productiva pendiente ya no es persistencia: v69 solo prioriza 25
+> de 109 series Video games y omite el alcance Esports. Una auditoría pública agotó 215
 > series gaming y 515 padres abiertos con el host recomendado de Kalshi. La
 > corrección incremental está documentada en
-> `docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`; aún no está
-> en GitHub ni producción. No ejecutar otro refresh ni Market Expert antes de
-> integrar, migrar, desplegar y verificar ese paquete.
+> `docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`; ya está en
+> GitHub, pero no en producción. No ejecutar otro refresh ni Market Expert antes
+> de integrar la corrección CI, migrar, desplegar y verificar ambos cortes.
 
 ### Checkpoint durable de discovery y cobertura temática · 25 de agosto de 2026
 
@@ -79,13 +85,33 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - Pasan Deno 2.1.14, 153 pruebas focalizadas, 183 pruebas de las cinco suites
   afectadas, 232 regresiones del ciclo completo y 19 contratos SQL estáticos.
   La prueba ejecutable conserva 109 + 107 - 1 = 215 series, los dos scopes de
-  la serie compartida y 515 padres únicos. Pages continúa sirviendo
-  `20260825-radar-catalog-bound1`; el paquete pendiente versiona solo los dos
-  scripts Radar modificados como `20260825-radar-provider-checkpoint1`.
+  la serie compartida y 515 padres únicos. Pages construyó el commit remoto,
+  pero `admin-markets.html` mezcla `20260825-radar-catalog-bound1` con
+  `20260825-radar-provider-checkpoint1`; la Action funcional falla cerrada.
 - Producción sigue en v69 y no se inició otra UUID. Los fingerprints protegidos,
   seis borradores, 15 mercados, 9 predicciones, Karma 2.932 y Prestigio 40 no se
   modificaron. Tras la integración se aplicará una sola migración, se desplegará
   únicamente `market-radar` y se hará exactamente un refresh fresco controlado.
+
+### Puerta CI de versión de caché Radar · 26 de agosto de 2026
+
+- `origin/main = ddf61bb7667fc209377f2ea120d469b66f2ad65f` contiene exactamente
+  las 16 rutas entregadas y su contenido coincide byte por byte con la worktree
+  preservada. No hay archivos adicionales ni eliminaciones en el rango.
+- GitHub Pages terminó en verde para ese SHA. La Action `Calidad de Atinara`
+  falló en `npm run validate`, antes del paso Deno: `public-brand.test.js` y
+  `sonarqube-quality.test.js` detectaron dos versiones de caché en
+  `admin-markets.html` (`actual=2`, `expected=1`). No se usó Sonar.
+- La causa es una entrega frontend no atómica: los dos scripts Radar nuevos
+  usaban `20260825-radar-provider-checkpoint1`, mientras los otros trece recursos
+  de esa página y las nueve páginas hermanas conservaban
+  `20260825-radar-catalog-bound1`. La regla compartida de Pages exige una sola
+  release por HTML y para los recursos transversales.
+- La corrección incremental cambia únicamente 108 query strings en diez HTML y
+  actualiza seis contratos estáticos de versión. Las 110 referencias quedan
+  bajo `20260825-radar-provider-checkpoint1`. No modifica contenido JavaScript,
+  backend, SQL, Auth, datos, IA, Registry, economía ni borradores. Véase
+  `docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md`.
 
 ### Aislamiento durable de timeouts de batch · 25 de agosto de 2026
 
