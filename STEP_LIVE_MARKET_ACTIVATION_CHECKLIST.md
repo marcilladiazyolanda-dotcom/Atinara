@@ -6,6 +6,12 @@ Estado: **migración aplicada y frontend productivo**. La migración `supabase/m
 
 El frontend inicial se publicó en `f7aac42` con `v=20260801-market1`; se conserva como evidencia histórica. `data.js` fue eliminado en `4ccd97e` y la limpieza completa se publicó en `a5c633b`. GitHub Pages sirve `v=20260801-market2`, la URL pública de `data.js` devuelve 404 y las métricas privadas provisionales ya no aparecen para invitadas.
 
+Actualización vigente: la migración incremental
+`20260826183050_raise_live_prediction_max_to_1000_v1.sql` consta aplicada como
+`20260826184500`. El límite histórico de 500/20 % de las evidencias del 1 de
+agosto quedó sustituido por `min(1.000 Karma, saldo disponible)`; no se debe
+reutilizar como regla actual.
+
 ## 1. Por qué se coordinó
 
 La migración cambió la firma de `place_prediction` y el frontend nuevo dependía de RPC y campos nuevos. Por eso SQL y frontend se activaron dentro de una ventana controlada. Esta explicación se conserva como trazabilidad histórica; ya no es una instrucción para volver a activar nada.
@@ -117,17 +123,22 @@ Incidencia encontrada y corregida en el árbol de limpieza:
 
 ## 7. Pruebas autenticadas que requieren autorización separada
 
-Estas pruebas no se fingieron ni se ejecutaron durante la aceptación de solo lectura:
+Estas pruebas no se fingieron durante la aceptación inicial. Yol autorizó una
+repetición transaccional reversible el 26 de agosto:
 
-- [ ] Solicitar cotización como usuaria real y comprobar su límite personal del 20 %.
-- [ ] Confirmar una participación `lmsr_v1` y comprobar descuento, nuevo punto y Realtime.
-- [ ] Provocar de forma controlada `PRICE_MOVED` y verificar recotización sin descuento doble.
-- [ ] Comprobar mínimo 10, máximo 500, saldo insuficiente y posición duplicada.
+- [x] Cotizar con dos perfiles y comprobar máximo 1.000 o saldo disponible.
+- [x] Confirmar Sí y No mediante `place_prediction`, con descuento, versión y punto nuevos, dentro de `ROLLBACK`.
+- [x] Provocar `PRICE_MOVED` y verificar que no crea posición ni descuenta Karma.
+- [x] Comprobar mínimo 10, máximo 1.000, 1001, saldo y posición duplicada.
+- [ ] Verificar la recepción Realtime desde dos sesiones persistentes separadas.
 - [ ] Comprobar la posición privada en «Mis predicciones».
 - [ ] Anular un mercado de aceptación y confirmar devolución íntegra sin cambio de Prestigio.
 - [ ] Probar acierto y fallo de `lmsr_v1` y `legacy_fixed_v1` en un entorno controlado separado.
 
-No ejecutar estas operaciones sobre datos reales sin autorización expresa de Yol y un plan de limpieza.
+No ejecutar operaciones persistentes sobre datos reales sin autorización
+expresa de Yol y un plan de limpieza. La prueba cerrada conserva su SQL en
+`supabase/tests/live_prediction_limit_v1_transaction.sql` y termina siempre en
+`ROLLBACK`.
 
 ## 8. Validación técnica del árbol final
 

@@ -387,7 +387,7 @@ test("Contrato · la revisión factual operativa queda retirada y la elegibilida
   assert.match(migration, /then 'technical_hold'[\s\S]*?ELIGIBILITY_REFRESH_REQUIRED/);
   assert.match(migration, /candidate\.id, provenance_revision/);
   assert.match(migration, /where code = 'RADAR_FACTUAL_VERIFICATION_REQUIRED'/);
-  assert.match(adminHtml, /20260825-radar-provider-checkpoint1/);
+  assert.match(adminHtml, /20260826-live-market-chart-limit1/);
 });
 
 test("Editor · la proyección segura conserva la elegibilidad autoritativa sin incluir leases en la huella", () => {

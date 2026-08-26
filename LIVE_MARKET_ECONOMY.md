@@ -1,11 +1,13 @@
 # Economía del mercado predictivo vivo de Atinara
 
-> **Estado vigente, 9 de agosto de 2026:** este contrato continúa vigente y
-> manda sobre el Paso 13.4. La administración, la puerta factual Radar y la
-> revisión B2B son aditivas y ya están activas; no cambian LMSR,
-> `legacy_fixed_v1`, cotización, liquidación ni privacidad. El postcheck del
-> último corte conservó 15 mercados, 9 predicciones, 2 perfiles, 2027 Karma, 40
-> Prestigio, 15 estados maker y 17 puntos históricos con sus hashes previos.
+> **Estado vigente, 26 de agosto de 2026:** este contrato continúa vigente y
+> manda sobre el Paso 13.4. La administración, Radar y la revisión B2B son
+> aditivos y no cambian LMSR, `legacy_fixed_v1`, liquidación ni privacidad. La
+> migración incremental `20260826183050_raise_live_prediction_max_to_1000_v1`
+> consta aplicada remotamente como `20260826184500`: el máximo por predicción
+> es ahora el menor valor entre 1.000 Karma y el saldo disponible, sin límite
+> porcentual. El postcheck conserva 16 mercados, 9 predicciones, 2 perfiles,
+> 2.932 Karma, 40 Prestigio, 16 estados maker y 18 puntos históricos.
 
 Fecha de aprobación: 1 de agosto de 2026.
 
@@ -88,7 +90,7 @@ La cotización no reserva el precio. Al confirmar, `place_prediction` vuelve a b
 Límites vigentes de beta:
 
 - mínimo: 10 Karma;
-- máximo: el menor valor entre 500 Karma y el 20 % del saldo disponible;
+- máximo: el menor valor entre 1.000 Karma y el saldo disponible;
 - una única predicción por persona y mercado;
 - ninguna inserción económica directa desde el frontend.
 
@@ -113,7 +115,9 @@ El parámetro `b = 2000`, los límites de participación y las tasas de bonus de
 - La gráfica ofrece `1 h`, `6 h`, `24 h`, `7 d` y `Todo`.
 - Supabase Realtime publica un evento anónimo `price_changed` sin identidad ni posición privada.
 - El frontend vuelve a consultar el dato autoritativo y usa una comprobación cada 30 segundos como respaldo.
-- Si todavía existe un solo punto, se muestra un estado honesto; no se dibuja volatilidad ficticia.
+- Si todavía existe un solo punto, se muestra en el borde izquierdo a su precio
+  real; no se dibuja volatilidad ficticia. Los movimientos posteriores avanzan
+  hacia la derecha según su tiempo real.
 - Al cerrar o resolver un mercado, la gráfica queda congelada como registro.
 
 ## 7. Privacidad y permisos
@@ -127,9 +131,14 @@ El parámetro `b = 2000`, los límites de participación y las tasas de bonus de
 ## 8. Archivos que forman el contrato
 
 - Migración: `supabase/migrations/20260801172543_add_live_prediction_market_model.sql`.
+- Límite global vigente:
+  `supabase/migrations/20260826183050_raise_live_prediction_max_to_1000_v1.sql`.
 - Ficha, gráfica y cotización: `market-detail.js` y `styles.css`.
 - Exploración: `script.js`.
 - Posiciones privadas: `my-predictions.js`.
 - Mapeo de RPC: `supabaseClient.js`.
 - Regresión automatizada: `tests/live-market-economy.test.js`.
+- Prueba SQL reversible Sí/No:
+  `supabase/tests/live_prediction_limit_v1_transaction.sql`.
+- Regresión visual escritorio/móvil: `scripts/check-live-market-browser.mjs`.
 - Correcciones de diseño: `STEP_13_3_LIVE_MARKET_PENPOT_OVERRIDES.md`.

@@ -29,13 +29,15 @@ const required = [
   "ai_gateway_budget_telemetry_transaction.sql",
   "agent_engine_v2_transaction.sql",
   "official_opportunity_idempotency_v2_transaction.sql",
+  "live_prediction_limit_v1_transaction.sql",
 ];
 const execute = process.argv.includes("--execute");
 const v2Only = process.argv.includes("--v2-only");
 const officialOnly = process.argv.includes("--official-only");
 const radarResilienceOnly = process.argv.includes("--radar-resilience-only");
 const workflowOnly = process.argv.includes("--workflow-only");
-if ([v2Only, officialOnly, radarResilienceOnly, workflowOnly].filter(Boolean).length > 1) {
+const liveMarketOnly = process.argv.includes("--live-market-only");
+if ([v2Only, officialOnly, radarResilienceOnly, workflowOnly, liveMarketOnly].filter(Boolean).length > 1) {
   throw new Error("SQL_TRANSACTION_SCOPE_CONFLICT");
 }
 const v2Required = [
@@ -59,7 +61,9 @@ const workflowRequired = [
   "market_workflow_orchestration_v1_transaction.sql",
   "market_draft_corrector_field_scope_v1_transaction.sql",
 ];
-const executable = workflowOnly ? workflowRequired
+const liveMarketRequired = ["live_prediction_limit_v1_transaction.sql"];
+const executable = liveMarketOnly ? liveMarketRequired
+  : workflowOnly ? workflowRequired
   : officialOnly ? officialRequired
   : v2Only ? v2Required
     : radarResilienceOnly ? radarResilienceRequired

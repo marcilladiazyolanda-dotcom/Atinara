@@ -35,8 +35,8 @@ publicación. Supabase y Chrome verificaron el mercado público
 [`tibo-sottiaux-confirma-corte-pelo-septiembre-2026`](market-detail.html?id=tibo-sottiaux-confirma-corte-pelo-septiembre-2026):
 está `Abierto`, conserva el periodo y los criterios aprobados, no fue programado,
 no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
-de Corrector v25 no contiene migración y queda pendiente únicamente de
-integración en GitHub para que el repositorio coincida con el bundle ya activo.
+de Corrector v25 no contiene migración y quedó integrado en `origin/main`
+mediante `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`.
 
 ## Estado operativo de 13.5.2 · Radar v72 activo y E2E bloqueado antes de Expert
 
@@ -320,12 +320,22 @@ la base canónica `b10f0eb` usada para el Paso 13.5.1.
 
 Atinara usa en producción un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez el 1 de agosto de 2026 y el frontend coordinado se publicó inicialmente en `f7aac42`. No se debe repetir la migración.
 
+El 26 de agosto se aplicó una segunda migración incremental y no destructiva,
+`20260826183050_raise_live_prediction_max_to_1000_v1.sql`, registrada por
+Supabase como `20260826184500`. Sustituye el máximo `min(500, 20 % del saldo)`
+por `min(1.000, saldo disponible)` en cotización y confirmación, sin modificar
+mercados, saldos, predicciones ni históricos existentes.
+
 - Cada mercado nuevo empieza al 50/50 y usa `b = 2000 Karma` durante la beta.
+- Cada predicción usa entre 10 y 1.000 Karma, limitada además por el saldo disponible.
 - Antes de confirmar, Supabase cotiza impacto, precio medio, contratos, retorno base, bonus de dificultad y Prestigio.
 - La versión del mercado y el precio máximo revisado protegen frente a una confirmación con una cotización antigua.
 - Cada contrato acertado nuevo liquida a 1 Karma y el bonus se añade por separado. El antiguo tope `×10` solo permanece en predicciones anteriores.
 - La beta admite una sola posición bloqueada hasta la resolución. No incluye venta, salida anticipada, cambio de lado, órdenes ni mercado secundario.
 - Las actualizaciones usan Broadcast de Supabase y una consulta periódica como respaldo, sin publicar identidad ni posiciones privadas.
+- Un único punto histórico se dibuja en el extremo izquierdo a su altura real;
+  cada movimiento posterior avanza hacia la derecha por tiempo, sin inventar
+  volatilidad.
 - `data.js` fue eliminado en `4ccd97e`: no existe en `origin/main`, su URL pública devuelve 404 y ante un fallo se muestra un error honesto con reintento, nunca mercados de demostración.
 
 La fotografía de activación fue de 11 mercados, 11 estados LMSR, 11 puntos históricos iniciales y 7 predicciones heredadas `legacy_fixed_v1`; no cambió ningún contrato anterior ni los saldos agregados de Karma y Prestigio. La aceptación pública de escritorio confirmó datos reales, `Sí + No = 100 %`, un único punto honesto sin movimiento, los cinco rangos temporales, cotización de solo lectura para invitadas y ausencia de controles de compraventa. No se creó ni modificó ninguna predicción durante la comprobación.
@@ -335,6 +345,12 @@ La limpieza completa se publicó en `a5c633b` y GitHub Pages ya sirve `v=2026080
 La aceptación móvil real se ejecutó a 320 × 568, 375 × 667, 390 × 844 y 768 × 1024. Producción reveló un desbordamiento global a 320 px y otro en la ficha resuelta a 375/390 px por URLs largas. El árbol de cierre elimina el mínimo rígido del elemento raíz y permite partir esas URLs; las seis superficies públicas superan después la comprobación visual local a 320 y 375 px, sin ocultar pregunta, precios, gráfica, rangos, cotización ni acciones. Los cinco rangos responden por interacción, el único punto continúa siendo honesto, el foco es visible, los controles tienen nombre accesible y no aparecen métricas privadas ni compraventa. Confirmar como invitada abre el acceso sin enviar formularios ni crear datos.
 
 Una nueva comprobación administrativa de Supabase, exclusivamente de lectura, volvió a confirmar 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos heredados —5 activos— y 0 contratos `lmsr_v1`. Todos los estados continúan en versión 0, las probabilidades suman 100 %, `b = 2000`, la firma antigua sigue ausente y las tablas internas y la resolución permanecen protegidas. No se creó ni modificó ninguna predicción.
+
+El postcheck del límite vigente confirmó 16 mercados —5 abiertos—, 16 estados
+LMSR, 18 puntos, 9 predicciones, 2 perfiles, 2.932 Karma y 40 Prestigio. Una
+prueba con dos identidades ejecutó compras autoritativas de Sí y No, además de
+los rechazos por 1001, saldo, duplicado y `PRICE_MOVED`, y terminó con
+`ROLLBACK`; no dejó mercados, participaciones, saldos ni histórico de prueba.
 
 ## Resolución asistida por IA
 

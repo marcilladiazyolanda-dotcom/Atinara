@@ -8,6 +8,10 @@ const migrationPath = join(
   repositoryRoot,
   "supabase/migrations/20260801172543_add_live_prediction_market_model.sql"
 );
+const limitMigrationPath = join(
+  repositoryRoot,
+  "supabase/migrations/20260826183050_raise_live_prediction_max_to_1000_v1.sql"
+);
 
 function calculateLmsrQuote(selectedProbability, liquidity, karma) {
   const growth = Math.exp(karma / liquidity);
@@ -77,6 +81,39 @@ test("el frontend usa cotización versionada, histórico real y ningún catálog
   assert.doesNotMatch(indexHtml, /data\.js/);
   assert.doesNotMatch(indexHtml, /Mercados de prueba/i);
   assert.equal(existsSync(join(repositoryRoot, "data.js")), false);
+});
+
+test("el máximo global es 1.000 Karma o el saldo disponible, sin límite porcentual", () => {
+  const detailSource = readFileSync(join(repositoryRoot, "market-detail.js"), "utf8");
+  const limitMigration = readFileSync(limitMigrationPath, "utf8");
+
+  assert.match(detailSource, /maxPerPrediction:\s*1000/);
+  assert.match(detailSource, /Math\.min\(predictionRules\.maxPerPrediction, availableKarma\)/);
+  assert.doesNotMatch(detailSource, /maxNormalRatio|maxBeta|availableKarma \* 0\.2|límite del 20 %/);
+  assert.match(detailSource, /quotedMaxAllowed[\s\S]+Math\.min\(clientMaxAllowed, quotedMaxAllowed\)/);
+
+  assert.match(limitMigration, /max_allowed_karma integer := 1000/);
+  assert.match(limitMigration, /if karma_risked_input > 1000 then/);
+  assert.match(limitMigration, /least\(profile_row\.karma, 1000\)/);
+  assert.match(limitMigration, /LIVE_PREDICTION_LIMIT_PREFLIGHT_QUOTE_DRIFT/);
+  assert.match(limitMigration, /LIVE_PREDICTION_LIMIT_PREFLIGHT_PLACE_DRIFT/);
+  assert.match(limitMigration, /has_function_privilege\('anon',[\s\S]+get_prediction_quote/);
+  assert.match(limitMigration, /has_function_privilege\('authenticated',[\s\S]+place_prediction/);
+  assert.doesNotMatch(
+    limitMigration,
+    /(?:insert|update|delete)\s+(?:into\s+|from\s+)?public\.(?:markets|profiles|predictions|market_price_history)/i
+  );
+});
+
+test("la geometría del gráfico nace a la izquierda y avanza por tiempo real", () => {
+  const detailSource = readFileSync(join(repositoryRoot, "market-detail.js"), "utf8");
+
+  assert.match(detailSource, /points\.length === 1\s*\? 0/);
+  assert.match(detailSource, /index \/ \(points\.length - 1\)/);
+  assert.match(detailSource, /padding\.left \+ Math\.min\(1, Math\.max\(0, progress\)\) \* chartWidth/);
+  assert.doesNotMatch(detailSource, /padding\.left \+ chartWidth \/ 2/);
+  assert.match(detailSource, /\.sort\(\(left, right\) =>/);
+  assert.match(detailSource, /Number\.isFinite\(new Date\(point\.recordedAt\)\.getTime\(\)\)/);
 });
 
 test("una invitada no recibe saldo ni progreso de cuenta simulados", () => {

@@ -58,7 +58,7 @@ test("la auditoría de padres no se presenta como lista de oportunidades", () =>
 test("la cuadrícula de eventos evita comprimir una única familia", () => {
   assert.match(styles, /\.radar-candidate-grid\s*\{[\s\S]*?repeat\(auto-fit,\s*minmax\(min\(100%,\s*520px\),\s*1fr\)\)/);
   assert.match(styles, /\.radar-reconciliation-catalog-summary\[data-catalog-status="no-opportunity"\]/);
-  assert.match(html, /20260825-radar-provider-checkpoint1/);
+  assert.match(html, /20260826-live-market-chart-limit1/);
 });
 
 test("la puerta terminal general cubre contratos factuales y rechaza especulación", async () => {

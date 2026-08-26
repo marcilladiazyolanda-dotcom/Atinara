@@ -5,7 +5,9 @@
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado productivo verificado tras el despliegue Radar v72:**
-> `origin/main` está en `58e47a89eb639285a9b0ca27b604b8fd2c2553c0`;
+> `origin/main` está en `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`;
+> Radar v72 se desplegó desde el corte histórico
+> `58e47a89eb639285a9b0ca27b604b8fd2c2553c0`;
 > la migración local `20260826130000` consta aplicada remotamente como
 > `20260826112912` y `market-radar` v72 está `ACTIVE`, `verify_jwt=true`, digest
 > `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`.
@@ -45,9 +47,41 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > expediente actual debe considerarse stale: después del despliegue hará falta
 > exactamente un refresh Kalshi nuevo, no una mutación ni un retry directo.
 
+### Gráfica temporal y máximo global de 1.000 Karma · 26 de agosto de 2026
+
+- La causa visual era local y determinista: `getChartPointCoordinates` colocaba
+  expresamente un histórico de un punto en `padding.left + chartWidth / 2`.
+  Ahora el punto inicial queda en `x=46`, límite izquierdo del área trazable, y
+  los puntos siguientes avanzan por tiempo hasta `x=696`. Si todos comparten
+  timestamp, el orden de versión evita que se oculten unos sobre otros.
+- Cliente y servidor aplicaban dos límites duplicados: 500 Karma y el 20 % del
+  saldo. La regla vigente es global, `min(1.000, saldo disponible)`, tanto en
+  `get_prediction_quote` como en `place_prediction`; continúan mínimo 10,
+  saldo no negativo, posición única, lock transaccional y protección
+  `PRICE_MOVED`.
+- La migración
+  `20260826183050_raise_live_prediction_max_to_1000_v1.sql` consta aplicada
+  una sola vez en producción como `20260826184500`. Conserva
+  `SECURITY DEFINER`, `search_path` vacío, cotización para `anon/authenticated`
+  y confirmación solo para `authenticated`. Los hashes activos son
+  `43adc4e6c6358613c01cec41999958c219e13774ecf9c60f405f6cae53e40acf`
+  y `8e180eb20edc7afa97e02d0b2dfafa413dfb8b31cd9d8c78f3992f585b5c2028`.
+- La prueba SQL reversible usa dos perfiles y un mercado transaccional: 1.000
+  Karma en Sí eleva el precio, 1.000 en No lo reduce, cada operación incrementa
+  versión e histórico, Sí+No permanece en 100 y 1001, saldo insuficiente,
+  duplicado y quote obsoleta fallan cerrados. Tras `ROLLBACK` siguen 16
+  mercados, 9 predicciones, 18 puntos, 2 perfiles, 2.932 Karma y 40 Prestigio;
+  no queda fixture alguno y Tibo conserva 0 predicciones y su único punto real.
+- La regresión de navegador recorre el frontend real con RPC simuladas en
+  1440 px y 320 px: `50/50 → 69,67/30,33 → 42,26/57,74`, coordenadas
+  `46 → 371 → 696`, scrubber y tooltip operativos, colores diferenciados y
+  cero desbordamiento horizontal. La release de caché coordinada para todas
+  las superficies que cargan observabilidad es
+  `v=20260826-live-market-chart-limit1`.
+
 ### Corrector general por campos y publicación E2E verificada · 26 de agosto de 2026
 
-- `origin/main = 4a3036acbcfd3d6f085fbef6bed4de53485ba544` integra la
+- `origin/main = c9eb88cd04bd4fe2a5ee552dc20bc781569af951` integra la
   ampliación de los 23 campos y el reintento guiado del Validator. La migración
   `fix_market_draft_corrector_field_scope_v1` consta aplicada una sola vez como
   `20260826161837`; no debe repetirse. `validate-market-draft` v34 está
@@ -55,9 +89,9 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   `c12f5955a8aeb1a0d6ec63348f0124b0f93f89b2df4d59eeb9df14e631309ef8`.
 - `market-draft-fixer` v25 está `ACTIVE`, con JWT obligatorio y digest
   `76c87e535c2be6df7d5691e5beccd3d5978b9f671bb5b5ed9b16f303a54edb1f`.
-  Su último delta todavía debe integrarse en GitHub: evita que el editor
-  semántico repita como bloqueo una objeción tipada de workflow de fuentes que
-  la misma ronda ya reparó y atestó autoritativamente. La excepción solo se
+  Su último delta quedó integrado en GitHub: evita que el editor semántico
+  repita como bloqueo una objeción tipada de workflow de fuentes que la misma
+  ronda ya reparó y atestó autoritativamente. La excepción solo se
   aplica cuando el parche determinista contiene fuente primaria y alternativas
   verificadas; cualquier incidencia sustantiva, fuente incompleta o falta de
   evidencia continúa bloqueando.

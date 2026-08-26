@@ -17,8 +17,7 @@ const predictionState = {
 
 const predictionRules = {
   minKarma: 10,
-  maxBeta: 500,
-  maxNormalRatio: 0.2
+  maxPerPrediction: 1000
 };
 
 const priceHistoryRanges = [
@@ -218,10 +217,16 @@ function normalizePriceHistory(data) {
     }))
     .filter((point) => (
       point.recordedAt
+      && Number.isFinite(new Date(point.recordedAt).getTime())
       && Number.isFinite(point.yesPercent)
       && Number.isFinite(point.noPercent)
       && Number.isFinite(point.marketVersion)
-    ));
+    ))
+    .sort((left, right) => {
+      const timeDifference = new Date(left.recordedAt).getTime()
+        - new Date(right.recordedAt).getTime();
+      return timeDifference || left.marketVersion - right.marketVersion;
+    });
 }
 
 async function loadMarketPriceHistory(marketId, range = priceHistoryState.range) {
@@ -274,18 +279,11 @@ function getDifficultyFromPercentage(percentage) {
 function getMaxKarma() {
   const displayUser = getDisplayUser();
   if (!displayUser.isAuthenticated) {
-    return predictionRules.maxBeta;
+    return predictionRules.maxPerPrediction;
   }
 
   const availableKarma = Math.max(0, Math.floor(Number(displayUser.karma) || 0));
-  return Math.max(
-    0,
-    Math.min(
-      Math.floor(availableKarma * predictionRules.maxNormalRatio),
-      predictionRules.maxBeta,
-      availableKarma
-    )
-  );
+  return Math.max(0, Math.min(predictionRules.maxPerPrediction, availableKarma));
 }
 
 function clampKarma(value) {
@@ -314,13 +312,16 @@ function getChartPointCoordinates(points, valueKey) {
   const timestamps = points.map((point) => new Date(point.recordedAt).getTime());
   const minimumTime = Math.min(...timestamps);
   const maximumTime = Math.max(...timestamps);
-  const timeSpan = Math.max(1, maximumTime - minimumTime);
+  const hasTimeSpan = maximumTime > minimumTime;
 
   return points.map((point, index) => {
     const timestamp = timestamps[index];
-    const x = points.length === 1
-      ? padding.left + chartWidth / 2
-      : padding.left + ((timestamp - minimumTime) / timeSpan) * chartWidth;
+    const progress = points.length === 1
+      ? 0
+      : hasTimeSpan
+        ? (timestamp - minimumTime) / (maximumTime - minimumTime)
+        : index / (points.length - 1);
+    const x = padding.left + Math.min(1, Math.max(0, progress)) * chartWidth;
     const value = Math.min(100, Math.max(0, Number(point[valueKey])));
     const y = padding.top + ((100 - value) / 100) * chartHeight;
     return {
@@ -610,7 +611,7 @@ function getParticipationDisabledNote(timing, hasEnoughKarma) {
     return "Este mercado está cerrado y pendiente de resolución.";
   }
   if (!hasEnoughKarma) {
-    return "Tu saldo actual no permite alcanzar el mínimo de 10 Karma con el límite del 20 %.";
+    return "Tu saldo actual no permite alcanzar el mínimo de 10 Karma.";
   }
   return "";
 }
@@ -1158,10 +1159,14 @@ function validatePredictionBeforeSave(market, estimate, auth) {
   }
 
   const availableKarma = Math.max(0, Math.floor(Number(auth?.profile?.karma) || 0));
-  const maxAllowed = Math.min(
-    Math.floor(availableKarma * predictionRules.maxNormalRatio),
-    predictionRules.maxBeta
+  const clientMaxAllowed = Math.min(
+    availableKarma,
+    predictionRules.maxPerPrediction
   );
+  const quotedMaxAllowed = Number(estimate.maxKarmaAllowed);
+  const maxAllowed = Number.isFinite(quotedMaxAllowed)
+    ? Math.min(clientMaxAllowed, quotedMaxAllowed)
+    : clientMaxAllowed;
 
   if (amount > availableKarma) {
     return getFriendlyPredictionError("INSUFFICIENT_KARMA");
