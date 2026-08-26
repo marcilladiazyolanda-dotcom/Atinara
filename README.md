@@ -15,39 +15,63 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v68, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 25 de agosto usa Radar v69, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Bloqueo vigente de 13.5.2 · aislamiento durable de batches Radar
+## Estado operativo de 13.5.2 · Radar v69 terminal y cobertura pendiente
 
-El checkpoint de padres ya está integrado en `origin/main =
-4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d`, su migración consta aplicada en
-producción como `20260825191649_checkpoint_market_radar_parent_persistence_v1`
-y únicamente `market-radar` se desplegó como v68. El smoke autenticado creó una
-sola UUID, `39a1656e-61af-4674-a4e0-fa0896236507`, y una única continuación de
-esa misma intención; no se inició otro refresh.
+El corte remoto vigente es `origin/main =
+addfc0b372bc45c572a843f3cec7893b3e41e06c`. La migración de aislamiento de
+batches consta aplicada una sola vez en producción como `20260825203949` y solo
+`market-radar` se desplegó como v69. El refresh administrativo
+`39a1656e-61af-4674-a4e0-fa0896236507` terminó `partial/terminal` con
+`claim_count=3`; no se creó otra intención.
 
-Kalshi seleccionó 25 de 109 series, aplazó 84 y no registró series fallidas.
-Persistió 11 padres y 148/148 hijas identificadas, sin pérdida silenciosa:
-nueve padres están `complete` y dos `provider_unavailable`. El manifest de
-padres es `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
-Tavily terminó `AI_DEADLINE_EXCEEDED` como `source_enrichment`, con
-`blocking_scope=none`, y no impidió que Kalshi declarase y sellase 86 candidatas
-en cuatro batches de 24, 24, 24 y 14. El manifest de candidatas es
-`7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`.
+Kalshi conservó 11 padres y 148/148 hijas identificadas: nueve padres
+`complete`, dos `provider_unavailable` y cero identidades perdidas. El parent
+manifest es `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
+Los dos batches de 24 que agotaron el timeout quedaron `superseded` y sus cuatro
+hijos de 12 se completaron; los otros batches de 24 y 14 también terminaron.
+Expected, processed y accepted son 86, cuarentenas y fallos son cero. El manifest
+de candidatas es `7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`
+y la finalización es
+`62d641016b4b91bc79047d2cf28ab8cf7722d117a8962a318f403b3eda504f6f`.
+Tavily quedó `technical_failed` como `source_enrichment`, con
+`blocking_scope=none`, sin degradar Kalshi ni impedir manifest, batches o
+finalización.
 
-El primer batch agotó el `statement_timeout=8s` y quedó
-`technical_failed/RADAR_PERSISTENCE_TIMEOUT`, con `attempt_count=1`; los otros
-tres siguen pendientes y la intención continúa `in_progress`, sin finalización
-ni candidatas promovidas. La recuperación confirmó la causa general: el
-divisor durable `split_market_radar_refresh_batch_v1` existía, pero la Edge
-activa nunca lo invocaba; además, un timeout en el preflight v2 podía escapar
-antes del catcher interno v1. La corrección incremental añade el wrapper v4,
-liga cada timeout al batch exacto y biseca solo batches de más de un elemento.
-Un transporte ambiguo conserva idempotencia y el margen de finalización obliga
-a reanudar la misma UUID en otra invocación. Los errores SQL no temporales no se
-reclasifican ni se ocultan.
+La auditoría general posterior encontró una limitación distinta: la Edge v69
+solo prioriza 25 de 109 series de «Video games» y vuelve a diferir las mismas
+84. El alcance público vigente contiene 215 series gaming —109 de
+Entertainment/Video games y 107 de Sports/Esports, con una coincidencia— y 515
+padres abiertos. El recorrido completo por el host recomendado de Kalshi agotó
+las 215 series, con backoff de 429, 515 padres únicos y cero errores finales;
+un escaneo global sin `series_ticker` no es utilizable porque siguió abierto tras
+10.000 eventos y 50 páginas.
+
+La corrección incremental pendiente sella primero un checkpoint privado,
+append-only y service-only de hasta 2.000 series/padres, libera el lease y
+reanuda la misma UUID para enumerar familias sin repetir el catálogo. Incluye
+Video games y Esports, reintenta solo series fallidas, registra todos los IDs en
+el ledger y resume la respuesta pública para no superar 900 KB. Polymarket usa
+seis búsquedas temáticas —una por categoría Atinara—, deduplica padres y aísla
+búsquedas o familias fallidas. La lectura del catálogo reintenta una sola vez
+los 500/504/57014 transitorios; la UI reconcilia por lectura un transporte
+ambiguo, bloquea cambios de filtros mientras la petición está activa o existe
+una UUID reanudable y nunca crea una segunda intención por doble clic o
+búsqueda. Los offsets de paginación no forman parte del hash durable y, por
+tanto, navegar conserva la misma actualización activa. Una recarga recupera de
+la sesión solo UUID y filtros, nunca credenciales ni respuestas, y los reconcilia
+mediante lectura antes de ofrecer una acción nueva.
+
+Este paquete aún no está desplegado ni aplicado. Deno 2.1.14 está verde; pasan
+153 pruebas focalizadas, 183 pruebas de las cinco suites afectadas, 232
+regresiones de Radar→Expert/Editor/Corrector y 19
+contratos SQL estáticos. La migración completa se ejecutó contra PostgreSQL real
+dentro de una transacción terminada en `ROLLBACK`, y se comprobó que tabla y
+funciones no quedaron instaladas. No se inició otro refresh, no se llamó Market
+Expert y los seis borradores productivos permanecen intactos.
 
 Madden NFL 27 y EA Sports FC27 están correctamente marcados
 `EVENT_ALREADY_RESOLVED` mediante evidencia oficial aunque Polymarket los
@@ -63,6 +87,8 @@ Corrección de la puerta CI v4:
 [`docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825.md`](docs/ATINARA_RADAR_CI_V4_CONTRACT_FIX_20260825.md).
 Checkpoint precedente:
 [`docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PARENT_CHECKPOINT_FIX_20260825.md).
+Corrección pendiente de cobertura y reanudación:
+[`docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`](docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md).
 
 ## Estado vigente · cierre definitivo del ciclo experto
 
@@ -75,9 +101,11 @@ schedulers de descubrimiento y monitorización continúan apagados.
 
 El backend coordinado está activo en producción. GitHub Pages sirve
 `v=20260825-radar-catalog-bound1` y el smoke autenticado confirmó la frontera de
-catálogo en escritorio y móvil. La corrección de aislamiento de batches no
-modifica el frontend ni requiere republicar Pages. El smoke contra Pages y el
-backend nuevo confirmó el refresco real, el cooldown en tiempo real, el
+catálogo en escritorio y móvil. El paquete pendiente versiona únicamente
+`radar-refresh-request.js` y `admin-markets.js` como
+`20260825-radar-provider-checkpoint1`; Pages no debe considerarse actualizado
+hasta que GitHub integre ese inventario exacto. El smoke contra Pages y el
+backend vigente confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.
 

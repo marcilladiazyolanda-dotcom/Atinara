@@ -12,6 +12,7 @@ import {
   RADAR_PROVIDER_CHILD_CONTRACT_VERSION,
   RADAR_REASON_CODES,
   bindRadarCandidatesToReconciledChildren,
+  buildProviderDiscoveryCheckpointV1,
   buildRadarPersistenceBatches,
   collapseLegacyChildRepresentations,
   collectProviderCursorPages,
@@ -22,6 +23,7 @@ import {
   isRadarParentComplete,
   localizeRadarProviderLabel,
   mergeProviderParentSelections,
+  mergeProviderTaxonomySeriesV1,
   normalizeRadarCandidatePresentation,
   prioritizeProviderChildEvidenceAliases,
   radarOptionSlug,
@@ -259,34 +261,212 @@ test("la selección respeta a la vez los límites de hijas y de padres sin trunc
   assert.equal(result.selection.selected_parent_ids.length, 120);
 
   const indexed = selectWholeProviderParents(
-    Array.from({ length: 240 }, (_, index) => ({ id: `indexed-${index + 1}`, markets: [] })),
-    { maxParents: 120, maxTotalParents: 240, countChildren: false },
+    Array.from({ length: 515 }, (_, index) => ({ id: `indexed-${index + 1}`, markets: [] })),
+    { maxParents: 32, maxTotalParents: 2000, countChildren: false },
   );
   const childBudget = selectWholeProviderParents(indexed.selected.map((event, index) => ({
     ...event,
-    markets: Array.from({ length: index === 0 ? 480 : 1 }, (_, id) => ({ id })),
-  })), { maxChildren: 480, maxParents: 120, maxTotalParents: 120 });
+    markets: [{ id: `child-${index + 1}` }],
+  })), { maxChildren: 240, maxParents: 24, maxTotalParents: 32 });
   const merged = mergeProviderParentSelections(indexed.selection, childBudget.selection);
-  assert.equal(merged.total_parent_count, 240);
-  assert.equal(merged.selected_parent_count, 1);
-  assert.equal(merged.deferred_parent_count, 239);
-  assert.equal(merged.deferred_parent_ids.length, 239);
-  assert.equal(new Set([...merged.selected_parent_ids, ...merged.deferred_parent_ids]).size, 240);
+  assert.equal(merged.total_parent_count, 515);
+  assert.equal(merged.selected_parent_count, 24);
+  assert.equal(merged.deferred_parent_count, 491);
+  assert.equal(merged.deferred_parent_ids.length, 491);
+  assert.equal(new Set([...merged.selected_parent_ids, ...merged.deferred_parent_ids]).size, 515);
 
   const oversized = [{ id: "oversized", markets: Array.from({ length: 481 }, (_, id) => ({ id })) }];
   assert.throws(() => selectWholeProviderParents(oversized), /PROVIDER_PARENT_CHILD_LIMIT_EXCEEDED/);
 });
 
-test("el manifest de 240 padres con IDs largos cabe en el límite SQL", () => {
-  const events=Array.from({length:240},(_,index)=>({
-    id:`parent-${String(index).padStart(3,"0")}-${"x".repeat(195)}`,
+test("el índice de 2000 padres con IDs largos cabe en el límite SQL ampliado", () => {
+  const events=Array.from({length:2000},(_,index)=>({
+    id:`parent-${String(index).padStart(4,"0")}-${"x".repeat(195)}`,
   }));
   const result=selectWholeProviderParents(events,{
-    maxChildren:480,maxParents:120,maxTotalParents:240,countChildren:false,
+    maxChildren:480,maxParents:120,maxTotalParents:2000,countChildren:false,
   });
   assert.equal(result.selection.selected_parent_count,120);
-  assert.equal(result.selection.deferred_parent_count,120);
-  assert.ok(new TextEncoder().encode(JSON.stringify(result.selection)).byteLength<131_072);
+  assert.equal(result.selection.deferred_parent_count,1880);
+  assert.ok(new TextEncoder().encode(JSON.stringify(result.selection)).byteLength<1_048_576);
+});
+
+test("el checkpoint ejecutable conserva 215 series y 515 padres sin pérdida silenciosa", () => {
+  const series = Array.from({ length: 215 }, (_, index) => ({
+    ticker: `KXSERIES${String(index + 1).padStart(3, "0")}`,
+    title: `Gaming series ${index + 1}`,
+  }));
+  const eventResults = series.map((item, index) => ({
+    status: "fulfilled",
+    value: Array.from({ length: index < 85 ? 3 : 2 }, (_, childIndex) => ({
+      event_ticker: `${item.ticker}-EVENT-${childIndex + 1}`,
+      series_ticker: item.ticker,
+      title: `Parent ${index + 1}.${childIndex + 1}`,
+    })),
+  }));
+  const checkpoint = buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    taxonomy_scopes: [
+      { category: "Entertainment", tag: "Video games" },
+      { category: "Sports", tag: "Esports" },
+    ],
+    series,
+    event_results: eventResults,
+  });
+  assert.equal(checkpoint.total_series_count, 215);
+  assert.equal(checkpoint.total_taxonomy_scope_count, 2);
+  assert.equal(checkpoint.completed_taxonomy_scope_count, 2);
+  assert.equal(checkpoint.failed_taxonomy_scope_count, 0);
+  assert.equal(checkpoint.completed_series_count, 215);
+  assert.equal(checkpoint.failed_series_count, 0);
+  assert.equal(checkpoint.total_parent_count, 515);
+  assert.equal(new Set(checkpoint.events.map((event) => event.event_ticker)).size, 515);
+  assert.ok(new TextEncoder().encode(JSON.stringify(checkpoint)).byteLength < 2_000_000);
+});
+
+test("la unión ejecutable de taxonomías conserva 215 series y todos los scopes", () => {
+  const scopes = [
+    { category: "Entertainment", tag: "Video games" },
+    { category: "Sports", tag: "Esports" },
+  ];
+  const videoGames = Array.from({ length: 109 }, (_, index) => ({
+    ticker: `KXVG${String(index + 1).padStart(3, "0")}`,
+  }));
+  const esports = [
+    videoGames[0],
+    ...Array.from({ length: 106 }, (_, index) => ({
+      ticker: `KXES${String(index + 1).padStart(3, "0")}`,
+    })),
+  ];
+  const merged = mergeProviderTaxonomySeriesV1([
+    {
+      status: "fulfilled",
+      value: {
+        scope: { category: "Entertainment", tag: "Video games" },
+        series: videoGames,
+      },
+    },
+    {
+      status: "fulfilled",
+      value: {
+        scope: { category: "Sports", tag: "Esports" },
+        series: esports,
+      },
+    },
+  ], scopes);
+  assert.equal(merged.entries.length, 215);
+  assert.deepEqual(merged.failed_scopes, []);
+  const shared = merged.entries.find((entry) => entry.source.ticker === videoGames[0].ticker);
+  assert.deepEqual(shared.scopes, [
+    { category: "Entertainment", tag: "Video games" },
+    { category: "Sports", tag: "Esports" },
+  ]);
+});
+
+test("una taxonomía caída se conserva para reintento sin derribar el alcance sano", () => {
+  const scopes = [
+    { category: "Entertainment", tag: "Video games" },
+    { category: "Sports", tag: "Esports" },
+  ];
+  const merged = mergeProviderTaxonomySeriesV1([
+    {
+      status: "fulfilled",
+      value: { scope: scopes[0], series: [{ ticker: "KXHEALTHY" }] },
+    },
+    { status: "rejected", reason: new Error("PROVIDER_TIMEOUT") },
+  ], scopes);
+  assert.deepEqual(merged.entries.map((entry) => entry.source.ticker), ["KXHEALTHY"]);
+  assert.deepEqual(merged.failed_scopes, [scopes[1]]);
+
+  const unavailable = mergeProviderTaxonomySeriesV1([
+    { status: "rejected", reason: new Error("PROVIDER_TIMEOUT") },
+    { status: "rejected", reason: new Error("PROVIDER_RATE_LIMITED") },
+  ], scopes);
+  assert.deepEqual(unavailable.entries, []);
+  assert.deepEqual(unavailable.failed_scopes, scopes);
+
+  const checkpoint = buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    taxonomy_scopes: scopes,
+    failed_taxonomy_scopes: merged.failed_scopes,
+    series: [{ ticker: "KXHEALTHY" }],
+    event_results: [{
+      status: "fulfilled",
+      value: [{ event_ticker: "KXHEALTHY-EVENT", series_ticker: "KXHEALTHY" }],
+    }],
+  });
+  assert.equal(checkpoint.completed_taxonomy_scope_count, 1);
+  assert.equal(checkpoint.failed_taxonomy_scope_count, 1);
+  assert.deepEqual(checkpoint.failed_taxonomy_scopes, [scopes[1]]);
+  assert.equal(checkpoint.total_parent_count, 1);
+
+  assert.throws(() => buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    taxonomy_scopes: [scopes[0]],
+    failed_taxonomy_scopes: [scopes[1]],
+    series: [],
+    event_results: [],
+  }), /PROVIDER_DISCOVERY_TAXONOMY_SCOPE_INVALID/);
+});
+
+test("un padre JSON equivalente no entra en conflicto por el orden de sus claves", () => {
+  const checkpoint = buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    series: [{ ticker: "KXONE" }],
+    event_results: [{ status: "fulfilled", value: [
+      { event_ticker: "SAME", series_ticker: "KXONE", title: "Equivalent" },
+      { title: "Equivalent", series_ticker: "KXONE", event_ticker: "SAME" },
+    ] }],
+  });
+  assert.equal(checkpoint.total_parent_count, 1);
+});
+
+test("el checkpoint aísla series caídas y falla cerrado ante identidad o pertenencia corrupta", () => {
+  const series = [{ ticker: "KXGOOD" }, { ticker: "KXFAILED" }];
+  const partial = buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    series,
+    event_results: [
+      { status: "fulfilled", value: [{ event_ticker: "KXGOOD-EVENT", series_ticker: "KXGOOD" }] },
+      { status: "rejected", reason: new Error("PROVIDER_TIMEOUT") },
+    ],
+  });
+  assert.equal(partial.completed_series_count, 1);
+  assert.deepEqual(partial.failed_series_ids, ["KXFAILED"]);
+  assert.equal(partial.total_parent_count, 1);
+
+  assert.throws(() => buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    series,
+    event_results: [
+      { status: "fulfilled", value: [{ event_ticker: "WRONG", series_ticker: "KXFAILED" }] },
+      { status: "fulfilled", value: [] },
+    ],
+  }), /PROVIDER_DISCOVERY_PARENT_MEMBERSHIP_INVALID/);
+
+  assert.throws(() => buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    series: [{ ticker: "KXONE" }],
+    event_results: [{ status: "fulfilled", value: [
+      { event_ticker: "DUPLICATE", series_ticker: "KXONE", title: "A" },
+      { event_ticker: "DUPLICATE", series_ticker: "KXONE", title: "B" },
+    ] }],
+  }), /PROVIDER_DISCOVERY_PARENT_IDENTITY_CONFLICT/);
+
+  assert.throws(() => buildProviderDiscoveryCheckpointV1({
+    schema_version: "atinara-provider-discovery-checkpoint-v1",
+    checked_at: "2026-08-25T20:00:00.000Z",
+    series: [{ ticker: "KXONE", title: "x".repeat(2_000) }],
+    event_results: [{ status: "fulfilled", value: [] }],
+    max_bytes: 1_024,
+  }), /PROVIDER_DISCOVERY_CHECKPOINT_TOO_LARGE/);
 });
 
 test("la evidencia heredada de una página solo acredita las hijas observadas en ella", async () => {

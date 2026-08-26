@@ -1,0 +1,127 @@
+ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825
+Generated: 2026-08-26
+Base: origin/main addfc0b372bc45c572a843f3cec7893b3e41e06c
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M admin-markets.html
+M admin-markets.js
+A docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md
+A docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825_MANIFEST.txt
+M docs/STATE_CONSISTENCY_AND_MEMORY.md
+M radar-refresh-request.js
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260825223000_checkpoint_market_radar_provider_discovery_v1.sql
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+M tests/radar-parent-reconciliation.test.js
+M tests/radar-provider-resumability-v1.test.js
+
+SHA-256 PAYLOAD FILES
+279f9bbbfc89d121696e1bff29abcfcbd65d02474c5e3d5949808f8674abb2d1  ORAKLO_PROJECT_CONTEXT.md
+f28c2b15ad4479e13697df5cdd7afa6b88fc98ab93a3003cea43637393241521  README.md
+eb5ebcf261520a0536183cf90cc0dadf0a925de897b849105852d37af5d10b52  admin-markets.html
+7a5cb36fd665a93a10037e38b07b00f6a101e01372434f644befcc8682781b06  admin-markets.js
+5f1d577994b3cc4c4f1edfd8062ede22075ce29ce2230a84f4d839526547dde6  docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md
+6ec066a552f5b775b434126e151ab67f0159ec99bff3610efdc615b68e82b3dd  docs/STATE_CONSISTENCY_AND_MEMORY.md
+a170cac97bfd4291c9445005942b98293cf7068c6d66ce76e6e43fa4b22f6ca3  radar-refresh-request.js
+cb228db6b24e04c2d39e202717493c67ab6ea1e0bce4c37b1a5a5ccc0b444c46  supabase/functions/_shared/market-radar.mjs
+acdc45c3926d0e8b9ab82fed96e33a4f8b2ac14920cfbfb02d5d2a80a151157d  supabase/functions/market-radar/index.ts
+4b95f5c7552c3e575bb024220159e1d43679018165e7c416ae834c1fd8c0a1b6  supabase/migrations/20260825223000_checkpoint_market_radar_provider_discovery_v1.sql
+bdd5e5880e690b5f5c2b00ebc51fdaea4adfdf4b19158eb52053001d183de5c3  tests/human-confirmation-flow.test.js
+6847b135c286efe4e70ac3495e8f2d9ea1ef11183130272c3a64de3ff922ad7f  tests/market-radar.test.js
+711b3eaf5a77493145589b8ae6b10d12857d3bed270e0d23ff4f4fdc607c9ece  tests/official-opportunity-discovery.test.js
+fa829d572bf499c9b982a3570c5c6ca09036be07970b6543842ae1aedcb94cdc  tests/radar-parent-reconciliation.test.js
+08d24b55ba16b3fc30c2c650ad0bdc2912a6e615522dd5774acec12d94f9810b  tests/radar-provider-resumability-v1.test.js
+
+MIGRATIONS
+supabase/migrations/20260825223000_checkpoint_market_radar_provider_discovery_v1.sql
+
+FRONTEND
+admin-markets.html
+admin-markets.js
+radar-refresh-request.js
+
+EDGE FUNCTIONS
+market-radar (index.ts plus shared market-radar.mjs; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+VERIFICATION
+- focused Radar/resumability/parent tests: 153 passed, 0 failed
+- executable taxonomy/checkpoint proof: 215 series, 515 unique parents, shared scopes preserved
+- broad Radar to Expert/Editor/Corrector and UI regression: 232 passed, 0 failed
+- final five affected suites: 183 passed, 0 failed
+- JavaScript syntax: 128 valid
+- SQL transaction structure: 19 valid
+- Deno 2.1.14 market-radar check: passed
+- offline AI benchmark: 5 technical_pass, 0 network calls, 0 promotions
+- exact final migration executed against production inside BEGIN/ROLLBACK: passed
+- post-rollback table_rolled_back=true and function_rolled_back=true
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main addfc0b372bc45c572a843f3cec7893b3e41e06c
+- market-radar v69 ACTIVE verify_jwt=true digest 7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265
+- market-expert v26, market-draft-fixer v22, validate-market-draft v31 and analyze-market-resolution v16 unchanged
+- refresh UUID 39a1656e-61af-4674-a4e0-fa0896236507 partial/terminal; claim_count=3
+- 11 Kalshi parents; 148 discovered, accounted and identified children; unresolved=0
+- 9 complete parents; 2 provider_unavailable parents
+- expected=staged=processed=accepted=86; quarantined=failed=0
+- manifest 7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb
+- parent manifest c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428
+- finalization 62d641016b4b91bc79047d2cf28ab8cf7722d117a8962a318f403b3eda504f6f
+- Tavily technical_failed as non-blocking source_enrichment
+- candidates=354, provider_runs=50, refresh_intents=22, parent_ledgers=47
+- fact_checks=3306, eligibility_checks=3608, issues=559, reviews=39, bindings=14
+- markets=15, predictions=9, profiles=2, maker_state=15, price_history=17, drafts=6
+- Karma=2932, Prestige=40
+- all protected table fingerprints unchanged
+
+ROOT CAUSES
+- Kalshi v69 indexed only the same first 25 of 109 Video games series and omitted 107 Esports series
+- a complete 215-series index and exhaustive child enumeration did not fit safely in one invocation without a durable pre-manifest checkpoint
+- a failed taxonomy-scope listing could still collapse all Kalshi before the healthy scope reached the checkpoint
+- the public response could not duplicate a private ledger containing up to 2000 parent IDs inside its 900 KB budget
+- Polymarket depended on one generic search instead of the six current Atinara categories
+- a transient catalog read or lost transport could leave a terminal UUID displayed as resumable
+- active/resumable filter changes and read pagination did not share one canonical refresh identity
+- a page reload could lose the only browser copy of the active UUID
+
+CORRECTION
+- Kalshi indexes Video games and Esports exhaustively through the recommended host with bounded concurrency, cursor checks, backoff and isolated failed taxonomy scopes or series
+- first invocation seals an append-only, forced-RLS, service-only Kalshi checkpoint and yields the lease with HTTP 202
+- continuation reclaims exactly the same UUID, reloads the checkpoint and retries only failed taxonomy scopes and series
+- all indexed parents are recorded as selected or deferred; the public response returns counts, ledger integrity and samples only
+- Polymarket fans out by all six Atinara categories, deduplicates strong parent identities and isolates failed searches or parents
+- catalog SQL reads receive one bounded retry only for 500, 504 or SQLSTATE 57014
+- the browser shares a promise only for an identical filter fingerprint, reconciles ambiguous transport with one refresh=false read and clears deterministic 4xx state
+- sessionStorage contains only UUID and identity filters, never Auth, credentials, responses or provider payloads, and is cleared on terminal reconciliation
+- pagination offsets are read projection only and do not alter the durable refresh hash
+- checkpoint RPC accepts only Kalshi; Polymarket cannot write Gamma/CLOB data under a false Kalshi schema
+- half-open circuit probes preserve the same UUID token while valid and renew safely after expiry
+
+POST-UPLOAD
+- fetch and compare all 16 paths and contents against this package
+- require GitHub Action Calidad de Atinara, Edge Deno check, Pages and offline benchmark success; do not use Sonar
+- create a clean production worktree from the new origin/main
+- take a read-only production baseline and confirm v69 plus protected fingerprints
+- apply the single migration once, then deploy only market-radar with verify_jwt=true
+- verify the new version, ACTIVE state, JWT and digest before any refresh
+- respect cooldown and start exactly one fresh Kalshi refresh
+- continue only that UUID through checkpoint, selection, parent ledgers, manifest, batches, finalization and replay
+- do not repeat blindly if any provider, lease, RPC, pagination or payload contract fails
+- use Market Expert only after a fresh gaming child proves complete parent, exhausted pagination, current identity, open provider, no known public result, no duplicate, current eligibility and correct sources
+- create exactly one new private draft; never confirm, publish, resolve or settle it

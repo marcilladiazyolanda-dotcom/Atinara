@@ -13,6 +13,7 @@ const edge = read("supabase/functions/market-radar/index.ts");
 const migration = read("supabase/migrations/20260820163014_harden_radar_provider_resumability_v1.sql");
 const batchResumeMigration = read("supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql");
 const batchTimeoutIsolationMigration = read("supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql");
+const discoveryCheckpointMigration = read("supabase/migrations/20260825223000_checkpoint_market_radar_provider_discovery_v1.sql");
 const admin = read("admin-markets.js");
 const html = read("admin-markets.html");
 const styles = read("styles.css");
@@ -211,10 +212,18 @@ test("coordinador Radar colapsa doble clic y reutiliza UUID tras transporte ambi
   const first = coordinator.run(payload, execute);
   const second = coordinator.run(payload, execute);
   assert.equal(first, second);
+  assert.throws(() => coordinator.run(
+    { ...payload, provider: "kalshi" },
+    execute,
+  ), /RADAR_REFRESH_ACTIVE_INTENT_CONFLICT/);
   release();
   const result = await first;
   assert.equal(calls, 1);
   assert.equal(result.request.refresh_request_id, "33333333-3333-4333-8333-333333333333");
+  assert.throws(() => coordinator.run(
+    { ...payload, provider: "kalshi" },
+    async (request) => request,
+  ), /RADAR_REFRESH_FILTERS_CHANGED/);
   const retry = await coordinator.run(payload, async (request) => request);
   assert.equal(retry.refresh_request_id, "33333333-3333-4333-8333-333333333333");
 
@@ -227,6 +236,75 @@ test("coordinador Radar colapsa doble clic y reutiliza UUID tras transporte ambi
   assert.throws(() => recovered.resume(payload, "not-a-uuid"), /RADAR_REFRESH_REQUEST_ID_INVALID/);
 });
 
+test("una lectura terminal limpia Continuar y una lectura activa conserva exactamente la UUID", async () => {
+  const source = read("radar-refresh-request.js");
+  const context = { globalThis: {}, Promise };
+  context.globalThis.globalThis = context.globalThis;
+  vm.runInNewContext(source, context);
+  const ids = [
+    "66666666-6666-4666-8666-666666666666",
+    "77777777-7777-4777-8777-777777777777",
+  ];
+  const coordinator = context.globalThis.atinaraRadarRefreshRequests.createCoordinator({
+    createRequestId: () => ids.shift(),
+  });
+  const payload = { provider: "kalshi", category: "", query: "", horizon: "180d", quality: "review", order: "recommended", refresh: true };
+  await assert.rejects(coordinator.run(payload, async () => {
+    throw new Error("TRANSPORT_LOST");
+  }), /TRANSPORT_LOST/);
+  assert.equal(coordinator.snapshot().resumableRequestId, "66666666-6666-4666-8666-666666666666");
+  coordinator.reconcile(payload, {
+    refresh_in_progress: true,
+    refresh_request_id: "66666666-6666-4666-8666-666666666666",
+  });
+  assert.equal(coordinator.snapshot().resumableRequestId, "66666666-6666-4666-8666-666666666666");
+  coordinator.reconcile(payload, { refresh_in_progress: false, refresh_request_id: null });
+  assert.equal(coordinator.snapshot().resumableRequestId, null);
+  const next = await coordinator.run(payload, async (request) => request);
+  assert.equal(next.refresh_request_id, "77777777-7777-4777-8777-777777777777");
+});
+
+test("una recarga restaura en sesión la UUID y su huella sin guardar credenciales", async () => {
+  const source = read("radar-refresh-request.js");
+  const context = { globalThis: {}, Promise };
+  context.globalThis.globalThis = context.globalThis;
+  vm.runInNewContext(source, context);
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const payload = { provider: "kalshi", category: "Eventos", query: "torneo", horizon: "365d", quality: "fit", order: "closing", refresh: true };
+  const first = context.globalThis.atinaraRadarRefreshRequests.createCoordinator({
+    createRequestId: () => "88888888-8888-4888-8888-888888888888",
+    storage,
+  });
+  await assert.rejects(first.run(payload, async () => { throw new Error("TRANSPORT_LOST"); }), /TRANSPORT_LOST/);
+  const persisted = values.get("atinara:radar-refresh-intent:v1");
+  assert.match(persisted, /atinara-radar-refresh-intent-v1/);
+  assert.doesNotMatch(persisted, /authorization|token|password|cookie/i);
+
+  const restored = context.globalThis.atinaraRadarRefreshRequests.createCoordinator({ storage });
+  assert.equal(restored.snapshot().resumableRequestId, "88888888-8888-4888-8888-888888888888");
+  assert.equal(restored.snapshot().resumablePayload.provider, "kalshi");
+  assert.equal(restored.snapshot().resumablePayload.query, "torneo");
+  restored.reconcile(payload, { refresh_in_progress: false });
+  assert.equal(values.has("atinara:radar-refresh-intent:v1"), false);
+
+  const deterministic = context.globalThis.atinaraRadarRefreshRequests.createCoordinator({
+    createRequestId: () => "99999999-9999-4999-8999-999999999999",
+    storage,
+  });
+  await assert.rejects(deterministic.run(payload, async () => {
+    const error = new Error("INVALID_FILTER");
+    error.status = 400;
+    throw error;
+  }), /INVALID_FILTER/);
+  assert.equal(deterministic.snapshot().resumableRequestId, null);
+  assert.equal(values.has("atinara:radar-refresh-intent:v1"), false);
+});
+
 test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => {
   const runStart = edge.indexOf("async function runDiscovery(");
   const runEnd = edge.indexOf("function candidatePreflight(", runStart);
@@ -237,6 +315,13 @@ test("Edge reclama antes de red, persiste por cursor y finaliza una vez", () => 
   assert.ok(runStart >= 0 && runEnd > runStart && activeIndex >= 0
     && beginIndex > activeIndex && discoverIndex > beginIndex);
   assert.match(edge, /stage_market_radar_refresh_batch_v1/);
+  const identityStart = edge.indexOf("function radarRefreshIdentityFilters");
+  const identityEnd = edge.indexOf("async function loadExistingDefinitions", identityStart);
+  const refreshIdentity = edge.slice(identityStart, identityEnd);
+  assert.ok(identityStart >= 0 && identityEnd > identityStart);
+  assert.doesNotMatch(refreshIdentity, /parent_offset|reconciliation_offset/);
+  assert.match(productionFlow, /const refreshFilters = radarRefreshIdentityFilters\(filters\)/);
+  assert.match(productionFlow, /filters: refreshFilters/);
   assert.match(edge, /process_market_radar_refresh_batch_v4/);
   assert.match(edge, /split_market_radar_refresh_batch_v1/);
   assert.match(edge, /complete_market_radar_candidate_refresh_v2/);
@@ -271,6 +356,48 @@ test("la reanudación confirma batches bajo el timeout y mantiene invisible la i
   assert.match(admin, /radarRequestCoordinator\.resume\(requestPayload, data\.refresh_request_id\)/);
 });
 
+test("el índice de proveedor se sella append-only, service-only y se reanuda antes del manifest", () => {
+  assert.match(discoveryCheckpointMigration, /create table private\.market_radar_provider_discovery_checkpoints_v1/);
+  assert.match(discoveryCheckpointMigration, /provider text not null check \(provider = 'kalshi'\)/);
+  assert.match(discoveryCheckpointMigration, /if provider_input <> 'kalshi'/);
+  assert.match(discoveryCheckpointMigration, /checkpoint_version = 'atinara-provider-discovery-checkpoint-v1'/);
+  assert.match(discoveryCheckpointMigration, /octet_length\(checkpoint::text\) <= 2097152/);
+  assert.match(discoveryCheckpointMigration, /jsonb_typeof\(checkpoint_input -> 'checked_at'\) is distinct from 'string'/);
+  assert.match(discoveryCheckpointMigration, /checked_at_value := \(checkpoint_input ->> 'checked_at'\)::timestamptz/);
+  assert.match(discoveryCheckpointMigration, /RADAR_PROVIDER_DISCOVERY_CHECKPOINT_APPEND_ONLY/);
+  assert.match(discoveryCheckpointMigration, /before update or delete/);
+  assert.match(discoveryCheckpointMigration, /auth\.role\(\) <> 'service_role'/);
+  assert.match(discoveryCheckpointMigration, /lease_expires_at = clock_timestamp\(\)/);
+  assert.match(discoveryCheckpointMigration, /record_market_radar_provider_selection_v2/);
+  assert.match(discoveryCheckpointMigration, /deferred_parent_ids','\[\]'::jsonb\)\) > 2000/);
+  assert.match(discoveryCheckpointMigration, /RADAR_PROVIDER_DISCOVERY_CHECKPOINT_EXPOSED/);
+  assert.match(edge, /loadRadarProviderDiscoveryCheckpoint/);
+  assert.match(edge, /checkpointRadarProviderDiscovery/);
+  assert.match(edge, /if \(discovery\.discovery_in_progress === true\) \{[\s\S]*continue;/);
+  assert.match(edge, /return Boolean\(intent && !intent\.inProgress/);
+  assert.match(edge, /providersToPersist[\s\S]*!intent\.inProgress/);
+  assert.match(migration, /if circuit\.probe_request_id=request_id_input[\s\S]*token_value:=circuit\.probe_lease_token/);
+  assert.match(migration, /probe_lease_expires_at=now_value\+interval '45 seconds'/);
+  assert.match(migration, /circuit\.probe_lease_token is distinct from probe_lease_token_input/);
+});
+
+test("la UI reconcilia un transporte ambiguo mediante una sola lectura sin refresh", () => {
+  const recoveryStart = admin.indexOf("async function invokeRadarRefreshWithReadRecovery");
+  const recoveryEnd = admin.indexOf("async function loadRadar", recoveryStart);
+  const recovery = admin.slice(recoveryStart, recoveryEnd);
+  assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+  assert.match(recovery, /await invokeRadar\("discover", requestPayload\)/);
+  assert.match(recovery, /status < 500 && status !== 429/);
+  assert.match(recovery, /refresh: false/);
+  assert.match(recovery, /radarRequestCoordinator\?\.reconcile\?\.\(requestPayload, recovered\)/);
+  assert.doesNotMatch(recovery, /radarRequestCoordinator\.run|refresh_request_id:\s*(?:crypto|window)/);
+  assert.match(admin, /Radar confirmó por lectura que la actualización terminó/);
+  assert.match(admin, /refreshState\?\.active \|\| refreshState\?\.resumableRequestId/);
+  assert.match(admin, /const resumedRadarPayload = radarRequestCoordinator\?\.snapshot\?\.\(\)\.resumablePayload/);
+  assert.match(read("radar-refresh-request.js"), /deterministicClientError[\s\S]*status < 500 && status !== 429/);
+  assert.match(admin, /Termina o reconcilia la actualización en curso antes de cambiar sus filtros/);
+});
+
 test("descubrimiento y fuentes oficiales renuevan el lease antes de los 45 segundos", () => {
   assert.match(edge, /async function withRadarRefreshLeaseHeartbeat/);
   assert.match(edge, /setTimeout\(\(\) => resolve\(\{ done: false \}\), 15_000\)/);
@@ -302,5 +429,6 @@ test("UI elimina Tavily de tarjetas rojas y usa un único resumen expandible", (
   assert.match(admin, /Continuar actualización/);
   assert.doesNotMatch(admin, /class="radar-partial-error"/);
   assert.match(styles, /\.radar-operational-summary/);
-  assert.match(html, /radar-refresh-request\.js\?v=20260825-radar-catalog-bound1/);
+  assert.match(html, /radar-refresh-request\.js\?v=20260825-radar-provider-checkpoint1/);
+  assert.match(html, /admin-markets\.js\?v=20260825-radar-provider-checkpoint1/);
 });

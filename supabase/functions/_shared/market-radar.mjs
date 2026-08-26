@@ -567,6 +567,167 @@ export async function collectProviderCursorPages(fetchPage, options = {}) {
   throw new TypeError("PROVIDER_PAGINATION_INCOMPLETE");
 }
 
+/**
+ * Construye el checkpoint pre-manifest a partir del resultado real de cada
+ * serie. Cada padre debe pertenecer a la serie consultada y una identidad
+ * repetida con contenido distinto falla cerrada.
+ */
+export function buildProviderDiscoveryCheckpointV1(input = {}) {
+  const schemaVersion = cleanText(input.schema_version, 100);
+  const checkedAt = cleanText(input.checked_at, 100);
+  const checkedAtMs = Date.parse(checkedAt);
+  const taxonomyScopes = Array.isArray(input.taxonomy_scopes) ? input.taxonomy_scopes : [];
+  const failedTaxonomyScopes = Array.isArray(input.failed_taxonomy_scopes)
+    ? input.failed_taxonomy_scopes : [];
+  const series = Array.isArray(input.series) ? input.series : [];
+  const eventResults = Array.isArray(input.event_results) ? input.event_results : [];
+  const maxSeries = Math.max(1, Math.min(10_000, Math.floor(Number(input.max_series) || 2_000)));
+  const maxParents = Math.max(1, Math.min(10_000, Math.floor(Number(input.max_parents) || 2_000)));
+  const maxBytes = Math.max(1_024, Math.min(10_000_000, Math.floor(Number(input.max_bytes) || 2_000_000)));
+  if (schemaVersion !== "atinara-provider-discovery-checkpoint-v1"
+    || !Number.isFinite(checkedAtMs)
+    || series.length > maxSeries
+    || eventResults.length !== series.length) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_INVALID");
+  }
+
+  const normalizeScope = (scope) => ({
+    category: cleanText(scope?.category, 160),
+    tag: cleanText(scope?.tag, 160),
+  });
+  const normalizedTaxonomyScopes = taxonomyScopes.map(normalizeScope);
+  const normalizedFailedTaxonomyScopes = failedTaxonomyScopes.map(normalizeScope);
+  const taxonomyScopeIdentity = (scope) => `${scope.category}\u0000${scope.tag}`;
+  const taxonomyScopeIds = normalizedTaxonomyScopes.map(taxonomyScopeIdentity);
+  const taxonomyScopeIdSet = new Set(taxonomyScopeIds);
+  const failedTaxonomyScopeIds = normalizedFailedTaxonomyScopes.map(taxonomyScopeIdentity);
+  if (normalizedTaxonomyScopes.some((scope) => !scope.category || !scope.tag)
+    || normalizedFailedTaxonomyScopes.some((scope) => !scope.category || !scope.tag)
+    || taxonomyScopeIdSet.size !== taxonomyScopeIds.length
+    || new Set(failedTaxonomyScopeIds).size !== failedTaxonomyScopeIds.length
+    || failedTaxonomyScopeIds.some((identity) => !taxonomyScopeIdSet.has(identity))) {
+    throw new TypeError("PROVIDER_DISCOVERY_TAXONOMY_SCOPE_INVALID");
+  }
+
+  const seriesIds = series.map((item) => cleanText(item?.ticker, 120));
+  if (seriesIds.some((identity) => !identity)
+    || new Set(seriesIds).size !== seriesIds.length) {
+    throw new TypeError("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
+  }
+  const seriesIdSet = new Set(seriesIds);
+  const failedSeriesIds = [];
+  const eventsByIdentity = new Map();
+  for (let index = 0; index < eventResults.length; index += 1) {
+    const result = eventResults[index];
+    const expectedSeriesId = seriesIds[index];
+    if (result?.status === "rejected") {
+      failedSeriesIds.push(expectedSeriesId);
+      continue;
+    }
+    if (result?.status !== "fulfilled" || !Array.isArray(result.value)) {
+      throw new TypeError("PROVIDER_DISCOVERY_SERIES_RESULT_INVALID");
+    }
+    for (const event of result.value) {
+      const eventId = cleanText(event?.event_ticker ?? event?.ticker, 160);
+      const eventSeriesId = cleanText(event?.series_ticker, 120);
+      if (!eventId || eventSeriesId !== expectedSeriesId || !seriesIdSet.has(eventSeriesId)) {
+        throw new TypeError("PROVIDER_DISCOVERY_PARENT_MEMBERSHIP_INVALID");
+      }
+      const current = eventsByIdentity.get(eventId);
+      if (current && canonicalJson(current) !== canonicalJson(event)) {
+        throw new TypeError("PROVIDER_DISCOVERY_PARENT_IDENTITY_CONFLICT");
+      }
+      if (!current) eventsByIdentity.set(eventId, event);
+    }
+  }
+  const events = [...eventsByIdentity.values()];
+  if (events.length > maxParents) {
+    throw new TypeError("PROVIDER_PARENT_SCOPE_LIMIT_EXCEEDED");
+  }
+  const checkpoint = {
+    schema_version: schemaVersion,
+    checked_at: new Date(checkedAtMs).toISOString(),
+    taxonomy_scopes: normalizedTaxonomyScopes,
+    total_taxonomy_scope_count: normalizedTaxonomyScopes.length,
+    completed_taxonomy_scope_count:
+      normalizedTaxonomyScopes.length - normalizedFailedTaxonomyScopes.length,
+    failed_taxonomy_scope_count: normalizedFailedTaxonomyScopes.length,
+    failed_taxonomy_scopes: normalizedFailedTaxonomyScopes,
+    total_series_count: series.length,
+    completed_series_count: series.length - failedSeriesIds.length,
+    failed_series_count: failedSeriesIds.length,
+    failed_series_ids: failedSeriesIds,
+    total_parent_count: events.length,
+    series,
+    events,
+  };
+  if (new TextEncoder().encode(JSON.stringify(checkpoint)).byteLength > maxBytes) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_TOO_LARGE");
+  }
+  return checkpoint;
+}
+
+/**
+ * Une las series devueltas por varias taxonomías sin perder la pertenencia a
+ * ninguna de ellas. Conserva la primera representación de proveedor y suma
+ * scopes por identidad categórica exacta.
+ */
+export function mergeProviderTaxonomySeriesV1(scopedResults = [], expectedScopes = []) {
+  if (!Array.isArray(scopedResults) || !Array.isArray(expectedScopes)
+    || (expectedScopes.length && expectedScopes.length !== scopedResults.length)) {
+    throw new TypeError("PROVIDER_TAXONOMY_RESULTS_INVALID");
+  }
+  const sourceByTicker = new Map();
+  const failedScopes = [];
+  const scopeIdentity = (scope) => `${scope.category}\u0000${scope.tag}`;
+  for (let index = 0; index < scopedResults.length; index += 1) {
+    const result = scopedResults[index];
+    const fallbackScope = expectedScopes[index];
+    const fallbackCategory = cleanText(fallbackScope?.category, 160);
+    const fallbackTag = cleanText(fallbackScope?.tag, 160);
+    if (result?.status === "rejected") {
+      if (!fallbackCategory || !fallbackTag) {
+        throw new TypeError("PROVIDER_TAXONOMY_SCOPE_INVALID");
+      }
+      failedScopes.push({ category: fallbackCategory, tag: fallbackTag });
+      continue;
+    }
+    const value = result?.status === "fulfilled" && isRecord(result.value) ? result.value : null;
+    const scope = isRecord(value?.scope) ? value.scope : null;
+    const sourceSeries = Array.isArray(value?.series) ? value.series : null;
+    const category = cleanText(scope?.category, 160);
+    const tag = cleanText(scope?.tag, 160);
+    if (!scope || !sourceSeries || !category || !tag) {
+      throw new TypeError("PROVIDER_TAXONOMY_SCOPE_INVALID");
+    }
+    const normalizedScope = { category, tag };
+    if ((fallbackCategory || fallbackTag)
+      && scopeIdentity(normalizedScope) !== scopeIdentity({
+        category: fallbackCategory,
+        tag: fallbackTag,
+      })) {
+      throw new TypeError("PROVIDER_TAXONOMY_SCOPE_MEMBERSHIP_INVALID");
+    }
+    for (const source of sourceSeries) {
+      const ticker = cleanText(source?.ticker, 120);
+      if (!ticker) continue;
+      const current = sourceByTicker.get(ticker);
+      const scopeMap = new Map([
+        ...(current?.scopes ?? []),
+        normalizedScope,
+      ].map((item) => [`${item.category}\u0000${item.tag}`, item]));
+      sourceByTicker.set(ticker, {
+        source: current?.source ?? source,
+        scopes: [...scopeMap.values()],
+      });
+    }
+  }
+  return {
+    entries: [...sourceByTicker.values()],
+    failed_scopes: failedScopes,
+  };
+}
+
 export function buildRadarPersistenceBatches(entries = [], options = {}) {
   const maxItems = Math.max(1, Math.min(24, Math.floor(Number(options.maxItems) || 24)));
   const maxBytes = Math.max(64_000, Math.min(1_000_000, Math.floor(Number(options.maxBytes) || 700_000)));
@@ -591,8 +752,8 @@ export function selectWholeProviderParents(events = [], options = {}) {
   const source = Array.isArray(events) ? events.filter(isRecord) : [];
   const maxChildren = Math.max(1, Math.min(480, Math.floor(Number(options.maxChildren) || 480)));
   const maxParents = Math.max(1, Math.min(120, Math.floor(Number(options.maxParents) || 120)));
-  const maxTotalParents = Math.max(maxParents, Math.min(240,
-    Math.floor(Number(options.maxTotalParents) || 240)));
+  const maxTotalParents = Math.max(maxParents, Math.min(2000,
+    Math.floor(Number(options.maxTotalParents) || 2000)));
   const countChildren = options.countChildren !== false;
   if (source.length > maxTotalParents) throw new TypeError("PROVIDER_PARENT_SCOPE_LIMIT_EXCEEDED");
   const parentId = (event) => cleanText(
@@ -638,7 +799,8 @@ export function mergeProviderParentSelections(indexSelection = {}, childSelectio
     ...(Array.isArray(childSelection.deferred_parent_ids) ? childSelection.deferred_parent_ids : []),
     ...(Array.isArray(indexSelection.deferred_parent_ids) ? indexSelection.deferred_parent_ids : []),
   ].map((value) => cleanText(value, 220)).filter(Boolean))];
-  if (selectedIds.length > 120 || total !== selectedIds.length + deferredIds.length
+  if (selectedIds.length > 120 || total > 2000 || deferredIds.length > 2000
+    || total !== selectedIds.length + deferredIds.length
     || selectedIds.some((identity) => deferredIds.includes(identity))) {
     throw new TypeError("PROVIDER_PARENT_SELECTION_INCONSISTENT");
   }

@@ -1047,25 +1047,62 @@ test("el consenso oficial de una familia de portada incluye opciones reutilizada
   assert.equal(radar.buildCoverResolutionSignals(candidates.map((candidate) => ({ ...candidate, source_title: "Release dates" })), now).length, 0);
 });
 
-test("la Edge descubre taxonomía y eventos Kalshi sin límite arbitrario de cuatro series", () => {
+test("la Edge indexa todas las series gaming y esports de Kalshi antes de enumerar familias", () => {
   assert.match(edge, /search\/tags_by_categories/);
-  assert.match(edge, /MAX_KALSHI_SERIES = 25/);
-  assert.match(edge, /with_nested_markets/);
+  assert.match(edge, /MAX_KALSHI_SERIES = 2_000/);
+  assert.match(edge, /category: "Entertainment", tag: "Video games"/);
+  assert.match(edge, /category: "Sports", tag: "Esports"/);
+  assert.match(edge, /external-api\.kalshi\.com\/trade-api\/v2/);
+  assert.match(edge, /with_nested_markets", "false"/);
   assert.match(edge, /min_close_ts/);
   assert.match(edge, /limit", "200"/);
   assert.match(edge, /KALSHI_CONCURRENCY = 2/);
-  assert.doesNotMatch(edge, /MAX_KALSHI_SERIES = 4/);
+  assert.match(edge, /checkpointRadarProviderDiscovery/);
+  assert.match(edge, /RADAR_PROVIDER_DISCOVERY_CHECKPOINTED/);
+  assert.match(edge, /record_market_radar_provider_selection_v2/);
+  assert.doesNotMatch(edge, /MAX_KALSHI_SERIES = (?:4|25)/);
 });
 
-test("una serie Kalshi fallida no derriba los padres sanos ni desaparece del alcance", () => {
-  assert.match(edge, /const failedSeriesIds = indexedSettled\.flatMap/);
-  assert.match(edge, /if \(!indexedEvents\.length && failedSeriesIds\.length\) throw new Error\("PROVIDER_UNAVAILABLE"\)/);
-  assert.doesNotMatch(edge, /indexedSettled\.some\(\(result\) => result\.status === "rejected"\)\) throw/);
+test("una taxonomía o serie Kalshi fallida no derriba el alcance sano ni desaparece", () => {
+  assert.match(edge, /const checkpointFailedTaxonomyScopes = toRecordArray/);
+  assert.match(edge, /const taxonomyRetryResults = await mapWithConcurrency/);
+  assert.match(edge, /failed_taxonomy_scope_count: failedTaxonomyScopes\.length/);
+  assert.match(edge, /failed_taxonomy_scopes: failedTaxonomyScopes/);
+  assert.match(edge, /const failedSeriesIds: string\[\] = \[\]/);
+  assert.match(edge, /if \(result\.status === "rejected"\) \{[\s\S]*failedSeriesIds\.push/);
+  assert.doesNotMatch(edge, /if \(!indexedEvents\.length && failedSeriesIds\.length\) throw new Error\("PROVIDER_UNAVAILABLE"\)/);
   assert.match(edge, /failed_series_count: failedSeriesIds\.length/);
   assert.match(edge, /failed_series_ids: failedSeriesIds/);
-  assert.match(edge, /provider_scope_partial: failedSeriesIds\.length > 0/);
+  assert.match(edge, /const failedSeriesRetryResults = await mapWithConcurrency/);
+  assert.match(edge, /else recoveredEvents\.push\(\.\.\.result\.value\)/);
+  assert.match(edge, /provider_scope_partial: failedTaxonomyScopes\.length > 0[\s\S]{0,100}failedSeriesIds\.length > 0 \|\| failedParentIds\.length > 0/);
   assert.match(edge, /RADAR_PROVIDER_SERIES_PARTIAL/);
-  assert.match(edge, /se reintentarán sin descartar los padres sanos/);
+  assert.match(edge, /failedTaxonomyScopes[\s\S]{0,180}taxonomía/);
+  assert.match(edge, /se reintentarán sin descartar las familias sanas/);
+});
+
+test("Polymarket busca las seis temáticas abiertas y deduplica padres antes de enumerar", () => {
+  for (const query of [
+    "video game release delay", "gaming event game awards",
+    "video game studio publisher", "gaming streamer Twitch",
+    "video game Metacritic Game Awards", "gaming YouTube creator",
+  ]) assert.match(edge, new RegExp(query));
+  assert.match(edge, /return RADAR_CATEGORIES\.map/);
+  assert.match(edge, /const eventsByIdentity = new Map<string, JsonRecord>\(\)/);
+  assert.match(edge, /failed_search_categories: failedSearchCategories/);
+  assert.doesNotMatch(edge, /filters\.query \|\| categoryQueries\[filters\.category\] \|\| "video game gaming"/);
+});
+
+test("la respuesta pública resume el ledger de hasta 2000 padres sin duplicar sus IDs", () => {
+  const projector = edge.slice(
+    edge.indexOf("function projectProviderSelectionForResponse"),
+    edge.indexOf("const POLYMARKET_CATEGORY_QUERIES"),
+  );
+  assert.match(projector, /delete projected\.selected_parent_ids/);
+  assert.match(projector, /delete projected\.deferred_parent_ids/);
+  assert.match(projector, /parent_identity_sample_limit: 8/);
+  assert.match(projector, /provider_selection_ledger_complete/);
+  assert.match(edge, /providerSelections\.push\(\{[\s\S]*projectProviderSelectionForResponse/);
 });
 
 test("la Edge valida evento y pertenencia del hijo en Polymarket", () => {

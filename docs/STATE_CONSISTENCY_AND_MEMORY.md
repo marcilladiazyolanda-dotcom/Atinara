@@ -114,6 +114,42 @@ poseen la capacidad `candidate_feed`; Tavily posee `source_enrichment`. Una
 caída de enriquecimiento nunca convierte el catálogo de candidatas en parcial o
 indisponible.
 
+En el adaptador Kalshi, cuando el índice temático no cabe con seguridad junto a
+la enumeración de hijas, la intención sella primero
+`market_radar_provider_discovery_checkpoints_v1`. El checkpoint es privado,
+append-only, ligado a `(request_id, provider, capability)`, al lease y a un hash
+SHA-256; conserva scopes taxonómicos, series, padres, fallos parciales y
+evidencia temporal antes de liberar el transporte. La caída de un scope no
+elimina el otro: queda identificada y solo ese scope se reintenta al continuar.
+Si ambos scopes no responden, el resultado es parcial y accionable, nunca éxito
+fresco ni fallo técnico global. Una continuación solo puede reclamar la misma
+UUID y leer ese payload con `service_role`. El ledger de selección cuenta cada padre
+indexado como materializado o diferido, aunque la respuesta pública omita sus
+IDs completos por presupuesto. Un checkpoint presente solo en memoria, una
+serie fallida no registrada o un catálogo parcial presentado como agotado no
+constituyen progreso durable. Polymarket conserva su paginación Gamma/CLOB y su
+aislamiento por búsqueda y padre; no puede escribir un payload con forma Kalshi
+en este checkpoint. Si su índice deja de caber en una invocación, deberá añadir
+un adaptador durable propio bajo el mismo principio, no reutilizar tipos falsos.
+
+El navegador conserva la intención reanudable por la huella exacta de filtros.
+Doble clic comparte la promesa; cambiar filtros durante esa intención falla
+antes de crear otra UUID. Si se pierde la respuesta, una lectura `refresh=false`
+reconcilia el estado autoritativo: mantiene «Continuar» únicamente mientras
+Postgres conserva la intención activa y lo limpia cuando ya es terminal. Esa
+lectura nunca llama proveedores, no inicia refresh y no convierte el snapshot
+anterior en una consulta fresca.
+
+Mientras la intención no sea terminal, el coordinador conserva en
+`sessionStorage` únicamente su UUID y los seis filtros de identidad. No persiste
+JWT, Auth, respuestas, payloads de proveedor ni credenciales. Una recarga
+restaura esos filtros, hace una lectura sin refresh y elimina la memoria cuando
+Postgres confirma estado terminal.
+
+`parent_offset` y `reconciliation_offset` pertenecen solo a la proyección de
+lectura. No forman parte de la huella durable del refresh: cambiar de página
+conserva la misma UUID activa y nunca crea, interrumpe ni oculta una intención.
+
 Las candidatas saneadas se sellan en un manifest de hasta 480 elementos y se
 dividen en lotes durables de hasta 24. Cada elemento conserva ordinal e
 `eligibility_attempt_id`; un replay exacto no crea otro check, cuarentena,
@@ -271,7 +307,7 @@ El rollback a v1 cambia el modo de transporte o el bundle de una Edge, pero no b
 |---|---|---|---|---|---|---|
 | Guardar manual | `admin-markets.js` | `save_market_draft` | `expected_version`, `FOR UPDATE` | Transacción única; UUID y hash; no-op canónico | UI bloqueada; replay o `DRAFT_VERSION_MOVED` | Snapshot solo material; auditoría de cambio o no-op |
 | Preparar desde Radar | `admin-markets.js` | `save_market_draft_from_radar` | Versión del borrador y lock de candidata | Guarda y reserva candidata en una transacción; misma UUID | Una sola reserva; replay exacto no reescribe procedencia | Procedencia y `RADAR_DRAFT_PREPARED` |
-| Actualizar Radar | `radar-refresh-request.js` | Edge `market-radar` → intención/lotes/finalización v2/v3 | UUID, actor, huella, lease, manifest y cursor | Claim antes de red; lote durable; un histórico/snapshot | Doble clic comparte intención; replay no repite lote ni final | Candidatas/checks/cuarentenas aislados; salud por capacidad |
+| Actualizar Radar | `radar-refresh-request.js` | Edge `market-radar` → intención/checkpoint de proveedor/lotes/finalización v2/v4 | UUID, actor, huella, lease, índice de padres, manifest y cursor | Claim antes de red; checkpoint e IDs diferidos durables; un histórico/snapshot | Doble clic comparte intención; transporte ambiguo se reconcilia por lectura; replay no repite catálogo, lote ni final | Candidatas/checks/cuarentenas aislados; salud por capacidad |
 | Radar + Agente Editor | puente de `admin-markets.html` | `save_market_draft_from_radar_intelligence` | Versión, candidata, ejecución experta y binding | Guardado, procedencia y binding en una transacción | Botón bloqueado; replay exige UUID, contrato, fuentes y binding exactos y no escribe | Dictamen y Plan de Resolución vinculados; nunca publica |
 | Borrador con incidencias | puente del Editor | `save_market_draft_from_expert_with_issues_v2` (`v1` delega por compatibilidad) | Candidata, run, familia v4/v5 e `issue_id` exactos | Crea borrador privado y enlaces append-only; no concede binding de elegibilidad | Replay exacto conserva una sola ocurrencia | Responsable, bloqueo y siguiente acción sobreviven al handoff |
 | Descubrir oportunidades oficiales | `admin-markets.js` | Edge `data-observatory` → `begin/finish_official_opportunity_discovery_v2` | UUID, actor, huella e índice único antes de red | Una fila técnica; `FOR UPDATE`; insert o refresh condicional; payload idéntico no-op | Doble submit comparte promesa; retry ambiguo reutiliza UUID; replay no entra en red | `success`, `zero_results`, `partial` o `technical_failure` sin consulta, HTML ni URL fallida |

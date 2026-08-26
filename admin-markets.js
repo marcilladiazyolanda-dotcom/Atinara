@@ -95,6 +95,12 @@
       }
     }
   };
+  const resumedRadarPayload = radarRequestCoordinator?.snapshot?.().resumablePayload;
+  if (resumedRadarPayload) {
+    ["provider", "category", "query", "horizon", "quality", "order"].forEach((name) => {
+      if (typeof resumedRadarPayload[name] === "string") state.radar[name] = resumedRadarPayload[name];
+    });
+  }
 
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
   const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Fuentes oficiales" };
@@ -2483,6 +2489,31 @@
     state.radarCooldownTimer = window.setInterval(updateRadarCooldownButton, 500);
   }
 
+  async function invokeRadarRefreshWithReadRecovery(requestPayload) {
+    try {
+      return await invokeRadar("discover", requestPayload);
+    } catch (refreshError) {
+      const status = Number(refreshError?.status);
+      if (Number.isFinite(status) && status > 0 && status < 500 && status !== 429) {
+        throw refreshError;
+      }
+      // El transporte puede perderse después de que el backend haya sellado el
+      // resultado. Una única lectura, sin refresh, reconcilia la misma UUID y
+      // nunca crea una intención adicional.
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      try {
+        const recovered = await invokeRadar("discover", {
+          ...requestPayload,
+          refresh: false,
+        });
+        radarRequestCoordinator?.reconcile?.(requestPayload, recovered);
+        return { ...recovered, transport_reconciled: true };
+      } catch {
+        throw refreshError;
+      }
+    }
+  }
+
   async function loadRadar(refresh = false) {
     if (state.radarLoading) return;
     state.radarLoading = true;
@@ -2492,8 +2523,9 @@
     try {
       const requestPayload = radarRequestPayload(refresh);
       const data = refresh && radarRequestCoordinator
-        ? await radarRequestCoordinator.run(requestPayload, (payload) => invokeRadar("discover", payload))
+        ? await radarRequestCoordinator.run(requestPayload, invokeRadarRefreshWithReadRecovery)
         : await invokeRadar("discover", requestPayload);
+      if (!refresh) radarRequestCoordinator?.reconcile?.(requestPayload, data);
       const nextCandidates = Array.isArray(data.candidates) ? data.candidates : [];
       const nextGroups = Array.isArray(data.groups) ? data.groups : null;
       if (!nextGroups || (nextCandidates.length && !nextGroups.length)) {
@@ -2562,6 +2594,8 @@
         : "";
       const radarNotice = (state.radar.refreshInProgress
         ? "La actualización conserva su progreso. Puedes continuar la misma intención sin repetir lotes terminados."
+        : data.transport_reconciled === true
+          ? "Radar confirmó por lectura que la actualización terminó. No se inició una segunda intención."
         : data.partial
         ? "Radar actualizado con cobertura parcial. El detalle recuperable queda disponible en el resumen."
         : state.radar.qualityNotices.length
@@ -3337,6 +3371,12 @@
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "radar-filters") {
+      const refreshState = radarRequestCoordinator?.snapshot?.();
+      if (refreshState?.active || refreshState?.resumableRequestId) {
+        setNotice("Termina o reconcilia la actualización en curso antes de cambiar sus filtros. Atinara conservará la misma intención.", "info");
+        renderWorkspace();
+        return;
+      }
       const data = new FormData(event.target);
       ["provider", "category", "query", "horizon", "quality", "order"].forEach((name) => {
         const value = data.get(name);

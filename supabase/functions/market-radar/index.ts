@@ -18,6 +18,7 @@ import {
   applyDeterministicRadarEligibility,
   applyEligibilityDecision,
   bindRadarCandidatesToReconciledChildren,
+  buildProviderDiscoveryCheckpointV1,
   buildCacheKey,
   buildRadarPersistenceBatches,
   buildCoverResolutionSignals,
@@ -40,6 +41,7 @@ import {
   extractOfficialRelatedUrls,
   groupCandidates,
   hasSpeculativeEvidenceLanguage,
+  inferAtinaraCategory,
   isAdaptedIdeaComplete,
   isBlockingDuplicateMatch,
   isCanonicalRadarChildProjectionValid,
@@ -54,6 +56,7 @@ import {
   normalizeRadarCandidatePresentation,
   localizeRadarProviderLabel,
   mergeProviderParentSelections,
+  mergeProviderTaxonomySeriesV1,
   paginateMergedRadarParents,
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
@@ -108,7 +111,12 @@ const MAX_AI_ENRICHMENT_GROUPS = 30;
 const MAX_AI_ENRICHMENT_CANDIDATES = 180;
 const AI_ENRICHMENT_BATCH_SIZE = 9;
 const TAVILY_CONCURRENCY = 4;
-const MAX_KALSHI_SERIES = 25;
+const MAX_KALSHI_SERIES = 2_000;
+const MAX_PROVIDER_INDEX_PARENTS = 2_000;
+const MAX_PROVIDER_ENUMERATION_PARENTS = 32;
+const MAX_PROVIDER_MATERIALIZED_PARENTS = 24;
+const MAX_PROVIDER_MATERIALIZED_CHILDREN = 240;
+const PROVIDER_DISCOVERY_CHECKPOINT_VERSION = "atinara-provider-discovery-checkpoint-v1";
 // Kalshi aplica 429 con ráfagas pequeñas en producción. Dos workers conservan
 // el presupuesto del refresh y reducen retries sin sacrificar paginación.
 const KALSHI_CONCURRENCY = 2;
@@ -134,8 +142,9 @@ const OFFICIAL_SELECTION_FOLLOWUP_BUDGET_MS = 12_000;
 const RADAR_ENRICHMENT_BUDGET_MS = 12_000;
 const MAX_PROVIDER_RETRY_DELAY_MS = 8_000;
 const PROVIDER_RETRY_JITTER_MS = 250;
+const MAX_PROVIDER_RATE_LIMIT_ATTEMPTS = 4;
 
-const KALSHI_API_ROOT = "https://api.elections.kalshi.com/trade-api/v2";
+const KALSHI_API_ROOT = "https://external-api.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA_ROOT = "https://gamma-api.polymarket.com";
 const POLYMARKET_CLOB_ROOT = "https://clob.polymarket.com";
 
@@ -393,6 +402,26 @@ async function rpc(
     throw new RadarRpcError(name, response.status, databaseCode, databaseMessage);
   }
   return payload;
+}
+
+function isTransientRadarReadFailure(error: unknown): boolean {
+  return error instanceof RadarRpcError
+    && (error.databaseCode === "57014" || error.status === 500 || error.status === 504);
+}
+
+async function rpcReadWithRetry(
+  environment: Environment,
+  name: string,
+  args: JsonRecord,
+  authorization: string,
+): Promise<unknown> {
+  try {
+    return await rpc(environment, name, args, authorization);
+  } catch (error) {
+    if (!isTransientRadarReadFailure(error)) throw error;
+    await deadlineSleep(500, environment.execution, FINALIZATION_RESERVE_MS);
+    return rpc(environment, name, args, authorization);
+  }
 }
 
 function validUuid(value: unknown): value is string {
@@ -713,6 +742,52 @@ async function renewRadarRefreshLease(environment: Environment, intent: RadarRef
   }, undefined, true);
 }
 
+async function loadRadarProviderDiscoveryCheckpoint(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+): Promise<JsonRecord | null> {
+  if (!intent.leaseToken || intent.capability !== "candidate_feed") return null;
+  return toRecord(await rpc(
+    environment,
+    "get_market_radar_provider_discovery_checkpoint_v1",
+    {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+    },
+    undefined,
+    true,
+  ));
+}
+
+async function checkpointRadarProviderDiscovery(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  checkpoint: JsonRecord,
+): Promise<JsonRecord> {
+  if (!intent.leaseToken || intent.capability !== "candidate_feed") {
+    throw new Error("RADAR_REFRESH_LEASE_REQUIRED");
+  }
+  const result = toRecord(await rpc(
+    environment,
+    "checkpoint_market_radar_provider_discovery_v1",
+    {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+      checkpoint_input: checkpoint,
+    },
+    undefined,
+    true,
+  )) ?? {};
+  intent.phase = "fetching";
+  intent.inProgress = true;
+  intent.leaseToken = null;
+  return result;
+}
+
 async function renewRadarRefreshLeases(
   environment: Environment,
   intents: RadarRefreshIntent[],
@@ -821,7 +896,7 @@ async function fetchJson(
   if (!validateApiUrl(url)) throw new Error("PROVIDER_HOST_NOT_ALLOWED");
   const execution = options.execution;
   if (!execution) throw new Error("ABSOLUTE_DEADLINE_REQUIRED");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_PROVIDER_RATE_LIMIT_ATTEMPTS; attempt += 1) {
     const child = createChildAbort(execution, timeoutMs, FINALIZATION_RESERVE_MS);
     try {
       const response = await fetch(url, { ...init, signal: child.signal });
@@ -839,7 +914,8 @@ async function fetchJson(
         const rateLimitError = new ProviderRequestError("PROVIDER_RATE_LIMITED", 429, retryAfterMs);
         options.onRateLimit?.(rateLimitError);
         const delayMs = retryAfterMs ?? providerRetryDelay(attempt);
-        if (attempt === 0 && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
+        if (attempt < MAX_PROVIDER_RATE_LIMIT_ATTEMPTS - 1
+          && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
           await deadlineSleep(delayMs, execution, FINALIZATION_RESERVE_MS);
           continue;
         }
@@ -856,7 +932,7 @@ async function fetchJson(
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw new Error("PROVIDER_TIMEOUT");
       if (error instanceof ProviderRequestError
-        || attempt === 1
+        || attempt >= 1
         || (error instanceof Error && /INVALID|NOT_ALLOWED|TOO_LARGE|HTTP_4(?!29)/.test(error.message))) throw error;
       await deadlineSleep(providerRetryDelay(attempt), execution, FINALIZATION_RESERVE_MS);
     } finally {
@@ -1074,6 +1150,17 @@ function safeFilters(body: JsonRecord) {
     query: cleanText(body.query, 120),
     parent_offset: Math.max(0, Math.min(10_000, Math.floor(Number(body.parent_offset) || 0))),
     reconciliation_offset: Math.max(0, Math.min(10_000, Math.floor(Number(body.reconciliation_offset) || 0))),
+  };
+}
+
+function radarRefreshIdentityFilters(filters: ReturnType<typeof safeFilters>) {
+  return {
+    provider: filters.provider,
+    category: filters.category,
+    quality: filters.quality,
+    order: filters.order,
+    horizon: filters.horizon,
+    query: filters.query,
   };
 }
 
@@ -2741,22 +2828,84 @@ async function enumeratePolymarketEventChildren(
   };
 }
 
-async function discoverPolymarket(
-  environment: Environment,
-  now: string,
-  filters: ReturnType<typeof safeFilters>,
-  requestId: string,
-) {
-  const categoryQueries: Record<string, string> = {
-    Lanzamientos: "video game release delay",
-    Eventos: "gaming event game awards",
-    Industria: "video game studio publisher",
-    Streamers: "gaming streamer Twitch",
-    "Reviews/Premios": "video game Metacritic Game Awards",
-    YouTubers: "gaming YouTube creator",
+function providerParentIdentity(event: JsonRecord): string {
+  return cleanText(event.id ?? event.event_ticker ?? event.ticker ?? event.slug, 220);
+}
+
+function mergeIndexedProviderSelection(
+  indexedSelection: JsonRecord,
+  materializedSelection: JsonRecord,
+  failedParentIds: string[] = [],
+): JsonRecord {
+  const selectedIds = new Set(
+    Array.isArray(materializedSelection.selected_parent_ids)
+      ? materializedSelection.selected_parent_ids.map((value) => cleanText(value, 220)).filter(Boolean)
+      : [],
+  );
+  const deferredIds = new Set<string>([
+    ...(Array.isArray(materializedSelection.deferred_parent_ids)
+      ? materializedSelection.deferred_parent_ids : []),
+    ...failedParentIds,
+  ].map((value) => cleanText(value, 220)).filter(Boolean));
+  for (const identity of Array.isArray(indexedSelection.selected_parent_ids)
+    ? indexedSelection.selected_parent_ids : []) {
+    const normalized = cleanText(identity, 220);
+    if (normalized && !selectedIds.has(normalized)) deferredIds.add(normalized);
+  }
+  const materialized = {
+    ...materializedSelection,
+    total_parent_count: selectedIds.size + deferredIds.size,
+    selected_parent_count: selectedIds.size,
+    deferred_parent_count: deferredIds.size,
+    no_parent_truncated: true,
+    selected_parent_ids: [...selectedIds],
+    deferred_parent_ids: [...deferredIds],
   };
+  return mergeProviderParentSelections(indexedSelection, materialized);
+}
+
+function projectProviderSelectionForResponse(value: JsonRecord): JsonRecord {
+  const selectedIds = Array.isArray(value.selected_parent_ids)
+    ? value.selected_parent_ids.map((identity) => cleanText(identity, 220)).filter(Boolean) : [];
+  const deferredIds = Array.isArray(value.deferred_parent_ids)
+    ? value.deferred_parent_ids.map((identity) => cleanText(identity, 220)).filter(Boolean) : [];
+  const projected = { ...value };
+  delete projected.selected_parent_ids;
+  delete projected.deferred_parent_ids;
+  return {
+    ...projected,
+    provider_selection_ledger_complete: selectedIds.length === Number(value.selected_parent_count)
+      && deferredIds.length === Number(value.deferred_parent_count),
+    parent_identity_sample_limit: 8,
+    selected_parent_id_sample: selectedIds.slice(0, 8),
+    deferred_parent_id_sample: deferredIds.slice(0, 8),
+  };
+}
+
+const POLYMARKET_CATEGORY_QUERIES: Readonly<Record<string, string>> = Object.freeze({
+  Lanzamientos: "video game release delay",
+  Eventos: "gaming event game awards",
+  Industria: "video game studio publisher",
+  Streamers: "gaming streamer Twitch",
+  "Reviews/Premios": "video game Metacritic Game Awards",
+  YouTubers: "gaming YouTube creator",
+});
+
+function polymarketDiscoveryQueries(filters: ReturnType<typeof safeFilters>): JsonRecord[] {
+  if (filters.query) return [{ category: filters.category || null, query: filters.query }];
+  if (filters.category) return [{ category: filters.category, query: POLYMARKET_CATEGORY_QUERIES[filters.category] }];
+  return RADAR_CATEGORIES.map((category) => ({
+    category,
+    query: POLYMARKET_CATEGORY_QUERIES[category],
+  }));
+}
+
+async function searchPolymarketParents(
+  environment: Environment,
+  query: string,
+): Promise<JsonRecord[]> {
   const searchUrl = new URL(`${POLYMARKET_GAMMA_ROOT}/public-search`);
-  searchUrl.searchParams.set("q", filters.query || categoryQueries[filters.category] || "video game gaming");
+  searchUrl.searchParams.set("q", query);
   searchUrl.searchParams.set("events_status", "active");
   searchUrl.searchParams.set("limit_per_type", "80");
   searchUrl.searchParams.set("keep_closed_markets", "0");
@@ -2786,7 +2935,7 @@ async function discoverPolymarket(
     }
     let newEventCount = 0;
     for (const event of pageEvents) {
-      const identity = cleanText(event.id ?? event.slug, 220);
+      const identity = providerParentIdentity(event);
       if (!identity || seenEventIds.has(identity)) continue;
       seenEventIds.add(identity);
       rawEvents.push(event);
@@ -2809,10 +2958,54 @@ async function discoverPolymarket(
       || (!paginationMetadataPresent && pageEvents.length < 80)) break;
     if (page === MAX_PROVIDER_PAGES) throw new Error("PROVIDER_PAGINATION_INCOMPLETE");
   }
+  return rawEvents;
+}
+
+async function discoverPolymarket(
+  environment: Environment,
+  now: string,
+  filters: ReturnType<typeof safeFilters>,
+  requestId: string,
+) {
+  const searches = polymarketDiscoveryQueries(filters);
+  const searchResults = await mapWithConcurrency(
+    searches,
+    KALSHI_CONCURRENCY,
+    async (descriptor) => ({
+      descriptor,
+      events: await searchPolymarketParents(environment, cleanText(descriptor.query, 200)),
+    }),
+  );
+  const eventsByIdentity = new Map<string, JsonRecord>();
+  const failedSearchCategories: string[] = [];
+  for (let index = 0; index < searchResults.length; index += 1) {
+    const result = searchResults[index];
+    if (result.status === "rejected") {
+      failedSearchCategories.push(cleanText(searches[index].category, 80) || "query");
+      continue;
+    }
+    const category = cleanText(result.value.descriptor.category, 80);
+    for (const event of result.value.events) {
+      const identity = providerParentIdentity(event);
+      if (!identity) continue;
+      const current = eventsByIdentity.get(identity);
+      const categories = new Set([
+        ...(Array.isArray(current?._atinara_search_categories)
+          ? current._atinara_search_categories : []),
+        category,
+      ].map((value) => cleanText(value, 80)).filter(Boolean));
+      eventsByIdentity.set(identity, {
+        ...(current ?? event),
+        _atinara_search_categories: [...categories],
+      });
+    }
+  }
+  const rawEvents = [...eventsByIdentity.values()];
+  if (!rawEvents.length && failedSearchCategories.length) throw new Error("PROVIDER_UNAVAILABLE");
   const indexedScope = selectWholeProviderParents(rawEvents, {
-    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
-    maxParents: 120,
-    maxTotalParents: 240,
+    maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+    maxParents: MAX_PROVIDER_ENUMERATION_PARENTS,
+    maxTotalParents: MAX_PROVIDER_INDEX_PARENTS,
     countChildren: false,
   });
   const validationResults = await mapWithConcurrency(
@@ -2820,54 +3013,109 @@ async function discoverPolymarket(
     async (searchEvent): Promise<JsonRecord> => enumeratePolymarketEventChildren(environment, searchEvent, now),
   );
   const validatedEvents: JsonRecord[] = [];
-  for (const result of validationResults) {
-    if (result.status === "rejected") throw result.reason;
+  const failedParentIds: string[] = [];
+  for (let index = 0; index < validationResults.length; index += 1) {
+    const result = validationResults[index];
+    if (result.status === "rejected") {
+      failedParentIds.push(providerParentIdentity(indexedScope.selected[index]));
+      continue;
+    }
     if (result.status === "fulfilled" && result.value) validatedEvents.push(result.value);
   }
   const childScope = selectWholeProviderParents(
     validatedEvents, {
-      maxChildren: MAX_NORMALIZED_PER_PROVIDER,
-      maxParents: 120,
-      maxTotalParents: 120,
+      maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+      maxParents: MAX_PROVIDER_MATERIALIZED_PARENTS,
+      maxTotalParents: MAX_PROVIDER_ENUMERATION_PARENTS,
     },
   );
-  const selectedEvents = childScope.selected;
-  const selection = mergeProviderParentSelections(indexedScope.selection, childScope.selection);
-  const resolvedEvents: JsonRecord[] = [];
-  for (const event of selectedEvents) {
-    resolvedEvents.push(await resolvePolymarketEventIdentities(environment, event, now));
-  }
-  const adapted = adaptPolymarketResponse(
-    { events: resolvedEvents }, { now, cacheMinutes: 20 },
-  ) as JsonRecord[];
-  const contextual = await attachCanonicalFactContext(adapted, resolvedEvents, "polymarket");
-  const reconciled = await reconcileCanonicalEvents(
-    environment, "polymarket", resolvedEvents, contextual, now, requestId,
+  const identityResults = await mapWithConcurrency(
+    childScope.selected,
+    KALSHI_CONCURRENCY,
+    async (event): Promise<JsonRecord> => resolvePolymarketEventIdentities(environment, event, now),
   );
-  return { ...reconciled, selection };
+  const resolvedEvents: JsonRecord[] = [];
+  for (let index = 0; index < identityResults.length; index += 1) {
+    const result = identityResults[index];
+    if (result.status === "rejected") {
+      failedParentIds.push(providerParentIdentity(childScope.selected[index]));
+      continue;
+    }
+    resolvedEvents.push(result.value);
+  }
+  if (!resolvedEvents.length && indexedScope.selected.length) throw new Error("PROVIDER_UNAVAILABLE");
+  const materializedScope = selectWholeProviderParents(resolvedEvents, {
+    maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+    maxParents: MAX_PROVIDER_MATERIALIZED_PARENTS,
+    maxTotalParents: MAX_PROVIDER_ENUMERATION_PARENTS,
+  });
+  const selection = mergeIndexedProviderSelection(
+    indexedScope.selection,
+    materializedScope.selection,
+    failedParentIds,
+  );
+  const adapted = adaptPolymarketResponse(
+    { events: materializedScope.selected }, { now, cacheMinutes: 20 },
+  ) as JsonRecord[];
+  const contextual = await attachCanonicalFactContext(adapted, materializedScope.selected, "polymarket");
+  const reconciled = await reconcileCanonicalEvents(
+    environment, "polymarket", materializedScope.selected, contextual, now, requestId,
+  );
+  return {
+    ...reconciled,
+    selection: {
+      ...selection,
+      total_search_count: searches.length,
+      completed_search_count: searches.length - failedSearchCategories.length,
+      failed_search_count: failedSearchCategories.length,
+      failed_search_categories: failedSearchCategories,
+      provider_scope_partial: failedSearchCategories.length > 0 || failedParentIds.length > 0,
+      failed_parent_count: failedParentIds.length,
+      failed_parent_ids: [...new Set(failedParentIds)],
+    },
+  };
 }
 
-function taxonomyValues(payload: unknown): { category: string; tag: string } | null {
+type KalshiTaxonomyScope = { category: string; tag: string };
+
+const KALSHI_TAXONOMY_SCOPES: ReadonlyArray<KalshiTaxonomyScope> = Object.freeze([
+  Object.freeze({ category: "Entertainment", tag: "Video games" }),
+  Object.freeze({ category: "Sports", tag: "Esports" }),
+]);
+
+function taxonomyValues(payload: unknown): KalshiTaxonomyScope[] {
   const root = toRecord(payload) ?? {};
   const mapping = toRecord(root.tags_by_categories);
+  const discovered: KalshiTaxonomyScope[] = [];
   if (mapping) {
     for (const [category, rawTags] of Object.entries(mapping)) {
       const tags = Array.isArray(rawTags) ? rawTags : [];
-      const exactTag = tags.map((tag) => cleanText(tag, 160)).find((tag) => /^video games?$/i.test(tag));
-      if (category.toLowerCase() === "entertainment" && exactTag) return { category, tag: exactTag };
+      for (const rawTag of tags) {
+        const tag = cleanText(rawTag, 160);
+        if ((category.toLowerCase() === "entertainment" && /^video games?$/i.test(tag))
+          || (category.toLowerCase() === "sports" && /^esports?$/i.test(tag))) {
+          discovered.push({ category, tag });
+        }
+      }
     }
   }
   const categories = toRecordArray(root.categories ?? root.data);
   for (const categoryItem of categories) {
     const category = cleanText(categoryItem.name ?? categoryItem.category, 160);
     const tags = Array.isArray(categoryItem.tags) ? categoryItem.tags : [];
-    if (category.toLowerCase() !== "entertainment") continue;
     for (const tagItem of tags) {
       const tag = cleanText(isRecord(tagItem) ? tagItem.name ?? tagItem.tag : tagItem, 160);
-      if (/^video games?$/i.test(tag)) return { category, tag };
+      if ((category.toLowerCase() === "entertainment" && /^video games?$/i.test(tag))
+        || (category.toLowerCase() === "sports" && /^esports?$/i.test(tag))) {
+        discovered.push({ category, tag });
+      }
     }
   }
-  return null;
+  const byIdentity = new Map(discovered.map((scope) => [
+    `${scope.category.toLowerCase()}:${scope.tag.toLowerCase()}`,
+    scope,
+  ]));
+  return [...byIdentity.values()];
 }
 
 function seriesPriority(series: JsonRecord): number {
@@ -2897,13 +3145,244 @@ async function mapWithConcurrency<T, U>(items: T[], concurrency: number, worker:
   return results;
 }
 
-async function kalshiTaxonomy(environment: Environment) {
+async function kalshiTaxonomy(environment: Environment): Promise<KalshiTaxonomyScope[]> {
   const taxonomyUrl = new URL(`${KALSHI_API_ROOT}/search/tags_by_categories`);
   try {
-    return taxonomyValues(await fetchJson(taxonomyUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution }));
+    const scopes = taxonomyValues(await fetchJson(
+      taxonomyUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    ));
+    return scopes.length ? scopes : [...KALSHI_TAXONOMY_SCOPES];
   } catch {
-    return null;
+    return [...KALSHI_TAXONOMY_SCOPES];
   }
+}
+
+function compactKalshiSeriesCheckpoint(series: JsonRecord, scopes: KalshiTaxonomyScope[]): JsonRecord {
+  const title = cleanText(series.title ?? series.name, 400);
+  return {
+    ticker: cleanText(series.ticker, 120),
+    title,
+    category: cleanText(series.category, 160),
+    tags: Array.isArray(series.tags)
+      ? series.tags.map((tag) => cleanText(tag, 100)).filter(Boolean).slice(0, 30) : [],
+    taxonomy_scopes: scopes.map((scope) => ({ category: scope.category, tag: scope.tag })),
+    series_slug: slugify(title),
+    settlement_sources: toRecordArray(series.settlement_sources).map((source) => ({
+      name: cleanText(source.name, 200) || null,
+      url: safePublicUrl(source.url),
+    })).filter((source) => source.url),
+    volume_fp: cleanText(series.volume_fp ?? series.volume, 80) || null,
+    last_updated_ts: safeIsoDate(series.last_updated_ts),
+  };
+}
+
+function compactKalshiEventCheckpoint(event: JsonRecord): JsonRecord | null {
+  const eventTicker = cleanText(event.event_ticker ?? event.ticker, 160);
+  const seriesTicker = cleanText(event.series_ticker, 120);
+  if (!eventTicker || !seriesTicker) return null;
+  return {
+    event_ticker: eventTicker,
+    series_ticker: seriesTicker,
+    title: cleanText(event.title, 500),
+    sub_title: cleanText(event.sub_title ?? event.subtitle, 500) || null,
+    category: cleanText(event.category, 160) || null,
+    strike_date: safeIsoDate(event.strike_date),
+    strike_period: cleanText(event.strike_period, 160) || null,
+    mutually_exclusive: event.mutually_exclusive === true,
+    available_on_brokers: event.available_on_brokers === true,
+    last_updated_ts: safeIsoDate(event.last_updated_ts),
+  };
+}
+
+async function fetchOpenKalshiSeriesEvents(
+  environment: Environment,
+  ticker: string,
+): Promise<JsonRecord[]> {
+  const minimumClose = Math.floor(Date.now() / 1000);
+  const eventCollection = await collectProviderCursorPages(async (cursor) => {
+    const eventsUrl = new URL(`${KALSHI_API_ROOT}/events`);
+    eventsUrl.searchParams.set("series_ticker", ticker);
+    eventsUrl.searchParams.set("status", "open");
+    eventsUrl.searchParams.set("with_nested_markets", "false");
+    eventsUrl.searchParams.set("min_close_ts", String(minimumClose));
+    eventsUrl.searchParams.set("limit", "200");
+    if (cursor) eventsUrl.searchParams.set("cursor", cursor);
+    return toRecord(await fetchJson(
+      eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    )) ?? {};
+  }, { itemsField: "events", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
+  return eventCollection.items.map(compactKalshiEventCheckpoint).filter(Boolean) as JsonRecord[];
+}
+
+async function fetchKalshiTaxonomyScopeSeries(
+  environment: Environment,
+  scope: KalshiTaxonomyScope,
+): Promise<{ scope: KalshiTaxonomyScope; series: JsonRecord[] }> {
+  const seriesUrl = new URL(`${KALSHI_API_ROOT}/series`);
+  seriesUrl.searchParams.set("category", scope.category);
+  seriesUrl.searchParams.set("tags", scope.tag);
+  seriesUrl.searchParams.set("include_volume", "true");
+  seriesUrl.searchParams.set("include_product_metadata", "true");
+  seriesUrl.searchParams.set("limit", "200");
+  const collection = await collectProviderCursorPages(async (cursor) => {
+    const pageUrl = new URL(seriesUrl);
+    if (cursor) pageUrl.searchParams.set("cursor", cursor);
+    return toRecord(await fetchJson(
+      pageUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+    )) ?? {};
+  }, { itemsField: "series", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
+  return { scope, series: collection.items };
+}
+
+async function buildKalshiProviderDiscoveryCheckpoint(
+  environment: Environment,
+  now: string,
+): Promise<JsonRecord> {
+  const scopes = await kalshiTaxonomy(environment);
+  const scopedSeriesResults = await mapWithConcurrency(
+    scopes,
+    KALSHI_CONCURRENCY,
+    async (scope) => fetchKalshiTaxonomyScopeSeries(environment, scope),
+  );
+  const taxonomyMerge = mergeProviderTaxonomySeriesV1(scopedSeriesResults, scopes) as {
+    entries: Array<{ source: JsonRecord; scopes: KalshiTaxonomyScope[] }>;
+    failed_scopes: KalshiTaxonomyScope[];
+  };
+  const mergedSeries = taxonomyMerge.entries;
+  if (!mergedSeries.length && !taxonomyMerge.failed_scopes.length) {
+    throw new Error("PROVIDER_INVALID_RESPONSE");
+  }
+  const orderedSeries = mergedSeries
+    .sort((left, right) => seriesPriority(right.source) - seriesPriority(left.source));
+  if (orderedSeries.length > MAX_KALSHI_SERIES) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
+  const series = orderedSeries.map(({ source, scopes: itemScopes }) =>
+    compactKalshiSeriesCheckpoint(source, itemScopes));
+  const eventResults = await mapWithConcurrency(
+    series,
+    KALSHI_CONCURRENCY,
+    async (seriesItem) => fetchOpenKalshiSeriesEvents(
+      environment,
+      cleanText(seriesItem.ticker, 120),
+    ),
+  );
+  return buildProviderDiscoveryCheckpointV1({
+    schema_version: PROVIDER_DISCOVERY_CHECKPOINT_VERSION,
+    checked_at: now,
+    taxonomy_scopes: scopes,
+    failed_taxonomy_scopes: taxonomyMerge.failed_scopes,
+    series,
+    event_results: eventResults,
+    max_series: MAX_KALSHI_SERIES,
+    max_parents: MAX_PROVIDER_INDEX_PARENTS,
+    max_bytes: 2_000_000,
+  }) as JsonRecord;
+}
+
+function validatedKalshiDiscoveryCheckpoint(value: unknown): JsonRecord | null {
+  const wrapper = toRecord(value);
+  const checkpoint = toRecord(wrapper?.checkpoint);
+  if (!checkpoint
+    || cleanText(checkpoint.schema_version, 100) !== PROVIDER_DISCOVERY_CHECKPOINT_VERSION
+    || !Array.isArray(checkpoint.series)
+    || !Array.isArray(checkpoint.events)
+    || !Array.isArray(checkpoint.failed_series_ids)
+    || !Array.isArray(checkpoint.taxonomy_scopes)
+    || !Array.isArray(checkpoint.failed_taxonomy_scopes)
+    || Number(checkpoint.total_taxonomy_scope_count) !== checkpoint.taxonomy_scopes.length
+    || Number(checkpoint.failed_taxonomy_scope_count) !== checkpoint.failed_taxonomy_scopes.length
+    || Number(checkpoint.total_series_count) !== checkpoint.series.length
+    || Number(checkpoint.total_parent_count) !== checkpoint.events.length) return null;
+  return checkpoint;
+}
+
+function kalshiCheckpointSeriesContext(series: JsonRecord): JsonRecord {
+  const taxonomyScopes = toRecordArray(series.taxonomy_scopes);
+  return {
+    category: cleanText(series.category, 120),
+    tags: [...new Set([
+      ...(Array.isArray(series.tags) ? series.tags : []),
+      ...taxonomyScopes.map((scope) => cleanText(scope.tag, 100)),
+    ].map((tag) => cleanText(tag, 100)).filter(Boolean))],
+    taxonomy_scopes: taxonomyScopes,
+    series_ticker: cleanText(series.ticker, 120),
+    series_title: cleanText(series.title, 400),
+    series_slug: cleanText(series.series_slug, 220),
+    settlement_sources: toRecordArray(series.settlement_sources)
+      .map((source) => safePublicUrl(source.url)).filter(Boolean),
+    raw_settlement_sources: toRecordArray(series.settlement_sources),
+  };
+}
+
+function kalshiCheckpointEventCategory(event: JsonRecord, series: JsonRecord): string {
+  const scopes = toRecordArray(series.taxonomy_scopes);
+  if (scopes.some((scope) => /^esports?$/i.test(cleanText(scope.tag, 100)))) return "Eventos";
+  return inferAtinaraCategory(
+    event.title,
+    event.sub_title,
+    series.title,
+    series.tags,
+  );
+}
+
+function kalshiCheckpointEventMatchesFilters(
+  event: JsonRecord,
+  series: JsonRecord,
+  filters: ReturnType<typeof safeFilters>,
+  nowMs = Date.now(),
+): boolean {
+  const category = kalshiCheckpointEventCategory(event, series);
+  if (filters.category && category !== filters.category) return false;
+  if (filters.query) {
+    const haystack = normalizeComparableText([
+      event.title, event.sub_title, series.title, series.tags,
+    ].flat().filter(Boolean).join(" "));
+    const tokens = normalizeComparableText(filters.query).split(/\s+/).filter(Boolean);
+    if (!tokens.length || !tokens.every((token) => haystack.includes(token))) return false;
+  }
+  const strikeAt = Date.parse(cleanText(event.strike_date, 100));
+  const horizonDays = Math.max(30, Number.parseInt(filters.horizon, 10) || 180);
+  return !Number.isFinite(strikeAt) || strikeAt <= nowMs + horizonDays * 86_400_000;
+}
+
+function prioritizeKalshiCheckpointEvents(
+  events: JsonRecord[],
+  seriesByTicker: ReadonlyMap<string, JsonRecord>,
+  filters: ReturnType<typeof safeFilters>,
+): JsonRecord[] {
+  const ranked = events
+    .filter((event) => {
+      const series = seriesByTicker.get(cleanText(event.series_ticker, 120));
+      return Boolean(series && kalshiCheckpointEventMatchesFilters(event, series, filters));
+    })
+    .sort((left, right) => {
+      const leftSeries = seriesByTicker.get(cleanText(left.series_ticker, 120)) ?? {};
+      const rightSeries = seriesByTicker.get(cleanText(right.series_ticker, 120)) ?? {};
+      const priority = seriesPriority(rightSeries) - seriesPriority(leftSeries);
+      if (priority) return priority;
+      const leftId = providerParentIdentity(left);
+      const rightId = providerParentIdentity(right);
+      return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+    });
+  if (filters.category || filters.query) return ranked;
+  const buckets = new Map(RADAR_CATEGORIES.map((category) => [category, [] as JsonRecord[]]));
+  for (const event of ranked) {
+    const series = seriesByTicker.get(cleanText(event.series_ticker, 120)) ?? {};
+    const category = kalshiCheckpointEventCategory(event, series);
+    (buckets.get(category) ?? buckets.get("Industria"))?.push(event);
+  }
+  const balanced: JsonRecord[] = [];
+  for (let index = 0; balanced.length < ranked.length; index += 1) {
+    let added = false;
+    for (const category of RADAR_CATEGORIES) {
+      const event = buckets.get(category)?.[index];
+      if (event) {
+        balanced.push(event);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+  return balanced;
 }
 
 async function enumerateKalshiEventChildren(
@@ -2990,82 +3469,108 @@ async function enumerateKalshiEventChildren(
   };
 }
 
-async function discoverKalshi(environment: Environment, now: string, requestId: string) {
-  const exact = await kalshiTaxonomy(environment);
-  const category = exact?.category ?? "Entertainment";
-  const tag = exact?.tag ?? "Video games";
-  const seriesUrl = new URL(`${KALSHI_API_ROOT}/series`);
-  seriesUrl.searchParams.set("category", category);
-  seriesUrl.searchParams.set("tags", tag);
-  seriesUrl.searchParams.set("include_volume", "true");
-  seriesUrl.searchParams.set("include_product_metadata", "true");
-  seriesUrl.searchParams.set("limit", "200");
-  const seriesCollection = await collectProviderCursorPages(async (cursor) => {
-    const pageUrl = new URL(seriesUrl);
-    if (cursor) pageUrl.searchParams.set("cursor", cursor);
-    return toRecord(await fetchJson(
-      pageUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
-    )) ?? {};
-  }, { itemsField: "series", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
-  const allSeries: JsonRecord[] = [];
-  const seriesIdentities = new Set<string>();
-  for (const seriesItem of seriesCollection.items) {
-    const identity = cleanText(seriesItem.ticker, 120);
-    if (!identity || seriesIdentities.has(identity)) continue;
-    seriesIdentities.add(identity);
-    allSeries.push(seriesItem);
+async function discoverKalshi(
+  environment: Environment,
+  now: string,
+  filters: ReturnType<typeof safeFilters>,
+  requestId: string,
+  intent: RadarRefreshIntent,
+  storedCheckpoint: JsonRecord | null,
+) {
+  const checkpoint = validatedKalshiDiscoveryCheckpoint(storedCheckpoint);
+  if (!checkpoint) {
+    const freshCheckpoint = await buildKalshiProviderDiscoveryCheckpoint(environment, now);
+    const durable = await checkpointRadarProviderDiscovery(environment, intent, freshCheckpoint);
+    return {
+      discovery_in_progress: true,
+      discovery_checkpoint: durable,
+      candidates: [] as JsonRecord[],
+      reconciliations: [] as JsonRecord[],
+    };
   }
-  const prioritizedSeries = allSeries.sort((left, right) => seriesPriority(right) - seriesPriority(left));
-  const series = prioritizedSeries.slice(0, MAX_KALSHI_SERIES);
-  if (!series.length) throw new Error("PROVIDER_INVALID_RESPONSE");
-
-  const minimumClose = Math.floor(Date.now() / 1000);
-  const indexedSettled = await mapWithConcurrency(series, KALSHI_CONCURRENCY, async (seriesItem) => {
-    const ticker = cleanText(seriesItem.ticker, 120);
-    if (!ticker) return [];
-    const eventCollection = await collectProviderCursorPages(async (cursor) => {
-      const eventsUrl = new URL(`${KALSHI_API_ROOT}/events`);
-      eventsUrl.searchParams.set("series_ticker", ticker);
-      eventsUrl.searchParams.set("status", "open");
-      eventsUrl.searchParams.set("with_nested_markets", "true");
-      eventsUrl.searchParams.set("min_close_ts", String(minimumClose));
-      eventsUrl.searchParams.set("limit", "200");
-      if (cursor) eventsUrl.searchParams.set("cursor", cursor);
-      return toRecord(await fetchJson(
-        eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
-      )) ?? {};
-    }, { itemsField: "events", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
-    const events = eventCollection.items;
-    const seriesTitle = cleanText(seriesItem.title ?? seriesItem.name, 400);
-    const seriesSlug = slugify(seriesTitle);
-    const settlementSources = toRecordArray(seriesItem.settlement_sources).map((source) => safePublicUrl(source.url)).filter(Boolean);
-    return events.flatMap((listedEvent) => {
-      const listedTicker = cleanText(listedEvent.event_ticker ?? listedEvent.ticker, 160);
-      return listedTicker ? [{
-        ...listedEvent,
-        _atinara_series_context: {
-          category,
-          tags: Array.isArray(seriesItem.tags) ? seriesItem.tags : [tag],
-          series_ticker: ticker,
-          series_title: seriesTitle,
-          series_slug: seriesSlug,
-          settlement_sources: settlementSources,
-          raw_settlement_sources: seriesItem.settlement_sources,
-        },
-      }] : [];
+  const checkpointSeries = toRecordArray(checkpoint.series);
+  const checkpointFailedTaxonomyScopes = toRecordArray(checkpoint.failed_taxonomy_scopes)
+    .map((scope) => ({
+      category: cleanText(scope.category, 160),
+      tag: cleanText(scope.tag, 160),
+    })).filter((scope) => scope.category && scope.tag);
+  const taxonomyRetryResults = await mapWithConcurrency(
+    checkpointFailedTaxonomyScopes,
+    KALSHI_CONCURRENCY,
+    async (scope) => fetchKalshiTaxonomyScopeSeries(environment, scope),
+  );
+  const taxonomyRetryMerge = mergeProviderTaxonomySeriesV1(
+    taxonomyRetryResults,
+    checkpointFailedTaxonomyScopes,
+  ) as {
+    entries: Array<{ source: JsonRecord; scopes: KalshiTaxonomyScope[] }>;
+    failed_scopes: KalshiTaxonomyScope[];
+  };
+  const failedTaxonomyScopes = taxonomyRetryMerge.failed_scopes;
+  const seriesByTicker = new Map<string, JsonRecord>(checkpointSeries.map((series) => [
+    cleanText(series.ticker, 120), series,
+  ]));
+  const recoveredSeriesIds: string[] = [];
+  for (const { source, scopes: recoveredScopes } of taxonomyRetryMerge.entries) {
+    const recovered = compactKalshiSeriesCheckpoint(source, recoveredScopes);
+    const ticker = cleanText(recovered.ticker, 120);
+    if (!ticker) continue;
+    const current = seriesByTicker.get(ticker);
+    const scopeMap = new Map([
+      ...toRecordArray(current?.taxonomy_scopes),
+      ...toRecordArray(recovered.taxonomy_scopes),
+    ].map((scope) => [
+      `${cleanText(scope.category, 160)}\u0000${cleanText(scope.tag, 160)}`,
+      { category: cleanText(scope.category, 160), tag: cleanText(scope.tag, 160) },
+    ]));
+    if (!current) recoveredSeriesIds.push(ticker);
+    seriesByTicker.set(ticker, {
+      ...(current ?? recovered),
+      taxonomy_scopes: [...scopeMap.values()],
     });
-  });
-  const indexedEvents = indexedSettled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-  const failedSeriesIds = indexedSettled.flatMap((result, index) =>
-    result.status === "rejected"
-      ? [cleanText(series[index]?.ticker, 120)].filter(Boolean)
-      : []);
-  if (!indexedEvents.length && failedSeriesIds.length) throw new Error("PROVIDER_UNAVAILABLE");
-  const successfulSeriesCount = Math.max(0, series.length - failedSeriesIds.length);
+  }
+  const checkpointFailedSeriesIds = Array.isArray(checkpoint.failed_series_ids)
+    ? checkpoint.failed_series_ids.map((value) => cleanText(value, 120)).filter(Boolean) : [];
+  const retrySeriesIds = [...new Set([
+    ...checkpointFailedSeriesIds,
+    ...recoveredSeriesIds,
+  ])];
+  const failedSeriesRetryResults = await mapWithConcurrency(
+    retrySeriesIds,
+    KALSHI_CONCURRENCY,
+    async (ticker) => fetchOpenKalshiSeriesEvents(environment, ticker),
+  );
+  const failedSeriesIds: string[] = [];
+  const recoveredEvents: JsonRecord[] = [];
+  for (let index = 0; index < failedSeriesRetryResults.length; index += 1) {
+    const result = failedSeriesRetryResults[index];
+    if (result.status === "rejected") failedSeriesIds.push(retrySeriesIds[index]);
+    else recoveredEvents.push(...result.value);
+  }
+  const indexedEventsByIdentity = new Map<string, JsonRecord>();
+  for (const event of [...toRecordArray(checkpoint.events), ...recoveredEvents]) {
+    const identity = providerParentIdentity(event);
+    if (!identity) continue;
+    const current = indexedEventsByIdentity.get(identity);
+    if (current && canonicalJson(current) !== canonicalJson(event)) {
+      throw new Error("PROVIDER_DISCOVERY_PARENT_IDENTITY_CONFLICT");
+    }
+    if (!current) indexedEventsByIdentity.set(identity, event);
+  }
+  const indexedEvents = prioritizeKalshiCheckpointEvents(
+    [...indexedEventsByIdentity.values()],
+    seriesByTicker,
+    filters,
+  ).map((event) => ({
+    ...event,
+    _atinara_series_context: kalshiCheckpointSeriesContext(
+      seriesByTicker.get(cleanText(event.series_ticker, 120)) ?? {},
+    ),
+  }));
   const indexedScope = selectWholeProviderParents(indexedEvents, {
-    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
-    maxParents: 120,
-    maxTotalParents: 240,
+    maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+    maxParents: MAX_PROVIDER_ENUMERATION_PARENTS,
+    maxTotalParents: MAX_PROVIDER_INDEX_PARENTS,
     countChildren: false,
   });
   const enumerated = await mapWithConcurrency(
@@ -3092,7 +3597,7 @@ async function discoverKalshi(environment: Environment, now: string, requestId: 
       return {
         ...event,
         category: cleanText(context.category, 120),
-        tags: Array.isArray(context.tags) ? context.tags : [tag],
+        tags: Array.isArray(context.tags) ? context.tags : [],
         series_ticker: ticker,
         series_title: cleanText(context.series_title, 400),
         settlement_sources: toRecordArray(event.settlement_sources).length
@@ -3112,34 +3617,80 @@ async function discoverKalshi(environment: Environment, now: string, requestId: 
       };
     },
   );
-  if (enumerated.some((result) => result.status === "rejected")) throw new Error("PROVIDER_UNAVAILABLE");
-  const events = enumerated.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  const childScope = selectWholeProviderParents(events, {
-    maxChildren: MAX_NORMALIZED_PER_PROVIDER,
-    maxParents: 120,
-    maxTotalParents: 120,
-  });
-  const selectedEvents = childScope.selected;
-  const parentSelection = mergeProviderParentSelections(indexedScope.selection, childScope.selection);
-  const resolvedEvents: JsonRecord[] = [];
-  for (const event of selectedEvents) {
-    resolvedEvents.push(await resolveKalshiEventIdentities(environment, event, now));
+  const failedParentIds: string[] = [];
+  const events: JsonRecord[] = [];
+  for (let index = 0; index < enumerated.length; index += 1) {
+    const result = enumerated[index];
+    if (result.status === "rejected") {
+      failedParentIds.push(providerParentIdentity(indexedScope.selected[index]));
+      continue;
+    }
+    events.push(result.value);
   }
-  const adapted = adaptKalshiResponse({ events: resolvedEvents }, { now, category, cacheMinutes: 20 }) as JsonRecord[];
-  const contextual = await attachCanonicalFactContext(adapted, resolvedEvents, "kalshi");
+  const childScope = selectWholeProviderParents(events, {
+    maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+    maxParents: MAX_PROVIDER_MATERIALIZED_PARENTS,
+    maxTotalParents: MAX_PROVIDER_ENUMERATION_PARENTS,
+  });
+  const identityResults = await mapWithConcurrency(
+    childScope.selected,
+    KALSHI_CONCURRENCY,
+    async (event): Promise<JsonRecord> => resolveKalshiEventIdentities(environment, event, now),
+  );
+  const resolvedEvents: JsonRecord[] = [];
+  for (let index = 0; index < identityResults.length; index += 1) {
+    const result = identityResults[index];
+    if (result.status === "rejected") {
+      failedParentIds.push(providerParentIdentity(childScope.selected[index]));
+      continue;
+    }
+    resolvedEvents.push(result.value);
+  }
+  if (!resolvedEvents.length && indexedScope.selected.length) throw new Error("PROVIDER_UNAVAILABLE");
+  const materializedScope = selectWholeProviderParents(resolvedEvents, {
+    maxChildren: MAX_PROVIDER_MATERIALIZED_CHILDREN,
+    maxParents: MAX_PROVIDER_MATERIALIZED_PARENTS,
+    maxTotalParents: MAX_PROVIDER_ENUMERATION_PARENTS,
+  });
+  const parentSelection = mergeIndexedProviderSelection(
+    indexedScope.selection,
+    materializedScope.selection,
+    failedParentIds,
+  );
+  const adapted = adaptKalshiResponse(
+    { events: materializedScope.selected },
+    { now, category: filters.category || "Video Games", cacheMinutes: 20 },
+  ) as JsonRecord[];
+  const contextual = await attachCanonicalFactContext(adapted, materializedScope.selected, "kalshi");
   const reconciled = await reconcileCanonicalEvents(
-    environment, "kalshi", resolvedEvents, contextual, now, requestId,
+    environment, "kalshi", materializedScope.selected, contextual, now, requestId,
   );
   return {
     ...reconciled,
     selection: {
       ...parentSelection,
-      total_series_count: prioritizedSeries.length,
-      selected_series_count: successfulSeriesCount,
-      deferred_series_count: Math.max(0, prioritizedSeries.length - successfulSeriesCount),
+      catalog_total_parent_count: indexedEventsByIdentity.size,
+      total_taxonomy_scope_count: Math.max(
+        0,
+        Number(checkpoint.total_taxonomy_scope_count) || toRecordArray(checkpoint.taxonomy_scopes).length,
+      ),
+      selected_taxonomy_scope_count: Math.max(
+        0,
+        toRecordArray(checkpoint.taxonomy_scopes).length - failedTaxonomyScopes.length,
+      ),
+      failed_taxonomy_scope_count: failedTaxonomyScopes.length,
+      failed_taxonomy_scopes: failedTaxonomyScopes,
+      total_series_count: seriesByTicker.size,
+      selected_series_count: Math.max(0, seriesByTicker.size - failedSeriesIds.length),
+      deferred_series_count: 0,
       failed_series_count: failedSeriesIds.length,
       failed_series_ids: failedSeriesIds,
-      provider_scope_partial: failedSeriesIds.length > 0,
+      failed_parent_count: failedParentIds.length,
+      failed_parent_ids: [...new Set(failedParentIds)],
+      provider_scope_partial: failedTaxonomyScopes.length > 0
+        || failedSeriesIds.length > 0 || failedParentIds.length > 0,
+      discovery_checkpoint_version: PROVIDER_DISCOVERY_CHECKPOINT_VERSION,
+      discovery_checkpoint_replayed: true,
     },
   };
 }
@@ -4303,7 +4854,7 @@ async function loadRadarView(
   minimumDiscoveryCheckedAt: string | null = null,
 ) {
   const [candidatesPayload, rejectedPayload, providers, parentReconciliationsPayload] = await Promise.all([
-    rpc(environment, "list_market_radar_candidates_v5", {
+    rpcReadWithRetry(environment, "list_market_radar_candidates_v5", {
       provider_filter: filters.provider === "all" ? null : filters.provider,
       category_filter: filters.category || null,
       quality_filter: filters.quality,
@@ -4383,12 +4934,15 @@ async function loadRadarView(
 
 async function runDiscovery(environment: Environment, authorization: string, body: JsonRecord) {
   const filters = safeFilters(body);
-  const cacheKey = buildCacheKey(filters);
+  // La paginación solo proyecta un snapshot; no forma parte de la identidad de
+  // red ni puede ocultar una UUID activa al navegar entre páginas.
+  const refreshFilters = radarRefreshIdentityFilters(filters);
+  const cacheKey = buildCacheKey(refreshFilters);
   const requestedRefresh = body.refresh === true;
   const refreshRequestHash = await sha256Hex({
     request_version: RADAR_REFRESH_REQUEST_VERSION,
     provider_role_version: RADAR_PROVIDER_ROLE_VERSION,
-    filters,
+    filters: refreshFilters,
   });
   const activeRefresh = toRecord(await rpc(
     environment,
@@ -4485,7 +5039,10 @@ async function runDiscovery(environment: Environment, authorization: string, bod
     const issue = toRecord(intent.responseSummary?.issue);
     if (issue) providerIssues.push(issue);
     const replayedSelection = toRecord(intent.responseSummary?.provider_selection);
-    if (replayedSelection) providerSelections.push({ provider, ...replayedSelection });
+    if (replayedSelection) providerSelections.push({
+      provider,
+      ...projectProviderSelectionForResponse(replayedSelection),
+    });
     if (intent.inProgress) {
       candidateProviderErrors.push({
         ...publicProviderError(provider, "RADAR_REFRESH_ALREADY_RUNNING", 202),
@@ -4519,10 +5076,19 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const discoveryResults = await withRadarRefreshLeaseHeartbeat(
     environment,
     [...providerIntents.values(),tavilyIntent],
-    () => mapWithConcurrency(providers, Math.max(1, providers.length), async (provider) => {
+    () => mapWithConcurrency(providers, Math.max(1, providers.length), async (provider): Promise<JsonRecord> => {
+      const intent = providerIntents.get(provider);
+      if (!intent) throw new Error("RADAR_REFRESH_INTENT_REQUIRED");
       const discovery = provider === "polymarket"
         ? await discoverPolymarket(environment, now, filters, refresh.requestId)
-        : await discoverKalshi(environment, now, refresh.requestId);
+        : await discoverKalshi(
+          environment,
+          now,
+          filters,
+          refresh.requestId,
+          intent,
+          await loadRadarProviderDiscoveryCheckpoint(environment, intent),
+        );
       return { provider, ...discovery };
     }),
   );
@@ -4533,20 +5099,36 @@ async function runDiscovery(environment: Environment, authorization: string, bod
       const intent = providerIntents.get(provider);
       try {
         if (!intent) throw new Error("RADAR_REFRESH_INTENT_REQUIRED");
-        if (isRecord(result.value.selection)) await rpc(
-          environment, "record_market_radar_provider_selection_v1", {
+        const discovery = result.value;
+        if (discovery.discovery_in_progress === true) {
+          candidateProviderErrors.push({
+            provider,
+            code: "RADAR_PROVIDER_DISCOVERY_CHECKPOINTED",
+            status: 202,
+            message: "Atinara selló el índice de series y registró cualquier fallo parcial. Continúa la misma actualización para enumerar familias sin repetir el catálogo.",
+            retryable: true,
+            state_preserved: true,
+            next_action: "resume_provider_discovery",
+            discovery_checkpoint: discovery.discovery_checkpoint,
+          });
+          continue;
+        }
+        const selection = toRecord(discovery.selection);
+        if (selection) await rpc(
+          environment, "record_market_radar_provider_selection_v2", {
             request_id_input: intent.requestId,
             provider_input: intent.provider,
             capability_input: intent.capability,
             lease_token_input: intent.leaseToken,
-            selection_input: result.value.selection,
+            selection_input: selection,
           }, undefined, true,
         );
-        await recordParentReconciliations(environment, intent, result.value.reconciliations as JsonRecord[]);
-        discoveredByProvider.set(result.value.provider, result.value.candidates as JsonRecord[]);
-        if (isRecord(result.value.selection)) providerSelections.push({
-          provider: result.value.provider,
-          ...result.value.selection,
+        await recordParentReconciliations(environment, intent, toRecordArray(discovery.reconciliations));
+        const discoveredProvider = cleanText(discovery.provider, 40);
+        discoveredByProvider.set(discoveredProvider, toRecordArray(discovery.candidates));
+        if (selection) providerSelections.push({
+          provider: discoveredProvider,
+          ...projectProviderSelectionForResponse(selection),
         });
         continue;
       } catch (error) {
@@ -4602,14 +5184,25 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   for (const selection of providerSelections) {
     const deferredParents = Math.max(0, Number(selection.deferred_parent_count) || 0);
     const deferredSeries = Math.max(0, Number(selection.deferred_series_count) || 0);
+    const failedTaxonomyScopes = Math.max(0, Number(selection.failed_taxonomy_scope_count) || 0);
     const failedSeries = Math.max(0, Number(selection.failed_series_count) || 0);
-    if (!deferredParents && !deferredSeries && !failedSeries) continue;
-    const failureCopy = failedSeries
-      ? ` ${failedSeries} serie${failedSeries === 1 ? "" : "s"} seleccionada${failedSeries === 1 ? "" : "s"} no respondieron y se reintentarán sin descartar los padres sanos.`
+    const failedParents = Math.max(0, Number(selection.failed_parent_count) || 0);
+    const failedSearches = Math.max(0, Number(selection.failed_search_count) || 0);
+    if (!deferredParents && !deferredSeries && !failedTaxonomyScopes
+      && !failedSeries && !failedParents && !failedSearches) continue;
+    const failures = [
+      failedTaxonomyScopes
+        ? `${failedTaxonomyScopes} taxonomía${failedTaxonomyScopes === 1 ? "" : "s"}` : "",
+      failedSeries ? `${failedSeries} serie${failedSeries === 1 ? "" : "s"}` : "",
+      failedParents ? `${failedParents} padre${failedParents === 1 ? "" : "s"}` : "",
+      failedSearches ? `${failedSearches} búsqueda${failedSearches === 1 ? "" : "s"} temática${failedSearches === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(", ");
+    const failureCopy = failures
+      ? ` No respondieron: ${failures}; se reintentarán sin descartar las familias sanas.`
       : "";
     qualityNotices.push({
       provider: selection.provider,
-      code: failedSeries ? "RADAR_PROVIDER_SERIES_PARTIAL" : "RADAR_PROVIDER_SCOPE_DEFERRED",
+      code: failures ? "RADAR_PROVIDER_SERIES_PARTIAL" : "RADAR_PROVIDER_SCOPE_DEFERRED",
       quarantined_count: 0,
       degrades_provider: false,
       selection,
@@ -4900,13 +5493,18 @@ async function runDiscovery(environment: Environment, authorization: string, bod
   const preservedCandidatesByIdentity = new Map<string, JsonRecord>();
   for (const failure of candidateProviderErrors) {
     const failedProvider = cleanText(failure.provider, 40);
+    const resumableState = Number(failure.status) === 202
+      ? cleanText(failure.code, 100) === "RADAR_PROVIDER_DISCOVERY_CHECKPOINTED"
+        ? "discovery_resumable"
+        : "persistence_resumable"
+      : "provider_degraded";
     for (const candidate of current.candidates.filter((item) => item.provider === failedProvider)) {
       const identity = `${cleanText(candidate.provider, 40)}:${cleanText(candidate.external_id, 220)}`;
       preservedCandidatesByIdentity.set(identity, {
         ...candidate,
         eligibility_state_preserved: true,
         provider_refresh_checked_at: now,
-        provider_refresh_state: "provider_degraded",
+        provider_refresh_state: resumableState,
       });
     }
   }

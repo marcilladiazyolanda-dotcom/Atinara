@@ -4,39 +4,88 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el smoke Radar v68:**
-> `origin/main` está en `4fdc0b13001b7d296b38d986a8eafe3a4a7dd43d`;
-> `20260825191649_checkpoint_market_radar_parent_persistence_v1` consta aplicada
-> una sola vez y `market-radar` v68 está `ACTIVE`, `verify_jwt=true`, digest
-> `85ce234327b57e7aee4d656e1fad0e43b712ae979c89515646deea7b3742a519`.
+> **Estado productivo verificado tras el smoke Radar v69:**
+> `origin/main` está en `addfc0b372bc45c572a843f3cec7893b3e41e06c`;
+> `20260825203949` consta aplicada una sola vez y `market-radar` v69 está
+> `ACTIVE`, `verify_jwt=true`, digest
+> `7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265`.
 > Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
 > Resolución v16 permanecen sin cambios y con JWT obligatorio.
 >
-> El único refresh nuevo es `39a1656e-61af-4674-a4e0-fa0896236507` y solo se
-> continuó una vez esa misma UUID. Kalshi seleccionó 25 de 109 series, con cero
-> fallidas; persistió 11 padres y 148/148 hijas identificadas. Nueve padres son
+> El único refresh nuevo es `39a1656e-61af-4674-a4e0-fa0896236507`; terminó
+> `partial/terminal` tras continuar siempre esa misma UUID, con `claim_count=3`.
+> Kalshi persistió 11 padres y 148/148 hijas identificadas. Nueve padres son
 > `complete` y dos `provider_unavailable`; no hay identidades sin resolver. El
 > parent manifest es
 > `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
 > Tavily terminó `technical_failed/AI_DEADLINE_EXCEEDED` como enriquecimiento
 > auxiliar con `blocking_scope=none`, sin degradar Kalshi.
 >
-> El feed alcanzó por primera vez su checkpoint de candidatas: expected y staged
-> son 86, el manifest es
+> Expected, staged, processed y accepted son 86; cuarentenas y fallos son cero.
+> El manifest es
 > `7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`
-> y existen cuatro batches de 24, 24, 24 y 14. El primero agotó el timeout,
-> quedó `technical_failed` con `attempt_count=1` y los otros tres permanecen
-> pendientes. La recuperación obtuvo HTTP 500 antes de entrar en el catcher v1;
-> la intención sigue `in_progress/persisting`, `claim_count=2`, sin
-> `finalization_hash`, candidatas aceptadas, cuarentenas ni nuevo borrador.
+> y la finalización es
+> `62d641016b4b91bc79047d2cf28ab8cf7722d117a8962a318f403b3eda504f6f`.
+> Dos batches raíz de 24 quedaron `superseded` y sus cuatro hijos de 12 se
+> completaron; los raíces de 24 y 14 también terminaron. Se promovieron 86
+> candidatas, ninguna elegible, y continuaron exactamente seis borradores.
 >
-> La causa general es que el divisor durable ya existía pero no estaba conectado
-> a la ruta Edge v2, y el preflight exterior podía agotar el timeout sin devolver
-> `batch_id`. La corrección incremental está documentada en
-> `docs/ATINARA_RADAR_BATCH_TIMEOUT_ISOLATION_FIX_20260825.md`. No pulsar otra vez
-> «Continuar actualización» ni crear una intención nueva antes de integrar,
-> migrar y desplegar este paquete; después debe reanudarse exclusivamente la
-> misma UUID.
+> La limitación pendiente ya no es persistencia: v69 solo prioriza 25 de 109
+> series Video games y omite el alcance Esports. Una auditoría pública agotó 215
+> series gaming y 515 padres abiertos con el host recomendado de Kalshi. La
+> corrección incremental está documentada en
+> `docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`; aún no está
+> en GitHub ni producción. No ejecutar otro refresh ni Market Expert antes de
+> integrar, migrar, desplegar y verificar ese paquete.
+
+### Checkpoint durable de discovery y cobertura temática · 25 de agosto de 2026
+
+- El alcance público real contiene 109 series Entertainment/Video games y 107
+  Sports/Esports, con una coincidencia: 215 series y 515 padres abiertos. El
+  recorrido completo terminó en 52,1 s con concurrencia 2 y backoff de 429;
+  agotó las 215 series, obtuvo 515 identidades únicas y cero errores finales.
+  El escaneo global no sirve como sustituto: alcanzó 10.000 eventos y 50 páginas
+  sin demostrar fin de catálogo.
+- La primera invocación de la misma UUID indexa todas las series y padres con
+  `with_nested_markets=false`, sella un checkpoint privado de hasta 2 MiB y
+  libera el lease. La continuación reclama esa UUID, lee el checkpoint y
+  enumera familias completas sin repetir las 215 series. Series fallidas se
+  reintentan de forma aislada; IDs seleccionados y diferidos se conservan sin
+  truncamiento en `provider_selection` v2.
+- Las dos consultas taxonómicas también están aisladas: una caída de Video
+  games o Esports conserva el scope sano, registra el scope fallido dentro del
+  checkpoint y reintenta exclusivamente ese scope al continuar. Incluso si
+  ambos scopes quedan temporalmente indisponibles, Radar devuelve alcance
+  parcial explícito y no un fallo técnico global ni un snapshot fresco vacío.
+- La tabla de checkpoint fuerza RLS y append-only; las tres RPC son
+  `service_role` only, exigen lease y validan recuentos, unicidad, pertenencia,
+  tamaño, versión, timestamp y hash SHA-256. No hay backfill ni DML manual.
+  La migración se probó completa contra producción dentro de una transacción
+  terminada en `ROLLBACK`; después `to_regclass` y `to_regprocedure` confirmaron
+  que no quedó aplicada.
+- La respuesta pública no duplica hasta 2.000 IDs: entrega recuentos, integridad
+  del ledger y muestras acotadas. Polymarket sustituye la consulta genérica por
+  seis búsquedas temáticas, deduplica padres y aísla búsquedas o familias
+  fallidas. No hay IDs de serie/mercado hardcodeados ni Gemini en Radar.
+- `list_market_radar_candidates_v5` realiza un solo retry de lectura para
+  500/504/57014. Ante transporte ambiguo, la UI espera 500 ms y hace una única
+  lectura `refresh=false`; conserva la UUID si sigue activa y limpia
+  «Continuar» si ya es terminal. Doble clic comparte promesa únicamente para la
+  misma huella y los filtros no pueden cambiar durante la petición activa ni
+  mientras exista una intención reanudable. Los offsets de páginas son solo una
+  proyección de lectura y no cambian el hash durable del refresh. Una recarga
+  restaura desde la sesión únicamente UUID y filtros, sin credenciales ni
+  respuestas, y los reconcilia por lectura autoritativa.
+- Pasan Deno 2.1.14, 153 pruebas focalizadas, 183 pruebas de las cinco suites
+  afectadas, 232 regresiones del ciclo completo y 19 contratos SQL estáticos.
+  La prueba ejecutable conserva 109 + 107 - 1 = 215 series, los dos scopes de
+  la serie compartida y 515 padres únicos. Pages continúa sirviendo
+  `20260825-radar-catalog-bound1`; el paquete pendiente versiona solo los dos
+  scripts Radar modificados como `20260825-radar-provider-checkpoint1`.
+- Producción sigue en v69 y no se inició otra UUID. Los fingerprints protegidos,
+  seis borradores, 15 mercados, 9 predicciones, Karma 2.932 y Prestigio 40 no se
+  modificaron. Tras la integración se aplicará una sola migración, se desplegará
+  únicamente `market-radar` y se hará exactamente un refresh fresco controlado.
 
 ### Aislamiento durable de timeouts de batch · 25 de agosto de 2026
 
