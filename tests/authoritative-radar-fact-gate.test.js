@@ -299,6 +299,80 @@ test("el parser puro liga identidad, predicado y fecha y no mezcla GTA VI con GT
   assert.match(edge, /deriveDeterministicUnresolvedProof\(page\.content, group, retrievedAt\)/);
 });
 
+test("contenido oficial reconoce anuncios audiovisuales equivalentes sin abrir evidencia cruzada", () => {
+  const candidate = eligibleCandidate({
+    provider: "kalshi",
+    external_id: "kalshi:PROJECT-AURORA-TRAILER-SEP",
+    source_title: "Project Aurora: New trailer release date",
+    source_question: "Will another Project Aurora trailer come out before Sep 2026?",
+    atinara_question: "¿Se lanzará another Project Aurora trailer antes de Sep 2026?",
+    source_resolution_rules: "Resolves Yes if a new, at least 30 second, Project Aurora trailer is officially released before Sep 1, 2026.",
+    source_market_open_at: "2026-05-01T16:00:00.000Z",
+    source_close_at: "2026-09-01T00:00:00.000Z",
+  });
+  const group = { title: candidate.source_title, candidates: [candidate] };
+  const futureAnnouncement = "Project Aurora: An Extended Look will premiere on August 27 on the official studio video channel.";
+  const proof = radar.deriveDeterministicUnresolvedProof(futureAnnouncement, group, now);
+
+  assert.equal(radar.predictionContractKind(candidate), "milestone");
+  assert.equal(proof?.until, "2026-08-27T12:00:00.000Z");
+  assert.deepEqual(proof?.contractKinds, ["milestone"]);
+  assert.equal(radar.deriveDeterministicUnresolvedProof(
+    "Project Borealis: An Extended Look will premiere on August 27.", group, now,
+  ), null);
+  assert.equal(radar.deriveDeterministicUnresolvedProof(
+    "Project Aurora: An Extended Look will premiere on August 8.", group, now,
+  ), null);
+  assert.equal(radar.deriveDeterministicUnresolvedProof(
+    "Project Aurora: An Extended Look article will publish on August 27.", group, now,
+  ), null);
+  assert.equal(radar.deriveDeterministicUnresolvedProof(
+    `Project Aurora: An Extended Look is available now. ${futureAnnouncement}`, group, now,
+  ), null);
+
+  const futureEvidence = verifiedOfficialEvidence({
+    title: "Project Aurora: An Extended Look",
+    url: "https://studio.example.com/project-aurora/extended-look",
+    supports: futureAnnouncement,
+    supported_contract_kinds: ["milestone"],
+    unresolved_until: proof.until,
+    unresolved_proof_excerpt: proof.excerpt,
+    unresolved_proof_excerpt_sha256: createHash("sha256").update(proof.excerpt).digest("hex"),
+  });
+  assert.equal(radar.evidenceHasPotentialTerminalClaim(futureEvidence, candidate, now), false);
+  assert.equal(radar.hasDeterministicOfficialResearchCoverage([candidate], [futureEvidence], now), true);
+  assert.equal(radar.hasDeterministicOfficialResearchCoverage([{
+    ...candidate,
+    source_question: "Will another Project Aurora trailer come out before August 20, 2026?",
+    atinara_question: "¿Se lanzará another Project Aurora trailer antes del 20 de agosto de 2026?",
+    source_resolution_rules: "Resolves Yes if a new Project Aurora trailer is officially released before August 20, 2026.",
+    source_close_at: "2026-08-20T00:00:00.000Z",
+  }], [futureEvidence], now), false);
+  assert.equal(radar.hasDeterministicOfficialResearchCoverage([{
+    ...candidate,
+    source_question: "Will another Project Aurora trailer come out?",
+    atinara_question: "¿Se lanzará another Project Aurora trailer?",
+    source_resolution_rules: "Resolves Yes if a new Project Aurora trailer is officially released.",
+    source_close_at: null,
+    evaluation_ends_at: null,
+  }], [futureEvidence], now), false);
+  assert.equal(radar.hasDeterministicOfficialResearchCoverage([{
+    ...candidate,
+    source_title: "Project Borealis: New trailer release date",
+    source_question: "Will another Project Borealis trailer come out before Sep 2026?",
+    atinara_question: "¿Se lanzará another Project Borealis trailer antes de Sep 2026?",
+  }], [futureEvidence], now), false);
+
+  const terminalEvidence = verifiedOfficialEvidence({
+    title: "Project Aurora: An Extended Look",
+    url: "https://studio.example.com/project-aurora/extended-look",
+    supports: "Project Aurora: An Extended Look is available now on the official studio video channel.",
+    unresolved_proof: false,
+    supported_contract_kinds: [],
+  });
+  assert.equal(radar.evidenceHasPotentialTerminalClaim(terminalEvidence, candidate, now), true);
+});
+
 test("el parser da precedencia al lanzamiento material y respeta la plataforma contractual", () => {
   const excerpt = "Grand Theft Auto VI launches for PC on September 1, 2026.";
   const genericCandidate = eligibleCandidate({

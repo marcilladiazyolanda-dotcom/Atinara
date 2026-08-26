@@ -1,0 +1,96 @@
+ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826
+Generated: 2026-08-26
+Base: origin/main 58e47a89eb639285a9b0ca27b604b8fd2c2553c0
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826.md
+A docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826_MANIFEST.txt
+M docs/STATE_CONSISTENCY_AND_MEMORY.md
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+M tests/authoritative-radar-fact-gate.test.js
+M tests/market-family-v4.test.js
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+a69499ca015e12bd2d8dd3b11e6d40f9b8a21c4300953039fffdb75df033ed8c  ORAKLO_PROJECT_CONTEXT.md
+480e939b05dff3487105333cb9e4aa9ce7e303d9ee7d2c14b7625da8388c1ff2  README.md
+66454922fd5a9c73923ee97af031c3045748dfa14dc18b8bed6f428688a907b4  docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826.md
+92848977fd8bf90bff41f5bcf3ce6cd7eee3f64d2ebd7184af72127fadf8f8f1  docs/STATE_CONSISTENCY_AND_MEMORY.md
+58780f808a5fa5af0b0df76012cc09289ffae3001476f1413b58752122ff61a3  supabase/functions/_shared/market-radar.mjs
+f02f15adf280802398e8bb1fd479a84453cbece81ae315083f583710b8dc3cd6  supabase/functions/market-radar/index.ts
+0e0c1e1d0f4abd364165d06fedd9cbd6851b691ea60aacb023e50766964fc315  tests/authoritative-radar-fact-gate.test.js
+106b70471dc547be65cde63fad427fd66866a8f05ef7c8b4b38a212cd7332888  tests/market-family-v4.test.js
+fadf6592d2b492b4be643b9aacc358c961d4eaf655b4fa04c99c08d9dfc7ac1c  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar (index.ts plus modified shared dependency; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+VERIFICATION
+- focused Radar, evidence, family, resumability and draft-cycle tests: 219 passed, 0 failed
+- parent reconciliation, pagination and family-size matrix: 58 passed, 0 failed
+- combined focused total: 277 passed, 0 failed
+- Deno 2.1.14 Edge checks: 9 passed, including market-radar
+- JavaScript syntax: 128 files passed
+- live official page: HTTP 200; exact production payload produced gtavi family, full subject and 2026-08-27 future proof
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main 58e47a89eb639285a9b0ca27b604b8fd2c2553c0
+- market-radar v72 ACTIVE verify_jwt=true digest 5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116
+- market-expert v26, market-draft-fixer v22, validate-market-draft v31 and analyze-market-resolution v16 unchanged
+- migration 20260826112912_fix_market_radar_domain_review_contract_v2 applied once
+- refresh UUID c1f677eb-0dae-410f-820d-a4483601ab47 completed/terminal; no later refresh UUID
+- 215/215 Kalshi series completed; failed=0; 590 indexed parents
+- 24 selected complete parents; 566 deferred; 192 discovered/accounted/identified children
+- expected=staged=processed=accepted=162; quarantined=failed=0
+- manifest 085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4
+- finalization aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5
+- candidate 1aa9b332-07d9-4dff-a2e3-d98a7066237e; fingerprint r3712d951
+- domain review request 6b5249ad-767d-488c-b0cc-5ab902f87b24; in_domain; policy v2
+- eligibility requests 0488f6b7-ee48-4cb9-853e-2b357101e64a and bc5b79e8-8338-4f09-a020-36405b32957d: HTTP 503 ELIGIBILITY_SCAN_UNAVAILABLE
+- exactly six private drafts; no Market Expert invocation for the selected candidate
+
+ROOT CAUSE
+- mixed-language optional article matched a before another and persisted nother gta vi
+- official-content parser did not recognize natural active audiovisual wording such as will premiere
+- yearless official dates did not create deterministic future evidence
+- one auxiliary URL failure kept the group incomplete despite an exact reachable official future announcement
+
+CORRECTION
+- preserve complete articles with longest-first matching and word boundaries
+- derive official-content subject from the freshly calculated family
+- recognize bounded audiovisual aliases and natural future/terminal verbs
+- infer yearless dates conservatively from retrieval year without rolling recent past dates forward
+- clear incomplete research only when every candidate has exact verified future coverage within its own temporal boundary
+- terminal, cross-subject, cross-content, speculative, past or out-of-contract evidence remains closed
+- no provider, series, event, market or fixture hardcode in production
+
+POST-UPLOAD
+- fetch and compare all 10 routes and contents against this package
+- require Calidad de Atinara, Edge Deno check, Pages and offline benchmark success; do not use Sonar
+- create a clean production worktree from the new origin/main
+- take a read-only baseline and confirm v72 plus protected fingerprints and exactly six drafts
+- deploy only market-radar with verify_jwt=true; apply no migration and deploy no frontend
+- verify new version, ACTIVE state, JWT, digest and protected invariants
+- do not retry preparation on the stale candidate identity
+- run exactly one new Kalshi refresh to persist the corrected family identity
+- revalidate one fresh valid candidate; investigate before any retry if it fails
+- call Market Expert only after eligibility is current; permit one inference and one private draft write
+- never confirm, publish, resolve or settle the draft

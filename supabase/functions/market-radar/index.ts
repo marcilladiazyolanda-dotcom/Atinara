@@ -40,6 +40,7 @@ import {
   extractOfficialHtmlText,
   extractOfficialRelatedUrls,
   groupCandidates,
+  hasDeterministicOfficialResearchCoverage,
   hasSpeculativeEvidenceLanguage,
   inferAtinaraCategory,
   isAdaptedIdeaComplete,
@@ -4205,10 +4206,13 @@ async function researchGroupsWithTavily(
   // el escaneo terminal de la familia está completo aunque la búsqueda auxiliar
   // haya fallado. Una fuente genérica o evidencia cruzada nunca satisface esto.
   let directAuthorityFallbackGroups = 0;
+  let deterministicFutureFallbackGroups = 0;
+  const coverageCheckedAt = new Date().toISOString();
   for (const group of groups) {
     const groupKey = cleanText(group.event_group_key, 240);
     if (!incompleteGroupKeys.has(groupKey)) continue;
-    const authorityCandidateIds = new Set((evidence.get(groupKey) ?? [])
+    const groupEvidence = evidence.get(groupKey) ?? [];
+    const authorityCandidateIds = new Set(groupEvidence
       .filter((item) => isResolutionAuthorityEvidence(item))
       .map((item) => cleanText(item.candidate_external_id, 220))
       .filter(Boolean));
@@ -4217,6 +4221,11 @@ async function researchGroupsWithTavily(
       authorityCandidateIds.has(cleanText(candidate.external_id, 220)))) {
       incompleteGroupKeys.delete(groupKey);
       directAuthorityFallbackGroups += 1;
+      continue;
+    }
+    if (hasDeterministicOfficialResearchCoverage(groupCandidates, groupEvidence, coverageCheckedAt)) {
+      incompleteGroupKeys.delete(groupKey);
+      deterministicFutureFallbackGroups += 1;
     }
   }
   const evidenceItems = [...evidence.values()].flat();
@@ -4231,7 +4240,12 @@ async function researchGroupsWithTavily(
     actionKey: "authority-selection",
     progressFingerprint: `authority-selection:${authorityCount}:${groups.length}`,
     status: authorityCount ? "completed" : "no_op",
-    summary: { count: authorityCount, groups: groups.length, direct_contract_fallback_groups: directAuthorityFallbackGroups },
+    summary: {
+      count: authorityCount,
+      groups: groups.length,
+      direct_contract_fallback_groups: directAuthorityFallbackGroups,
+      deterministic_future_fallback_groups: deterministicFutureFallbackGroups,
+    },
   });
   const agentExecution = agent.complete(firstFailure ? "degraded" : "completed") as JsonRecord;
   const agentTelemetry = await persistAgentTelemetry({

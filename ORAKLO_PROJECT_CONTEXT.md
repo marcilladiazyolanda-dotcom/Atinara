@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el despliegue Radar v71:**
-> `origin/main` está en `d204bde336a63ac83a2991e5916b78fbdc4ef7ee`;
+> **Estado productivo verificado tras el despliegue Radar v72:**
+> `origin/main` está en `58e47a89eb639285a9b0ca27b604b8fd2c2553c0`;
 > la migración local `20260826130000` consta aplicada remotamente como
-> `20260826112912` y `market-radar` v71 está `ACTIVE`, `verify_jwt=true`, digest
-> `18b3c501fb7dbd5ed4323e701ec25c2ef046224af3de50838ece0ad7cd8ca695`.
+> `20260826112912` y `market-radar` v72 está `ACTIVE`, `verify_jwt=true`, digest
+> `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`.
 > Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
 > Resolución v16 permanecen sin cambios y con JWT obligatorio.
 >
@@ -22,27 +22,60 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
 > Tavily también terminó sin degradar Kalshi. No se creó una segunda UUID.
 >
-> La candidata fresca `1aa9b332-07d9-4dff-a2e3-d98a7066237e`, hija
-> `kalshi:market:KXGTATRAILER-26SEP`, superó identidad, padre completo,
-> paginación, apertura y duplicados. La única revisión humana ya se registró
-> como `in_domain`, request `6b5249ad-767d-488c-b0cc-5ab902f87b24`, con huella
-> de candidata `r3712d951`, huella de dominio
+> La candidata `1aa9b332-07d9-4dff-a2e3-d98a7066237e`, hija
+> `kalshi:market:KXGTATRAILER-26SEP`, conserva padre completo, siete hijas,
+> paginación agotada, apertura y ausencia de duplicado. Su revisión humana está
+> registrada como `in_domain`, request
+> `6b5249ad-767d-488c-b0cc-5ab902f87b24`, con huella `r3712d951`, huella de dominio
 > `0c5c75388ff6690d6963c8ad5375c5628f078d5f34ab8b27fa323a9c97981653`
-> y política `atinara-gaming-domain-v2`. La lectura service-only devuelve la
-> fila exacta y la incidencia quedó resuelta.
+> y política `atinara-gaming-domain-v2`. V72 conservó correctamente esa
+> atestación y alcanzó el escaneo oficial de elegibilidad.
 >
-> La única renovación de elegibilidad posterior, attempt
-> `2fd2337a-f246-4371-8da1-9bae46fde828`, creó el check 4572 pero volvió a
-> `technical_hold/GAMING_DOMAIN_REVIEW_REQUIRED`. No hubo error HTTP, SQL o de
-> proveedor: las RPC de candidata, reconciliación, revisión y aplicación
-> respondieron 200. No se repitió la operación y los seis borradores siguen
-> intactos.
+> Los dos intentos controlados posteriores, requests
+> `0488f6b7-ee48-4cb9-853e-2b357101e64a` y
+> `bc5b79e8-8338-4f09-a020-36405b32957d`, fallaron ambos con HTTP 503 y
+> `ELIGIBILITY_SCAN_UNAVAILABLE`. No se realizó un tercer intento, no se llamó
+> Market Expert y los seis borradores siguen intactos.
 >
-> La corrección incremental está en
-> `docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md`. Hasta integrarla
-> y desplegar exclusivamente `market-radar`, no repetir elegibilidad, no ejecutar
-> Market Expert y no crear un borrador por otra vía. No contiene migración. El
-> refresh Kalshi ya está correctamente finalizado y no debe repetirse.
+> La nueva corrección incremental está en
+> `docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826.md`. Hasta
+> integrarla y desplegar exclusivamente `market-radar`, no repetir elegibilidad,
+> no ejecutar Market Expert y no crear un borrador por otra vía. No contiene
+> migración. Como corrige la identidad familiar material `ngvi` por `gtavi`, el
+> expediente actual debe considerarse stale: después del despliegue hará falta
+> exactamente un refresh Kalshi nuevo, no una mutación ni un retry directo.
+
+### Continuidad de evidencia oficial futura · 26 de agosto de 2026
+
+- Tavily devolvió seis URLs y cuatro descargas válidas, pero el grupo acabó con
+  cero evidencias y cero autoridades. Dos URLs auxiliares fallidas bastaban para
+  mantener el grupo incompleto aunque una página oficial exacta y alcanzable
+  anunciara un estreno audiovisual futuro dentro del contrato.
+- La identidad familiar se truncaba porque el patrón posterior al verbo
+  español consumía solo la `a` inicial de `another`; persistió `nother gta vi`
+  y la búsqueda factual no podía ligar esa entidad con `Grand Theft Auto VI`.
+  Además, el parser reconocía fechas con año y `will be premiered`, pero no la
+  forma natural `will premiere` ni una fecha oficial sin año.
+- La corrección ordena artículos de mayor a menor y exige límite de palabra;
+  deriva el sujeto factual desde la familia recién calculada; reconoce
+  equivalentes audiovisuales tipados; liga sujeto, predicado y fecha; e infiere
+  fechas sin año respecto de la recuperación sin convertir un pasado reciente
+  en el año siguiente.
+- Una URL auxiliar fallida solo deja de bloquear cuando cada candidata del
+  grupo tiene evidencia oficial verificada, exacta, determinista y futura, y
+  esa fecha no rebasa su propia frontera contractual. Una afirmación terminal,
+  otro sujeto, otro tipo de contenido o una fecha posterior al cierre falla
+  cerrado.
+- La página oficial real respondió HTTP 200 y produjo la familia
+  `atinara:v5:gtavi:official_content:trailer:duration-gte-30-seconds`, sujeto
+  `grand theft auto vi` y prueba futura hasta
+  `2026-08-27T12:00:00.000Z`. La validación local pasa 219/219 pruebas
+  focalizadas más 58/58 de reconciliación general, 9/9 Edge con Deno 2.1.14,
+  sintaxis en 128 JavaScript y `git diff --check`.
+- No hay hardcodes de proveedor, serie, mercado o título en producción; no hay
+  frontend, SQL, DML, backfill, Gemini en Radar ni cambios de Registry, rutas,
+  modos, modelos, flags, presupuestos o economía. La corrección aún no está
+  integrada ni desplegada y el E2E no está terminado.
 
 ### Continuidad de la revisión de dominio · 26 de agosto de 2026
 

@@ -932,6 +932,17 @@ test("el enriquecimiento auxiliar tiene un deadline propio y siempre libera su c
   assert.match(edge, /withRadarRefreshLeaseHeartbeat\([\s\S]+withRadarEnrichmentBudget\([\s\S]+researchGroupsWithTavily/);
 });
 
+test("una URL auxiliar fallida solo se recupera con cobertura oficial futura exacta", () => {
+  const researchSource = edge.slice(
+    edge.indexOf("async function researchGroupsWithTavily"),
+    edge.indexOf("function officialEventResolutionSignals"),
+  );
+  assert.match(researchSource, /hasDeterministicOfficialResearchCoverage\(groupCandidates, groupEvidence, coverageCheckedAt\)/);
+  assert.match(researchSource, /deterministic_future_fallback_groups: deterministicFutureFallbackGroups/);
+  assert.match(researchSource, /incompleteGroupKeys\.delete\(groupKey\)/);
+  assert.doesNotMatch(researchSource, /GTA|Rockstar|KXGTATRAILER|Project Aurora/i);
+});
+
 test("la fuente de resolución exige evidencia oficial exacta y dominio autoritativo", () => {
   const authoritativeDomains = new Set(["ea.com", "thegameawards.com"]);
   const evidence = [

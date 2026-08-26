@@ -61,6 +61,30 @@ identificador, texto, taxonomía, contexto, etiqueta canónica o identidad oblig
 a usar la huella actual y, si procede, a una revisión nueva. Política, ledger,
 elegibilidad, fuentes, duplicados y temporalidad permanecen independientes.
 
+### Continuidad de evidencia oficial futura
+
+Un fallo parcial del enriquecimiento auxiliar no convierte una fuente en válida
+ni en inválida. Solo puede dejar de marcar incompleto un grupo cuando cada
+candidata dispone de evidencia oficial verificada que liga exactamente su
+sujeto, tipo de contrato, predicado y fecha futura. La fecha acreditada debe ser
+posterior a la comprobación y no posterior a la frontera contractual de esa
+hija. Otro sujeto, otro tipo de contenido, lenguaje especulativo, una fecha
+pasada o una afirmación terminal mantienen la puerta cerrada.
+
+Las fechas oficiales sin año se interpretan respecto del año UTC de la
+recuperación. Solo una fecha situada más de 180 días en el pasado puede rodar al
+año siguiente; un evento recién vencido nunca se vuelve futuro por inferencia.
+La denominación audiovisual puede usar equivalentes verificables de tráiler,
+teaser o clip, pero requiere contexto de distribución y conserva el tipo exacto
+de la candidata.
+
+La extracción de entidad consume artículos completos con límite de palabra.
+Una mezcla de verbo español y artículo inglés no puede truncar `another` como
+`a` + `nother`. Si la corrección cambia `family_key`, `family_title`, sujeto o
+identidad hija respecto del snapshot persistido, el expediente queda stale y se
+renueva mediante un refresh normal. Nunca se reescribe por DML ni se reutiliza
+para preparar un borrador con una identidad material antigua.
+
 ### Completitud del padre y transición de snapshots Radar
 
 Una fila raw del proveedor y una candidata canónica actual son memorias

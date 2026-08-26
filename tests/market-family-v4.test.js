@@ -64,6 +64,20 @@ test("v5 agrupa cinco meses GTA como hermanos y nunca como duplicados", () => {
   }
 });
 
+test("v5 conserva completa la entidad tras verbo español y artículo inglés", () => {
+  const candidate = definition("Will another Project Aurora trailer come out before Sep 2026?", {
+    source_title: "Project Aurora: New trailer release date",
+    atinara_question: "¿Se lanzará another Project Aurora trailer antes de Sep 2026?",
+    source_resolution_rules: "Resolves Yes if a new, at least 30 second, Project Aurora trailer is released before the cutoff.",
+  });
+  const family = radar.deriveMarketFamily(candidate);
+
+  assert.equal(family.family_key, "atinara:v5:project-aurora:official_content:trailer:duration-gte-30-seconds");
+  assert.equal(family.family_title, "Contenido oficial · project aurora");
+  assert.doesNotMatch(family.family_title, /nother/);
+  assert.equal(radar.candidateResolutionSubject(candidate), "project aurora");
+});
+
 test("v4 reconoce el mismo mes cross-provider y alias largo/corto como duplicado exacto", () => {
   const kalshi = definition("Will GTA VI be released before October 1, 2026?", {
     id: "kalshi-october",

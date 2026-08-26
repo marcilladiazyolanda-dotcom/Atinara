@@ -3119,9 +3119,9 @@ export function evidenceHasPotentialTerminalClaim(item, candidateOrKind = "other
       && isDeterministicUnresolvedEvidence(item, candidateOrKind, now));
   }
   if (contractKind === "milestone") {
-    if (/\b(?:trailer|teaser|avance)\b.{0,120}\b(?:is out|is available|has (?:been )?released|was released|premiered|debuted|ya disponible|fue publicado|se estreno)\b/.test(text)) return true;
-    const scheduledWording = /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:will (?:be )?(?:released|premiered|debuted)|releases|premieres|debuts|se publicara|se estrenara)\b/.test(text)
-      || /\b(?:will (?:be )?(?:released|premiered|debuted)|releases|premieres|debuts|se publicara|se estrenara)\b.{0,120}\b(?:trailer|teaser|avance)\b/.test(text);
+    const scopedCandidates = typeof candidateOrKind === "object" ? [candidateOrKind] : [];
+    if (factualTerminalClaim("milestone", text, scopedCandidates)) return true;
+    const scheduledWording = factualContractPredicate("milestone", text, scopedCandidates);
     return scheduledWording && !(typeof candidateOrKind === "object"
       && isDeterministicUnresolvedEvidence(item, candidateOrKind, now));
   }
@@ -3199,6 +3199,7 @@ function factualIdentityTokenSets(group) {
     sets.push(tokens);
   };
   for (const candidate of (Array.isArray(group?.candidates) ? group.candidates : []).filter(isRecord)) {
+    push(deriveMarketFamily(candidate)?.family_semantics?.entity_label);
     push(candidate.subject ?? candidate.atinara_subject);
     push(candidate.source_title);
     push(candidate.atinara_question ?? candidate.source_question);
@@ -3312,7 +3313,32 @@ function factualWindowMatchesIdentity(window, identitySets) {
   });
 }
 
-function factualContractPredicate(kind, window) {
+function factualOfficialContentKind(candidates) {
+  const kinds = new Set((Array.isArray(candidates) ? candidates : [])
+    .filter(isRecord)
+    .map((candidate) => cleanText(deriveMarketFamily(candidate)?.family_semantics?.content_kind, 40))
+    .filter(Boolean));
+  return kinds.size === 1 ? [...kinds][0] : null;
+}
+
+function factualOfficialContentLabel(window, candidates) {
+  const normalized = normalizeComparableText(window);
+  const audiovisualDistribution = /\b(?:video|watch|youtube|netflix|stream|premiere|debut|channel|canal)\b/.test(normalized);
+  const kind = factualOfficialContentKind(candidates);
+  if (kind === "teaser") {
+    return /\bteaser\b/.test(normalized)
+      || (audiovisualDistribution && /\b(?:first look|primer vistazo)\b/.test(normalized));
+  }
+  if (kind === "clip") return /\b(?:clip|gameplay video|gameplay footage|video de gameplay)\b/.test(normalized);
+  if (kind === "trailer") {
+    return /\btrailer\b/.test(normalized)
+      || (audiovisualDistribution
+        && /\b(?:gameplay video|gameplay reveal|gameplay showcase|gameplay overview|gameplay deep dive|extended look|extended preview|in depth look|deep dive|vistazo extendido|avance extendido)\b/.test(normalized));
+  }
+  return /\b(?:trailer|teaser|avance)\b/.test(normalized);
+}
+
+function factualContractPredicate(kind, window, candidates = []) {
   if (kind === "announcement") {
     return /\b(?:will\s+(?:be\s+)?(?:officially\s+)?(?:announced|revealed|unveiled|presented)|(?:announcement|reveal)\s+(?:is\s+)?(?:scheduled|set|planned|due)|se\s+(?:anunciara|revelara|presentara))\b/.test(window);
   }
@@ -3320,13 +3346,13 @@ function factualContractPredicate(kind, window) {
     return /\b(?:will\s+(?:be\s+)?(?:released|launched|available)|will\s+(?:release|launch)|(?:releases|launches|arrives|becomes available|goes on sale)\b|(?:release|launch)\s+(?:is\s+)?(?:scheduled|set|planned|due)|se\s+lanzara|estara\s+disponible|saldra\s+a\s+la\s+venta|llegara)\b/.test(window);
   }
   if (kind === "milestone") {
-    return /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:will\s+(?:be\s+)?(?:released|premiered|debuted)|releases|premieres|debuts|se\s+publicara|se\s+estrenara)\b/.test(window)
-      || /\b(?:will\s+(?:be\s+)?(?:released|premiered|debuted)|releases|premieres|debuts|se\s+publicara|se\s+estrenara)\b.{0,120}\b(?:trailer|teaser|avance)\b/.test(window);
+    return factualOfficialContentLabel(window, candidates)
+      && /\b(?:will\s+(?:(?:be\s+)?(?:released|premiered|debuted|published|shown|streamed)|release|premiere|debut|publish|show|stream|launch)|releases|premieres|debuts|launches|se\s+publicara|se\s+estrenara|se\s+presentara)\b/.test(window);
   }
   return false;
 }
 
-function factualTerminalClaim(kind, window) {
+function factualTerminalClaim(kind, window, candidates = []) {
   if (kind === "announcement") {
     return /\b(?:has|have|was|were|is now)\s+(?:officially\s+)?(?:announced|revealed|unveiled|presented)\b|\b(?:announced|revealed|unveiled|presented)\s+(?:today|yesterday)\b|\b(?:ha sido|fue|ya fue)\s+(?:anunciado|revelado|presentado)\b/.test(window);
   }
@@ -3338,7 +3364,8 @@ function factualTerminalClaim(kind, window) {
       && FACTUAL_TERMINAL_STATE_PATTERN.test(window);
   }
   if (kind === "milestone") {
-    return /\b(?:trailer|teaser|avance)\b.{0,120}\b(?:is\s+out|is\s+available|has\s+(?:been\s+)?released|was\s+released|premiered|debuted|ya\s+disponible|fue\s+publicado|se\s+estreno)\b/.test(window);
+    return factualOfficialContentLabel(window, candidates)
+      && /\b(?:is\s+out|is\s+available|has\s+(?:been\s+)?released|was\s+released|premiered|debuted|published|watch\s+now|available\s+now|out\s+now|ya\s+disponible|fue\s+publicado|se\s+estreno)\b/.test(window);
   }
   return false;
 }
@@ -3399,6 +3426,29 @@ export function deriveDeterministicUnresolvedProof(content, group, retrievedAt) 
   for (const match of normalized.matchAll(new RegExp(`\\b([0-3]?[0-9])(?:st|nd|rd|th)?\\s+(?:de\\s+)?(${monthNames})(?:\\s+de|,)?\\s+(20[0-9]{2})\\b`, "g"))) {
     add(match[3], match[2], match[1], match.index ?? 0);
   }
+  const inferYearlessDate = (monthValue, dayValue, index) => {
+    const reference = new Date(checkedAt);
+    let year = reference.getUTCFullYear();
+    const currentYearDate = factualSourceDate(
+      year,
+      FACT_SOURCE_MONTHS[String(monthValue).toLowerCase()],
+      Number(dayValue),
+    );
+    if (currentYearDate && currentYearDate.getTime() < checkedAt - (180 * 86_400_000)) year += 1;
+    add(year, monthValue, dayValue, index);
+  };
+  for (const match of normalized.matchAll(new RegExp(
+    `\\b(${monthNames})\\s+([0-3]?[0-9])(?:st|nd|rd|th)?\\b(?!(?:,|\\s)+\\s*20[0-9]{2}\\b)`,
+    "g",
+  ))) {
+    inferYearlessDate(match[1], match[2], match.index ?? 0);
+  }
+  for (const match of normalized.matchAll(new RegExp(
+    `\\b([0-3]?[0-9])(?:st|nd|rd|th)?\\s+(?:de\\s+)?(${monthNames})\\b(?!(?:\\s+de|,|\\s)+\\s*20[0-9]{2}\\b)`,
+    "g",
+  ))) {
+    inferYearlessDate(match[2], match[1], match.index ?? 0);
+  }
   const claimWindow = (index) => {
     const prior = Math.max(normalized.lastIndexOf(".", index), normalized.lastIndexOf("!", index), normalized.lastIndexOf("?", index));
     const following = [normalized.indexOf(".", index), normalized.indexOf("!", index), normalized.indexOf("?", index)]
@@ -3407,7 +3457,7 @@ export function deriveDeterministicUnresolvedProof(content, group, retrievedAt) 
   };
   const boundClaims = dates.map((dated) => {
     const window = claimWindow(dated.index);
-    const kinds = directKinds.filter((kind) => factualContractPredicate(kind, window));
+    const kinds = directKinds.filter((kind) => factualContractPredicate(kind, window, allCandidates));
     return {
       ...dated,
       window,
@@ -3416,12 +3466,19 @@ export function deriveDeterministicUnresolvedProof(content, group, retrievedAt) 
       platform: factualWindowMatchesPlatformScope(window, groupPlatformScope.platforms),
     };
   }).filter((dated) => dated.identity && dated.platform && dated.kinds.length && !hasSpeculativeEvidenceLanguage(dated.window));
+  const terminalSentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const milestoneTerminalConflict = directKinds.includes("milestone") && terminalSentences.some((sentence, index) => {
+    const window = cleanText(terminalSentences.slice(Math.max(0, index - 1), index + 2).join(" "), 1_200);
+    return factualWindowMatchesIdentity(window, identitySets)
+      && factualTerminalMatchesPlatformScope(window, groupPlatformScope.platforms)
+      && factualTerminalClaim("milestone", window, allCandidates);
+  });
   const terminalConflict = boundClaims.some((dated) =>
     dated.date.getTime() <= checkedAt + 60_000
-    || dated.kinds.some((kind) => factualTerminalClaim(kind, dated.window))
-  ) || normalized.split(/(?<=[.!?])\s+/).some((sentence) =>
+    || dated.kinds.some((kind) => factualTerminalClaim(kind, dated.window, allCandidates))
+  ) || milestoneTerminalConflict || terminalSentences.some((sentence) =>
     factualTerminalMatchesPlatformScope(sentence, groupPlatformScope.platforms)
-    && directKinds.some((kind) => factualTerminalClaim(kind, sentence))
+    && directKinds.some((kind) => factualTerminalClaim(kind, sentence, allCandidates))
   );
   if (terminalConflict && directKinds.length) return null;
   const supported = boundClaims.filter((dated) => dated.date.getTime() > checkedAt + 60_000)
@@ -3459,9 +3516,9 @@ export function deriveDeterministicUnresolvedProof(content, group, retrievedAt) 
 function familyQuestionEntity(normalizedQuestion, dimension) {
   let value = normalizedQuestion
     .replace(/^(?:will|whether|can|could|is|are|sera|seran|se)\s+/, "")
-    .replace(/^(?:a|an|la|el|un|una|another|next|otro|otra|proximo|proxima)\s+/, "");
+    .replace(/^(?:another|proximo|proxima|next|otro|otra|una|la|el|un|an|a)\s+/, "");
   value = value
-    .replace(/^(?:announce\w*|anunci\w*|reveal\w*|present\w*|release\w*|launch\w*|lanz\w*|public\w*|reach\w*|alcanz\w*|exceed\w*|super\w*)\s+(?:officially|oficialmente)?\s*(?:a|an|the|la|el|los|las|un|una)?\s*/, "")
+    .replace(/^(?:announce\w*|anunci\w*|reveal\w*|present\w*|release\w*|launch\w*|lanz\w*|public\w*|reach\w*|alcanz\w*|exceed\w*|super\w*)\s+(?:officially|oficialmente)?\s*(?:(?:another|the|los|las|una|la|el|un|an|a)\b\s*)?/, "")
     .replace(/^(?:officially|oficialmente)\s+/, "");
   if (dimension === "official_content") {
     const contentOf = value.match(/(?:new|nuevo|nueva|another)?\s*(?:trailer|teaser|avance|clip)(?:\s+official|\s+oficial)?\s+(?:of|de)\s+(.+?)(?:\s+(?:before|antes de|antes del|by)\b|$)/);
@@ -3853,7 +3910,7 @@ export function predictionContractKind(candidate) {
   // predicción de lanzamiento distinta.
   if (/(?:\bmetacritic|\breview|\bresena|\bscore|\bpuntuacion)/.test(question)) return "review";
   if (/(?:\bgame of the year|\bgoty|\baward|\bpremio|\bnomina|\bwin\b|\bganar|\bgana)/.test(question)) return "award";
-  if (/(?:\btrailer|\bavance|\bdelay|\bretras)/.test(question)) return "milestone";
+  if (/(?:\btrailer|\bteaser|\bavance|\bclip\b|\bgameplay video|\bdelay|\bretras)/.test(question)) return "milestone";
   if (/(?:\bannounc|\banunci|\breveal|\bpresent)/.test(question)) return "announcement";
   if (/(?:\breleas|\blaunch|\blanz|\bsaldr|\bdebut)/.test(question)) return "release";
   return "other";
@@ -5054,6 +5111,26 @@ function exactResolutionEvidence(candidate, item) {
     || subjectTokens.every((token) => material.includes(token));
 }
 
+export function hasDeterministicOfficialResearchCoverage(candidates, evidence, now = new Date().toISOString()) {
+  const scopedCandidates = (Array.isArray(candidates) ? candidates : []).filter(isRecord);
+  const scopedEvidence = (Array.isArray(evidence) ? evidence : []).filter(isRecord);
+  return scopedCandidates.length > 0 && scopedCandidates.every((candidate) =>
+    scopedEvidence.some((item) => {
+      if (!exactResolutionEvidence(candidate, item)
+          || !isDeterministicUnresolvedEvidence(item, candidate, now)) return false;
+      const family = deriveMarketFamily(candidate);
+      const boundary = safeIsoDate(
+        family?.family_semantics?.temporal_boundary?.canonical_instant
+          ?? candidate?.evaluation_ends_at
+          ?? candidate?.source_close_at,
+      );
+      const unresolvedUntil = Date.parse(cleanText(item.unresolved_until, 100));
+      return Boolean(boundary)
+        && unresolvedUntil <= Date.parse(boundary) + 60_000;
+    }),
+  );
+}
+
 export function selectVerifiedResolutionUrl(candidate, evidence = [], authoritativeDomains = new Set()) {
   const subject = candidateResolutionSubject(candidate);
   const comparableSubject = normalizeComparableText(subject);
@@ -5125,6 +5202,13 @@ export function candidateResolutionSubject(candidate) {
   if (selection?.subject) return selection.subject;
   const metric = thresholdSubject(candidate);
   if (metric) return metric;
+  const family = deriveMarketFamily(candidate);
+  const familySemantics = isRecord(family?.family_semantics) ? family.family_semantics : {};
+  const officialContentEntity = cleanText(
+    familySemantics.content_kind ? familySemantics.entity_label : null,
+    240,
+  );
+  if (officialContentEntity) return officialContentEntity;
   const question = cleanText(candidate?.source_question ?? candidate?.atinara_question ?? candidate?.source_title, 700)
     .replace(/^[¿\s]+|[?\s]+$/g, "");
   const patterns = [
