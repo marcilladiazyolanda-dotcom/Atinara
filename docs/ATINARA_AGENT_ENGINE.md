@@ -6,15 +6,16 @@ de agosto de 2026 sin cambiar secretos, frontend, proveedor ni autoridad de domi
 
 Agent Engine V2.1 está activo como capa de contratos, runtime y persistencia, pero todas las tareas conservan `legacy_direct`. No están activados `gateway_gemini_parity`, `gateway_routing`, OpenRouter ni NVIDIA NIM. Su arquitectura y operación se documentan en `ATINARA_AI_GATEWAY.md` y `ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`.
 
-> **Corrector por campo productivo y delta local pendiente (26-08-2026):** la
-> migración remota `20260826161837`, Corrector v23 y Validator v33 completan las
+> **Corrector por campo productivo y E2E cerrado (26-08-2026):** la migración
+> remota `20260826161837`, Corrector v25 y Validator v34 completan las
 > estrategias para los 23 campos rellenables y aplican el mismo flujo a origen
-> manual o Radar. El E2E real renovó la fuente X y modificó solo los dos campos
-> de fuentes, pero la revalidación reprodujo `AI_OUTPUT_CONTRACT_INVALID`. El
-> delta pendiente minimiza también el contexto y la propuesta semánticos del
-> Corrector y hace que el retry del Validator reciba la fase segura incumplida.
-> Conserva el parche determinista, CAS, idempotencia, privacidad y las puertas
-> humanas; no cambia modelos, modos, rutas ni autoridad de dominio.
+> manual o Radar. El Corrector descarta únicamente una objeción semántica tipada
+> de workflow de fuentes cuando el parche determinista de esa misma ronda ya
+> aportó y atestó fuente primaria y alternativas. Una objeción sustantiva o una
+> verificación incompleta sigue escalando. El E2E real terminó en versión 4,
+> revisión efectiva 22 aprobada y cero incidencias; Yol realizó después la
+> confirmación humana y la publicación. CAS, idempotencia, privacidad y puertas
+> humanas permanecen intactas; no cambian modelos, modos, rutas ni autoridad.
 
 ## Transición V2.1
 
@@ -34,10 +35,10 @@ Las inferencias ya no viven dentro de las Edge de dominio. Cada Edge invoca el A
   `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`).
 - `market-expert` v26 (`verify_jwt=true`, bundle
   `21ecf113d27a18d8e0436a43daf84a2fe5b37ca90ea8d071cce2b2527a5d9b11`).
-- `market-draft-fixer` v23 (`verify_jwt=true`, bundle
-  `79898db878314f5c72843e353becbf9b5f691da6c2f5f1aaf185f9c3a23b83d0`).
-- `validate-market-draft` v33 (`verify_jwt=true`, bundle
-  `a98999adf02c53f4a959fd9ae70ab92d2a9d82547863153d7fd8e7ff6ffa2d90`).
+- `market-draft-fixer` v25 (`verify_jwt=true`, bundle
+  `76c87e535c2be6df7d5691e5beccd3d5978b9f671bb5b5ed9b16f303a54edb1f`).
+- `validate-market-draft` v34 (`verify_jwt=true`, bundle
+  `c12f5955a8aeb1a0d6ec63348f0124b0f93f89b2df4d59eeb9df14e631309ef8`).
 - `analyze-market-resolution` v16 (`verify_jwt=true`, bundle
   `d78fd05f920340b2e98d00941258362acaefc35e67471de4d4adec7fd45222eb`).
 - Migraciones remotas no repetibles `20260811230350` (v8),
@@ -47,6 +48,8 @@ Las inferencias ya no viven dentro de las Edge de dominio. Cada Edge invoca el A
   (registries y runtime v2).
 - La ampliación del Corrector por campos consta remotamente una sola vez como
   `20260826161837`; no debe repetirse.
+- El delta final de Corrector v25 no añade SQL y debe integrarse en GitHub para
+  que la fuente canónica coincida con el bundle productivo ya verificado.
 
 La v9 exige autoridad resolutiva del contrato y de la opción exactos. La v10
 impide que una caída reintentable se persista como resultado terminal. La v11

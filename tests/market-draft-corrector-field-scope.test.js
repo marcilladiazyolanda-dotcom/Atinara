@@ -307,6 +307,62 @@ test("Corrector semántico · manual y Radar usan un contrato mínimo sin undefi
   );
 });
 
+test("Corrector semántico · una atestación autoritativa de la ronda cierra solo la objeción de fuente tipada", () => {
+  const draft = tiboDraft();
+  const context = {
+    draft,
+    latest_review: {
+      semantic_issues: [{
+        code: "INSUFFICIENT_EVIDENCE",
+        field: "primary_source",
+        message: "La fuente primaria necesita una atestación vigente.",
+        workflow_issue_code: "RESOLUTION_PRIMARY_SOURCE_REQUIRED",
+      }],
+    },
+    repairable_content_issues: [{
+      code: "INSUFFICIENT_EVIDENCE",
+      field: "primary_source",
+      message: "La fuente primaria necesita una atestación vigente.",
+      workflow_issue_code: "RESOLUTION_PRIMARY_SOURCE_REQUIRED",
+    }],
+  };
+  const { scoped } = buildScopedTiboRepair(context);
+  const repeated = {
+    code: "INSUFFICIENT_EVIDENCE",
+    field: "primary_source",
+    reason: "La fuente primaria no conserva una atestación vigente.",
+  };
+
+  assert.equal(
+    repair.semanticSourceIssueSupersededByAuthoritativeRepair(repeated, context, scoped),
+    true,
+  );
+  assert.equal(
+    repair.semanticSourceIssueSupersededByAuthoritativeRepair(repeated, {
+      ...context,
+      latest_review: {
+        semantic_issues: [{ ...context.latest_review.semantic_issues[0], workflow_issue_code: "SOURCE_CONTRACT_AMBIGUOUS" }],
+      },
+      repairable_content_issues: [],
+    }, scoped),
+    false,
+  );
+  assert.equal(
+    repair.semanticSourceIssueSupersededByAuthoritativeRepair(repeated, context, {
+      patch: {
+        primary_source: { url: "https://x.com/thsottiaux" },
+        alternative_sources: scoped.patch.alternative_sources,
+      },
+    }),
+    false,
+  );
+  assert.match(
+    fixerEdge,
+    /semanticUnresolvedEscalation\(semantic\.value,\s*repairContext,\s*deterministic\)/,
+  );
+  assert.match(taskPolicy, /fuentes presentes en deterministic\.patch ya han superado la comprobación autoritativa/);
+});
+
 test("Corrector semántico · la proyección conserva los 23 campos rellenables autorizados", () => {
   const fullPatch = Object.fromEntries(registries.MARKET_WRITER_FIELD_ALLOWLIST.map((field) => {
     if (field === "primary_source") return [field, socialPrimary()];

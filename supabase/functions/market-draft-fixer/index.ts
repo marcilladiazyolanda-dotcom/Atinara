@@ -29,6 +29,7 @@ import {
   projectDeterministicRepair,
   repairInferenceContext,
   safePublicUrl,
+  semanticSourceIssueSupersededByAuthoritativeRepair,
   validateRepairDraft,
 } from "../_shared/market-draft-repair.mjs";
 import { createAtinaraAgentRunV2 } from "../_shared/atinara-agent-runtime-v2.mjs";
@@ -758,7 +759,11 @@ async function semanticEdit(
   }
 }
 
-function semanticUnresolvedEscalation(value: JsonRecord | null): JsonRecord | null {
+function semanticUnresolvedEscalation(
+  value: JsonRecord | null,
+  context: JsonRecord,
+  deterministic: JsonRecord,
+): JsonRecord | null {
   if (!value || !Array.isArray(value.unresolved_issues) || value.unresolved_issues.length === 0) return null;
   const normalized: JsonRecord[] = [];
   for (const raw of value.unresolved_issues.slice(0, 8)) {
@@ -783,8 +788,10 @@ function semanticUnresolvedEscalation(value: JsonRecord | null): JsonRecord | nu
         reason: "El editor semántico usó un código fuera de la taxonomía cerrada o una explicación incompleta.",
       };
     }
+    if (semanticSourceIssueSupersededByAuthoritativeRepair(raw, context, deterministic)) continue;
     normalized.push({ code, field, reason });
   }
+  if (normalized.length === 0) return null;
   const first = normalized[0];
   return {
     code: first.code,
@@ -1383,7 +1390,7 @@ async function executeRepairAndRevalidate(
     const semantic = await semanticEdit(env, repairContext, deterministic, semanticInvocationId);
     if (semantic.warning) providerWarnings.add(semantic.warning);
     semantic.warnings.forEach((warning) => providerWarnings.add(warning));
-    const semanticEscalation = semanticUnresolvedEscalation(semantic.value);
+    const semanticEscalation = semanticUnresolvedEscalation(semantic.value, repairContext, deterministic);
     if (semanticEscalation) {
       return jsonResponse({
         ok: false,

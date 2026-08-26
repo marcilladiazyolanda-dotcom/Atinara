@@ -417,7 +417,10 @@ test("Corrector · Gemini no sobrescribe el contrato determinista y unresolved b
   };
   const repaired = repair.applyRepairPatch({}, deterministic, { assumptions: "Supuesto semántico auditado." });
   assert.equal(repaired.assumptions, "Supuesto determinista.");
-  assert.match(fixerEdge, /const semanticEscalation = semanticUnresolvedEscalation\(semantic\.value\)/);
+  assert.match(
+    fixerEdge,
+    /const semanticEscalation = semanticUnresolvedEscalation\(semantic\.value,\s*repairContext,\s*deterministic\)/,
+  );
   assert.ok(fixerEdge.indexOf("semanticUnresolvedEscalation(semantic.value)") < fixerEdge.indexOf("applyRepairPatch(draft, deterministic)"));
 });
 

@@ -15,9 +15,28 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 26 de agosto usa Radar v72, Expert v26, Corrector v23, Validator v33 y Resolución v16, todas con `verify_jwt=true`. Corrector v23 y Validator v33 incorporan la reparación por 23 campos y la minimización de fuentes; el delta de reintento guiado por fase permanece local hasta completar su subida, despliegue acotado y E2E. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 26 de agosto usa Radar v72, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
+
+## Corrector por campos · E2E y publicación verificados
+
+La migración `fix_market_draft_corrector_field_scope_v1` consta aplicada una
+sola vez como `20260826161837`. El flujo general sirve tanto a borradores
+manuales como a los procedentes de Radar: el parche determinista valida y
+atesta las fuentes, la capa semántica solo puede proponer campos rellenables y
+el Validator vuelve a comprobar el contrato completo. Una incidencia real o
+una fuente que no alcance la autoridad exigida continúa fallando de forma
+cerrada; el Corrector nunca confirma ni publica.
+
+El E2E real terminó el borrador manual de Tibo en versión 4, revisión efectiva
+22 aprobada y cero incidencias. Yol realizó después la confirmación humana y la
+publicación. Supabase y Chrome verificaron el mercado público
+[`tibo-sottiaux-confirma-corte-pelo-septiembre-2026`](market-detail.html?id=tibo-sottiaux-confirma-corte-pelo-septiembre-2026):
+está `Abierto`, conserva el periodo y los criterios aprobados, no fue programado,
+no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
+de Corrector v25 no contiene migración y queda pendiente únicamente de
+integración en GitHub para que el repositorio coincida con el bundle ya activo.
 
 ## Estado operativo de 13.5.2 · Radar v72 activo y E2E bloqueado antes de Expert
 

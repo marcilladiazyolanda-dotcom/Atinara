@@ -45,48 +45,46 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > expediente actual debe considerarse stale: después del despliegue hará falta
 > exactamente un refresh Kalshi nuevo, no una mutación ni un retry directo.
 
-### Corrector por campos desplegado y delta de reintento pendiente · 26 de agosto de 2026
+### Corrector general por campos y publicación E2E verificada · 26 de agosto de 2026
 
-- `origin/main` integra los dos primeros paquetes en
-  `87a635e67a9438f6084c4e9cb40fd4ca7393f3fd`. La migración
+- `origin/main = 4a3036acbcfd3d6f085fbef6bed4de53485ba544` integra la
+  ampliación de los 23 campos y el reintento guiado del Validator. La migración
   `fix_market_draft_corrector_field_scope_v1` consta aplicada una sola vez como
-  `20260826161837`. `market-draft-fixer` v23 está `ACTIVE`, con JWT obligatorio
-  y digest `79898db878314f5c72843e353becbf9b5f691da6c2f5f1aaf185f9c3a23b83d0`;
-  `validate-market-draft` v33 está `ACTIVE`, con JWT obligatorio y digest
-  `a98999adf02c53f4a959fd9ae70ab92d2a9d82547863153d7fd8e7ff6ffa2d90`.
-- El Corrector dispone en producción de estrategias registradas para los 23
-  campos rellenables. Conserva las URL objetadas únicamente como candidatas,
-  valida perfiles públicos X contra el handle del sujeto y aplica la misma
-  puerta por campos a borradores manuales y de Radar. Validator v33 minimiza
-  las fuentes al contrato editorial `url`, `name`, `role` antes del Gateway.
-- El E2E controlado sobre el borrador privado
-  `ca6a10ea-ad48-4196-aab3-cc3141d3bde1` confirmó que el antiguo
-  `AI_INPUT_FIELD_NOT_ALLOWED` del Validator desapareció. La atestación vencida
-  se rechazó correctamente; el Corrector renovó la fuente X, creó la versión 3
-  y cambió solo `primary_source` y `alternative_sources`. La revisión posterior
-  falló de forma técnica y recuperable con `AI_OUTPUT_CONTRACT_INVALID`, y un
-  retry independiente reprodujo el mismo código.
-- La investigación local aisló dos defectos generales adicionales. El contexto
-  semántico del Corrector serializaba opcionales ausentes como `undefined` y su
-  propuesta incluía metadatos de fuente fuera de la allowlist. Además, el
-  segundo intento de salida inválida del Validator repetía el mismo prompt sin
-  conocer qué restricción determinista había incumplido la primera salida.
-- El delta local pendiente proyecta contexto y propuesta semánticos a contratos
-  mínimos: conserva los 23 campos rellenables, representa ausencias con cadena
-  vacía y limita cada fuente a `url`, `name`, `role`, sin UUID, publisher, flags
-  ni estado de workflow. El sanitizer distingue ahora un campo no autorizado de
-  un exceso real de tamaño. Validator persiste una fase segura del contrato y
-  el retry recibe una guía específica de claves, consistencia o longitud; la
-  validación determinista final continúa intacta y no se fabrica evidencia.
-- Evidencia del delta: 49/49 pruebas focales, 596/596 unitarias, sintaxis válida
-  en 131 JavaScript, TypeScript verde, 9/9 Edge con Deno 2.1.14, canonicalización
-  Node/Deno idéntica en 13 casos de dominio, 10 golden y 22 inválidos, 20
-  comprobaciones SQL estáticas y benchmark offline 5/5 sin red externa de IA.
-- Este último delta no contiene migración y todavía no está integrado ni
-  desplegado. Tras subirlo deben desplegarse exclusivamente
-  `market-draft-fixer` y `validate-market-draft` y repetirse un único E2E
-  controlado. El borrador sigue privado, sin confirmación humana, programación,
-  publicación, mercado público, resolución ni linaje Radar.
+  `20260826161837`; no debe repetirse. `validate-market-draft` v34 está
+  `ACTIVE`, con JWT obligatorio y digest
+  `c12f5955a8aeb1a0d6ec63348f0124b0f93f89b2df4d59eeb9df14e631309ef8`.
+- `market-draft-fixer` v25 está `ACTIVE`, con JWT obligatorio y digest
+  `76c87e535c2be6df7d5691e5beccd3d5978b9f671bb5b5ed9b16f303a54edb1f`.
+  Su último delta todavía debe integrarse en GitHub: evita que el editor
+  semántico repita como bloqueo una objeción tipada de workflow de fuentes que
+  la misma ronda ya reparó y atestó autoritativamente. La excepción solo se
+  aplica cuando el parche determinista contiene fuente primaria y alternativas
+  verificadas; cualquier incidencia sustantiva, fuente incompleta o falta de
+  evidencia continúa bloqueando.
+- El Corrector mantiene estrategias registradas para los 23 campos rellenables,
+  tanto en borradores manuales como Radar. Proyecta contexto y propuesta a
+  contratos mínimos, representa opcionales ausentes sin `undefined` y limita
+  cada fuente enviada al Gateway a `url`, `name` y `role`. Validator v34 recibe
+  en su segundo intento la fase segura incumplida y vuelve a ejecutar todas las
+  validaciones deterministas; ninguna ruta fabrica evidencia, rebaja una puerta
+  o confirma y publica por sí sola.
+- El E2E real sobre `ca6a10ea-ad48-4196-aab3-cc3141d3bde1` terminó en versión
+  4, huella
+  `0b625fd1e8072d8545df4c17e332014c05bb7ed1648fa9060e182dbd7b822627`,
+  revisión efectiva 22 `approved` y cero incidencias. El Corrector renovó X y
+  cambió únicamente `primary_source` y `alternative_sources`; la revisión
+  posterior quedó aprobada con `atinara-market-gate-v3`.
+- Yol realizó después las dos acciones humanas separadas. Supabase registró
+  `HUMAN_CONFIRMATION_RECORDED` a las `17:55:03Z` y `MARKET_PUBLISHED` a las
+  `17:55:32Z`. El mercado público
+  `tibo-sottiaux-confirma-corte-pelo-septiembre-2026` está `Abierto`, existe una
+  sola vez por slug y pregunta, conserva `scheduled_for=null`,
+  `radar_candidate_id=null` y `family_relationship=standalone`. Chrome mostró
+  su ficha pública real con pregunta, criterios, fuente X y 50/50 inicial.
+- Evidencia del delta final: 115/115 pruebas focales, 597/597 unitarias,
+  sintaxis válida en 131 JavaScript, TypeScript verde, 9/9 Edge con Deno
+  2.1.14 y `git diff --check`. No añade migración, secreto, cambio de modo,
+  ruta, modelo, presupuesto, economía ni autoridad autónoma.
 
 ### Continuidad de evidencia oficial futura · 26 de agosto de 2026
 

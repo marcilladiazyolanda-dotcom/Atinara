@@ -266,6 +266,58 @@ export function minimalSemanticRepairProposal(deterministic) {
   };
 }
 
+const AUTHORITATIVE_SOURCE_WORKFLOW_ISSUE_CODES = new Set([
+  "RESOLUTION_PRIMARY_SOURCE_REQUIRED",
+  "RESOLUTION_ALTERNATIVE_SOURCE_REQUIRED",
+]);
+
+const AUTHORITATIVE_SOURCE_CONTENT_ISSUE_CODES = new Set([
+  "MISSING_RESOLUTION_SOURCE",
+  "PRIMARY_SOURCE_INVALID",
+  "ALTERNATIVE_SOURCE_REQUIRED",
+  "ALTERNATIVE_SOURCE_INVALID",
+  "INSUFFICIENT_EVIDENCE",
+]);
+
+function semanticReviewIssues(context) {
+  const review = isRecord(context?.latest_review) ? context.latest_review : {};
+  const reviewed = Array.isArray(review.blocking_reasons) ? review.blocking_reasons
+    : Array.isArray(review.semantic_issues) ? review.semantic_issues : [];
+  const repairable = Array.isArray(context?.repairable_content_issues)
+    ? context.repairable_content_issues : [];
+  return [...reviewed, ...repairable].filter(isRecord);
+}
+
+/**
+ * El editor semantico no tiene acceso a UUID, flags ni extractos de la
+ * atestacion. Por ello no puede reabrir una incidencia de registro/acceso que
+ * la misma ronda ya resolvio con fuentes comprobadas por el servidor. La
+ * excepcion exige el codigo de workflow tipado y una propuesta completa y
+ * verificada; una objecion semantica distinta sigue bloqueando normalmente.
+ */
+export function semanticSourceIssueSupersededByAuthoritativeRepair(issue, context, deterministic) {
+  if (!isRecord(issue)) return false;
+  const code = cleanText(issue.code, 100).toUpperCase();
+  const field = normalizedIssueField(issue.field);
+  if (!AUTHORITATIVE_SOURCE_CONTENT_ISSUE_CODES.has(code)
+    || !["primary_source", "alternative_sources"].includes(field)) return false;
+
+  const matchingAuthoritativeIssue = semanticReviewIssues(context).some((candidate) =>
+    cleanText(candidate.code, 100).toUpperCase() === code
+      && normalizedIssueField(candidate.field) === field
+      && AUTHORITATIVE_SOURCE_WORKFLOW_ISSUE_CODES.has(
+        cleanText(candidate.workflow_issue_code, 120).toUpperCase(),
+      ));
+  if (!matchingAuthoritativeIssue) return false;
+
+  const patch = isRecord(deterministic?.patch) ? deterministic.patch : {};
+  const draft = isRecord(context?.draft) ? context.draft : {};
+  const category = cleanText(patch.category || draft.category, 120);
+  const primaryVerified = isVerifiedPrimarySource(patch.primary_source, category);
+  const alternativesVerified = mergeVerifiedAlternativeSources(patch.alternative_sources).length > 0;
+  return primaryVerified && alternativesVerified;
+}
+
 function blockedIpv4Literal(host) {
   const parts = host.split(".");
   if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return false;
