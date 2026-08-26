@@ -4,11 +4,11 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el único smoke Radar v70:**
-> `origin/main` está en `cc089e32b7f920a8d14f9231c3fc821519fa34ca`;
-> la migración local `20260825223000` consta aplicada remotamente como
-> `20260826102549` y `market-radar` v70 está `ACTIVE`, `verify_jwt=true`, digest
-> `0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`.
+> **Estado productivo verificado tras el despliegue Radar v71:**
+> `origin/main` está en `d204bde336a63ac83a2991e5916b78fbdc4ef7ee`;
+> la migración local `20260826130000` consta aplicada remotamente como
+> `20260826112912` y `market-radar` v71 está `ACTIVE`, `verify_jwt=true`, digest
+> `18b3c501fb7dbd5ed4323e701ec25c2ef046224af3de50838ece0ad7cd8ca695`.
 > Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
 > Resolución v16 permanecen sin cambios y con JWT obligatorio.
 >
@@ -24,25 +24,56 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 >
 > La candidata fresca `1aa9b332-07d9-4dff-a2e3-d98a7066237e`, hija
 > `kalshi:market:KXGTATRAILER-26SEP`, superó identidad, padre completo,
-> paginación, apertura y duplicados, pero la revisión humana de dominio no pudo
-> registrarse: producción usa la huella versionada `r3712d951`, mientras la
-> Edge, la RPC y la tabla exigían erróneamente SHA-256 y la política histórica
-> `atinara-gaming-domain-v1`. Cero filas llegaron al ledger y los seis
-> borradores permanecen intactos.
+> paginación, apertura y duplicados. La única revisión humana ya se registró
+> como `in_domain`, request `6b5249ad-767d-488c-b0cc-5ab902f87b24`, con huella
+> de candidata `r3712d951`, huella de dominio
+> `0c5c75388ff6690d6963c8ad5375c5628f078d5f34ab8b27fa323a9c97981653`
+> y política `atinara-gaming-domain-v2`. La lectura service-only devuelve la
+> fila exacta y la incidencia quedó resuelta.
+>
+> La única renovación de elegibilidad posterior, attempt
+> `2fd2337a-f246-4371-8da1-9bae46fde828`, creó el check 4572 pero volvió a
+> `technical_hold/GAMING_DOMAIN_REVIEW_REQUIRED`. No hubo error HTTP, SQL o de
+> proveedor: las RPC de candidata, reconciliación, revisión y aplicación
+> respondieron 200. No se repitió la operación y los seis borradores siguen
+> intactos.
 >
 > La corrección incremental está en
-> `docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md`. Hasta integrarla,
-> aplicar su única migración y desplegar solo `market-radar`, no repetir la
-> revisión, no ejecutar Market Expert y no crear un borrador por otra vía. El
+> `docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md`. Hasta integrarla
+> y desplegar exclusivamente `market-radar`, no repetir elegibilidad, no ejecutar
+> Market Expert y no crear un borrador por otra vía. No contiene migración. El
 > refresh Kalshi ya está correctamente finalizado y no debe repetirse.
+
+### Continuidad de la revisión de dominio · 26 de agosto de 2026
+
+- Discovery calcula `domain_review_fingerprint` antes de que `scoreCandidates`
+  derive familia y presentación. La revalidación reconstruye el proveedor y lo
+  mezcla con la fila ya derivada; por ello recalcular la misma función no
+  reproduce necesariamente la huella atestada aunque el sujeto no cambie.
+- La huella incluía además `parent_reconciliation_fingerprint`. Esa huella puede
+  variar cuando cambia disponibilidad o contrato de una hermana, pero la
+  completitud del padre ya tiene una puerta autoritativa separada y no decide
+  si el sujeto pertenece a gaming.
+- La solución compara la candidata revalidada con la fila persistida usando el
+  mismo material cerrado de dominio y anulando solo la huella de reconciliación.
+  Si proveedor, IDs, textos, categoría, tags, contexto, etiqueta canónica o
+  estado de identidad difieren, calcula la huella actual y exige una revisión
+  nueva. Si todo coincide, consulta el ledger con la huella ya atestada.
+- La política v2 y la coincidencia exacta de proveedor, `external_id` y SHA-256
+  siguen comprobándose en `projectRadarDomainReview`; la reconciliación completa,
+  elegibilidad, fuentes, duplicados y temporalidad permanecen como puertas
+  independientes. No existe autoaprobación ni publicación.
+- Evidencia local focal: 97/97 pruebas de Radar y resumibilidad, 9/9 Edge con
+  Deno 2.1.14, sintaxis del test y `git diff --check`. No hay migración,
+  frontend, DML, backfill, Gemini en Radar ni cambios de Registry/AI/economía.
 
 ### Contrato de revisión humana de dominio · 26 de agosto de 2026
 
 - La causa raíz es un desacuerdo de tipos, no Auth ni proveedor: las 398
   candidatas productivas usan 353 huellas `r` + 8 hex y 45 huellas históricas
   `r1-` + 16 hex; la ruta de revisión exigía 64 hex. La tabla de atestaciones
-  está vacía porque su restricción y la RPC hacían imposible insertar una
-  candidata real.
+  estaba vacía antes de la corrección porque su restricción y la RPC hacían
+  imposible insertar una candidata real.
 - La migración incremental admite las dos versiones reales y conserva SHA-256
   por compatibilidad, sin convertir ni reescribir candidatas. La precondición
   sigue comparando revisión y huella exactas bajo lock; `domain_fingerprint`
@@ -52,12 +83,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   la lectura service-only proyecta exclusivamente la política vigente.
 - La Edge comparte la misma gramática cerrada. Una revisión sigue siendo
   append-only, administrativa, idempotente y ajena a aprobación o publicación.
-- La migración completa pasó contra PostgreSQL productivo dentro de una
-  transacción finalizada con `ROLLBACK`; las restricciones v1 originales se
-  comprobaron después, por lo que no quedó aplicada ni hubo DML o backfill.
+- La migración se aplicó una sola vez en producción sin DML ni backfill; la Edge
+  v71 quedó activa y la primera atestación v2 se persistió y proyectó.
 - El E2E continúa desde la misma candidata y los mismos seis borradores. Tras la
-  subida se verificará CI, se aplicará una sola migración, se desplegará solo
-  Radar, se registrará la atestación, se renovará elegibilidad una vez y solo
+  corrección de continuidad se renovará elegibilidad una sola vez y solo
   entonces podrá ejecutarse una única inferencia de Market Expert.
 
 ### Checkpoint durable de discovery y cobertura temática · 25 de agosto de 2026

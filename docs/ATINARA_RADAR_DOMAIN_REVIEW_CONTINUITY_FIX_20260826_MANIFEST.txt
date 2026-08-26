@@ -1,0 +1,88 @@
+ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826
+Generated: 2026-08-26
+Base: origin/main d204bde336a63ac83a2991e5916b78fbdc4ef7ee
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md
+A docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826_MANIFEST.txt
+M docs/STATE_CONSISTENCY_AND_MEMORY.md
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+M tests/radar-provider-resumability-v1.test.js
+
+SHA-256 PAYLOAD FILES
+510e9501b9bda84f8720db700494c694451e65ae94b310625f3e5da31367f65b  ORAKLO_PROJECT_CONTEXT.md
+7bda436cbe3580b703e258d21b2467db31488569f9afe9c2d224e4d26aafcfc9  README.md
+4a99d5d3c637b9428206dffe727ac4d55e148e07b50666e141ac3436739c9ad9  docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md
+52b6ad586e410a91de54f527936fe2f0c7cd62a95424befae4c4c798f985aa53  docs/STATE_CONSISTENCY_AND_MEMORY.md
+e40b046784eaea399c4ddabf68f3dc371f3bbdab2d850f1d723057bf5476021e  supabase/functions/_shared/market-radar.mjs
+2b65dd65222b8964920b0c2710543a4c77f74dec8c3aec8c07d079c6b8eccad9  supabase/functions/market-radar/index.ts
+40ca150ef4a9fa7512bccf3ad18629d787c1d6ced14587793053b9f27886747e  tests/radar-provider-resumability-v1.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar (index.ts plus modified shared dependency; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+VERIFICATION
+- focused Radar and resumability tests: 97 passed, 0 failed
+- semantic continuity positive and four fail-closed mutations: passed
+- Deno 2.1.14 Edge checks: 9 passed, including market-radar
+- JavaScript syntax for the modified regression test: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main d204bde336a63ac83a2991e5916b78fbdc4ef7ee
+- market-radar v71 ACTIVE verify_jwt=true digest 18b3c501fb7dbd5ed4323e701ec25c2ef046224af3de50838ece0ad7cd8ca695
+- market-expert v26, market-draft-fixer v22, validate-market-draft v31 and analyze-market-resolution v16 unchanged
+- migration 20260826112912_fix_market_radar_domain_review_contract_v2 applied once
+- refresh UUID c1f677eb-0dae-410f-820d-a4483601ab47 completed/terminal; no new UUID
+- 215/215 Kalshi series completed; failed=0; 590 indexed parents
+- 24 selected complete parents; 566 deferred; 192 discovered/accounted/identified children
+- expected=staged=processed=accepted=162; quarantined=failed=0
+- manifest 085a5f169cd0f045e9ae867adba049b9b9937be1f02a79f02df6486d4537bae4
+- finalization aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5
+- candidate 1aa9b332-07d9-4dff-a2e3-d98a7066237e; revision 87; fingerprint r3712d951
+- domain review request 6b5249ad-767d-488c-b0cc-5ab902f87b24; in_domain; policy v2
+- domain fingerprint 0c5c75388ff6690d6963c8ad5375c5628f078d5f34ab8b27fa323a9c97981653
+- failed eligibility attempt 2fd2337a-f246-4371-8da1-9bae46fde828; check 4572; technical_hold
+- exactly six private drafts; no Market Expert invocation for the selected candidate
+
+ROOT CAUSE
+- discovery hashes the provider candidate before family/presentation derivation
+- revalidation hashes the persisted enriched form after provider reconstruction
+- parent reconciliation has a separate gate but its mutable fingerprint also entered the domain hash
+- an exact human attestation was therefore invisible to equivalent revalidation
+
+CORRECTION
+- compare current and persisted domain material before selecting the ledger scope
+- ignore only parent_reconciliation_fingerprint during the continuity comparison
+- reuse the persisted domain fingerprint only on exact semantic equality
+- any provider, identity, text, taxonomy, context or canonical-label change fails closed
+- existing exact policy, ledger, reconciliation and eligibility gates remain unchanged
+
+POST-UPLOAD
+- fetch and compare all 8 routes and contents against this package
+- require Calidad de Atinara, Edge Deno check, Pages and offline benchmark success; do not use Sonar
+- create a clean production worktree from the new origin/main
+- take a read-only baseline and confirm v71 plus protected fingerprints and exactly six drafts
+- deploy only market-radar with verify_jwt=true; apply no migration and deploy no frontend
+- verify new version, ACTIVE state, JWT, digest and protected invariants
+- do not start a Radar refresh and do not create another domain review
+- renew eligibility exactly once; investigate before any retry if it fails
+- call Market Expert only after eligibility is current; permit one inference and one private draft write
+- never confirm, publish, resolve or settle the draft

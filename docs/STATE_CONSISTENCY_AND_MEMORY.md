@@ -51,6 +51,16 @@ el clasificador actual. El ledger es privado, append-only e idempotente. Una
 decisión `in_domain` solo permite renovar la elegibilidad; nunca aprueba, crea,
 confirma o publica un mercado.
 
+La revalidación conserva una atestación existente únicamente si la observación
+actual y la fila persistida coinciden en todos los campos que forman esa huella
+de dominio. La comparación neutraliza solo
+`parent_reconciliation_fingerprint`: la reconciliación completa tiene su propia
+puerta autoritativa y una variación de disponibilidad o contrato de una hermana
+no cambia por sí sola el ámbito gaming. Cualquier diferencia de proveedor,
+identificador, texto, taxonomía, contexto, etiqueta canónica o identidad obliga
+a usar la huella actual y, si procede, a una revisión nueva. Política, ledger,
+elegibilidad, fuentes, duplicados y temporalidad permanecen independientes.
+
 ### Completitud del padre y transición de snapshots Radar
 
 Una fila raw del proveedor y una candidata canónica actual son memorias

@@ -74,6 +74,7 @@ import {
   safeNumber,
   safePublicUrl,
   scoreCandidates,
+  selectRadarDomainReviewFingerprintV1,
   selectWholeProviderParents,
   selectVerifiedResolutionUrl,
   summarizeRejections,
@@ -5842,8 +5843,12 @@ function refreshCandidateCacheLease(candidate: JsonRecord, checkedAt: string): J
 async function revalidateCurrentCandidateDomain(
   environment: Environment,
   candidate: JsonRecord,
+  persistedCandidate: JsonRecord,
 ): Promise<JsonRecord> {
-  const domainFingerprint = await radarDomainFingerprintV1(candidate);
+  const domainFingerprint = await selectRadarDomainReviewFingerprintV1(
+    candidate,
+    persistedCandidate,
+  );
   const scopedCandidate: JsonRecord = { ...candidate, domain_review_fingerprint: domainFingerprint };
   let reviews: JsonRecord[];
   try {
@@ -5954,7 +5959,7 @@ async function revalidateCandidateForPreparation(
   }
   const checkedAt = new Date().toISOString();
   const currentProviderCandidate = providerCandidate
-    ? await revalidateCurrentCandidateDomain(environment, providerCandidate) : null;
+    ? await revalidateCurrentCandidateDomain(environment, providerCandidate, candidate) : null;
   let eligibility = applyDeterministicRadarEligibility(
     currentProviderCandidate ?? candidate,
     currentProviderCandidate

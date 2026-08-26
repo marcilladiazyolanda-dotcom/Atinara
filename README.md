@@ -15,17 +15,17 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 26 de agosto usa Radar v70, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 26 de agosto usa Radar v71, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `18b3c501fb7dbd5ed4323e701ec25c2ef046224af3de50838ece0ad7cd8ca695`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Estado operativo de 13.5.2 · Radar v70 íntegro y E2E pendiente
+## Estado operativo de 13.5.2 · Radar v71 íntegro y E2E pendiente
 
-`origin/main = cc089e32b7f920a8d14f9231c3fc821519fa34ca` pasó Calidad de
-Atinara, Deno, Pages y benchmark offline. La migración de checkpoint consta
-aplicada como `20260826102549` y solo `market-radar` se desplegó como v70,
-`ACTIVE`, con JWT obligatorio y digest
-`0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`.
+`origin/main = d204bde336a63ac83a2991e5916b78fbdc4ef7ee` pasó Calidad de
+Atinara, Deno, Pages y benchmark offline. La migración del contrato de revisión
+consta aplicada como `20260826112912` y solo `market-radar` se desplegó como
+v71, `ACTIVE`, con JWT obligatorio y digest
+`18b3c501fb7dbd5ed4323e701ec25c2ef046224af3de50838ece0ad7cd8ca695`.
 
 El único refresh fresco, `c1f677eb-0dae-410f-820d-a4483601ab47`, terminó
 Kalshi `completed/terminal` con 215/215 series, cero series fallidas, 590 padres
@@ -37,21 +37,27 @@ y finalización
 `aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
 Las recuperaciones reutilizaron la misma UUID y no se inició otro refresh.
 
-El E2E detectó después una incompatibilidad general en la revisión humana de
-dominio. Las candidatas reales usan huellas versionadas `r` + 8 hex o la forma
-histórica `r1-` + 16 hex, pero la Edge, la RPC y la tabla exigían SHA-256; además
-la persistencia seguía en `atinara-gaming-domain-v1` mientras el clasificador
-usa v2. La candidata fresca
-`1aa9b332-07d9-4dff-a2e3-d98a7066237e` no pudo registrar su atestación y cero
-filas llegaron al ledger. No se llamó Market Expert y continúan exactamente
-seis borradores.
+El contrato de revisión ya admite las huellas reales sin backfill y usa
+`atinara-gaming-domain-v2`. La candidata fresca
+`1aa9b332-07d9-4dff-a2e3-d98a7066237e` registró una única decisión humana
+`in_domain`, request `6b5249ad-767d-488c-b0cc-5ab902f87b24`, ligada a
+`r3712d951` y al `domain_fingerprint`
+`0c5c75388ff6690d6963c8ad5375c5628f078d5f34ab8b27fa323a9c97981653`.
+La RPC service-only la devuelve de forma exacta y su incidencia quedó resuelta.
 
-La corrección mantiene la precondición exacta de revisión+huella, admite las
-versiones reales sin backfill, conserva SHA-256 para `domain_fingerprint` y
-escribe atestaciones nuevas con política v2. Requiere la migración
-`20260826130000_fix_market_radar_domain_review_contract_v2.sql` y desplegar
-únicamente `market-radar`. Véase
-[`docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md`](docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md).
+La única renovación posterior falló cerrada con
+`GAMING_DOMAIN_REVIEW_REQUIRED` aunque el ledger estaba disponible. La causa
+general es una discontinuidad de fase: discovery calcula la huella de dominio
+antes de derivar familia/presentación; la revalidación parte de la candidata ya
+enriquecida y añade además una nueva huella de reconciliación del padre. La
+corrección incremental compara todos los campos clasificables entre la fila
+persistida y la observación actual, ignora exclusivamente la huella del padre
+—que conserva su propia puerta autoritativa— y reutiliza la atestación solo si
+la equivalencia es exacta. No requiere migración. Véase
+[`docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md`](docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTINUITY_FIX_20260826.md).
+
+No se repitió refresh, revisión ni elegibilidad; no se llamó Market Expert y
+continúan exactamente seis borradores.
 
 ## Historial operativo · Radar v69 y checkpoint de discovery
 

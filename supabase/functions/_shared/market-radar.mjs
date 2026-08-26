@@ -493,6 +493,39 @@ export async function radarDomainFingerprintV1(candidate) {
   });
 }
 
+/**
+ * Conserva una atestación humana ya persistida únicamente cuando la candidata
+ * revalidada mantiene exactamente el mismo material de dominio. La
+ * reconciliación del padre tiene una puerta autoritativa propia y puede cambiar
+ * de huella al volver a observar disponibilidad o contratos de sus hermanas;
+ * ese cambio no altera por sí solo si el sujeto pertenece a gaming.
+ *
+ * @param {Record<string, any>} currentCandidate
+ * @param {Record<string, any>} persistedCandidate
+ */
+export async function selectRadarDomainReviewFingerprintV1(
+  currentCandidate = {},
+  persistedCandidate = {},
+) {
+  const persistedReviewFingerprint = cleanText(
+    persistedCandidate?.domain_review_fingerprint,
+    80,
+  );
+  if (!/^[a-f0-9]{64}$/.test(persistedReviewFingerprint)) {
+    return radarDomainFingerprintV1(currentCandidate);
+  }
+  const continuityProjection = (candidate) => ({
+    ...candidate,
+    parent_reconciliation_fingerprint: null,
+  });
+  const [currentContinuity, persistedContinuity] = await Promise.all([
+    radarDomainFingerprintV1(continuityProjection(currentCandidate)),
+    radarDomainFingerprintV1(continuityProjection(persistedCandidate)),
+  ]);
+  if (currentContinuity === persistedContinuity) return persistedReviewFingerprint;
+  return radarDomainFingerprintV1(currentCandidate);
+}
+
 const GAMING_DOMAIN_STRONG_PATTERNS = Object.freeze([
   /\bvideo ?games?\b/, /\bvideojuegos?\b/, /\bplaystation\b/, /\bxbox\b/,
   /\bnintendo\b/, /\bsteam\b/, /\bmetacritic\b/, /\bgame awards\b/,

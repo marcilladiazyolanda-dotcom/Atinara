@@ -159,6 +159,65 @@ test("la revalidación solo reutiliza una decisión humana ligada a la huella de
   assert.ok(domainGateCall>=0 && domainGateCall<eligibilityProjection && eligibilityProjection<eligibilityWrite);
 });
 
+test("la continuidad semántica conserva la revisión sin confundir cambios de dominio", async () => {
+  const radar = await import(`${sharedUrl}?domainContinuity=${Date.now()}`);
+  const discovered = {
+    provider:"kalshi",external_id:"kalshi:KX-GTA-SEP",external_event_id:"KX-GTA",
+    event_group_key:"kalshi:KX-GTA",source_title:"Grand Theft Auto VI trailer",
+    source_question:"Will another GTA VI trailer come out before Sep 2026?",
+    source_description:"Before Sep 2026",source_category:"Entertainment",
+    source_tags:["Entertainment","KXGTATRAILER"],
+    provider_payload:{yes_sub_title:"Before September 2026",series_ticker:"KXGTATRAILER",event_ticker:"KX-GTA"},
+    identity_status:"resolved",identity_classification:"identified_real_option",
+    identity_source:"provider_contract_identity",parent_reconciliation_fingerprint:"a".repeat(64),
+  };
+  const attestedFingerprint = await radar.radarDomainFingerprintV1(discovered);
+  const persisted = {
+    ...discovered,
+    family_key:"atinara:v5:ngvi:official_content:trailer:duration-gte-30-seconds",
+    family_child_key:"content:trailer:deadline:lt:2026-09-01T00:00:00.000Z:month",
+    family_child_label:"lt 2026-09-01T00:00:00.000Z (UTC, month)",
+    domain_review_fingerprint:attestedFingerprint,
+  };
+  const revalidated = {
+    ...persisted,
+    parent_reconciliation_fingerprint:"b".repeat(64),
+    source_probability_yes:73,
+  };
+  assert.notEqual(await radar.radarDomainFingerprintV1(revalidated),attestedFingerprint);
+  assert.equal(
+    await radar.selectRadarDomainReviewFingerprintV1(revalidated,persisted),
+    attestedFingerprint,
+  );
+  assert.equal(
+    await radar.selectRadarDomainReviewFingerprintV1(revalidated,{
+      ...persisted,domain_review_fingerprint:"r3712d951",
+    }),
+    await radar.radarDomainFingerprintV1(revalidated),
+  );
+  for (const changed of [
+    { ...revalidated,source_question:"Will the president win the election?" },
+    { ...revalidated,provider_payload:{...revalidated.provider_payload,category:"Traditional sports"} },
+    { ...revalidated,identity_status:"conflict" },
+    { ...revalidated,external_id:"kalshi:KX-GTA-OCT" },
+  ]) assert.notEqual(
+    await radar.selectRadarDomainReviewFingerprintV1(changed,persisted),
+    attestedFingerprint,
+  );
+  const review = {
+    provider:persisted.provider,external_id:persisted.external_id,
+    domain_fingerprint:attestedFingerprint,decision:"in_domain",
+    policy_version:"atinara-gaming-domain-v2",
+    request_id:"11111111-1111-4111-8111-111111111111",evidence_refs:[],
+  };
+  const selected = await radar.selectRadarDomainReviewFingerprintV1(revalidated,persisted);
+  assert.equal(radar.projectRadarDomainReview({
+    ...revalidated,domain_review_fingerprint:selected,
+  },review).domain_status,"in_domain");
+  assert.match(edge,/selectRadarDomainReviewFingerprintV1\(\s*candidate,\s*persistedCandidate,?\s*\)/);
+  assert.match(edge,/revalidateCurrentCandidateDomain\(environment, providerCandidate, candidate\)/);
+});
+
 test("contrato de incidencias V6 es completo, estable y no altera Registry V2.1", async () => {
   const issues = await import(`${issuesUrl}?contract=${Date.now()}`);
   const options = {
