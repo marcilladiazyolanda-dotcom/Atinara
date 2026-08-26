@@ -33,6 +33,24 @@ La referencia exacta `market_id` prevalece; antes de materializar solo cuenta
 una intención `human_confirmed` o `scheduled`, y dos intenciones publicables con
 el mismo slug detienen la proyección en vez de elegir un borrador arbitrario.
 
+### Revisión humana de dominio y huellas de candidata
+
+La huella material de una candidata Radar es un identificador versionado, no la
+huella criptográfica del contrato de dominio. `atinara-radar-v3` usa
+`r` seguido de ocho dígitos hexadecimales; expedientes históricos pueden usar
+`r1-` seguido de dieciséis. Las atestaciones admiten esas dos formas y SHA-256
+por compatibilidad, pero siempre comparan bajo lock la revisión y la huella
+exactas de `private.external_market_candidates`. No convierten, recortan ni
+rehashan el valor antes de auditarlo.
+
+`domain_fingerprint` continúa siendo un SHA-256 independiente que cubre solo la
+identidad y el texto relevantes para clasificación. Una revisión humana se
+aplica únicamente cuando coinciden proveedor, `external_id`, huella de dominio
+y `atinara-gaming-domain-v2`; una atestación v1 queda como historia y no gobierna
+el clasificador actual. El ledger es privado, append-only e idempotente. Una
+decisión `in_domain` solo permite renovar la elegibilidad; nunca aprueba, crea,
+confirma o publica un mercado.
+
 ### Completitud del padre y transición de snapshots Radar
 
 Una fila raw del proveedor y una candidata canónica actual son memorias

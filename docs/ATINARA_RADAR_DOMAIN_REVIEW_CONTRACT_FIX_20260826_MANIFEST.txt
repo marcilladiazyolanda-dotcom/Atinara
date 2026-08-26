@@ -1,0 +1,94 @@
+ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826
+Generated: 2026-08-26
+Base: origin/main cc089e32b7f920a8d14f9231c3fc821519fa34ca
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md
+A docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826_MANIFEST.txt
+M docs/STATE_CONSISTENCY_AND_MEMORY.md
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260826130000_fix_market_radar_domain_review_contract_v2.sql
+M supabase/tests/market_workflow_orchestration_v1_transaction.sql
+M tests/radar-provider-resumability-v1.test.js
+
+SHA-256 PAYLOAD FILES
+bd39926155e28f7ea2aa15c94aa9e08a7531d82de6f08e4fc24043c1c53dc03e  ORAKLO_PROJECT_CONTEXT.md
+9731394b442d39ebb1a4e20d60a5eab940ede2551b85eb92f9ac1f485811f39d  README.md
+61832b35f0b4f2426bea73f7862c868a9962cad4d9e135a0ef94f5d124b7e187  docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md
+2edffe6475d3eeecadb32e1ac8331758fbc3f92169007e96709686975cf1eae1  docs/STATE_CONSISTENCY_AND_MEMORY.md
+02500ce0224ad2a6616f1267c346a05b407e108ad81ba9a2c027bca677465798  supabase/functions/market-radar/index.ts
+0bda433d30b62ecc9b781595c4fbb308027e0523f224fdde288335f7482626af  supabase/migrations/20260826130000_fix_market_radar_domain_review_contract_v2.sql
+16c4d4f8410778bf42253ed4e3500f298fc631d6ba1aa75175cbf6bf039ce24d  supabase/tests/market_workflow_orchestration_v1_transaction.sql
+009a5d8d4e1078b4818f186fb5a6678fd4dd3395131424dfa79421747e4f027c  tests/radar-provider-resumability-v1.test.js
+
+MIGRATIONS
+supabase/migrations/20260826130000_fix_market_radar_domain_review_contract_v2.sql
+
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar (index.ts; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+VERIFICATION
+- focused Radar and resumability tests: 96 passed, 0 failed
+- production fingerprint formats: 353 current r+8 hex, 45 legacy r1-+16 hex, 0 SHA-256
+- domain review ledger before fix: 0 rows
+- SQL transaction structure: 19 valid
+- Deno 2.1.14 Edge checks: 9 passed, including market-radar
+- exact migration executed against production inside BEGIN/ROLLBACK: passed
+- post-rollback original v1 constraints remained present: passed
+- JavaScript syntax for the modified regression test: passed
+- git diff --check: passed
+
+PRODUCTION CHECKPOINT
+- origin/main cc089e32b7f920a8d14f9231c3fc821519fa34ca
+- market-radar v70 ACTIVE verify_jwt=true digest 0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f
+- market-expert v26, market-draft-fixer v22, validate-market-draft v31 and analyze-market-resolution v16 unchanged
+- refresh UUID c1f677eb-0dae-410f-820d-a4483601ab47 completed/terminal; Kalshi claim_count=3
+- 215/215 Kalshi series completed; failed=0; 590 indexed parents
+- 24 selected complete parents; 566 deferred; 192 discovered/accounted/identified children
+- expected=staged=processed=accepted=162; quarantined=failed=0
+- manifest 085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4
+- finalization aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5
+- chosen candidate 1aa9b332-07d9-4dff-a2e3-d98a7066237e; fingerprint r3712d951
+- six private drafts before and after the failed domain review; no Market Expert inference
+
+ROOT CAUSE
+- candidate fingerprints are versioned identities, not SHA-256 hashes
+- Edge review-domain rejected every current or legacy production candidate before RPC
+- SQL RPC and ledger constraint repeated the incompatible SHA-256-only grammar
+- SQL wrote/read gaming-domain-v1 while the current deterministic classifier requires gaming-domain-v2
+- the failure was general to every real human domain review, not specific to GTA VI, Kalshi, Auth or the browser
+
+CORRECTION
+- one closed grammar accepts SHA-256 compatibility, current r+8 hex and legacy r1-+16 hex
+- exact candidate revision and fingerprint comparison remains under row lock
+- domain_fingerprint and request_hash remain SHA-256
+- v1 rows remain historical; new writes and service-only reads use gaming-domain-v2
+- append-only behavior, idempotency, supersession, RLS and ACL remain enforced
+- no candidate, review, draft or market backfill is performed
+
+POST-UPLOAD
+- fetch and compare all 9 routes and contents against this package
+- require GitHub Action Calidad de Atinara, Edge Deno check, Pages and offline benchmark success; do not use Sonar
+- create a clean production worktree from the new origin/main
+- take a read-only baseline and confirm v70 plus protected fingerprints and exactly six drafts
+- apply the single migration once, then deploy only market-radar with verify_jwt=true
+- verify new version, ACTIVE state, JWT and digest before the domain review
+- do not start another Radar refresh; reuse candidate 1aa9b332-07d9-4dff-a2e3-d98a7066237e
+- record one in-domain review, then renew eligibility once and investigate before any retry if it fails
+- call Market Expert only after eligibility is current; permit one inference and one private draft write
+- never confirm, publish, resolve or settle the draft

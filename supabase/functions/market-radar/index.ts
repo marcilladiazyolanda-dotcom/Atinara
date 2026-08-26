@@ -106,6 +106,7 @@ const MAX_PERSISTENCE_RPC_CALLS_PER_PROVIDER = 64;
 const PERSISTENCE_ISOLATION_BUDGET_MS = 20_000;
 const PERSISTENCE_RPC_START_MARGIN_MS = 750;
 const RADAR_REFRESH_REQUEST_VERSION = "atinara-radar-refresh-request-v1";
+const RADAR_CANDIDATE_FINGERPRINT_PATTERN = /^(?:[a-f0-9]{64}|r[0-9a-f]{8}|r1-[0-9a-f]{16})$/;
 const MAX_VISIBLE_GROUPS = 60;
 const MAX_AI_ENRICHMENT_GROUPS = 30;
 const MAX_AI_ENRICHMENT_CANDIDATES = 180;
@@ -6350,7 +6351,7 @@ async function handleAction(
           role: cleanText(item.role, 80) || "DOMAIN_REVIEW",
         })).filter((item) => item.url);
         if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0
-          || !/^[a-f0-9]{64}$/.test(expectedFingerprint)
+          || !RADAR_CANDIDATE_FINGERPRINT_PATTERN.test(expectedFingerprint)
           || !["in_domain", "out_of_domain"].includes(decision)
           || rationale.length < 20
           || (supersedesRequestId !== null && !validUuid(supersedesRequestId))

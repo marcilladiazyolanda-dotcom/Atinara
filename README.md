@@ -15,13 +15,47 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 25 de agosto usa Radar v69, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 26 de agosto usa Radar v70, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Estado operativo de 13.5.2 · Radar v69 terminal y corrección CI pendiente
+## Estado operativo de 13.5.2 · Radar v70 íntegro y E2E pendiente
 
-El corte remoto vigente es `origin/main =
+`origin/main = cc089e32b7f920a8d14f9231c3fc821519fa34ca` pasó Calidad de
+Atinara, Deno, Pages y benchmark offline. La migración de checkpoint consta
+aplicada como `20260826102549` y solo `market-radar` se desplegó como v70,
+`ACTIVE`, con JWT obligatorio y digest
+`0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`.
+
+El único refresh fresco, `c1f677eb-0dae-410f-820d-a4483601ab47`, terminó
+Kalshi `completed/terminal` con 215/215 series, cero series fallidas, 590 padres
+indexados, 24 padres seleccionados completos y 192/192 hijas descubiertas,
+contabilizadas e identificadas. Persistió 162/162 candidatas, sin cuarentenas o
+fallos; manifest
+`085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4`
+y finalización
+`aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
+Las recuperaciones reutilizaron la misma UUID y no se inició otro refresh.
+
+El E2E detectó después una incompatibilidad general en la revisión humana de
+dominio. Las candidatas reales usan huellas versionadas `r` + 8 hex o la forma
+histórica `r1-` + 16 hex, pero la Edge, la RPC y la tabla exigían SHA-256; además
+la persistencia seguía en `atinara-gaming-domain-v1` mientras el clasificador
+usa v2. La candidata fresca
+`1aa9b332-07d9-4dff-a2e3-d98a7066237e` no pudo registrar su atestación y cero
+filas llegaron al ledger. No se llamó Market Expert y continúan exactamente
+seis borradores.
+
+La corrección mantiene la precondición exacta de revisión+huella, admite las
+versiones reales sin backfill, conserva SHA-256 para `domain_fingerprint` y
+escribe atestaciones nuevas con política v2. Requiere la migración
+`20260826130000_fix_market_radar_domain_review_contract_v2.sql` y desplegar
+únicamente `market-radar`. Véase
+[`docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md`](docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md).
+
+## Historial operativo · Radar v69 y checkpoint de discovery
+
+El corte remoto de aquel hito era `origin/main =
 ddf61bb7667fc209377f2ea120d469b66f2ad65f`. La migración de aislamiento de
 batches consta aplicada una sola vez en producción como `20260825203949` y solo
 `market-radar` se desplegó como v69. El refresh administrativo

@@ -4,45 +4,61 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado productivo verificado tras el smoke Radar v69:**
-> `origin/main` está en `ddf61bb7667fc209377f2ea120d469b66f2ad65f`;
-> `20260825203949` consta aplicada una sola vez y `market-radar` v69 está
-> `ACTIVE`, `verify_jwt=true`, digest
-> `7d81a755520b527924679c1b9186801b51f462ba38c8e38725701abb39ee7265`.
+> **Estado productivo verificado tras el único smoke Radar v70:**
+> `origin/main` está en `cc089e32b7f920a8d14f9231c3fc821519fa34ca`;
+> la migración local `20260825223000` consta aplicada remotamente como
+> `20260826102549` y `market-radar` v70 está `ACTIVE`, `verify_jwt=true`, digest
+> `0e93b7f7a6c0feae4827ee35f353d3a0ddf506de6eab52632deda9462dc8399f`.
 > Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
 > Resolución v16 permanecen sin cambios y con JWT obligatorio.
 >
-> El único refresh nuevo es `39a1656e-61af-4674-a4e0-fa0896236507`; terminó
-> `partial/terminal` tras continuar siempre esa misma UUID, con `claim_count=3`.
-> Kalshi persistió 11 padres y 148/148 hijas identificadas. Nueve padres son
-> `complete` y dos `provider_unavailable`; no hay identidades sin resolver. El
-> parent manifest es
-> `c197e3ac8565ae36465023c59d942b2abcc949b98ca1a8fbbe717935e28c7428`.
-> Tavily terminó `technical_failed/AI_DEADLINE_EXCEEDED` como enriquecimiento
-> auxiliar con `blocking_scope=none`, sin degradar Kalshi.
->
-> Expected, staged, processed y accepted son 86; cuarentenas y fallos son cero.
-> El manifest es
-> `7b9f65509641a3f3dc916a6d55168c61526100cc8b625821fcaab10aafc5e1bb`
+> El único refresh nuevo es `c1f677eb-0dae-410f-820d-a4483601ab47`.
+> Kalshi terminó `completed/terminal`, `claim_count=3`, con 215/215 series,
+> 590 padres indexados, 24 padres completos seleccionados y 192/192 hijas
+> descubiertas, contabilizadas e identificadas. Expected, staged, processed y
+> accepted son 162; cuarentenas y fallos son cero. El manifest es
+> `085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4`
 > y la finalización es
-> `62d641016b4b91bc79047d2cf28ab8cf7722d117a8962a318f403b3eda504f6f`.
-> Dos batches raíz de 24 quedaron `superseded` y sus cuatro hijos de 12 se
-> completaron; los raíces de 24 y 14 también terminaron. Se promovieron 86
-> candidatas, ninguna elegible, y continuaron exactamente seis borradores.
+> `aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
+> Tavily también terminó sin degradar Kalshi. No se creó una segunda UUID.
 >
-> El commit remoto integra byte por byte las 16 rutas del checkpoint de
-> discovery, pero no está activado: `Calidad de Atinara` falló antes de Deno
-> porque `admin-markets.html` mezcló dos versiones de caché. Pages sí construyó
-> el SHA. No aplicar la migración, desplegar la Edge ni iniciar otro refresh
-> hasta integrar la corrección incremental de caché y obtener CI verde.
+> La candidata fresca `1aa9b332-07d9-4dff-a2e3-d98a7066237e`, hija
+> `kalshi:market:KXGTATRAILER-26SEP`, superó identidad, padre completo,
+> paginación, apertura y duplicados, pero la revisión humana de dominio no pudo
+> registrarse: producción usa la huella versionada `r3712d951`, mientras la
+> Edge, la RPC y la tabla exigían erróneamente SHA-256 y la política histórica
+> `atinara-gaming-domain-v1`. Cero filas llegaron al ledger y los seis
+> borradores permanecen intactos.
 >
-> La limitación productiva pendiente ya no es persistencia: v69 solo prioriza 25
-> de 109 series Video games y omite el alcance Esports. Una auditoría pública agotó 215
-> series gaming y 515 padres abiertos con el host recomendado de Kalshi. La
-> corrección incremental está documentada en
-> `docs/ATINARA_RADAR_PROVIDER_DISCOVERY_CHECKPOINT_FIX_20260825.md`; ya está en
-> GitHub, pero no en producción. No ejecutar otro refresh ni Market Expert antes
-> de integrar la corrección CI, migrar, desplegar y verificar ambos cortes.
+> La corrección incremental está en
+> `docs/ATINARA_RADAR_DOMAIN_REVIEW_CONTRACT_FIX_20260826.md`. Hasta integrarla,
+> aplicar su única migración y desplegar solo `market-radar`, no repetir la
+> revisión, no ejecutar Market Expert y no crear un borrador por otra vía. El
+> refresh Kalshi ya está correctamente finalizado y no debe repetirse.
+
+### Contrato de revisión humana de dominio · 26 de agosto de 2026
+
+- La causa raíz es un desacuerdo de tipos, no Auth ni proveedor: las 398
+  candidatas productivas usan 353 huellas `r` + 8 hex y 45 huellas históricas
+  `r1-` + 16 hex; la ruta de revisión exigía 64 hex. La tabla de atestaciones
+  está vacía porque su restricción y la RPC hacían imposible insertar una
+  candidata real.
+- La migración incremental admite las dos versiones reales y conserva SHA-256
+  por compatibilidad, sin convertir ni reescribir candidatas. La precondición
+  sigue comparando revisión y huella exactas bajo lock; `domain_fingerprint`
+  permanece SHA-256.
+- Las atestaciones nuevas usan `atinara-gaming-domain-v2`, igual que el
+  clasificador actual. La versión v1 solo se conserva como historia permitida;
+  la lectura service-only proyecta exclusivamente la política vigente.
+- La Edge comparte la misma gramática cerrada. Una revisión sigue siendo
+  append-only, administrativa, idempotente y ajena a aprobación o publicación.
+- La migración completa pasó contra PostgreSQL productivo dentro de una
+  transacción finalizada con `ROLLBACK`; las restricciones v1 originales se
+  comprobaron después, por lo que no quedó aplicada ni hubo DML o backfill.
+- El E2E continúa desde la misma candidata y los mismos seis borradores. Tras la
+  subida se verificará CI, se aplicará una sola migración, se desplegará solo
+  Radar, se registrará la atestación, se renovará elegibilidad una vez y solo
+  entonces podrá ejecutarse una única inferencia de Market Expert.
 
 ### Checkpoint durable de discovery y cobertura temática · 25 de agosto de 2026
 

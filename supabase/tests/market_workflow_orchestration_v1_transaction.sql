@@ -426,17 +426,26 @@ begin
       and candidate.family_child_key not like 'option:%'
   ) then raise exception 'TEST_RADAR_QUESTION_OPTION_IDENTITY_INVALID'; end if;
 
+  -- Las huellas reales del Radar son versionadas y no SHA-256: v3 usa r+8
+  -- hex y el histórico conserva r1-+16 hex. Ambas deben poder ligarse a una
+  -- atestación sin perder la precondición exacta de revisión.
+  update private.external_market_candidates set fingerprint=case
+    when id=candidate_ids[3] then 'r3712d951'
+    when id=candidate_ids[4] then 'r1-006f0c801b31acce'
+    else fingerprint end
+  where id in (candidate_ids[3],candidate_ids[4]);
+
   -- La revisión humana de dominio queda ligada a candidato+huella, es
   -- idempotente, no acepta payloads sensibles y nunca crea un borrador.
   select * into candidate_snapshot from private.external_market_candidates where id=candidate_ids[3];
   issue:=private.market_workflow_server_issue_v1(
     'GAMING_DOMAIN_REVIEW_REQUIRED','radar','human_review','human_editable','approval',
     'review_gaming_domain_manually',jsonb_build_object('candidate_id',candidate_snapshot.id),
-    true,'atinara-gaming-domain-v1'
+    true,'atinara-gaming-domain-v2'
   );
   issue_id_value:=private.record_market_workflow_issue_v1(
     'radar_candidate',candidate_snapshot.id::text,candidate_snapshot.preparation_revision::text,
-    candidate_snapshot.fingerprint,issue,null,null
+    null,issue,null,null
   );
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',gen_random_uuid())::text,true);
@@ -484,6 +493,10 @@ begin
   if domain_review_result ->> 'idempotency_replay'<>'true'
      or (select count(*) from private.market_radar_domain_reviews_v1 review
        where review.request_id=domain_review_request_id)<>1
+     or not exists (select 1 from private.market_radar_domain_reviews_v1 review
+       where review.request_id=domain_review_request_id
+         and review.candidate_fingerprint='r3712d951'
+         and review.policy_version='atinara-gaming-domain-v2')
      or (select eligibility_status from private.external_market_candidates
        where id=candidate_snapshot.id)<>'technical_hold'
      or not exists (select 1 from private.market_workflow_issue_events_v1 event
@@ -514,11 +527,11 @@ begin
   issue:=private.market_workflow_server_issue_v1(
     'GAMING_DOMAIN_REVIEW_REQUIRED','radar','human_review','human_editable','approval',
     'review_gaming_domain_manually',jsonb_build_object('candidate_id',candidate_snapshot.id),
-    true,'atinara-gaming-domain-v1'
+    true,'atinara-gaming-domain-v2'
   );
   perform private.record_market_workflow_issue_v1(
     'radar_candidate',candidate_snapshot.id::text,candidate_snapshot.preparation_revision::text,
-    candidate_snapshot.fingerprint,issue,null,null
+    null,issue,null,null
   );
   perform set_config('request.jwt.claims',jsonb_build_object(
     'role','authenticated','sub',admin_id)::text,true);

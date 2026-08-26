@@ -14,6 +14,8 @@ const migration = read("supabase/migrations/20260820163014_harden_radar_provider
 const batchResumeMigration = read("supabase/migrations/20260824190000_harden_radar_batch_resume_visibility_v1.sql");
 const batchTimeoutIsolationMigration = read("supabase/migrations/20260825214500_isolate_market_radar_batch_timeouts_v1.sql");
 const discoveryCheckpointMigration = read("supabase/migrations/20260825223000_checkpoint_market_radar_provider_discovery_v1.sql");
+const domainReviewContractMigration = read("supabase/migrations/20260826130000_fix_market_radar_domain_review_contract_v2.sql");
+const workflowTransaction = read("supabase/tests/market_workflow_orchestration_v1_transaction.sql");
 const admin = read("admin-markets.js");
 const html = read("admin-markets.html");
 const styles = read("styles.css");
@@ -379,6 +381,32 @@ test("el índice de proveedor se sella append-only, service-only y se reanuda an
   assert.match(migration, /if circuit\.probe_request_id=request_id_input[\s\S]*token_value:=circuit\.probe_lease_token/);
   assert.match(migration, /probe_lease_expires_at=now_value\+interval '45 seconds'/);
   assert.match(migration, /circuit\.probe_lease_token is distinct from probe_lease_token_input/);
+});
+
+test("la revisión humana acepta las huellas versionadas reales y aplica la política de dominio v2", () => {
+  assert.match(edge,
+    /RADAR_CANDIDATE_FINGERPRINT_PATTERN = \/\^\(\?:\[a-f0-9\]\{64\}\|r\[0-9a-f\]\{8\}\|r1-\[0-9a-f\]\{16\}\)\$\//);
+  const reviewAction = edge.slice(edge.indexOf('if (action === "review-domain")'),
+    edge.indexOf('if (action === "details")'));
+  assert.match(reviewAction, /RADAR_CANDIDATE_FINGERPRINT_PATTERN\.test\(expectedFingerprint\)/);
+  assert.doesNotMatch(reviewAction, /!\/\^\[a-f0-9\]\{64\}\$\//);
+  assert.match(domainReviewContractMigration,
+    /candidate_fingerprint ~ '\^\(\[a-f0-9\]\{64\}\|r\[0-9a-f\]\{8\}\|r1-\[0-9a-f\]\{16\}\)\$'/);
+  assert.match(domainReviewContractMigration,
+    /policy_version in \('atinara-gaming-domain-v1','atinara-gaming-domain-v2'\)/);
+  assert.match(domainReviewContractMigration,
+    /where domain_review\.policy_version='atinara-gaming-domain-v2'/);
+  assert.match(domainReviewContractMigration,
+    /'atinara-gaming-domain-v2',decision_input/);
+  assert.match(domainReviewContractMigration,
+    /to_jsonb\('atinara-gaming-domain-v2'::text\)/);
+  assert.match(domainReviewContractMigration,
+    /from public,anon,authenticated,service_role;[\s\S]*to authenticated;/);
+  assert.match(domainReviewContractMigration, /relation\.relrowsecurity and relation\.relforcerowsecurity/);
+  assert.match(workflowTransaction,
+    /fingerprint=case[\s\S]*when id=candidate_ids\[3\] then 'r3712d951'/);
+  assert.match(workflowTransaction, /review\.candidate_fingerprint='r3712d951'/);
+  assert.match(workflowTransaction, /review\.policy_version='atinara-gaming-domain-v2'/);
 });
 
 test("la UI reconcilia un transporte ambiguo mediante una sola lectura sin refresh", () => {
