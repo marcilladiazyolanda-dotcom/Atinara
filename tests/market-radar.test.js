@@ -1059,6 +1059,11 @@ test("el consenso oficial de una familia de portada incluye opciones reutilizada
 });
 
 test("la Edge indexa todas las series gaming y esports de Kalshi antes de enumerar familias", () => {
+  assert.match(edge, /new URL\(`\$\{KALSHI_API_ROOT\}\/series`\)/);
+  assert.match(edge, /include_product_metadata", "true"/);
+  assert.match(edge, /include_volume", "true"/);
+  assert.match(edge, /classifyKalshiRadarSeriesCatalogV2/);
+  assert.match(edge, /providerCatalogHash/);
   assert.match(edge, /search\/tags_by_categories/);
   assert.match(edge, /MAX_KALSHI_SERIES = 2_000/);
   assert.match(edge, /category: "Entertainment", tag: "Video games"/);
@@ -1079,8 +1084,10 @@ test("una taxonomía o serie Kalshi fallida no derriba el alcance sano ni desapa
   assert.match(edge, /const taxonomyRetryResults = await mapWithConcurrency/);
   assert.match(edge, /failed_taxonomy_scope_count: failedTaxonomyScopes\.length/);
   assert.match(edge, /failed_taxonomy_scopes: failedTaxonomyScopes/);
-  assert.match(edge, /const failedSeriesIds: string\[\] = \[\]/);
-  assert.match(edge, /if \(result\.status === "rejected"\) \{[\s\S]*failedSeriesIds\.push/);
+  assert.match(edge, /retryable_failed_series_ids/);
+  assert.match(edge, /status: "rejected"[\s\S]*error_code:[\s\S]*events: \[\]/);
+  assert.match(edge, /advanceProviderDiscoveryCheckpointV2/);
+  assert.match(edge, /exhausted_failed_series_ids/);
   assert.doesNotMatch(edge, /if \(!indexedEvents\.length && failedSeriesIds\.length\) throw new Error\("PROVIDER_UNAVAILABLE"\)/);
   assert.match(edge, /failed_series_count: failedSeriesIds\.length/);
   assert.match(edge, /failed_series_ids: failedSeriesIds/);
@@ -1287,7 +1294,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260826-live-market-chart-limit1/);
+  assert.match(adminHtml, /v=20260825-radar-provider-checkpoint1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

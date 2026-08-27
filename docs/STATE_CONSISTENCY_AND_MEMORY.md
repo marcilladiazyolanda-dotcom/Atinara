@@ -166,19 +166,43 @@ poseen la capacidad `candidate_feed`; Tavily posee `source_enrichment`. Una
 caída de enriquecimiento nunca convierte el catálogo de candidatas en parcial o
 indisponible.
 
-En el adaptador Kalshi, cuando el índice temático no cabe con seguridad junto a
-la enumeración de hijas, la intención sella primero
-`market_radar_provider_discovery_checkpoints_v1`. El checkpoint es privado,
-append-only, ligado a `(request_id, provider, capability)`, al lease y a un hash
-SHA-256; conserva scopes taxonómicos, series, padres, fallos parciales y
-evidencia temporal antes de liberar el transporte. La caída de un scope no
-elimina el otro: queda identificada y solo ese scope se reintenta al continuar.
-Si ambos scopes no responden, el resultado es parcial y accionable, nunca éxito
-fresco ni fallo técnico global. Una continuación solo puede reclamar la misma
-UUID y leer ese payload con `service_role`. El ledger de selección cuenta cada padre
-indexado como materializado o diferido, aunque la respuesta pública omita sus
-IDs completos por presupuesto. Un checkpoint presente solo en memoria, una
-serie fallida no registrada o un catálogo parcial presentado como agotado no
+El adaptador Kalshi inicia con la lista oficial global de series, porque el
+proveedor no ofrece búsqueda textual y sus categorías propias no coinciden con
+las seis temáticas de Atinara. Solo puede declarar catálogo completo si la
+respuesta tiene identidad única, cursor agotado y cabe dentro del límite de
+bytes. La selección usa una política versionada de taxonomía, metadatos,
+entidades y autoridades; nunca IDs concretos. Esa frontera es deliberadamente
+amplia: la puerta gaming, resultado público, apertura, temporalidad, fuentes,
+duplicados y elegibilidad siguen decidiendo después sobre cada hija.
+
+La intención sella primero
+`market_radar_provider_discovery_checkpoints_v2`. El primer snapshot conserva
+hash SHA-256 del catálogo global, recuento completo, política, proyección,
+timestamp y todas las series seleccionadas. Cada snapshot posterior referencia
+el hash anterior y puede modificar como máximo 48 resultados de series. SQL
+recalcula recuentos, unicidad, pertenencia padre-serie, número de intento y
+transiciones: un resultado anterior no puede desaparecer, una serie cumplida no
+puede cambiar y catálogo o selección permanecen idénticos durante toda la UUID.
+La tabla es privada, RLS forzada y append-only; sus RPC exigen lease vigente y
+`service_role`.
+
+El presupuesto de red de cada tramo es hijo del deadline absoluto. Si expira el
+tramo, una petición que seguía en vuelo no se registra como fallo de la serie ni
+consume intento: permanece pendiente. Timeout real, rate limit, indisponibilidad
+o respuesta inválida conservan código, retry y cooldown. Una invocación sin
+progreso libera o difiere el lease mediante una incidencia
+`blocking_scope=none`; la UI continúa exclusivamente la misma UUID. Cuatro
+fallos reales aíslan la serie como `provider_unavailable` sin borrar su
+identidad ni sus intentos; las familias completas sanas pueden continuar y el
+ledger declara el alcance parcial como calidad, no como salud degradada del
+proveedor. Nunca se presenta el snapshot anterior como fresco.
+
+`market_radar_provider_discovery_checkpoints_v1` permanece solo para reanudar
+una intención histórica creada antes de V2. Las intenciones nuevas no dependen
+de los dos scopes taxonómicos legacy. El ledger de selección cuenta cada padre
+indexado como materializado o diferido, aunque la respuesta pública omita IDs
+completos por presupuesto. Un checkpoint presente solo en memoria, una serie
+fallida no registrada o un catálogo parcial presentado como agotado no
 constituyen progreso durable. Polymarket conserva su paginación Gamma/CLOB y su
 aislamiento por búsqueda y padre; no puede escribir un payload con forma Kalshi
 en este checkpoint. Si su índice deja de caber en una invocación, deberá añadir

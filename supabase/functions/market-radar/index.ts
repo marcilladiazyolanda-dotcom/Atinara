@@ -11,6 +11,8 @@ import {
   RADAR_NORMALIZER_VERSION,
   RADAR_PARENT_RECONCILIATION_VERSION,
   RADAR_PROVIDER_ROLE_VERSION,
+  RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2,
+  KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
   RADAR_PROVIDERS,
   RADAR_REASON_CODES,
   adaptKalshiResponse,
@@ -18,7 +20,10 @@ import {
   applyDeterministicRadarEligibility,
   applyEligibilityDecision,
   bindRadarCandidatesToReconciledChildren,
+  advanceProviderDiscoveryCheckpointV2,
+  buildKalshiRadarCatalogEntityTermsV2,
   buildProviderDiscoveryCheckpointV1,
+  buildProviderDiscoveryCheckpointV2,
   buildCacheKey,
   buildRadarPersistenceBatches,
   buildCoverResolutionSignals,
@@ -27,6 +32,7 @@ import {
   canReuseRadarVerification,
   candidateResolutionSubject,
   cleanText,
+  classifyKalshiRadarSeriesCatalogV2,
   collapseLegacyChildRepresentations,
   collectProviderCursorPages,
   constrainRadarDiscoveryPayload,
@@ -64,10 +70,12 @@ import {
   providerResolutionSourceUrls,
   providerResultLabel,
   projectRadarDiscoveryView,
+  projectProviderDiscoveryCheckpointV2,
   projectRadarParentReconciliation,
   projectRadarDomainReview,
   prioritizeProviderChildEvidenceAliases,
   publicProviderError,
+  providerDiscoveryCheckpointV2State,
   radarOperationalErrorCode,
   radarDomainFingerprintV1,
   reconcileProviderParent,
@@ -120,6 +128,10 @@ const MAX_PROVIDER_ENUMERATION_PARENTS = 32;
 const MAX_PROVIDER_MATERIALIZED_PARENTS = 24;
 const MAX_PROVIDER_MATERIALIZED_CHILDREN = 240;
 const PROVIDER_DISCOVERY_CHECKPOINT_VERSION = "atinara-provider-discovery-checkpoint-v1";
+const MAX_PROVIDER_DISCOVERY_SERIES_BATCH = 48;
+const MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS = 4;
+const PROVIDER_DISCOVERY_BATCH_BUDGET_MS = 40_000;
+const MAX_KALSHI_CATALOG_RESPONSE_BYTES = 24_000_000;
 // Kalshi aplica 429 con ráfagas pequeñas en producción. Dos workers conservan
 // el presupuesto del refresh y reducen retries sin sacrificar paginación.
 const KALSHI_CONCURRENCY = 2;
@@ -252,6 +264,8 @@ type RadarRefreshContext = {
 type FetchJsonOptions = {
   onRateLimit?: (error: ProviderRequestError) => void;
   execution?: Environment["execution"];
+  maxAttempts?: number;
+  maxResponseBytes?: number;
 };
 
 type RpcOptions = {
@@ -750,15 +764,24 @@ async function loadRadarProviderDiscoveryCheckpoint(
   intent: RadarRefreshIntent,
 ): Promise<JsonRecord | null> {
   if (!intent.leaseToken || intent.capability !== "candidate_feed") return null;
+  const input = {
+    request_id_input: intent.requestId,
+    provider_input: intent.provider,
+    capability_input: intent.capability,
+    lease_token_input: intent.leaseToken,
+  };
+  const v2 = toRecord(await rpc(
+    environment,
+    "get_market_radar_provider_discovery_checkpoint_v2",
+    input,
+    undefined,
+    true,
+  ));
+  if (v2) return v2;
   return toRecord(await rpc(
     environment,
     "get_market_radar_provider_discovery_checkpoint_v1",
-    {
-      request_id_input: intent.requestId,
-      provider_input: intent.provider,
-      capability_input: intent.capability,
-      lease_token_input: intent.leaseToken,
-    },
+    input,
     undefined,
     true,
   ));
@@ -772,9 +795,13 @@ async function checkpointRadarProviderDiscovery(
   if (!intent.leaseToken || intent.capability !== "candidate_feed") {
     throw new Error("RADAR_REFRESH_LEASE_REQUIRED");
   }
+  const schemaVersion = cleanText(checkpoint.schema_version, 100);
+  const operation = schemaVersion === RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2
+    ? "checkpoint_market_radar_provider_discovery_v2"
+    : "checkpoint_market_radar_provider_discovery_v1";
   const result = toRecord(await rpc(
     environment,
-    "checkpoint_market_radar_provider_discovery_v1",
+    operation,
     {
       request_id_input: intent.requestId,
       provider_input: intent.provider,
@@ -785,6 +812,39 @@ async function checkpointRadarProviderDiscovery(
     undefined,
     true,
   )) ?? {};
+  intent.phase = "fetching";
+  intent.inProgress = true;
+  intent.leaseToken = null;
+  return result;
+}
+
+async function deferRadarProviderDiscovery(
+  environment: Environment,
+  intent: RadarRefreshIntent,
+  failure: ReturnType<typeof publicProviderError> & JsonRecord,
+): Promise<JsonRecord> {
+  if (!intent.leaseToken || intent.capability !== "candidate_feed") {
+    throw new Error("RADAR_REFRESH_LEASE_REQUIRED");
+  }
+  const code = cleanText(failure.code, 100);
+  const result = toRecord(await rpc(
+    environment,
+    "defer_market_radar_provider_discovery_v2",
+    {
+      request_id_input: intent.requestId,
+      provider_input: intent.provider,
+      capability_input: intent.capability,
+      lease_token_input: intent.leaseToken,
+      issue_code_input: code,
+      retry_after_at_input: safeIsoDate(failure.retry_after_at),
+    },
+    undefined,
+    true,
+  )) ?? {};
+  if (result.outcome !== "in_progress" || result.retryable !== true
+      || result.next_action !== "resume_provider_discovery") {
+    throw new Error("RADAR_PROVIDER_DISCOVERY_DEFERRAL_INVALID");
+  }
   intent.phase = "fetching";
   intent.inProgress = true;
   intent.leaseToken = null;
@@ -850,6 +910,27 @@ async function withRadarEnrichmentBudget<T>(
   }
 }
 
+async function withRadarProviderDiscoveryBudget<T>(
+  environment: Environment,
+  operation: (boundedEnvironment: Environment) => Promise<T>,
+): Promise<T> {
+  const remaining = Math.max(
+    1_000,
+    environment.execution.absoluteDeadlineAt - Date.now() - FINALIZATION_RESERVE_MS,
+  );
+  const scoped = createAbsoluteExecutionContext({
+    durationMs: Math.min(PROVIDER_DISCOVERY_BATCH_BUDGET_MS, remaining),
+    invocationId: environment.execution.invocationId,
+    agentRunId: environment.execution.agentRunId,
+    parentSignal: environment.execution.signal,
+  });
+  try {
+    return await operation({ ...environment, execution: scoped.context });
+  } finally {
+    scoped.cleanup();
+  }
+}
+
 async function authenticateAdmin(environment: Environment, authorization: string): Promise<{ adminId: string } | Response> {
   const response = await fetchInternal(environment, `${environment.supabaseUrl}/auth/v1/user`, {
     headers: { Authorization: authorization, apikey: environment.publishableKey },
@@ -890,6 +971,38 @@ function isProviderRateLimit(error: unknown): error is ProviderRequestError {
     : error instanceof Error && /PROVIDER_RATE_LIMITED|HTTP_429/.test(error.message);
 }
 
+async function readProviderResponseText(response: Response, maxBytes: number): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
+  }
+  if (!response.body) {
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
+    return new TextDecoder().decode(buffer);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("PROVIDER_RESPONSE_TOO_LARGE").catch(() => undefined);
+        throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function fetchJson(
   url: URL,
   init: RequestInit = {},
@@ -899,13 +1012,20 @@ async function fetchJson(
   if (!validateApiUrl(url)) throw new Error("PROVIDER_HOST_NOT_ALLOWED");
   const execution = options.execution;
   if (!execution) throw new Error("ABSOLUTE_DEADLINE_REQUIRED");
-  for (let attempt = 0; attempt < MAX_PROVIDER_RATE_LIMIT_ATTEMPTS; attempt += 1) {
+  const maxAttempts = Math.max(1, Math.min(
+    MAX_PROVIDER_RATE_LIMIT_ATTEMPTS,
+    Math.floor(Number(options.maxAttempts) || MAX_PROVIDER_RATE_LIMIT_ATTEMPTS),
+  ));
+  const maxResponseBytes = Math.max(64_000, Math.min(
+    MAX_KALSHI_CATALOG_RESPONSE_BYTES,
+    Math.floor(Number(options.maxResponseBytes) || 3_000_000),
+  ));
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const child = createChildAbort(execution, timeoutMs, FINALIZATION_RESERVE_MS);
     try {
       const response = await fetch(url, { ...init, signal: child.signal });
       if (response.ok) {
-        const text = await response.text();
-        if (text.length > 3_000_000) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
+        const text = await readProviderResponseText(response, maxResponseBytes);
         try {
           return JSON.parse(text);
         } catch {
@@ -917,15 +1037,15 @@ async function fetchJson(
         const rateLimitError = new ProviderRequestError("PROVIDER_RATE_LIMITED", 429, retryAfterMs);
         options.onRateLimit?.(rateLimitError);
         const delayMs = retryAfterMs ?? providerRetryDelay(attempt);
-        if (attempt < MAX_PROVIDER_RATE_LIMIT_ATTEMPTS - 1
-          && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
+        if (attempt < maxAttempts - 1
+            && delayMs <= MAX_PROVIDER_RETRY_DELAY_MS) {
           await deadlineSleep(delayMs, execution, FINALIZATION_RESERVE_MS);
           continue;
         }
         throw rateLimitError;
       }
       if (response.status >= 500) {
-        if (attempt === 0) {
+        if (attempt === 0 && maxAttempts > 1) {
           await deadlineSleep(providerRetryDelay(attempt), execution, FINALIZATION_RESERVE_MS);
           continue;
         }
@@ -935,7 +1055,7 @@ async function fetchJson(
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw new Error("PROVIDER_TIMEOUT");
       if (error instanceof ProviderRequestError
-        || attempt >= 1
+        || attempt >= Math.min(1, maxAttempts - 1)
         || (error instanceof Error && /INVALID|NOT_ALLOWED|TOO_LARGE|HTTP_4(?!29)/.test(error.message))) throw error;
       await deadlineSleep(providerRetryDelay(attempt), execution, FINALIZATION_RESERVE_MS);
     } finally {
@@ -3160,7 +3280,11 @@ async function kalshiTaxonomy(environment: Environment): Promise<KalshiTaxonomyS
   }
 }
 
-function compactKalshiSeriesCheckpoint(series: JsonRecord, scopes: KalshiTaxonomyScope[]): JsonRecord {
+function compactKalshiSeriesCheckpoint(
+  series: JsonRecord,
+  scopes: KalshiTaxonomyScope[],
+  classification: ReturnType<typeof classifyKalshiRadarSeriesCatalogV2> | null = null,
+): JsonRecord {
   const title = cleanText(series.title ?? series.name, 400);
   return {
     ticker: cleanText(series.ticker, 120),
@@ -3169,6 +3293,11 @@ function compactKalshiSeriesCheckpoint(series: JsonRecord, scopes: KalshiTaxonom
     tags: Array.isArray(series.tags)
       ? series.tags.map((tag) => cleanText(tag, 100)).filter(Boolean).slice(0, 30) : [],
     taxonomy_scopes: scopes.map((scope) => ({ category: scope.category, tag: scope.tag })),
+    catalog_signals: classification?.signals ?? [],
+    catalog_entity_matches: classification?.catalog_entity_matches ?? [],
+    radar_themes: classification?.radar_themes ?? [],
+    inferred_atinara_category: classification?.inferred_atinara_category
+      ?? inferAtinaraCategory(title, series.tags),
     series_slug: slugify(title),
     settlement_sources: toRecordArray(series.settlement_sources).map((source) => ({
       name: cleanText(source.name, 200) || null,
@@ -3200,6 +3329,7 @@ function compactKalshiEventCheckpoint(event: JsonRecord): JsonRecord | null {
 async function fetchOpenKalshiSeriesEvents(
   environment: Environment,
   ticker: string,
+  options: { maxAttempts?: number } = {},
 ): Promise<JsonRecord[]> {
   const minimumClose = Math.floor(Date.now() / 1000);
   const eventCollection = await collectProviderCursorPages(async (cursor) => {
@@ -3211,7 +3341,10 @@ async function fetchOpenKalshiSeriesEvents(
     eventsUrl.searchParams.set("limit", "200");
     if (cursor) eventsUrl.searchParams.set("cursor", cursor);
     return toRecord(await fetchJson(
-      eventsUrl, {}, PROVIDER_TIMEOUT_MS, { execution: environment.execution },
+      eventsUrl,
+      {},
+      PROVIDER_TIMEOUT_MS,
+      { execution: environment.execution, maxAttempts: options.maxAttempts },
     )) ?? {};
   }, { itemsField: "events", cursorField: "cursor", maxPages: MAX_PROVIDER_PAGES });
   return eventCollection.items.map(compactKalshiEventCheckpoint).filter(Boolean) as JsonRecord[];
@@ -3279,6 +3412,235 @@ async function buildKalshiProviderDiscoveryCheckpoint(
     max_parents: MAX_PROVIDER_INDEX_PARENTS,
     max_bytes: 2_000_000,
   }) as JsonRecord;
+}
+
+function kalshiCatalogFingerprintProjection(series: JsonRecord): JsonRecord {
+  const productMetadata = toRecord(series.product_metadata);
+  const importantInfo = toRecord(productMetadata?.important_info);
+  const settlementSources = toRecordArray(series.settlement_sources).map((source) => ({
+    name: cleanText(source.name, 200) || null,
+    url: cleanText(source.url, 2_048) || null,
+  })).filter((source) => source.url).sort((left, right) => {
+    const leftIdentity = `${left.url}\u0000${left.name ?? ""}`;
+    const rightIdentity = `${right.url}\u0000${right.name ?? ""}`;
+    return leftIdentity < rightIdentity ? -1 : leftIdentity > rightIdentity ? 1 : 0;
+  });
+  return {
+    ticker: cleanText(series.ticker, 120),
+    title: cleanText(series.title ?? series.name, 400),
+    category: cleanText(series.category, 160),
+    tags: (Array.isArray(series.tags) ? series.tags : [])
+      .map((tag) => cleanText(tag, 100)).filter(Boolean).sort(),
+    product_scope: cleanText(productMetadata?.scope, 1_000) || null,
+    product_important_info: importantInfo ? {
+      title: cleanText(importantInfo.title, 500) || null,
+      message: cleanText(importantInfo.message, 2_000) || null,
+      markdown: cleanText(importantInfo.markdown, 4_000) || null,
+    } : null,
+    settlement_sources: settlementSources,
+    volume_fp: cleanText(series.volume_fp ?? series.volume, 80) || null,
+    last_updated_ts: safeIsoDate(series.last_updated_ts),
+  };
+}
+
+async function buildKalshiProviderDiscoveryCheckpointV2(
+  environment: Environment,
+  now: string,
+): Promise<JsonRecord> {
+  const seriesUrl = new URL(`${KALSHI_API_ROOT}/series`);
+  seriesUrl.searchParams.set("include_product_metadata", "true");
+  seriesUrl.searchParams.set("include_volume", "true");
+  const payload = toRecord(await fetchJson(
+    seriesUrl,
+    {},
+    PROVIDER_TIMEOUT_MS,
+    {
+      execution: environment.execution,
+      maxResponseBytes: MAX_KALSHI_CATALOG_RESPONSE_BYTES,
+    },
+  )) ?? {};
+  const rawSeries = toRecordArray(payload.series);
+  const providerCursor = cleanText(payload.cursor, 500);
+  if (!rawSeries.length) throw new Error("PROVIDER_INVALID_RESPONSE");
+  if (providerCursor) throw new Error("PROVIDER_PAGINATION_INCOMPLETE");
+  if (rawSeries.length > 100_000) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
+  const projectionByTicker = new Map<string, JsonRecord>();
+  const catalogEntityTerms = buildKalshiRadarCatalogEntityTermsV2(rawSeries);
+  const entityTermsHash = await sha256Hex({
+    policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
+    terms: catalogEntityTerms,
+  });
+  const selected: Array<{
+    source: JsonRecord;
+    scopes: KalshiTaxonomyScope[];
+    classification: ReturnType<typeof classifyKalshiRadarSeriesCatalogV2>;
+  }> = [];
+  for (const source of rawSeries) {
+    const projection = kalshiCatalogFingerprintProjection(source);
+    const ticker = cleanText(projection.ticker, 120);
+    if (!ticker || projectionByTicker.has(ticker)) {
+      throw new Error("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
+    }
+    projectionByTicker.set(ticker, projection);
+    const classification = classifyKalshiRadarSeriesCatalogV2(source, {
+      catalog_entity_terms: catalogEntityTerms,
+    });
+    if (!classification.selected) continue;
+    const category = cleanText(source.category, 160);
+    const scopes = (Array.isArray(source.tags) ? source.tags : [])
+      .map((tag) => cleanText(tag, 160))
+      .filter((tag) => /^(?:video games?|esports?)$/i.test(tag))
+      .map((tag) => ({ category, tag }));
+    selected.push({ source, scopes, classification });
+  }
+  selected.sort((left, right) => {
+    const priority = seriesPriority(right.source) - seriesPriority(left.source);
+    if (priority) return priority;
+    const leftTicker = cleanText(left.source.ticker, 120);
+    const rightTicker = cleanText(right.source.ticker, 120);
+    return leftTicker < rightTicker ? -1 : leftTicker > rightTicker ? 1 : 0;
+  });
+  if (!selected.length) throw new Error("PROVIDER_INVALID_RESPONSE");
+  if (selected.length > MAX_KALSHI_SERIES) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
+  const catalogProjection = [...projectionByTicker.values()]
+    .sort((left, right) => cleanText(left.ticker, 120) < cleanText(right.ticker, 120) ? -1
+      : cleanText(left.ticker, 120) > cleanText(right.ticker, 120) ? 1 : 0);
+  const providerCatalogHash = await sha256Hex({
+    projection_version: "atinara-kalshi-series-catalog-projection-v1",
+    entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
+    entity_terms_hash: entityTermsHash,
+    series: catalogProjection,
+  });
+  const compactSeries = selected.map(({ source, scopes, classification }) =>
+    compactKalshiSeriesCheckpoint(source, scopes, classification));
+  return buildProviderDiscoveryCheckpointV2({
+    checked_at: now,
+    catalog: {
+      provider_catalog_hash: providerCatalogHash,
+      entity_terms_hash: entityTermsHash,
+      entity_term_count: catalogEntityTerms.length,
+      total_provider_series_count: rawSeries.length,
+      provider_pagination_exhausted: true,
+      provider_cursor: null,
+    },
+    series: compactSeries,
+    max_series: MAX_KALSHI_SERIES,
+    max_parents: MAX_PROVIDER_INDEX_PARENTS,
+    max_attempts: MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS,
+    max_bytes: 4_000_000,
+  }) as JsonRecord;
+}
+
+function validatedKalshiDiscoveryCheckpointV2(value: unknown): {
+  checkpoint: JsonRecord;
+  checkpointHash: string;
+  state: ReturnType<typeof providerDiscoveryCheckpointV2State>;
+} | null {
+  const wrapper = toRecord(value);
+  const checkpoint = toRecord(wrapper?.checkpoint);
+  const checkpointHash = cleanText(wrapper?.checkpoint_hash, 80);
+  if (!checkpoint
+      || cleanText(checkpoint.schema_version, 100) !== RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2
+      || !/^[a-f0-9]{64}$/.test(checkpointHash)) return null;
+  try {
+    const state = providerDiscoveryCheckpointV2State(checkpoint, {
+      max_series: MAX_KALSHI_SERIES,
+      max_parents: MAX_PROVIDER_INDEX_PARENTS,
+      max_attempts: MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS,
+      max_bytes: 4_000_000,
+    });
+    if (Number(wrapper?.sequence) !== state.sequence) return null;
+    return { checkpoint, checkpointHash, state };
+  } catch {
+    return null;
+  }
+}
+
+async function collectKalshiProviderDiscoveryBatch(
+  environment: Environment,
+  durable: NonNullable<ReturnType<typeof validatedKalshiDiscoveryCheckpointV2>>,
+): Promise<{ batchResults: JsonRecord[]; retryAfterAt: string | null }> {
+  const resultBySeries = new Map(durable.state.results.map((result) => [
+    cleanText(result.series_ticker, 120),
+    result,
+  ]));
+  const pendingSeriesIds = durable.state.pending_series_ids
+    .map((ticker: unknown) => cleanText(ticker, 120)).filter(Boolean);
+  const retryableFailedSeriesIds = durable.state.retryable_failed_series_ids
+    .map((ticker: unknown) => cleanText(ticker, 120)).filter(Boolean);
+  const nowMs = Date.now();
+  const retryableNow = retryableFailedSeriesIds.filter((ticker: string) => {
+    const retryAfterAt = Date.parse(cleanText(resultBySeries.get(ticker)?.retry_after_at, 100));
+    return !Number.isFinite(retryAfterAt) || retryAfterAt <= nowMs;
+  });
+  const targets = [
+    ...pendingSeriesIds,
+    ...retryableNow,
+  ].slice(0, MAX_PROVIDER_DISCOVERY_SERIES_BATCH);
+  if (!targets.length) {
+    const retryAfterValues = retryableFailedSeriesIds
+      .map((ticker: string) => Date.parse(cleanText(resultBySeries.get(ticker)?.retry_after_at, 100)))
+      .filter((value: number) => Number.isFinite(value) && value > nowMs);
+    return {
+      batchResults: [],
+      retryAfterAt: retryAfterValues.length
+        ? new Date(Math.min(...retryAfterValues)).toISOString() : null,
+    };
+  }
+  return withRadarProviderDiscoveryBudget(environment, async (boundedEnvironment) => {
+    const output: Array<{ index: number; result: JsonRecord }> = [];
+    let cursor = 0;
+    async function run() {
+      while (true) {
+        if (Date.now() >= boundedEnvironment.execution.absoluteDeadlineAt
+            - FINALIZATION_RESERVE_MS - 1_000) return;
+        const index = cursor;
+        if (index >= targets.length) return;
+        cursor += 1;
+        const seriesTicker = targets[index];
+        try {
+          const events = await fetchOpenKalshiSeriesEvents(
+            boundedEnvironment,
+            seriesTicker,
+            { maxAttempts: 1 },
+          );
+          output.push({
+            index,
+            result: {
+              series_ticker: seriesTicker,
+              status: "fulfilled",
+              checked_at: new Date().toISOString(),
+              events,
+            },
+          });
+        } catch (error) {
+          // El deadline del lote no es un fallo de esta serie. La identidad
+          // queda pendiente y la siguiente invocación retoma exactamente aquí,
+          // sin consumir un intento artificial ni degradar el alcance sano.
+          if (boundedEnvironment.execution.signal.aborted
+              || Date.now() >= boundedEnvironment.execution.absoluteDeadlineAt
+                - FINALIZATION_RESERVE_MS - 1_000) return;
+          const failure = providerFailure(error, "kalshi");
+          output.push({
+            index,
+            result: {
+              series_ticker: seriesTicker,
+              status: "rejected",
+              checked_at: new Date().toISOString(),
+              error_code: cleanText(failure.code, 100) || "PROVIDER_UNAVAILABLE",
+              retry_after_at: safeIsoDate(failure.retry_after_at),
+              events: [],
+            },
+          });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(KALSHI_CONCURRENCY, targets.length) }, run));
+    return {
+      batchResults: output.sort((left, right) => left.index - right.index).map(({ result }) => result),
+      retryAfterAt: null,
+    };
+  });
 }
 
 function validatedKalshiDiscoveryCheckpoint(value: unknown): JsonRecord | null {
@@ -3480,17 +3842,128 @@ async function discoverKalshi(
   intent: RadarRefreshIntent,
   storedCheckpoint: JsonRecord | null,
 ) {
-  const checkpoint = validatedKalshiDiscoveryCheckpoint(storedCheckpoint);
-  if (!checkpoint) {
-    const freshCheckpoint = await buildKalshiProviderDiscoveryCheckpoint(environment, now);
-    const durable = await checkpointRadarProviderDiscovery(environment, intent, freshCheckpoint);
+  const durableV2 = validatedKalshiDiscoveryCheckpointV2(storedCheckpoint);
+  let checkpoint = validatedKalshiDiscoveryCheckpoint(storedCheckpoint);
+  const storedPayload = toRecord(toRecord(storedCheckpoint)?.checkpoint);
+  if (storedPayload && !durableV2 && !checkpoint) {
+    throw new Error("PROVIDER_DISCOVERY_CHECKPOINT_INVALID");
+  }
+  if (durableV2 && !durableV2.state.ready) {
+    const collected = await collectKalshiProviderDiscoveryBatch(environment, durableV2);
+    if (!collected.batchResults.length) {
+      const code = collected.retryAfterAt ? "PROVIDER_RATE_LIMITED" : "PROVIDER_TIMEOUT";
+      const failure = {
+        ...publicProviderError("kalshi", code, collected.retryAfterAt ? 429 : 503),
+        retry_after_at: collected.retryAfterAt,
+        retryable: true,
+      } as ReturnType<typeof publicProviderError> & JsonRecord;
+      const deferred = await deferRadarProviderDiscovery(environment, intent, failure);
+      return {
+        discovery_in_progress: true,
+        discovery_checkpoint: deferred,
+        discovery_progress: {
+          stage: "series_events",
+          cause_code: code,
+          retry_after_at: collected.retryAfterAt,
+          total_series_count: durableV2.state.series.length,
+          completed_series_count: durableV2.state.completed_series_ids.length,
+          failed_series_count: durableV2.state.failed_series_ids.length,
+          pending_series_count: durableV2.state.pending_series_ids.length,
+        },
+        candidates: [] as JsonRecord[],
+        reconciliations: [] as JsonRecord[],
+      };
+    }
+    const nextCheckpoint = advanceProviderDiscoveryCheckpointV2(
+      durableV2.checkpoint,
+      collected.batchResults,
+      {
+        previous_checkpoint_hash: durableV2.checkpointHash,
+        max_batch: MAX_PROVIDER_DISCOVERY_SERIES_BATCH,
+        max_series: MAX_KALSHI_SERIES,
+        max_parents: MAX_PROVIDER_INDEX_PARENTS,
+        max_attempts: MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS,
+        max_bytes: 4_000_000,
+      },
+    ) as JsonRecord;
+    const nextState = providerDiscoveryCheckpointV2State(nextCheckpoint, {
+      max_series: MAX_KALSHI_SERIES,
+      max_parents: MAX_PROVIDER_INDEX_PARENTS,
+      max_attempts: MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS,
+      max_bytes: 4_000_000,
+    });
+    const durable = await checkpointRadarProviderDiscovery(environment, intent, nextCheckpoint);
     return {
       discovery_in_progress: true,
       discovery_checkpoint: durable,
+      discovery_progress: {
+        stage: "series_events",
+        sequence: nextState.sequence,
+        total_series_count: nextState.series.length,
+        completed_series_count: nextState.completed_series_ids.length,
+        failed_series_count: nextState.failed_series_ids.length,
+        pending_series_count: nextState.pending_series_ids.length,
+        retryable_failed_series_count: nextState.retryable_failed_series_ids.length,
+        exhausted_failed_series_count: nextState.exhausted_failed_series_ids.length,
+        total_parent_count: nextState.events.length,
+      },
       candidates: [] as JsonRecord[],
       reconciliations: [] as JsonRecord[],
     };
   }
+  if (durableV2) {
+    checkpoint = projectProviderDiscoveryCheckpointV2(durableV2.checkpoint, {
+      max_series: MAX_KALSHI_SERIES,
+      max_parents: MAX_PROVIDER_INDEX_PARENTS,
+      max_attempts: MAX_PROVIDER_DISCOVERY_SERIES_ATTEMPTS,
+      max_bytes: 4_000_000,
+    }) as JsonRecord;
+  }
+  if (!checkpoint) {
+    let freshCheckpoint: JsonRecord;
+    try {
+      freshCheckpoint = await buildKalshiProviderDiscoveryCheckpointV2(environment, now);
+    } catch (error) {
+      const observed = providerFailure(error, "kalshi");
+      const failure = {
+        ...observed,
+        retryable: true,
+      } as ReturnType<typeof publicProviderError> & JsonRecord;
+      const deferred = await deferRadarProviderDiscovery(environment, intent, failure);
+      return {
+        discovery_in_progress: true,
+        discovery_checkpoint: deferred,
+        discovery_progress: {
+          stage: "catalog_fetch",
+          cause_code: cleanText(failure.code, 100),
+          retry_after_at: safeIsoDate(failure.retry_after_at),
+        },
+        candidates: [] as JsonRecord[],
+        reconciliations: [] as JsonRecord[],
+      };
+    }
+    // El sellado queda fuera del catch del proveedor. Si el transporte de la
+    // RPC es ambiguo, la siguiente lectura recupera la misma secuencia; nunca
+    // intentamos diferir con un lease que pudo haberse consumido al persistir.
+    const durable = await checkpointRadarProviderDiscovery(environment, intent, freshCheckpoint);
+    return {
+      discovery_in_progress: true,
+      discovery_checkpoint: durable,
+      discovery_progress: {
+        stage: "catalog_sealed",
+        total_series_count: Number(freshCheckpoint.total_series_count) || 0,
+        completed_series_count: 0,
+        failed_series_count: 0,
+        pending_series_count: Number(freshCheckpoint.pending_series_count) || 0,
+        total_parent_count: 0,
+        catalog_evidence: freshCheckpoint.catalog,
+      },
+      candidates: [] as JsonRecord[],
+      reconciliations: [] as JsonRecord[],
+    };
+  }
+  const legacyCheckpoint = cleanText(checkpoint.schema_version, 100)
+    === PROVIDER_DISCOVERY_CHECKPOINT_VERSION;
   const checkpointSeries = toRecordArray(checkpoint.series);
   const checkpointFailedTaxonomyScopes = toRecordArray(checkpoint.failed_taxonomy_scopes)
     .map((scope) => ({
@@ -3532,7 +4005,7 @@ async function discoverKalshi(
       taxonomy_scopes: [...scopeMap.values()],
     });
   }
-  const checkpointFailedSeriesIds = Array.isArray(checkpoint.failed_series_ids)
+  const checkpointFailedSeriesIds = legacyCheckpoint && Array.isArray(checkpoint.failed_series_ids)
     ? checkpoint.failed_series_ids.map((value) => cleanText(value, 120)).filter(Boolean) : [];
   const retrySeriesIds = [...new Set([
     ...checkpointFailedSeriesIds,
@@ -3543,7 +4016,8 @@ async function discoverKalshi(
     KALSHI_CONCURRENCY,
     async (ticker) => fetchOpenKalshiSeriesEvents(environment, ticker),
   );
-  const failedSeriesIds: string[] = [];
+  const failedSeriesIds: string[] = legacyCheckpoint || !Array.isArray(checkpoint.failed_series_ids)
+    ? [] : checkpoint.failed_series_ids.map((value) => cleanText(value, 120)).filter(Boolean);
   const recoveredEvents: JsonRecord[] = [];
   for (let index = 0; index < failedSeriesRetryResults.length; index += 1) {
     const result = failedSeriesRetryResults[index];
@@ -3668,6 +4142,8 @@ async function discoverKalshi(
   const reconciled = await reconcileCanonicalEvents(
     environment, "kalshi", materializedScope.selected, contextual, now, requestId,
   );
+  const catalogEvidence = toRecord(checkpoint.catalog_evidence);
+  const storedWrapper = toRecord(storedCheckpoint);
   return {
     ...reconciled,
     selection: {
@@ -3692,7 +4168,21 @@ async function discoverKalshi(
       failed_parent_ids: [...new Set(failedParentIds)],
       provider_scope_partial: failedTaxonomyScopes.length > 0
         || failedSeriesIds.length > 0 || failedParentIds.length > 0,
-      discovery_checkpoint_version: PROVIDER_DISCOVERY_CHECKPOINT_VERSION,
+      provider_catalog_total_series_count: catalogEvidence
+        ? Number(catalogEvidence.total_provider_series_count) || 0 : null,
+      provider_catalog_selected_series_count: catalogEvidence
+        ? Number(catalogEvidence.selected_series_count) || 0 : null,
+      provider_catalog_hash: catalogEvidence
+        ? cleanText(catalogEvidence.provider_catalog_hash, 80) : null,
+      provider_catalog_pagination_exhausted: catalogEvidence
+        ? catalogEvidence.provider_pagination_exhausted === true : null,
+      provider_catalog_selection_policy_version: catalogEvidence
+        ? cleanText(catalogEvidence.selection_policy_version, 120) : null,
+      discovery_checkpoint_version: cleanText(checkpoint.schema_version, 100)
+        || PROVIDER_DISCOVERY_CHECKPOINT_VERSION,
+      discovery_checkpoint_sequence: durableV2?.state.sequence ?? null,
+      discovery_checkpoint_hash: durableV2?.checkpointHash
+        ?? (cleanText(storedWrapper?.checkpoint_hash, 80) || null),
       discovery_checkpoint_replayed: true,
     },
   };
@@ -5117,15 +5607,23 @@ async function runDiscovery(environment: Environment, authorization: string, bod
         if (!intent) throw new Error("RADAR_REFRESH_INTENT_REQUIRED");
         const discovery = result.value;
         if (discovery.discovery_in_progress === true) {
+          const discoveryProgress = toRecord(discovery.discovery_progress) ?? {};
+          const discoveryStage = cleanText(discoveryProgress.stage, 80);
+          const progressMessage = discoveryStage === "catalog_sealed"
+            ? "Atinara selló el catálogo global completo de Kalshi. Continúa la misma actualización para indexar sus series por tramos durables."
+            : discoveryStage === "catalog_fetch"
+              ? "Kalshi no permitió completar el catálogo global. La intención sigue protegida y puede reanudarse sin abrir otra actualización."
+              : "Atinara guardó el tramo de series ya procesado. Continúa la misma actualización; solo se consultará lo pendiente o recuperable.";
           candidateProviderErrors.push({
             provider,
             code: "RADAR_PROVIDER_DISCOVERY_CHECKPOINTED",
             status: 202,
-            message: "Atinara selló el índice de series y registró cualquier fallo parcial. Continúa la misma actualización para enumerar familias sin repetir el catálogo.",
+            message: progressMessage,
             retryable: true,
             state_preserved: true,
             next_action: "resume_provider_discovery",
             discovery_checkpoint: discovery.discovery_checkpoint,
+            discovery_progress: discoveryProgress,
           });
           continue;
         }

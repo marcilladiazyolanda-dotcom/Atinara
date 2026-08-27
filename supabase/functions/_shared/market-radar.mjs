@@ -11,6 +11,9 @@ export const RADAR_PARENT_RECONCILIATION_VERSION = "atinara-radar-parent-reconci
 export const RADAR_CHILD_PROJECTION_VERSION = "atinara-radar-child-projection-v1";
 export const RADAR_PROVIDER_CHILD_CONTRACT_VERSION = "atinara-radar-provider-child-contract-v1";
 export const RADAR_PROVIDER_LABEL_CATALOG_VERSION = "atinara-radar-provider-labels-es-v1";
+export const RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2 = "atinara-provider-discovery-checkpoint-v2";
+export const KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION = "atinara-kalshi-radar-series-catalog-v2";
+export const KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION = "atinara-kalshi-catalog-entities-v1";
 
 export const RADAR_CATEGORIES = Object.freeze([
   "Lanzamientos",
@@ -530,17 +533,210 @@ const GAMING_DOMAIN_STRONG_PATTERNS = Object.freeze([
   /\bvideo ?games?\b/, /\bvideojuegos?\b/, /\bplaystation\b/, /\bxbox\b/,
   /\bnintendo\b/, /\bsteam\b/, /\bmetacritic\b/, /\bgame awards\b/,
   /\bgoty\b/, /\besports?\b/, /\btwitch\b/, /\bgameplay\b/,
-  /\b(?:dlc|expansion|multiplayer|single player|console)\b/,
+  /\b(?:dlc|expansion pack|game expansion|multiplayer|single player|console)\b/,
   /\b(?:game developer|game publisher|gaming studio)\b/,
 ]);
 
 const GAMING_DOMAIN_NEGATIVE_PATTERNS = Object.freeze([
   /\bsports illustrated\b/, /\b(?:footballer|futbolista)\b/,
   /\b(?:premier league|la liga|champions league|nba|nfl|mlb|nhl)\b/,
-  /\b(?:election|president|senate|congress|parliament|politic|eleccion)\b/,
+  /\b(?:election|president|senate|congress|parliament|politics?|political|eleccion)\b/,
   /\b(?:stock price|share price|bitcoin|cryptocurrency|criptomoneda)\b/,
   /\b(?:movie|film|box office|actor|actress|musician|album)\b/,
+  /\b(?:music|songs?|singer|band|podcasts?|television|tv shows?)\b/,
 ]);
+
+const KALSHI_RADAR_CATALOG_EXPLICIT_PATTERNS = Object.freeze([
+  /\b(?:video games?|videojuegos?|gaming|esports?)\b/,
+  /\b(?:playstation|xbox|nintendo|steam|metacritic|game awards|goty)\b/,
+  /\b(?:gameplay|dlc|multiplayer|single player|console)\b/,
+]);
+
+const KALSHI_RADAR_CATALOG_ENTITY_PATTERNS = Object.freeze([
+  /\b(?:rockstar games|riot games|epic games|electronic arts|ubisoft|activision|blizzard|bethesda)\b/,
+  /\b(?:take two|valve|supercell|bandai namco|square enix|capcom|sega|konami|cd projekt)\b/,
+  /\b(?:roblox|minecraft|fortnite|league of legends|valorant|counter strike|cs2)\b/,
+  /\b(?:call of duty|overwatch|rocket league|dota|warcraft|zelda|pokemon)\b/,
+]);
+
+const KALSHI_RADAR_CATALOG_INDUSTRY_PATTERNS = Object.freeze([
+  /\b(?:game developers?|game publishers?|gaming studios?)\b/,
+  /\b(?:video game companies|video game company|video game industry|games industry)\b/,
+]);
+
+const KALSHI_RADAR_CATALOG_CREATOR_METADATA_PATTERNS = Object.freeze([
+  /\b(?:twitch|youtube|youtuber|streamers?|content creators?)\b/,
+]);
+
+const KALSHI_RADAR_CATALOG_CREATOR_TICKER_PATTERN = /^(?:kx)+(?:twitch|ytube|youtube|streamer)/;
+
+const KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS = Object.freeze([
+  "rockstargames.com", "riotgames.com", "lolesports.com", "epicgames.com", "ea.com",
+  "ubisoft.com", "activision.com", "blizzard.com", "bethesda.net", "take2games.com",
+  "steampowered.com", "valvesoftware.com", "supercell.com", "bandainamcoent.com",
+  "square-enix-games.com", "capcom.com", "sega.com", "konami.com", "cdprojektred.com",
+  "roblox.com", "minecraft.net", "fortnite.com", "playstation.com", "xbox.com", "nintendo.com",
+]);
+
+const KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS = Object.freeze([
+  "metacritic.com", "thegameawards.com", "ign.com", "gamespot.com",
+  "pcgamer.com", "kotaku.com", "polygon.com",
+]);
+
+const KALSHI_RADAR_CATALOG_CREATOR_HOSTS = Object.freeze(["twitch.tv", "youtube.com"]);
+
+const KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS = new Set([
+  "registered_gaming_taxonomy",
+  "explicit_gaming_metadata",
+  "gaming_entity_metadata",
+  "gaming_industry_metadata",
+  "official_gaming_source",
+  "gaming_editorial_source",
+]);
+
+const KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS = new Set([
+  "will", "would", "when", "what", "which", "who", "where", "how", "many", "much",
+  "before", "after", "between", "over", "under", "than", "with", "without", "from",
+  "the", "and", "for", "that", "this", "into", "onto", "come", "comes", "coming",
+  "first", "last", "next", "more", "most", "less", "least", "certain", "official",
+  "new", "total", "point", "win", "winner", "team", "teams", "season", "sports",
+  "league", "cup", "pro", "project", "person", "people", "appear", "annual", "kpi",
+  "movie", "movies", "ranking", "rank", "voice", "artist", "performance", "two",
+  "rotten", "tomatoes", "meta",
+  "game", "games", "gaming", "video", "esports", "event", "events", "award", "awards",
+  "best", "top", "score", "review", "reviews", "release", "launch", "date", "year",
+  "month", "week", "day", "time", "stream", "streamer", "youtube", "twitch", "subs",
+  "subscriber", "subscribers", "announcement", "announced", "company", "market", "price",
+  "juego", "juegos", "videojuego", "videojuegos", "evento", "premio", "premios", "mejor",
+  "lanzamiento", "fecha", "antes", "despues", "cuando", "cuantos", "oficial",
+]);
+
+function kalshiCatalogEntityTokens(series) {
+  const rawTitle = cleanText(series?.title ?? series?.name, 400);
+  const normalizedTokens = normalizeComparableText(rawTitle).split(/\s+/).filter((token) =>
+    /^[a-z][a-z0-9]{2,39}$/.test(token)
+      && !KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS.has(token));
+  const uppercaseAcronyms = new Set((rawTitle.match(/\b[A-Z][A-Z0-9]{2,7}\b/g) ?? [])
+    .map((token) => normalizeComparableText(token))
+    .filter((token) => token && !KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS.has(token)));
+  return { tokens: [...new Set(normalizedTokens)], uppercase_acronyms: uppercaseAcronyms };
+}
+
+/**
+ * Deriva un vocabulario efímero desde series que el propio catálogo ya acredita
+ * por taxonomía, metadatos o autoridad. Permite descubrir series hermanas que
+ * solo nombran la entidad, sin incorporar una lista cerrada de títulos o IDs.
+ */
+export function buildKalshiRadarCatalogEntityTermsV2(seriesRows = []) {
+  if (!Array.isArray(seriesRows)) throw new TypeError("PROVIDER_DISCOVERY_CATALOG_INVALID");
+  const rows = seriesRows.filter(isRecord);
+  const globalFrequency = new Map();
+  const extractedRows = rows.map((series) => {
+    const extracted = kalshiCatalogEntityTokens(series);
+    for (const token of extracted.tokens) {
+      globalFrequency.set(token, (globalFrequency.get(token) ?? 0) + 1);
+    }
+    return { series, extracted };
+  });
+  const trustedFrequency = new Map();
+  const trustedAcronyms = new Set();
+  for (const { series, extracted } of extractedRows) {
+    const base = classifyKalshiRadarSeriesCatalogV2(series);
+    if (!base.signals.some((signal) => KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS.has(signal))) continue;
+    for (const token of extracted.tokens) {
+      trustedFrequency.set(token, (trustedFrequency.get(token) ?? 0) + 1);
+    }
+    for (const token of extracted.uppercase_acronyms) trustedAcronyms.add(token);
+  }
+  return [...trustedFrequency.entries()]
+    .filter(([token, trustedCount]) => {
+      const globalCount = globalFrequency.get(token) ?? 0;
+      return globalCount > 0 && globalCount <= 40
+        && trustedCount / globalCount >= 0.5
+        && (trustedCount >= 2 || trustedAcronyms.has(token));
+    })
+    .sort((left, right) => right[1] - left[1]
+      || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+    .slice(0, 1_000)
+    .map(([token]) => token);
+}
+
+function providerSourceHostname(source) {
+  try { return new URL(cleanText(source?.url, 2048)).hostname.toLowerCase(); }
+  catch { return ""; }
+}
+
+function providerHostMatches(hostname, allowedHosts) {
+  return Boolean(hostname) && allowedHosts.some((host) =>
+    hostname === host || hostname.endsWith(`.${host}`));
+}
+
+/**
+ * Clasifica una serie del catálogo global de Kalshi con reglas de dominio y
+ * temática. Las señales son categorías, metadatos, entidades y autoridades;
+ * nunca tickers concretos de mercados ni excepciones por evento observado.
+ */
+export function classifyKalshiRadarSeriesCatalogV2(series = {}, options = {}) {
+  const ticker = cleanText(series?.ticker, 120);
+  const title = cleanText(series?.title ?? series?.name, 400);
+  const category = cleanText(series?.category, 160);
+  const tags = safeStringArray(series?.tags, 30);
+  const productMetadata = isRecord(series?.product_metadata) ? series.product_metadata : {};
+  const importantInfo = isRecord(productMetadata.important_info) ? productMetadata.important_info : {};
+  const metadataText = normalizeComparableText([
+    title, category, ...tags, productMetadata.scope,
+    importantInfo.title, importantInfo.message, importantInfo.markdown,
+  ].filter(Boolean).join(" "));
+  const normalizedTicker = normalizeComparableText(ticker).replace(/\s+/g, "");
+  const sources = Array.isArray(series?.settlement_sources)
+    ? series.settlement_sources.filter(isRecord).slice(0, 40) : [];
+  const sourceHosts = sources.map(providerSourceHostname).filter(Boolean);
+  const signals = [];
+  if (tags.some((tag) => /^(?:video games?|esports?)$/.test(normalizeComparableText(tag)))) {
+    signals.push("registered_gaming_taxonomy");
+  }
+  if (KALSHI_RADAR_CATALOG_EXPLICIT_PATTERNS.some((pattern) => pattern.test(metadataText))) {
+    signals.push("explicit_gaming_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_ENTITY_PATTERNS.some((pattern) => pattern.test(metadataText))) {
+    signals.push("gaming_entity_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_INDUSTRY_PATTERNS.some((pattern) => pattern.test(metadataText))) {
+    signals.push("gaming_industry_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_CREATOR_METADATA_PATTERNS.some((pattern) => pattern.test(metadataText))
+      || KALSHI_RADAR_CATALOG_CREATOR_TICKER_PATTERN.test(normalizedTicker)) {
+    signals.push("creator_theme_metadata");
+  }
+  if (sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS))) {
+    signals.push("official_gaming_source");
+  }
+  if (sources.length <= 6
+      && sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS))) {
+    signals.push("gaming_editorial_source");
+  }
+  if (sources.length <= 3
+      && sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_CREATOR_HOSTS))) {
+    signals.push("creator_theme_source");
+  }
+  const entityTerms = safeStringArray(options.catalog_entity_terms, 1_000)
+    .map((term) => normalizeComparableText(term)).filter(Boolean);
+  const metadataTokens = new Set(metadataText.split(/\s+/).filter(Boolean));
+  const catalogEntityMatches = entityTerms.filter((term) => metadataTokens.has(term)).slice(0, 20);
+  if (catalogEntityMatches.length) signals.push("catalog_gaming_entity_match");
+  const themeText = normalizeComparableText(`${title} ${tags.join(" ")}`);
+  const radarThemes = Object.entries(CATEGORY_TERMS)
+    .filter(([, terms]) => terms.some((term) => themeText.includes(normalizeComparableText(term))))
+    .map(([radarCategory]) => radarCategory);
+  return {
+    selected: signals.length > 0,
+    policy_version: KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION,
+    signals: [...new Set(signals)],
+    catalog_entity_matches: catalogEntityMatches,
+    radar_themes: radarThemes,
+    inferred_atinara_category: inferAtinaraCategory(title, tags, productMetadata.scope),
+  };
+}
 
 const PROVIDER_PLACEHOLDER_PATTERNS = Object.freeze([
   /^(?:game|juego)\s+[a-z0-9]$/,
@@ -698,6 +894,348 @@ export function buildProviderDiscoveryCheckpointV1(input = {}) {
     throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_TOO_LARGE");
   }
   return checkpoint;
+}
+
+function normalizeProviderDiscoverySeriesV2(item) {
+  if (!isRecord(item)) throw new TypeError("PROVIDER_DISCOVERY_SERIES_INVALID");
+  const ticker = cleanText(item.ticker, 120);
+  if (!ticker) throw new TypeError("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
+  return {
+    ...item,
+    ticker,
+    title: cleanText(item.title ?? item.name, 400),
+    category: cleanText(item.category, 160),
+    tags: safeStringArray(item.tags, 30),
+    catalog_signals: safeStringArray(item.catalog_signals, 20),
+    catalog_entity_matches: safeStringArray(item.catalog_entity_matches, 20),
+    radar_themes: safeStringArray(item.radar_themes, 6)
+      .filter((category) => RADAR_CATEGORIES.includes(category)),
+    inferred_atinara_category: RADAR_CATEGORIES.includes(item.inferred_atinara_category)
+      ? item.inferred_atinara_category : inferAtinaraCategory(item.title, item.tags),
+  };
+}
+
+function normalizeProviderDiscoveryEventV2(event, expectedSeriesId) {
+  if (!isRecord(event)) throw new TypeError("PROVIDER_DISCOVERY_PARENT_INVALID");
+  const eventTicker = cleanText(event.event_ticker ?? event.ticker, 160);
+  const seriesTicker = cleanText(event.series_ticker, 120);
+  if (!eventTicker || seriesTicker !== expectedSeriesId) {
+    throw new TypeError("PROVIDER_DISCOVERY_PARENT_MEMBERSHIP_INVALID");
+  }
+  return { ...event, event_ticker: eventTicker, series_ticker: seriesTicker };
+}
+
+/**
+ * Valida un snapshot V2 y deriva el trabajo pendiente sin confiar en sus
+ * contadores declarados. Cada resultado representa el último estado durable de
+ * una serie; un padre solo puede pertenecer a una serie completada.
+ */
+export function providerDiscoveryCheckpointV2State(checkpoint = {}, options = {}) {
+  const maxSeries = Math.max(1, Math.min(10_000, Math.floor(Number(options.max_series) || 2_000)));
+  const maxParents = Math.max(1, Math.min(10_000, Math.floor(Number(options.max_parents) || 2_000)));
+  const maxAttempts = Math.max(1, Math.min(10, Math.floor(Number(options.max_attempts) || 4)));
+  const maxBytes = Math.max(64_000, Math.min(10_000_000,
+    Math.floor(Number(options.max_bytes) || 4_000_000)));
+  if (!isRecord(checkpoint)
+      || cleanText(checkpoint.schema_version, 100) !== RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2
+      || !Number.isSafeInteger(Number(checkpoint.sequence))
+      || Number(checkpoint.sequence) < 1
+      || Number(checkpoint.sequence) > 1_000
+      || !Number.isFinite(Date.parse(cleanText(checkpoint.checked_at, 100)))
+      || !Array.isArray(checkpoint.series)
+      || !Array.isArray(checkpoint.series_results)
+      || checkpoint.series.length < 1
+      || checkpoint.series.length > maxSeries
+      || checkpoint.series_results.length > checkpoint.series.length) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_V2_INVALID");
+  }
+  const sequence = Number(checkpoint.sequence);
+  const previousHash = cleanText(checkpoint.previous_checkpoint_hash, 80);
+  if ((sequence === 1 && previousHash)
+      || (sequence > 1 && !/^[a-f0-9]{64}$/.test(previousHash))) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_CHAIN_INVALID");
+  }
+  const catalog = isRecord(checkpoint.catalog) ? checkpoint.catalog : null;
+  const providerCatalogHash = cleanText(catalog?.provider_catalog_hash, 80);
+  const totalProviderSeriesCount = Number(catalog?.total_provider_series_count);
+  if (!catalog
+      || cleanText(catalog.catalog_version, 100) !== "atinara-kalshi-series-catalog-evidence-v2"
+      || cleanText(catalog.source_endpoint, 120) !== "/trade-api/v2/series"
+      || cleanText(catalog.query_contract, 160)
+        !== "include_product_metadata=true&include_volume=true"
+      || cleanText(catalog.selection_policy_version, 120)
+        !== KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION
+      || cleanText(catalog.entity_policy_version, 120)
+        !== KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION
+      || !/^[a-f0-9]{64}$/.test(cleanText(catalog.entity_terms_hash, 80))
+      || !Number.isSafeInteger(Number(catalog.entity_term_count))
+      || Number(catalog.entity_term_count) < 0
+      || Number(catalog.entity_term_count) > 1_000
+      || cleanText(catalog.projection_version, 120)
+        !== "atinara-kalshi-series-catalog-projection-v1"
+      || catalog.provider_pagination_exhausted !== true
+      || catalog.provider_cursor !== null
+      || !/^[a-f0-9]{64}$/.test(providerCatalogHash)
+      || !Number.isSafeInteger(totalProviderSeriesCount)
+      || totalProviderSeriesCount < checkpoint.series.length
+      || totalProviderSeriesCount > 100_000
+      || Number(catalog.selected_series_count) !== checkpoint.series.length
+      || !Number.isFinite(Date.parse(cleanText(catalog.checked_at, 100)))) {
+    throw new TypeError("PROVIDER_DISCOVERY_CATALOG_EVIDENCE_INVALID");
+  }
+  const series = checkpoint.series.map(normalizeProviderDiscoverySeriesV2);
+  const seriesIds = series.map((item) => item.ticker);
+  if (new Set(seriesIds).size !== seriesIds.length
+      || series.some((item) => item.catalog_signals.length === 0)) {
+    throw new TypeError("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
+  }
+  const seriesIdSet = new Set(seriesIds);
+  const results = [];
+  const resultIds = new Set();
+  const parentByIdentity = new Map();
+  for (const rawResult of checkpoint.series_results) {
+    if (!isRecord(rawResult)) throw new TypeError("PROVIDER_DISCOVERY_SERIES_RESULT_INVALID");
+    const seriesTicker = cleanText(rawResult.series_ticker, 120);
+    const status = cleanText(rawResult.status, 40);
+    const attemptCount = Number(rawResult.attempt_count);
+    const resultCheckedAt = cleanText(rawResult.checked_at, 100);
+    if (!seriesIdSet.has(seriesTicker) || resultIds.has(seriesTicker)
+        || !["fulfilled", "rejected"].includes(status)
+        || !Number.isSafeInteger(attemptCount) || attemptCount < 1 || attemptCount > maxAttempts
+        || !Number.isFinite(Date.parse(resultCheckedAt))) {
+      throw new TypeError("PROVIDER_DISCOVERY_SERIES_RESULT_INVALID");
+    }
+    resultIds.add(seriesTicker);
+    if (status === "rejected") {
+      const errorCode = cleanText(rawResult.error_code, 100);
+      const retryAfterAt = cleanText(rawResult.retry_after_at, 100);
+      if (!/^[A-Z][A-Z0-9_]{2,100}$/.test(errorCode)
+          || (retryAfterAt && !Number.isFinite(Date.parse(retryAfterAt)))
+          || (Array.isArray(rawResult.events) && rawResult.events.length)) {
+        throw new TypeError("PROVIDER_DISCOVERY_SERIES_RESULT_INVALID");
+      }
+      results.push({
+        series_ticker: seriesTicker,
+        status,
+        attempt_count: attemptCount,
+        checked_at: new Date(Date.parse(resultCheckedAt)).toISOString(),
+        error_code: errorCode,
+        retry_after_at: retryAfterAt ? new Date(Date.parse(retryAfterAt)).toISOString() : null,
+        events: [],
+      });
+      continue;
+    }
+    if (!Array.isArray(rawResult.events) || rawResult.error_code) {
+      throw new TypeError("PROVIDER_DISCOVERY_SERIES_RESULT_INVALID");
+    }
+    const events = rawResult.events.map((event) =>
+      normalizeProviderDiscoveryEventV2(event, seriesTicker));
+    for (const event of events) {
+      const identity = cleanText(event.event_ticker, 160);
+      const existing = parentByIdentity.get(identity);
+      if (existing && canonicalJson(existing) !== canonicalJson(event)) {
+        throw new TypeError("PROVIDER_DISCOVERY_PARENT_IDENTITY_CONFLICT");
+      }
+      if (existing) throw new TypeError("PROVIDER_DISCOVERY_PARENT_IDENTITY_CONFLICT");
+      parentByIdentity.set(identity, event);
+    }
+    results.push({
+      series_ticker: seriesTicker,
+      status,
+      attempt_count: attemptCount,
+      checked_at: new Date(Date.parse(resultCheckedAt)).toISOString(),
+      error_code: null,
+      retry_after_at: null,
+      events,
+    });
+  }
+  if (parentByIdentity.size > maxParents) {
+    throw new TypeError("PROVIDER_PARENT_SCOPE_LIMIT_EXCEEDED");
+  }
+  const resultBySeries = new Map(results.map((result) => [result.series_ticker, result]));
+  const completedSeriesIds = seriesIds.filter((ticker) => resultBySeries.get(ticker)?.status === "fulfilled");
+  const failedSeriesIds = seriesIds.filter((ticker) => resultBySeries.get(ticker)?.status === "rejected");
+  const pendingSeriesIds = seriesIds.filter((ticker) => !resultBySeries.has(ticker));
+  const retryableFailedSeriesIds = failedSeriesIds.filter((ticker) =>
+    Number(resultBySeries.get(ticker)?.attempt_count) < maxAttempts);
+  const exhaustedFailedSeriesIds = failedSeriesIds.filter((ticker) =>
+    Number(resultBySeries.get(ticker)?.attempt_count) >= maxAttempts);
+  if (Number(checkpoint.total_series_count) !== series.length
+      || Number(checkpoint.completed_series_count) !== completedSeriesIds.length
+      || Number(checkpoint.failed_series_count) !== failedSeriesIds.length
+      || Number(checkpoint.pending_series_count) !== pendingSeriesIds.length
+      || Number(checkpoint.retryable_failed_series_count) !== retryableFailedSeriesIds.length
+      || Number(checkpoint.exhausted_failed_series_count) !== exhaustedFailedSeriesIds.length
+      || Number(checkpoint.total_parent_count) !== parentByIdentity.size) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_V2_COUNT_INVALID");
+  }
+  if (new TextEncoder().encode(JSON.stringify(checkpoint)).byteLength > maxBytes) {
+    throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_TOO_LARGE");
+  }
+  return {
+    sequence,
+    catalog,
+    series,
+    results,
+    events: [...parentByIdentity.values()],
+    completed_series_ids: completedSeriesIds,
+    failed_series_ids: failedSeriesIds,
+    pending_series_ids: pendingSeriesIds,
+    retryable_failed_series_ids: retryableFailedSeriesIds,
+    exhausted_failed_series_ids: exhaustedFailedSeriesIds,
+    ready: pendingSeriesIds.length === 0 && retryableFailedSeriesIds.length === 0,
+  };
+}
+
+export function buildProviderDiscoveryCheckpointV2(input = {}) {
+  const checkedAtMs = Date.parse(cleanText(input.checked_at, 100));
+  const series = Array.isArray(input.series)
+    ? input.series.map(normalizeProviderDiscoverySeriesV2) : [];
+  const catalogInput = isRecord(input.catalog) ? input.catalog : {};
+  if (!Number.isFinite(checkedAtMs)) throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_V2_INVALID");
+  const checkedAt = new Date(checkedAtMs).toISOString();
+  const checkpoint = {
+    schema_version: RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2,
+    sequence: 1,
+    previous_checkpoint_hash: null,
+    checked_at: checkedAt,
+    last_batch_checked_at: null,
+    catalog: {
+      catalog_version: "atinara-kalshi-series-catalog-evidence-v2",
+      source_endpoint: "/trade-api/v2/series",
+      query_contract: "include_product_metadata=true&include_volume=true",
+      selection_policy_version: KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION,
+      entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
+      entity_terms_hash: cleanText(catalogInput.entity_terms_hash, 80),
+      entity_term_count: Number(catalogInput.entity_term_count),
+      projection_version: "atinara-kalshi-series-catalog-projection-v1",
+      checked_at: checkedAt,
+      provider_catalog_hash: cleanText(catalogInput.provider_catalog_hash, 80),
+      total_provider_series_count: Number(catalogInput.total_provider_series_count),
+      selected_series_count: series.length,
+      provider_pagination_exhausted: catalogInput.provider_pagination_exhausted === true,
+      provider_cursor: catalogInput.provider_cursor ?? null,
+    },
+    total_series_count: series.length,
+    completed_series_count: 0,
+    failed_series_count: 0,
+    pending_series_count: series.length,
+    retryable_failed_series_count: 0,
+    exhausted_failed_series_count: 0,
+    total_parent_count: 0,
+    series,
+    series_results: [],
+  };
+  providerDiscoveryCheckpointV2State(checkpoint, input);
+  return checkpoint;
+}
+
+export function advanceProviderDiscoveryCheckpointV2(checkpoint = {}, batchResults = [], options = {}) {
+  const maxBatch = Math.max(1, Math.min(120, Math.floor(Number(options.max_batch) || 48)));
+  const previousHash = cleanText(options.previous_checkpoint_hash, 80);
+  const state = providerDiscoveryCheckpointV2State(checkpoint, options);
+  if (!Array.isArray(batchResults) || !batchResults.length || batchResults.length > maxBatch
+      || !/^[a-f0-9]{64}$/.test(previousHash)) {
+    throw new TypeError("PROVIDER_DISCOVERY_BATCH_INVALID");
+  }
+  const incomingIds = batchResults.map((result) => cleanText(result?.series_ticker, 120));
+  if (incomingIds.some((ticker) => !ticker) || new Set(incomingIds).size !== incomingIds.length) {
+    throw new TypeError("PROVIDER_DISCOVERY_BATCH_INVALID");
+  }
+  const seriesIdSet = new Set(state.series.map((series) => series.ticker));
+  const currentBySeries = new Map(state.results.map((result) => [result.series_ticker, result]));
+  const maxAttempts = Math.max(1, Math.min(10, Math.floor(Number(options.max_attempts) || 4)));
+  let lastBatchCheckedAt = "";
+  for (const incoming of batchResults) {
+    if (!isRecord(incoming)) throw new TypeError("PROVIDER_DISCOVERY_BATCH_INVALID");
+    const seriesTicker = cleanText(incoming.series_ticker, 120);
+    const status = cleanText(incoming.status, 40);
+    const checkedAtMs = Date.parse(cleanText(incoming.checked_at, 100));
+    const current = currentBySeries.get(seriesTicker);
+    if (!seriesIdSet.has(seriesTicker) || !["fulfilled", "rejected"].includes(status)
+        || !Number.isFinite(checkedAtMs) || current?.status === "fulfilled"
+        || Number(current?.attempt_count ?? 0) >= maxAttempts) {
+      throw new TypeError("PROVIDER_DISCOVERY_BATCH_TRANSITION_INVALID");
+    }
+    const checkedAt = new Date(checkedAtMs).toISOString();
+    if (!lastBatchCheckedAt || checkedAt > lastBatchCheckedAt) lastBatchCheckedAt = checkedAt;
+    const attemptCount = Number(current?.attempt_count ?? 0) + 1;
+    if (status === "fulfilled") {
+      const events = Array.isArray(incoming.events)
+        ? incoming.events.map((event) => normalizeProviderDiscoveryEventV2(event, seriesTicker)) : null;
+      if (!events) throw new TypeError("PROVIDER_DISCOVERY_BATCH_INVALID");
+      currentBySeries.set(seriesTicker, {
+        series_ticker: seriesTicker,
+        status,
+        attempt_count: attemptCount,
+        checked_at: checkedAt,
+        error_code: null,
+        retry_after_at: null,
+        events,
+      });
+      continue;
+    }
+    const errorCode = cleanText(incoming.error_code, 100);
+    const retryAfterAtMs = incoming.retry_after_at
+      ? Date.parse(cleanText(incoming.retry_after_at, 100)) : NaN;
+    if (!/^[A-Z][A-Z0-9_]{2,100}$/.test(errorCode)
+        || (incoming.retry_after_at && !Number.isFinite(retryAfterAtMs))) {
+      throw new TypeError("PROVIDER_DISCOVERY_BATCH_INVALID");
+    }
+    currentBySeries.set(seriesTicker, {
+      series_ticker: seriesTicker,
+      status,
+      attempt_count: attemptCount,
+      checked_at: checkedAt,
+      error_code: errorCode,
+      retry_after_at: Number.isFinite(retryAfterAtMs)
+        ? new Date(retryAfterAtMs).toISOString() : null,
+      events: [],
+    });
+  }
+  const seriesResults = state.series.map((series) => currentBySeries.get(series.ticker)).filter(Boolean);
+  const completed = seriesResults.filter((result) => result.status === "fulfilled");
+  const failed = seriesResults.filter((result) => result.status === "rejected");
+  const retryableFailed = failed.filter((result) => result.attempt_count < maxAttempts);
+  const totalParents = completed.reduce((total, result) => total + result.events.length, 0);
+  const next = {
+    ...checkpoint,
+    sequence: state.sequence + 1,
+    previous_checkpoint_hash: previousHash,
+    last_batch_checked_at: lastBatchCheckedAt,
+    completed_series_count: completed.length,
+    failed_series_count: failed.length,
+    pending_series_count: state.series.length - seriesResults.length,
+    retryable_failed_series_count: retryableFailed.length,
+    exhausted_failed_series_count: failed.length - retryableFailed.length,
+    total_parent_count: totalParents,
+    series: state.series,
+    series_results: seriesResults,
+  };
+  providerDiscoveryCheckpointV2State(next, options);
+  return next;
+}
+
+export function projectProviderDiscoveryCheckpointV2(checkpoint = {}, options = {}) {
+  const state = providerDiscoveryCheckpointV2State(checkpoint, options);
+  if (!state.ready) throw new TypeError("PROVIDER_DISCOVERY_CHECKPOINT_V2_NOT_READY");
+  return {
+    schema_version: RADAR_PROVIDER_DISCOVERY_CHECKPOINT_V2,
+    checked_at: new Date(Date.parse(cleanText(checkpoint.checked_at, 100))).toISOString(),
+    taxonomy_scopes: [],
+    total_taxonomy_scope_count: 0,
+    completed_taxonomy_scope_count: 0,
+    failed_taxonomy_scope_count: 0,
+    failed_taxonomy_scopes: [],
+    total_series_count: state.series.length,
+    completed_series_count: state.completed_series_ids.length,
+    failed_series_count: state.exhausted_failed_series_ids.length,
+    failed_series_ids: state.exhausted_failed_series_ids,
+    total_parent_count: state.events.length,
+    series: state.series,
+    events: state.events,
+    catalog_evidence: state.catalog,
+  };
 }
 
 /**
@@ -1896,7 +2434,7 @@ export function evaluateGamingDomain(candidate = {}) {
   const collectSignals = (patterns, prefix) => evidenceFields.flatMap(([field, value]) =>
     patterns.filter((pattern) => pattern.test(value))
       .filter((pattern) => !(prefix === "NON_GAMING"
-        && /premier league|la liga|champions league|nba|nfl|mlb|nhl/.test(pattern.source)
+        && /premier league|la liga|champions league|nba|nfl|mlb|nhl|music|songs?|singer|band|podcasts?|television|tv shows?/.test(pattern.source)
         && /\b(?:video ?games?|videojuegos?|gaming|gameplay|playstation|xbox|nintendo|steam)\b/.test(value)))
       .map((pattern) => ({
       code: `${prefix}_${stableFingerprint(pattern.source).slice(1).toUpperCase()}`,

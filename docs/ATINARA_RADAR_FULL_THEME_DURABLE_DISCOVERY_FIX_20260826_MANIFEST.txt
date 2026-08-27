@@ -1,0 +1,108 @@
+ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826
+Generated: 2026-08-26
+Base: origin/main 8025df43e898280d06c88c70c43a26dc8acba472
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+A docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826_MANIFEST.txt
+M docs/STATE_CONSISTENCY_AND_MEMORY.md
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-radar/index.ts
+A supabase/migrations/20260826190000_checkpoint_market_radar_global_catalog_v2.sql
+M tests/market-radar.test.js
+A tests/radar-global-series-discovery-v2.test.js
+
+SHA-256 PAYLOAD FILES
+a036166e2ff17534c95ef8b122ed74a2c599adfd23339db690b864dd0c87d8cb  ORAKLO_PROJECT_CONTEXT.md
+b85853ab6d01248bd7eccd6d56f86d9bbb6b7a6d8651b52907761773df4d71cc  README.md
+aa4469207c916a823e36ff9e0677cc93689e4ae450331f284af3638110294aeb  docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+37f47e9b1f05e2f94a6b0aea6b759f53380dedfd8da7e0256b0d899cbc80a3de  docs/STATE_CONSISTENCY_AND_MEMORY.md
+ae395aa327f36249d7fc308fe3a2651a0f7b2451686bc8310fdee9099fdfeb4b  supabase/functions/_shared/market-radar.mjs
+3ad5b88dadddba8ef7c8bc12548fa7572f41fbbf1b29554bb38aecdd9b9d9179  supabase/functions/market-radar/index.ts
+b8fa4e75fa4f797741a30fa0f54742cb3738abdc37b6867a0efba8c61bb28a85  supabase/migrations/20260826190000_checkpoint_market_radar_global_catalog_v2.sql
+1238fb9628ceb41508698bbafe69ddb7a655711e9010f153778d3d9ece662714  tests/market-radar.test.js
+ca5b6c6b1b2df48e57645533add3f7e0bfce2689556e55dc4d9a25371d39c7aa  tests/radar-global-series-discovery-v2.test.js
+
+MIGRATIONS
+supabase/migrations/20260826190000_checkpoint_market_radar_global_catalog_v2.sql
+
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar (index.ts plus shared market-radar.mjs; verify_jwt=true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+EXISTING DRAFTS: read-only and unchanged
+
+VERIFICATION
+- official Kalshi catalog read: HTTP 200, cursor null, 17181274 bytes
+- full catalog identities: 13486 series, 13486 unique tickers
+- catalog policy: 83 derived entity terms, 410 selected series
+- registered taxonomy: 217; outside registered taxonomy: 193; entity-only: 91
+- inferred Atinara categories: Lanzamientos 25, Eventos 115, Industria 152, Streamers 12, Reviews/Premios 97, YouTubers 9
+- broad lexical probe omissions: 0
+- catalog classifier plus eligibility sources: 28 passed, 0 failed
+- affected logic, families, facts and resumability: 155 passed, 0 failed
+- Radar to eligibility, Expert, Editor and human confirmation: 162 passed, 0 failed
+- Deno 2.1.14 Edge checks: 9 passed, 0 failed
+- JavaScript syntax: 129 valid
+- SQL static transaction contracts: 19 valid
+- SQL execution: not performed; PostgreSQL, Docker and local Supabase CLI unavailable
+- git diff --check: passed
+- full 563-test suite not repeated because remote base content matched the previously verified package exactly
+
+PRODUCTION CHECKPOINT BEFORE THIS PACKAGE
+- origin/main 8025df43e898280d06c88c70c43a26dc8acba472
+- market-radar v72 ACTIVE verify_jwt=true digest 5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116
+- market-expert v26, market-draft-fixer v22, validate-market-draft v31 and analyze-market-resolution v16 unchanged
+- last refresh c1f677eb-0dae-410f-820d-a4483601ab47 completed/terminal
+- 215/215 legacy-taxonomy series; 590 indexed parents; 24 selected complete parents
+- 192 discovered, accounted and identified children; unresolved=0
+- expected=staged=processed=accepted=162; quarantined=failed=0
+- manifest 085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4
+- finalization aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5
+- drafts=6; protected business fingerprints unchanged
+- no Market Expert call and no new draft after the two eligibility 503 responses
+
+ROOT CAUSES
+- Kalshi exposes no text search for series and its categories do not map exhaustively to Atinara's six current themes
+- Video games plus Esports taxonomy proved only 215 series and omitted gaming-related series registered elsewhere
+- the global events endpoint could not prove completeness because it reached 50 pages with a cursor still pending
+- a complete global catalog plus per-series event pagination does not fit safely in one Edge transport without a durable pre-manifest boundary
+- a catalog or series timeout could otherwise repeat healthy discovery, lose progress or collapse all Kalshi before manifest
+
+CORRECTION
+- fetch the official global series catalog once with product metadata, volume, 24 MB bound, unique identities and null cursor
+- hash the complete stable catalog projection and derive a bounded ephemeral entity vocabulary from catalog-accredited series
+- select all six Atinara themes by taxonomy, metadata, generic entities, industry and bounded authorities without market or series IDs
+- seal sequence 1 before querying series events, then process at most 48 series per continuation with concurrency 2 and a 40-second child budget
+- append-only forced-RLS checkpoints chain every sequence and preserve catalog, selection, results, attempts, parent membership and exact counts
+- budget expiry leaves work pending without consuming an attempt; real bounded failures retry only the affected series on the same UUID
+- four real failures preserve the series as provider_unavailable while healthy complete families continue with degrades_provider=false
+- catalog or no-progress failures remain in_progress with cooldown, blocking_scope=none and next_action=resume_provider_discovery
+- V1 remains read-compatible only for historical UUIDs; new refreshes use V2
+- no previous snapshot can be presented as fresh and no manifest starts before discovery becomes durably ready
+
+POST-UPLOAD
+- fetch and compare exactly these 10 paths and their contents against this package
+- require GitHub Action Calidad de Atinara, Edge Deno check, Pages and offline benchmark success; do not use Sonar
+- create a clean production worktree from the new origin/main
+- take a read-only production baseline and confirm v72, JWT, digest, six drafts and protected fingerprints
+- apply the single V2 migration once and verify table, RLS, ACL and RPC signatures
+- deploy only market-radar with verify_jwt=true; deploy no frontend or other Edge
+- verify the new version, ACTIVE state, digest, JWT and protected invariants
+- respect cooldown and start exactly one fresh Kalshi refresh
+- continue only that UUID through catalog, checkpoint chain, series, parents, children, manifest, batches, finalization and replay
+- never retry blindly after provider, lease, RPC, cursor, deadline or payload failure
+- use Market Expert only after a fresh future gaming child proves explicit identity, complete parent, exhausted pagination, open provider, no known public result, no duplicate, current eligibility and correct sources
+- create exactly one new private draft; never confirm, publish, resolve or settle it
