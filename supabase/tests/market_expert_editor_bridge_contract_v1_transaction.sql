@@ -16,17 +16,17 @@ begin
   select pg_catalog.pg_get_functiondef(
     'public.materialize_market_draft_for_repair_v1(uuid,bigint,uuid,jsonb)'::regprocedure
   ) into definition;
-  if pg_catalog.position(
-       'save_market_draft_from_expert_with_issues_v2' in definition
+  if pg_catalog.strpos(
+       definition,'save_market_draft_from_expert_with_issues_v2'
      )=0
-     or pg_catalog.position(
-       'writer_contract_version' in definition
+     or pg_catalog.strpos(
+       definition,'writer_contract_version'
      )=0
-     or pg_catalog.position(
-       'draft_input - ''_radar_preparation_revision''' in definition
+     or pg_catalog.strpos(
+       definition,'draft_input - ''_radar_preparation_revision'''
      )>0
-     or pg_catalog.position(
-       'save_market_draft_from_radar(' in definition
+     or pg_catalog.strpos(
+       definition,'save_market_draft_from_radar('
      )>0 then
     raise exception 'MARKET_EXPERT_EDITOR_BRIDGE_WRITER_MISMATCH';
   end if;

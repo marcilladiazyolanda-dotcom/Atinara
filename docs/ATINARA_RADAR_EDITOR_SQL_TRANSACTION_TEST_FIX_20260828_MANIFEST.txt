@@ -1,0 +1,17 @@
+ATINARA_RADAR_EDITOR_SQL_TRANSACTION_TEST_FIX_20260828
+Base: 81086eac63ceb1403f7054469837e93e27b47112
+Fecha: 2026-08-28
+
+Inventario exacto del ZIP incremental (3 rutas)
+
+A docs/ATINARA_RADAR_EDITOR_SQL_TRANSACTION_TEST_FIX_20260828.md
+A docs/ATINARA_RADAR_EDITOR_SQL_TRANSACTION_TEST_FIX_20260828_MANIFEST.txt
+M supabase/tests/market_expert_editor_bridge_contract_v1_transaction.sql
+
+Eliminaciones: ninguna.
+Migraciones nuevas o modificadas: ninguna.
+Edge Functions modificadas: ninguna.
+Frontend modificado: ninguno.
+Secretos, .env, .git, node_modules, temporales y ZIP anteriores: ninguno.
+
+El SHA-256 se calcula sobre el ZIP final y se comunica junto al paquete.
