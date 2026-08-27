@@ -298,6 +298,19 @@ test("la política de elegibilidad v5 coincide en Radar, interfaz, Editor y rese
   assert.match(policyMigration, /RADAR_FACTUAL_VERIFICATION_REQUIRED/);
 });
 
+test("Market Expert consume la versión del normalizador desde el contrato compartido del Radar", () => {
+  assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v3");
+  assert.match(marketExpert, /MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v6"/);
+  assert.match(
+    marketExpert,
+    /import \{ RADAR_NORMALIZER_VERSION \} from "\.\.\/_shared\/market-radar\.mjs";/,
+  );
+  assert.doesNotMatch(
+    marketExpert,
+    /const RADAR_NORMALIZER_VERSION\s*=\s*"atinara-radar-v2"/,
+  );
+});
+
 test("loadPackage comparte inflight y una respuesta vieja no sobrescribe una revisión nueva", async () => {
   const calls = [];
   const invokeExpert = (action, payload) => {

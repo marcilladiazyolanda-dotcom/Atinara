@@ -18,6 +18,7 @@ import { createAiPersistence } from "../_shared/ai/persistence.mjs";
 import { persistAgentTelemetry } from "../_shared/ai/telemetry.mjs";
 import { createMarketWorkflowIssue } from "../_shared/market-workflow-issues.mjs";
 import { essentialMarketTextNotSpanish } from "../_shared/market-language.mjs";
+import { RADAR_NORMALIZER_VERSION } from "../_shared/market-radar.mjs";
 import { nullableFiniteNumber } from "../_shared/nullable-number.mjs";
 import { isIanaTimezone } from "../_shared/market-temporal-contract.mjs";
 
@@ -33,8 +34,7 @@ type SupabaseEnvironment = {
 const MARKET_INTELLIGENCE_POLICY_VERSION = "atinara-market-constitution-v1";
 const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
-const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v5";
-const RADAR_NORMALIZER_VERSION = "atinara-radar-v2";
+const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v6";
 const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
 const MAX_REQUEST_BYTES = 12_288;
 const OPERATION_TIMEOUT_MS = 110_000;
