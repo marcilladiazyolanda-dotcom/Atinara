@@ -1,0 +1,40 @@
+ATINARA · PAQUETE ESTRATÉGICO B2B-FIRST · 2026-08-27
+
+BASE REMOTA VERIFICADA ANTES DE PREPARAR EL PAQUETE
+- Repositorio: marcilladiazyolanda-dotcom/Atinara
+- Rama: main
+- Commit observado: adbe3baacad6458e05621bc2bf232af1ac014d04 ("grafico")
+- GitHub Actions del commit: Benchmark IA offline = success; Calidad de Atinara = success; Pages build and deployment = success.
+- Supabase producción: ACTIVE_HEALTHY, PostgreSQL 17.6.x.
+- Edge Functions activas observadas: 9, todas con verify_jwt=true.
+- No se ejecutó SQL, migración, Edge deploy, cambio de secretos ni mutación de datos para este paquete.
+
+ARCHIVOS DEL PAQUETE
+MODIFICADOS/REEMPLAZO PROPUESTO
+1. AGENTS.md
+2. ATINARA_PRODUCT_STRATEGY.md
+3. Atinara_Memoria_Estrategica_Pasos_13_6_13_7.txt
+
+NUEVOS
+4. docs/ATINARA_B2B_FIRST_BLUEPRINT_20260827.md
+5. docs/ATINARA_EXCHANGE_ENGINE_TARGET_20260827.md
+6. docs/ATINARA_B2B_FIRST_MANIFEST_20260827.txt
+
+ARCHIVOS A ELIMINAR
+- Ninguno.
+
+EFECTO
+- Cambia la prioridad canónica de consumer-first a B2B-first.
+- Atinara Social permanece como implementación de referencia.
+- Redefine Paso 13.6 como B2B Discovery & Readiness.
+- Mantiene Paso 13.7 como productización/escalado del Engine.
+- Mantiene R1 intacta para todo dinero real.
+- Introduce puertas S1/A1/E1/P1/I1/O1/C1.
+- Define E1 Exchange Engine: CLOB con Karma ficticio, buy/sell, entrada/salida, fills parciales, cancelación, ledger y liquidez bootstrap.
+- Define soporte de binary, categorical_single_winner y binary_family; Sí/No deja de ser una suposición universal.
+- Clasifica LMSR como transitorio/histórico y preserva `lmsr_v1`/`legacy_fixed_v1` hasta un cutover seguro.
+- Añade un protocolo obligatorio de impacto transversal para que Codex busque dependencias, capas afectadas, compatibilidad, rollback y regresiones antes de cambiar.
+- Obliga a Codex a leer el blueprint B2B y la especificación Exchange Engine antes de cambios relevantes.
+
+NOTA DE COMPATIBILIDAD
+- README.md y ORAKLO_PROJECT_CONTEXT.md contienen historial técnico y pueden conservar menciones históricas a la secuencia anterior. AGENTS.md declara expresamente que las secuencias B2C-first anteriores quedan supersedidas por la decisión B2B-first de 2026-08-27. `LIVE_MARKET_ECONOMY.md` sigue describiendo correctamente el contrato productivo LMSR actual hasta que E1 se implemente; AGENTS/Strategy/Exchange Target aclaran que ya no es la arquitectura objetivo B2B y que no debe eliminarse destructivamente. No se reescribieron esos documentos completos en este paquete para evitar borrar o deformar historial operativo vigente.

@@ -1,73 +1,93 @@
 MEMORIA ESTRATÉGICA PERMANENTE · ATINARA
-PASOS 13.6, 13.7 Y VISIÓN B2B/REGULADA
-Actualización: 8 de agosto de 2026
+ORIENTACIÓN B2B-FIRST · 27/08/2026
 
-Esta memoria establece como estado permanente del proyecto:
+DECISIÓN APROBADA POR YOL
 
-1. Atinara Social será un producto completo de predicciones con Karma ficticio, reputación, temporadas y comunidad.
-2. El Karma no será convertible a dinero ni generará derechos económicos futuros.
-3. La visión a largo plazo contempla Atinara Engine, una infraestructura B2B modular y licenciable por operadores regulados, proveedores, agregadores, medios o instituciones.
-4. La vía prioritaria a estudiar combina Atinara Social, Atinara Engine y un operador regulado asociado responsable de dinero real, KYC, pagos, límites y licencias.
-5. El Paso 13.6 cubre captación, beta, atribución, onboarding, analítica, feedback, retención, referidos, Temporada Cero y posicionamiento regulatorio.
-6. El Paso 13.7 queda incorporado al roadmap después del 13.6 y de validar la beta.
-7. Antes de funciones monetarias deberá superarse la Puerta regulatoria R1.
+1. Atinara Engine pasa a ser la prioridad de producto y empresa.
+2. Atinara Social no se abandona: continúa como producto real con Karma ficticio y como implementación de referencia, demo, dogfooding y laboratorio del Engine.
+3. Ya no es requisito conseguir gran tracción B2C antes de productizar B2B.
+4. El primer wedge comercial prioritario es B2B2C para organizaciones que ya tienen audiencia: medios, creadores, comunidades, plataformas, gaming/esports, eventos y marcas.
+5. Un segundo vertical posible es forecasting privado para empresas/equipos, reutilizando el mismo Engine y solo si discovery lo valida.
+6. La ventaja objetivo de Atinara es unir integridad/resolución profesional, IA auditable con control humano, engagement/reputación y una infraestructura multiempresa integrable.
+7. Karma permanece ficticio, no convertible y sin derechos económicos. Ningún depósito, retirada, saldo real, KYC monetario, wallet o pago se implementará antes de superar expresamente R1.
 
-PASO 13.7 · PRODUCTIZACIÓN B2B Y PREPARACIÓN PARA OPERADORES
+NUEVO PASO 13.6 · B2B DISCOVERY & READINESS
 
-13.7.1 Separación del producto
-- Atinara Social y Atinara Engine.
-- Separación de datos, lógica económica y configuración por cliente.
-- Protección de propiedad intelectual y núcleo B2B en repositorios privados cuando corresponda.
+13.6.0 Baseline y prioridad
+- Cerrar de forma segura trabajo 13.5.x ya en curso.
+- Congelar nuevas prioridades B2C que no ayuden a Engine, demo, seguridad o aprendizaje real.
+- Inventariar capacidades actuales y deuda bloqueante B2B.
 
-13.7.2 Arquitectura modular
-- APIs versionadas, webhooks, adaptadores y marca blanca cuando exista necesidad.
-- Separación de UI, reglas, resolución, identidad, analítica e integraciones.
-- Compatibilidad futura con distintos modelos regulados sin acoplarse a un solo operador.
+13.6.1 Discovery comercial
+- Definir ICP concretos y entrevistar problemas reales antes de grandes desarrollos.
+- Validar microsite/embed/API, workflow de creación/resolución, identidad, analítica, seguridad y soporte.
+- Diseñar piloto preferentemente pagado y métricas de éxito.
 
-13.7.3 Calidad y preparación regulatoria
-- Trazabilidad de creación, revisión, aprobación, modificación, cierre, anulación y resolución.
-- Roles, permisos mínimos, doble aprobación, logs, evidencias y operaciones idempotentes.
-- Pruebas, carga, recuperación, monitorización, copias de seguridad y despliegues reversibles.
-- Políticas de conflictos de interés, información privilegiada, mercados sensibles y fraude.
+13.6.2 S1 Seguridad y aislamiento
+- Inventario RPC/RLS/grants/Edge/Auth.
+- Clasificación pública/usuario/tenant-admin/platform-admin/service-only.
+- RBAC y tenant authorization en servidor.
+- Pruebas adversariales cross-tenant.
+- Reparar exposiciones solo tras mapa de dependencias; no REVOKE masivo a ciegas.
 
-13.7.4 Paquete comercial
-- Demostración profesional, documentación, soporte, integración y propuesta de valor.
-- Pilotos pagados, licencia recurrente y servicios gestionados.
-- Licenciar uso sin vender el núcleo ni aceptar exclusividad amplia sin mínimos garantizados.
+13.6.3 A1 Arquitectura tenant-first
+- Organizations/workspaces/membresías/roles.
+- Atinara Social como tenant de referencia mediante migraciones aditivas y sin pérdida de datos.
+- Configuración/branding por datos, nunca forks por cliente.
+- Separación de identidad, mercado, resolución, engagement, analítica, integraciones y agentes.
 
-13.7.5 Descubrimiento con operadores
-- Mapa de operadores y proveedores.
-- Entrevistas de descubrimiento.
-- Pilotos basados en métricas reales.
-- Primer cliente de referencia, segundo replicable y tercero para reducir dependencia.
+13.6.4 P1 Demo B2B
+- Ruta real tenant → branding → creación → revisión → aprobación humana → publicación → participación → cierre → resolución/evidencias → analítica/auditoría.
 
-13.7.6 Módulos conceptuales
-- Discover, Studio, Resolve, Engage, Connect y Core.
-- Core monetario queda bloqueado hasta superar R1.
+13.6.5 Primer piloto
+- Alcance fijo, seguridad/privacidad proporcional, métricas de éxito, coste de implantación y soporte medido, propiedad intelectual protegida.
 
-PUERTA R1
-- Estudio jurídico y regulatorio de DGOJ, CNMV cuando proceda, licencias, certificación, KYC, AML, pagos, fiscalidad, juego responsable, publicidad, jurisdicciones, costes y riesgos.
-- Ningún desarrollo de dinero real queda autorizado antes de aprobar expresamente R1.
+PASO 13.7 · PRODUCTIZACIÓN Y ESCALADO
 
-REGLA TRANSVERSAL
-Todo trabajo futuro debe comprobar modularidad, auditabilidad, seguridad, separación Karma/dinero real, propiedad intelectual, capacidad de integración, calidad de mercado, ausencia de dependencias innecesarias y proporcionalidad con la fase actual.
+- Multi-tenant endurecido.
+- Experiencia alojada/embebible production-ready.
+- API/webhooks versionados según demanda real.
+- SSO/OIDC/SAML y SCIM si el segmento lo exige.
+- Analítica/exportaciones, observabilidad, backups, runbooks, SLA y soporte reproducible.
+- Segundo y tercer cliente para demostrar replicabilidad y reducir concentración.
 
-Considerar esta visión no obliga a construir ahora todas las funciones B2B. Obliga a no cerrar esa puerta y a mantener una calidad profesional sin perjudicar la beta social.
+MÓDULOS CONCEPTUALES
+- Discover: radar/señales.
+- Studio: creación/revisión/aprobación/programación.
+- Resolve: fuentes/evidencia/resolución/auditoría.
+- Engage: puntos/reputación/rankings/temporadas/comunidad.
+- Connect: tenant/branding/embed/API/webhooks/SSO/analítica.
+- Exchange/Core: contratos, CLOB ficticio, órdenes/fills/posiciones, liquidez y settlement. Core monetario bloqueado por R1.
 
-DIVISIÓN DE TRABAJO
-Work especifica, revisa GitHub/Supabase, prueba y valida. Codex implementa las partes complejas. Se evita repetir auditorías sin necesidad.
+DECISIÓN ECONÓMICA 27/08/2026
+- LMSR queda como contrato histórico/transitorio de Atinara Social, no como target B2B.
+- El target Audience es un CLOB con Karma ficticio, compra/venta, entrada/salida, limit/marketable orders, partial fills, cancelación, price-time priority y auditoría.
+- La baja liquidez se resuelve con una capa de market making/liquidity provider ficticia que publica órdenes reales en el mismo libro, no con precios LMSR ni trades inventados.
+- Tipos objetivo: binary, categorical_single_winner y binary_family.
+- `legacy_fixed_v1` y `lmsr_v1` conservan sus condiciones; el nuevo motor se introduce versionado y aditivamente.
+- Ninguna de estas mecánicas convierte Karma en dinero ni autoriza R1.
 
-OBJETIVO EMPRESARIAL
-Desarrollar Atinara con calidad suficiente para generar ingresos recurrentes, licenciar su tecnología y permitir una dedicación profesional sostenible al proyecto.
+BARRA DE CALIDAD
 
-9. ÁMBITO MULTIMODO Y MULTICONVERSACIÓN
+Atinara no estará “lista para B2B” solo porque exista multi-tenant. Debe superar progresivamente:
+- S1 seguridad/aislamiento;
+- A1 arquitectura;
+- E1 Exchange Engine;
+- P1 producto E2E;
+- I1 integración;
+- O1 operación/reliability;
+- C1 validación comercial.
 
-- Esta memoria se aplica automáticamente a Chat, investigaciones Pro, Work y Codex.
-- Se aplica tanto en conversaciones nuevas como en conversaciones antiguas que se retomen dentro del proyecto Atinara.
-- Un transcript antiguo no prevalece sobre el roadmap vigente, la estrategia canónica, origin/main o Supabase producción.
-- Todo análisis, investigación, recomendación, prompt, revisión, cambio o creación debe evaluar Atinara Social, el Paso 13.6, Atinara Engine/Paso 13.7 y la Puerta R1 cuando sean pertinentes.
-- Work y Pro deben reutilizar evidencia vigente y distinguir hechos, fuentes, inferencias y recomendaciones. Codex debe leer la documentación canónica y no repetir auditorías sin necesidad.
-- Ningún modo puede prometer conversión del Karma ni introducir dinero real antes de R1.
-- Si una solución inmediata perjudica la modularidad, auditabilidad, seguridad, propiedad intelectual o futura capacidad B2B, debe advertirse y corregirse o documentarse como deuda técnica consciente.
-- Esta regla prevalece salvo modificación expresa de Yol.
+NO CONSTRUIR PREMATURAMENTE
+- dinero real/KYC/wallets;
+- HFT/10k TPS o exchange sobredimensionado; el CLOB funcional sí es requisito E1;
+- apps nativas por cliente;
+- SDKs múltiples;
+- on-prem/air-gapped;
+- multirregión compleja;
+- certificaciones caras sin demanda;
+- forks por cliente.
 
+REGLA PERMANENTE
+
+Toda tarea futura de Chat, Pro, Work o Codex debe asumir B2B-first salvo que Yol lo cambie expresamente. `AGENTS.md`, `ATINARA_PRODUCT_STRATEGY.md`, `docs/ATINARA_B2B_FIRST_BLUEPRINT_20260827.md` y `docs/ATINARA_EXCHANGE_ENGINE_TARGET_20260827.md` son las fuentes estratégicas canónicas. Si documentos históricos conservan la secuencia antigua, esta memoria y la estrategia del 27/08/2026 prevalecen en prioridad; el contenido técnico histórico sigue sujeto a verificación con `origin/main` y Supabase producción.
