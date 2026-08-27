@@ -2,34 +2,36 @@
 
 Fecha: 26 de agosto de 2026
 Base exacta: `8025df43e898280d06c88c70c43a26dc8acba472`
-Estado actualizado el 27 de agosto: integrada en `a536a28`; migración aplicada
-una sola vez como `20260827150224`; `market-radar` v73 desplegado. El primer
-refresh V2 queda pausado en su misma UUID por un límite de memoria del sellado
-global; la corrección incremental está preparada y pendiente de subida.
+Estado actualizado el 27 de agosto: integrada en `98e5ede`; migración aplicada
+una sola vez como `20260827150224`; `market-radar` v74 desplegado. El primer
+refresh V2 queda pausado en su misma UUID por un límite de recursos del worker;
+la segunda corrección incremental está preparada y pendiente de subida.
 
 ## Actualización productiva · 27 de agosto de 2026
 
 La activación respetó el orden previsto: Actions verdes, baseline de solo
-lectura, migración V2 una vez y despliegue exclusivo de Radar con JWT. La Edge
-pasó de v72 a v73, digest
-`550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8`.
+lectura, migración V2 una vez y despliegues exclusivos de Radar con JWT. La Edge
+actual es v74, digest
+`aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea`.
 Las demás Edge y los datos protegidos no cambiaron.
 
 El único refresh nuevo es
-`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después del intento inicial y una sola
-reanudación conserva dos intenciones `in_progress/claimed`, `claim_count=2`,
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después de v73 y una sola reanudación
+con v74 conserva dos intenciones `in_progress/claimed`, `claim_count=3`,
 cero checkpoints V2, cero batches y cero manifest. Las invocaciones de escritura
 terminaron HTTP 546; las lecturas de recuperación conservaron la UUID y no se
-abrió otra. No debe reanudarse con v73.
+abrió otra. No debe reanudarse con v74.
 
-La medición live actual produjo 13.545 series, 17.286.505 bytes, cursor terminal
-y HTTP 200 en 4,54 s. El proveedor no estaba caído. El pico aparecía al pasar la
-proyección global completa por `canonicalJson`: 273,1 MB frente al límite Edge
-de 256 MB. La corrección de
-`ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827` conserva el mismo SHA-256 con
-un digest incremental; el sellado baja a 149,9 MB y la transformación completa
-a 172,8 MB. Este addendum prevalece sobre las instrucciones históricas de
-activación que siguen abajo como registro del diseño original.
+V74 eliminó el pico monolítico de `canonicalJson`, pero la transformación seguía
+clasificando dos veces todas las series y reteniendo todas las proyecciones. El
+perfil Deno exacto midió en torno a 5 s frente al límite CPU alojado de 2 s. La
+corrección `ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827` analiza señales una
+sola vez, solo materializa clasificaciones seleccionadas y entrega al mismo
+digest un iterable canónico ordenado. Una lectura posterior produjo 13.549
+series, 17.291.725 bytes, 83 términos y 411 seleccionadas; la transformación
+completa bajó a 1.247 ms y 160.002.048 bytes RSS. Este addendum prevalece sobre
+las instrucciones históricas de activación que siguen abajo como registro del
+diseño original.
 
 ## Objetivo
 

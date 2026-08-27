@@ -5,7 +5,8 @@
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado remoto y productivo verificado durante el cierre Radar/Discover:**
-> `origin/main` está en `a536a28e711a9c337ea23fde60c907a886584a72` (`fix`).
+> `origin/main` está en `98e5eded9fdef2dd9dea0975dad73a079bcb7f6e`
+> (`fix catalogo`).
 > Calidad de Atinara —incluido Deno—, Benchmark IA offline y GitHub Pages están
 > en `success` para ese SHA. La estrategia B2B-first de `01351db` permanece
 > intacta y autoritativa; este cierre no implementa B2B ni Atinara Engine.
@@ -17,10 +18,11 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > RLS forzada, ACL, trigger append-only y las tres RPC `service_role` quedaron
 > verificados. No hubo DML de negocio ni backfill.
 >
-> Se desplegó únicamente `market-radar`: pasó de v72 a v73, está `ACTIVE`,
+> Se desplegó únicamente `market-radar`: pasó de v73 a v74, está `ACTIVE`,
 > `verify_jwt=true`, digest
-> `550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8`.
-> El bundle remoto de 14 archivos coincide byte por byte con `origin/main`.
+> `aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea`.
+> El bundle remoto de 15 archivos coincide con `origin/main` tras normalizar
+> exclusivamente finales de línea.
 > Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron y
 > conservan JWT obligatorio.
 >
@@ -34,28 +36,31 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > Después de v73 se inició exactamente un refresh Kalshi:
 > `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Solo existen sus dos intenciones
 > esperadas (`kalshi/candidate_feed` y `tavily/source_enrichment`), ambas
-> `in_progress/claimed`, `claim_count=2`, lease vencido. Hay cuatro eventos
+> `in_progress/claimed`, `claim_count=3`, lease vencido. Hay cuatro eventos
 > append-only —dos `RADAR_REFRESH_CLAIMED` y dos
 > `RADAR_REFRESH_RECLAIMED`—, cero checkpoints V2, cero batches, cero manifest y
-> cero candidatas. No se creó otra UUID y no debe ejecutarse un tercer intento
-> con v73.
+> cero candidatas. No se creó otra UUID y no debe ejecutarse otro intento con
+> v74.
 >
 > Las dos invocaciones de escritura de v73 terminaron HTTP 546 a 10.666 ms y
-> 10.033 ms; las dos lecturas de recuperación devolvieron 200 y conservaron la
-> misma UUID. Kalshi no estaba caído: una lectura oficial independiente devolvió
-> HTTP 200, cursor terminal, 13.545 series y 17.286.505 bytes en 4,54 s. La causa
-> es el sellado monolítico del catálogo: `canonicalJson` materializaba la
-> proyección completa y elevaba el proceso a 273,1 MB, por encima del límite
-> productivo de 256 MB, antes de que JavaScript pudiera registrar deferral o el
-> primer checkpoint.
+> 10.033 ms. La reanudación única con v74 reclamó correctamente la misma UUID y
+> terminó también HTTP 546 a 6.216 ms; la lectura automática posterior devolvió
+> 200. No hubo checkpoint, batch, manifest ni segunda UUID. Kalshi respondió
+> sano y con cursor terminal.
 >
-> La corrección local pendiente de subida calcula exactamente el mismo SHA-256
-> mediante digest incremental de cada proyección canónica ordenada. Sobre el
-> catálogo real, el pico del sellado baja a 149,9 MB y el máximo de la
-> transformación a 172,8 MB. La equivalencia canónica, 334 regresiones focales,
-> Deno 2.1.14 y `git diff --check` están verdes. No cambia catálogo, selección,
-> migración, frontend, otras Edge, datos, IA, Registry, economía ni presupuestos.
-> Véase `docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md`.
+> V74 eliminó la materialización monolítica del JSON, pero la transformación aún
+> clasificaba las 13.547 series dos veces y retenía las 13.547 proyecciones antes
+> del hash. El perfil Deno exacto consumió aproximadamente 5 s de CPU para esa
+> fase frente al límite alojado de 2 s. La corrección local pendiente analiza
+> señales una sola vez, solo materializa las clasificaciones seleccionadas y
+> pasa un iterable ordenado al mismo SHA-256 incremental. Sobre una lectura live
+> posterior de 13.549 series y 17.291.725 bytes conservó 83 términos y 411
+> seleccionadas, procesó catálogo, orden y hash en 1.247 ms y alcanzó 160.002.048
+> bytes RSS. Pasan 617/617 unitarias, 18/18 focales V2, 9/9 Edge con Deno 2.1.14,
+> sintaxis en 134 JavaScript, 21 contratos SQL estáticos, canonicalización
+> Node/Deno, TypeScript y `git diff --check`. No cambia política, migración,
+> frontend, otras Edge, datos, IA, Registry, economía ni presupuestos. Véase
+> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md`.
 >
 > El expediente histórico
 > `c1f677eb-0dae-410f-820d-a4483601ab47` permanece stale e intacto. Hasta que
@@ -96,11 +101,11 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   calidad declara que no degrada el proveedor.
 - No hay IDs de mercado o serie, frontend, DML, backfill, secretos ni cambios
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
-  continúa sin Gemini. La implementación quedó integrada en `a536a28`, la
-  migración se aplicó una vez como `20260827150224` y v73 fue el único despliegue.
-  El smoke posterior descubrió el límite de memoria del sellado canónico global;
-  la corrección incremental está preparada, pero todavía no está en GitHub ni en
-  producción.
+  continúa sin Gemini. La implementación y el hash incremental quedaron
+  integrados en `98e5ede`, la migración se aplicó una vez como `20260827150224`
+  y v74 es el despliegue actual. El smoke posterior demostró el límite CPU
+  residual; la corrección de worker está preparada localmente, pero todavía no
+  está en GitHub ni en producción.
 
 ### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
 

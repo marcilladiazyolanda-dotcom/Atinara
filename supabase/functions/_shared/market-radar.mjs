@@ -611,8 +611,9 @@ const KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS = new Set([
   "lanzamiento", "fecha", "antes", "despues", "cuando", "cuantos", "oficial",
 ]);
 
-function kalshiCatalogEntityTokens(series) {
-  const rawTitle = cleanText(series?.title ?? series?.name, 400);
+function kalshiCatalogEntityTokens(series, preparedTitle = null) {
+  const rawTitle = preparedTitle === null
+    ? cleanText(series?.title ?? series?.name, 400) : preparedTitle;
   const normalizedTokens = normalizeComparableText(rawTitle).split(/\s+/).filter((token) =>
     /^[a-z][a-z0-9]{2,39}$/.test(token)
       && !KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS.has(token));
@@ -622,33 +623,115 @@ function kalshiCatalogEntityTokens(series) {
   return { tokens: [...new Set(normalizedTokens)], uppercase_acronyms: uppercaseAcronyms };
 }
 
-/**
- * Deriva un vocabulario efímero desde series que el propio catálogo ya acredita
- * por taxonomía, metadatos o autoridad. Permite descubrir series hermanas que
- * solo nombran la entidad, sin incorporar una lista cerrada de títulos o IDs.
- */
-export function buildKalshiRadarCatalogEntityTermsV2(seriesRows = []) {
+function kalshiCatalogSeriesMetadata(series) {
+  const ticker = cleanText(series?.ticker, 120);
+  const title = cleanText(series?.title ?? series?.name, 400);
+  const category = cleanText(series?.category, 160);
+  const tags = safeStringArray(series?.tags, 30);
+  const productMetadata = isRecord(series?.product_metadata) ? series.product_metadata : {};
+  const importantInfo = isRecord(productMetadata.important_info) ? productMetadata.important_info : {};
+  const metadataText = normalizeComparableText([
+    title, category, ...tags, productMetadata.scope,
+    importantInfo.title, importantInfo.message, importantInfo.markdown,
+  ].filter(Boolean).join(" "));
+  const normalizedTicker = normalizeComparableText(ticker).replace(/\s+/g, "");
+  const sources = Array.isArray(series?.settlement_sources)
+    ? series.settlement_sources.filter(isRecord).slice(0, 40) : [];
+  const sourceHosts = sources.map(providerSourceHostname).filter(Boolean);
+  return {
+    ticker, title, category, tags, productMetadata, metadataText,
+    normalizedTicker, sources, sourceHosts,
+  };
+}
+
+function kalshiCatalogSeriesSignals(metadata) {
+  const signals = [];
+  if (metadata.tags.some((tag) => /^(?:video games?|esports?)$/.test(normalizeComparableText(tag)))) {
+    signals.push("registered_gaming_taxonomy");
+  }
+  if (KALSHI_RADAR_CATALOG_EXPLICIT_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
+    signals.push("explicit_gaming_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_ENTITY_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
+    signals.push("gaming_entity_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_INDUSTRY_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
+    signals.push("gaming_industry_metadata");
+  }
+  if (KALSHI_RADAR_CATALOG_CREATOR_METADATA_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))
+      || KALSHI_RADAR_CATALOG_CREATOR_TICKER_PATTERN.test(metadata.normalizedTicker)) {
+    signals.push("creator_theme_metadata");
+  }
+  if (metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS))) {
+    signals.push("official_gaming_source");
+  }
+  if (metadata.sources.length <= 6
+      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS))) {
+    signals.push("gaming_editorial_source");
+  }
+  if (metadata.sources.length <= 3
+      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_CREATOR_HOSTS))) {
+    signals.push("creator_theme_source");
+  }
+  return signals;
+}
+
+function normalizeKalshiCatalogEntityTerms(terms) {
+  return safeStringArray(terms, 1_000)
+    .map((term) => normalizeComparableText(term)).filter(Boolean);
+}
+
+function kalshiCatalogEntityMatches(metadataText, entityTerms) {
+  if (!entityTerms.length) return [];
+  const metadataTokens = new Set(metadataText.split(/\s+/).filter(Boolean));
+  return entityTerms.filter((term) => metadataTokens.has(term)).slice(0, 20);
+}
+
+function finalizeKalshiCatalogClassification(metadata, baseSignals, catalogEntityMatches) {
+  const signals = catalogEntityMatches.length
+    ? [...baseSignals, "catalog_gaming_entity_match"] : [...baseSignals];
+  const themeText = normalizeComparableText(`${metadata.title} ${metadata.tags.join(" ")}`);
+  const radarThemes = Object.entries(CATEGORY_TERMS)
+    .filter(([, terms]) => terms.some((term) => themeText.includes(normalizeComparableText(term))))
+    .map(([radarCategory]) => radarCategory);
+  return {
+    selected: signals.length > 0,
+    policy_version: KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION,
+    signals: [...new Set(signals)],
+    catalog_entity_matches: catalogEntityMatches,
+    radar_themes: radarThemes,
+    inferred_atinara_category: inferAtinaraCategory(
+      metadata.title, metadata.tags, metadata.productMetadata.scope,
+    ),
+  };
+}
+
+function scanKalshiRadarCatalogV2(seriesRows, { preserveAnalysis = false } = {}) {
   if (!Array.isArray(seriesRows)) throw new TypeError("PROVIDER_DISCOVERY_CATALOG_INVALID");
   const rows = seriesRows.filter(isRecord);
   const globalFrequency = new Map();
-  const extractedRows = rows.map((series) => {
-    const extracted = kalshiCatalogEntityTokens(series);
+  const trustedFrequency = new Map();
+  const trustedAcronyms = new Set();
+  const preparedRows = preserveAnalysis ? [] : null;
+  for (const series of rows) {
+    const metadata = kalshiCatalogSeriesMetadata(series);
+    const extracted = kalshiCatalogEntityTokens(series, metadata.title);
     for (const token of extracted.tokens) {
       globalFrequency.set(token, (globalFrequency.get(token) ?? 0) + 1);
     }
-    return { series, extracted };
-  });
-  const trustedFrequency = new Map();
-  const trustedAcronyms = new Set();
-  for (const { series, extracted } of extractedRows) {
-    const base = classifyKalshiRadarSeriesCatalogV2(series);
-    if (!base.signals.some((signal) => KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS.has(signal))) continue;
+    const signals = kalshiCatalogSeriesSignals(metadata);
+    if (preparedRows) preparedRows.push({
+      source: series,
+      metadata_text: metadata.metadataText,
+      base_signals: signals.length ? signals : null,
+    });
+    if (!signals.some((signal) => KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS.has(signal))) continue;
     for (const token of extracted.tokens) {
       trustedFrequency.set(token, (trustedFrequency.get(token) ?? 0) + 1);
     }
     for (const token of extracted.uppercase_acronyms) trustedAcronyms.add(token);
   }
-  return [...trustedFrequency.entries()]
+  const entityTerms = [...trustedFrequency.entries()]
     .filter(([token, trustedCount]) => {
       const globalCount = globalFrequency.get(token) ?? 0;
       return globalCount > 0 && globalCount <= 40
@@ -659,6 +742,41 @@ export function buildKalshiRadarCatalogEntityTermsV2(seriesRows = []) {
       || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
     .slice(0, 1_000)
     .map(([token]) => token);
+  return { rows, entityTerms, preparedRows };
+}
+
+/**
+ * Deriva un vocabulario efímero desde series que el propio catálogo ya acredita
+ * por taxonomía, metadatos o autoridad. Permite descubrir series hermanas que
+ * solo nombran la entidad, sin incorporar una lista cerrada de títulos o IDs.
+ */
+export function buildKalshiRadarCatalogEntityTermsV2(seriesRows = []) {
+  return scanKalshiRadarCatalogV2(seriesRows).entityTerms;
+}
+
+/**
+ * Analiza el catálogo completo sin clasificar dos veces las filas descartadas.
+ * Conserva las mismas señales y términos que la ruta unitaria, pero solo
+ * materializa clasificaciones para las series finalmente seleccionadas.
+ */
+export function analyzeKalshiRadarSeriesCatalogV2(seriesRows = []) {
+  const { entityTerms, preparedRows } = scanKalshiRadarCatalogV2(
+    seriesRows, { preserveAnalysis: true },
+  );
+  const selected = [];
+  for (const prepared of preparedRows ?? []) {
+    const baseSignals = prepared.base_signals ?? [];
+    const catalogEntityMatches = kalshiCatalogEntityMatches(prepared.metadata_text, entityTerms);
+    if (!baseSignals.length && !catalogEntityMatches.length) continue;
+    const metadata = kalshiCatalogSeriesMetadata(prepared.source);
+    selected.push({
+      source: prepared.source,
+      classification: finalizeKalshiCatalogClassification(
+        metadata, baseSignals, catalogEntityMatches,
+      ),
+    });
+  }
+  return { entity_terms: entityTerms, selected };
 }
 
 function providerSourceHostname(source) {
@@ -677,65 +795,11 @@ function providerHostMatches(hostname, allowedHosts) {
  * nunca tickers concretos de mercados ni excepciones por evento observado.
  */
 export function classifyKalshiRadarSeriesCatalogV2(series = {}, options = {}) {
-  const ticker = cleanText(series?.ticker, 120);
-  const title = cleanText(series?.title ?? series?.name, 400);
-  const category = cleanText(series?.category, 160);
-  const tags = safeStringArray(series?.tags, 30);
-  const productMetadata = isRecord(series?.product_metadata) ? series.product_metadata : {};
-  const importantInfo = isRecord(productMetadata.important_info) ? productMetadata.important_info : {};
-  const metadataText = normalizeComparableText([
-    title, category, ...tags, productMetadata.scope,
-    importantInfo.title, importantInfo.message, importantInfo.markdown,
-  ].filter(Boolean).join(" "));
-  const normalizedTicker = normalizeComparableText(ticker).replace(/\s+/g, "");
-  const sources = Array.isArray(series?.settlement_sources)
-    ? series.settlement_sources.filter(isRecord).slice(0, 40) : [];
-  const sourceHosts = sources.map(providerSourceHostname).filter(Boolean);
-  const signals = [];
-  if (tags.some((tag) => /^(?:video games?|esports?)$/.test(normalizeComparableText(tag)))) {
-    signals.push("registered_gaming_taxonomy");
-  }
-  if (KALSHI_RADAR_CATALOG_EXPLICIT_PATTERNS.some((pattern) => pattern.test(metadataText))) {
-    signals.push("explicit_gaming_metadata");
-  }
-  if (KALSHI_RADAR_CATALOG_ENTITY_PATTERNS.some((pattern) => pattern.test(metadataText))) {
-    signals.push("gaming_entity_metadata");
-  }
-  if (KALSHI_RADAR_CATALOG_INDUSTRY_PATTERNS.some((pattern) => pattern.test(metadataText))) {
-    signals.push("gaming_industry_metadata");
-  }
-  if (KALSHI_RADAR_CATALOG_CREATOR_METADATA_PATTERNS.some((pattern) => pattern.test(metadataText))
-      || KALSHI_RADAR_CATALOG_CREATOR_TICKER_PATTERN.test(normalizedTicker)) {
-    signals.push("creator_theme_metadata");
-  }
-  if (sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS))) {
-    signals.push("official_gaming_source");
-  }
-  if (sources.length <= 6
-      && sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS))) {
-    signals.push("gaming_editorial_source");
-  }
-  if (sources.length <= 3
-      && sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_CREATOR_HOSTS))) {
-    signals.push("creator_theme_source");
-  }
-  const entityTerms = safeStringArray(options.catalog_entity_terms, 1_000)
-    .map((term) => normalizeComparableText(term)).filter(Boolean);
-  const metadataTokens = new Set(metadataText.split(/\s+/).filter(Boolean));
-  const catalogEntityMatches = entityTerms.filter((term) => metadataTokens.has(term)).slice(0, 20);
-  if (catalogEntityMatches.length) signals.push("catalog_gaming_entity_match");
-  const themeText = normalizeComparableText(`${title} ${tags.join(" ")}`);
-  const radarThemes = Object.entries(CATEGORY_TERMS)
-    .filter(([, terms]) => terms.some((term) => themeText.includes(normalizeComparableText(term))))
-    .map(([radarCategory]) => radarCategory);
-  return {
-    selected: signals.length > 0,
-    policy_version: KALSHI_RADAR_SERIES_CATALOG_POLICY_VERSION,
-    signals: [...new Set(signals)],
-    catalog_entity_matches: catalogEntityMatches,
-    radar_themes: radarThemes,
-    inferred_atinara_category: inferAtinaraCategory(title, tags, productMetadata.scope),
-  };
+  const metadata = kalshiCatalogSeriesMetadata(series);
+  const signals = kalshiCatalogSeriesSignals(metadata);
+  const entityTerms = normalizeKalshiCatalogEntityTerms(options.catalog_entity_terms);
+  const catalogEntityMatches = kalshiCatalogEntityMatches(metadata.metadataText, entityTerms);
+  return finalizeKalshiCatalogClassification(metadata, signals, catalogEntityMatches);
 }
 
 const PROVIDER_PLACEHOLDER_PATTERNS = Object.freeze([

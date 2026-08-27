@@ -6,6 +6,7 @@ const { test, before } = require("node:test");
 
 const root = join(__dirname, "..");
 const sharedPath = join(root, "supabase/functions/_shared/market-radar.mjs");
+const sharedSource = readFileSync(sharedPath, "utf8");
 const contractsPath = join(root, "supabase/functions/_shared/ai/contracts.mjs");
 const catalogHashPath = join(root, "supabase/functions/_shared/radar-catalog-hash.mjs");
 const edge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
@@ -248,10 +249,50 @@ test("el hash incremental conserva exactamente el contrato canónico con 100+ se
     catalogHash.sha256KalshiCatalogProjectionV1(input),
     await contracts.sha256Hex(input),
   );
+  let iteratorCalls = 0;
+  const oneShotSeries = {
+    *[Symbol.iterator]() {
+      iteratorCalls += 1;
+      if (iteratorCalls > 1) throw new Error("ITERATOR_REUSED");
+      yield* series;
+    },
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV1({ ...input, series: oneShotSeries }),
+    await contracts.sha256Hex(input),
+  );
+  assert.equal(iteratorCalls, 1);
   assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV1({
     ...input,
     series: [series[1], series[0]],
   }), /PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID/);
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV1({
+    ...input,
+    series: {},
+  }), /PROVIDER_DISCOVERY_CATALOG_HASH_INVALID/);
+});
+
+test("el análisis global de 100+ series equivale a términos más clasificación unitaria", () => {
+  const catalog = Array.from({ length: 137 }, (_, index) => ({
+    ticker: `KX-GLOBAL-${String(index).padStart(4, "0")}`,
+    title: index < 3 ? `Aetherium outcome ${index}` : `Economic indicator ${index}`,
+    category: index < 2 ? "Entertainment" : "Other",
+    tags: index < 2 ? ["Video games"] : [],
+    product_metadata: index === 0 ? { scope: "Official console release" } : {},
+    settlement_sources: index === 1 ? [{ url: "https://www.nintendo.com/" }] : [],
+  }));
+  const entityTerms = radar.buildKalshiRadarCatalogEntityTermsV2(catalog);
+  const expected = catalog.map((source) => ({
+    source,
+    classification: radar.classifyKalshiRadarSeriesCatalogV2(source, {
+      catalog_entity_terms: entityTerms,
+    }),
+  })).filter((entry) => entry.classification.selected);
+  const analyzed = radar.analyzeKalshiRadarSeriesCatalogV2(catalog);
+  assert.deepEqual(analyzed.entity_terms, entityTerms);
+  assert.deepEqual(analyzed.selected, expected);
+  assert.equal(analyzed.selected.length, 3);
+  assert.ok(analyzed.selected[2].classification.catalog_entity_matches.includes("aetherium"));
 });
 
 test("el snapshot inicial prueba catálogo completo, selección razonada y cero progreso inventado", () => {
@@ -430,13 +471,22 @@ test("Edge usa catálogo global completo, lectura acotada y checkpoint antes de 
   assert.match(edge, /readProviderResponseText/);
   assert.match(edge, /MAX_PROVIDER_DISCOVERY_SERIES_BATCH = 48/);
   assert.match(edge, /withRadarProviderDiscoveryBudget/);
-  assert.match(edge, /buildKalshiRadarCatalogEntityTermsV2/);
-  assert.match(edge, /catalog_entity_terms: catalogEntityTerms/);
+  assert.match(sharedSource, /buildKalshiRadarCatalogEntityTermsV2/);
+  assert.match(edge, /analyzeKalshiRadarSeriesCatalogV2/);
   assert.match(edge, /sha256KalshiCatalogProjectionV1/);
   assert.doesNotMatch(edge, /providerCatalogHash\s*=\s*await sha256Hex/);
+  assert.match(edge, /function\* kalshiCatalogFingerprintProjections/);
+  assert.match(edge, /rawSeries\.sort\(/);
+  assert.doesNotMatch(edge, /projectionByTicker|catalogProjection\s*=/);
   assert.match(catalogHashSource, /createHash\("sha256"\)/);
+  assert.match(catalogHashSource, /for \(const projection of series\)/);
   assert.match(catalogHashSource, /digest\.update\(canonicalJson\(projection\)\)/);
   assert.doesNotMatch(catalogHashSource, /canonicalJson\(input\)/);
+  const scanCatalog = sharedSource.slice(
+    sharedSource.indexOf("function scanKalshiRadarCatalogV2"),
+    sharedSource.indexOf("export function buildKalshiRadarCatalogEntityTermsV2"),
+  );
+  assert.doesNotMatch(scanCatalog, /classifyKalshiRadarSeriesCatalogV2\(/);
   assert.match(edge, /El deadline del lote no es un fallo de esta serie/);
   assert.match(edge, /boundedEnvironment\.execution\.signal\.aborted/);
   assert.match(edge, /provider_catalog_hash/);

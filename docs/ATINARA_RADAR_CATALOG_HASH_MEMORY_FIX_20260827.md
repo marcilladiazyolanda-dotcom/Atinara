@@ -4,8 +4,13 @@ Fecha: 27 de agosto de 2026
 
 Base exacta: `a536a28e711a9c337ea23fde60c907a886584a72`
 
-Estado: corrección general verificada en local; pendiente de subida por Yol,
-Actions verdes y despliegue exclusivo de `market-radar`.
+Estado actualizado: integrada en
+`98e5eded9fdef2dd9dea0975dad73a079bcb7f6e` y desplegada exclusivamente como
+`market-radar` v74. Eliminó la materialización monolítica del hash, pero el smoke
+alojado terminó HTTP 546 porque el catálogo completo todavía se clasificaba dos
+veces y superaba el límite CPU del worker. La continuación vigente está en
+`ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827`; este documento conserva la
+evidencia histórica de la primera causa y corrección.
 
 ## Incidente productivo preservado
 

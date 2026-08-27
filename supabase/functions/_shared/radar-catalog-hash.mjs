@@ -15,11 +15,13 @@ export function sha256KalshiCatalogProjectionV1(input = {}) {
   const entityPolicyVersion = String(input.entity_policy_version ?? "");
   const entityTermsHash = String(input.entity_terms_hash ?? "");
   const projectionVersion = String(input.projection_version ?? "");
-  const series = Array.isArray(input.series) ? input.series : null;
+  const series = input.series;
+  const iterator = series != null && typeof series !== "string"
+    ? series[Symbol.iterator] : null;
   if (entityPolicyVersion !== KALSHI_CATALOG_ENTITY_POLICY_VERSION
       || projectionVersion !== KALSHI_CATALOG_PROJECTION_VERSION
       || !SHA256_PATTERN.test(entityTermsHash)
-      || !series) {
+      || typeof iterator !== "function") {
     throw new TypeError("PROVIDER_DISCOVERY_CATALOG_HASH_INVALID");
   }
 
@@ -33,8 +35,8 @@ export function sha256KalshiCatalogProjectionV1(input = {}) {
   digest.update(',"series":[');
 
   let previousTicker = "";
-  for (let index = 0; index < series.length; index += 1) {
-    const projection = series[index];
+  let index = 0;
+  for (const projection of series) {
     const ticker = typeof projection?.ticker === "string" ? projection.ticker : "";
     if (!ticker || (index > 0 && ticker <= previousTicker)) {
       throw new TypeError("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
@@ -42,6 +44,7 @@ export function sha256KalshiCatalogProjectionV1(input = {}) {
     if (index > 0) digest.update(",");
     digest.update(canonicalJson(projection));
     previousTicker = ticker;
+    index += 1;
   }
   digest.update("]}");
   return digest.digest("hex");

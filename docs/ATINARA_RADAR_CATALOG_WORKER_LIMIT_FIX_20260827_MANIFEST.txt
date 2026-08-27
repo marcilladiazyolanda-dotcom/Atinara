@@ -1,0 +1,79 @@
+ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827
+Generated: 2026-08-27
+Base: origin/main 98e5eded9fdef2dd9dea0975dad73a079bcb7f6e
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md
+A docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md
+A docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827_MANIFEST.txt
+M docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/_shared/radar-catalog-hash.mjs
+M supabase/functions/market-radar/index.ts
+M tests/radar-global-series-discovery-v2.test.js
+
+SHA-256 PAYLOAD FILES
+03c8e99d5bd217b2f275c9772419565e01590f319ca6ce5fbcec1a999bf0c63b  ORAKLO_PROJECT_CONTEXT.md
+636aef75691d74f3790de15c71a57a81c19105eabfca9543e42e23f94792f593  README.md
+17416347cdbfce01a5120d3446782d902aec778bcace4b3a00e9ad18a2a8ad13  docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md
+fe9600b6fc0804ac06a47b830d8a38a68ec9336e9891dd51ea511613c040c5fe  docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md
+d6da59d39c7dc5521ccd3c0acf36d3278f3342c991ae041b371be01ff82837d7  docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+afded708d56280d804de381905516fbdbca3ca006845743b640c0646e0fc10e8  supabase/functions/_shared/market-radar.mjs
+38424b85e9d91eac6a2232a7b9f44108dcc518344a47feb229be5f8fcdebc674  supabase/functions/_shared/radar-catalog-hash.mjs
+17d840667620f3a0a4f5123408afd0692159e9f9560d58bcaea7bcff4956eb24  supabase/functions/market-radar/index.ts
+38ddc2a6802ee2889fffb419a3c166d6d30abe40b12a7849927a2fc5984a8af8  tests/radar-global-series-discovery-v2.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar only (verify_jwt remains true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+B2B IMPLEMENTATION: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+MARKETS, PREDICTIONS AND EXISTING DRAFTS: unchanged
+
+PRODUCTION EVIDENCE
+- V2 migration applied once as 20260827150224_checkpoint_market_radar_global_catalog_v2
+- market-radar v74 ACTIVE, verify_jwt=true
+- v74 digest aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea
+- single refresh UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- v74 continuation claimed the same UUID, then ended HTTP 546 after 6216 ms
+- same UUID remains in_progress with claim_count=3 and zero checkpoints/batches
+- no second UUID, no Market Expert call, no new draft
+- hosted 546 means worker CPU or memory resource limit
+- live catalog profile before this correction: about 5007 ms processing for 13547 rows
+- live catalog profile after this correction: 1247 ms processing for 13549 rows
+- final profile: 83 terms, 411 selected, terminal cursor, about 152.6 MiB maximum RSS
+
+VERIFICATION
+- full unit suite: 617 passed, 0 failed
+- exact catalog/checkpoint tests: 18 passed, 0 failed
+- analyzer equivalence: 137 catalog rows
+- JavaScript syntax: valid in 134 files
+- static SQL contracts: 21 passed; no SQL execution because this package changes no SQL
+- Deno 2.1.14: 9 Edge Functions passed, including market-radar
+- TypeScript and canonical JSON parity: passed
+- git diff --check: passed
+- Sonar: not used
+
+POST-UPLOAD
+- fetch and require exactly these 10 paths and matching contents
+- require Calidad de Atinara including Deno, Pages and Benchmark IA offline success
+- create a clean worktree from the resulting origin/main
+- do not reapply the V2 migration
+- deploy only market-radar with verify_jwt=true
+- continue only UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- do not create a second refresh
+- create exactly one private draft only after all Radar and eligibility gates
+- never confirm, publish, schedule, resolve or settle

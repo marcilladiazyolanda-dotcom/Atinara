@@ -18,11 +18,11 @@ import {
   RADAR_REASON_CODES,
   adaptKalshiResponse,
   adaptPolymarketResponse,
+  analyzeKalshiRadarSeriesCatalogV2,
   applyDeterministicRadarEligibility,
   applyEligibilityDecision,
   bindRadarCandidatesToReconciledChildren,
   advanceProviderDiscoveryCheckpointV2,
-  buildKalshiRadarCatalogEntityTermsV2,
   buildProviderDiscoveryCheckpointV1,
   buildProviderDiscoveryCheckpointV2,
   buildCacheKey,
@@ -3444,6 +3444,10 @@ function kalshiCatalogFingerprintProjection(series: JsonRecord): JsonRecord {
   };
 }
 
+function* kalshiCatalogFingerprintProjections(seriesRows: JsonRecord[]): Generator<JsonRecord> {
+  for (const series of seriesRows) yield kalshiCatalogFingerprintProjection(series);
+}
+
 async function buildKalshiProviderDiscoveryCheckpointV2(
   environment: Environment,
   now: string,
@@ -3465,8 +3469,10 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
   if (!rawSeries.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   if (providerCursor) throw new Error("PROVIDER_PAGINATION_INCOMPLETE");
   if (rawSeries.length > 100_000) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
-  const projectionByTicker = new Map<string, JsonRecord>();
-  const catalogEntityTerms = buildKalshiRadarCatalogEntityTermsV2(rawSeries);
+  rawSeries.sort((left, right) => compareUtf16Text(left.ticker, right.ticker));
+  const catalogAnalysis = analyzeKalshiRadarSeriesCatalogV2(rawSeries);
+  const catalogEntityTerms = Array.isArray(catalogAnalysis.entity_terms)
+    ? catalogAnalysis.entity_terms : [];
   const entityTermsHash = await sha256Hex({
     policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
     terms: catalogEntityTerms,
@@ -3475,25 +3481,20 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
     source: JsonRecord;
     scopes: KalshiTaxonomyScope[];
     classification: ReturnType<typeof classifyKalshiRadarSeriesCatalogV2>;
-  }> = [];
-  for (const source of rawSeries) {
-    const projection = kalshiCatalogFingerprintProjection(source);
-    const ticker = cleanText(projection.ticker, 120);
-    if (!ticker || projectionByTicker.has(ticker)) {
-      throw new Error("PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID");
+  }> = (Array.isArray(catalogAnalysis.selected) ? catalogAnalysis.selected : []).map((entry) => {
+    const source = toRecord(entry?.source);
+    const classificationRecord = toRecord(entry?.classification);
+    if (!source || !classificationRecord) {
+      throw new Error("PROVIDER_DISCOVERY_CATALOG_ANALYSIS_INVALID");
     }
-    projectionByTicker.set(ticker, projection);
-    const classification = classifyKalshiRadarSeriesCatalogV2(source, {
-      catalog_entity_terms: catalogEntityTerms,
-    });
-    if (!classification.selected) continue;
+    const classification = classificationRecord as ReturnType<typeof classifyKalshiRadarSeriesCatalogV2>;
     const category = cleanText(source.category, 160);
     const scopes = (Array.isArray(source.tags) ? source.tags : [])
       .map((tag) => cleanText(tag, 160))
       .filter((tag) => /^(?:video games?|esports?)$/i.test(tag))
       .map((tag) => ({ category, tag }));
-    selected.push({ source, scopes, classification });
-  }
+    return { source, scopes, classification };
+  });
   selected.sort((left, right) => {
     const priority = seriesPriority(right.source) - seriesPriority(left.source);
     if (priority) return priority;
@@ -3503,14 +3504,11 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
   });
   if (!selected.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   if (selected.length > MAX_KALSHI_SERIES) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
-  const catalogProjection = [...projectionByTicker.values()]
-    .sort((left, right) => cleanText(left.ticker, 120) < cleanText(right.ticker, 120) ? -1
-      : cleanText(left.ticker, 120) > cleanText(right.ticker, 120) ? 1 : 0);
   const providerCatalogHash = sha256KalshiCatalogProjectionV1({
     projection_version: "atinara-kalshi-series-catalog-projection-v1",
     entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
     entity_terms_hash: entityTermsHash,
-    series: catalogProjection,
+    series: kalshiCatalogFingerprintProjections(rawSeries),
   });
   const compactSeries = selected.map(({ source, scopes, classification }) =>
     compactKalshiSeriesCheckpoint(source, scopes, classification));
