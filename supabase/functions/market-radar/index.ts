@@ -3430,7 +3430,7 @@ function kalshiCatalogFingerprintProjection(series: JsonRecord): JsonRecord {
     title: cleanText(series.title ?? series.name, 400),
     category: cleanText(series.category, 160),
     tags: (Array.isArray(series.tags) ? series.tags : [])
-      .map((tag) => cleanText(tag, 100)).filter(Boolean).sort(),
+      .map((tag) => cleanText(tag, 100)).filter(Boolean).sort(compareUtf16Text),
     product_scope: cleanText(productMetadata?.scope, 1_000) || null,
     product_important_info: importantInfo ? {
       title: cleanText(importantInfo.title, 500) || null,

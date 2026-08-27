@@ -1,0 +1,70 @@
+ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827
+Generated: 2026-08-27
+Base: origin/main 8caaa4787f09604a8f3e7ff535e6c418f75f7b2f
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md
+A docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827_MANIFEST.txt
+M supabase/functions/market-radar/index.ts
+M tests/market-radar.test.js
+
+SHA-256 PAYLOAD FILES
+fb37d5699a0b8732ddd47f1578d5da70aa14dfff186667ba9884beba7594ea24  ORAKLO_PROJECT_CONTEXT.md
+7d65b7dfbad09210d79437b9bdd0428f08ddd60e412711f809c651eba07c3f5e  README.md
+8694ef9232afea26f9595701b01e43719dba85c3d4d104f2730d7b073d5d43b7  docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md
+dd29827dc365fcc5034a2f14bc91d13b31f19daa837700ed9f6fa5eece9682f8  supabase/functions/market-radar/index.ts
+c9792ed440ffebbcab0163eabfda44db112292f503ce33cf3d236d6979cc358d  tests/market-radar.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar (explicit UTF-16 tag comparator only; verify_jwt remains true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+B2B IMPLEMENTATION: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+MARKETS, PREDICTIONS AND DRAFTS: unchanged
+
+REMOTE EVIDENCE
+- Full Theme upload 8caaa4787f09604a8f3e7ff535e6c418f75f7b2f has exactly the original 10 paths
+- those 10 paths match local package commit a10791257ffa5d95e8b498e3c9f639ed0c07202a
+- GitHub Pages: success and serves v=20260826-live-market-chart-limit1
+- Benchmark IA offline: success
+- Calidad de Atinara: failure before Deno because overlapping uploads were not merged
+- Sonar: not used
+
+VERIFICATION
+- unit tests: 615 passed, 0 failed
+- focused market-radar: 79 passed, 0 failed
+- global series classifier and V2 checkpoint: 16 passed, 0 failed
+- Deno 2.1.14 Edge checks: 9 passed, 0 failed
+- JavaScript syntax: 133 valid
+- SQL static transaction contracts: 21 valid
+- canonicalization: Node and Deno identical, 13 domain cases, 10 golden cases
+- offline benchmark: 5 passed, 0 failed, externalNetworkCalls=0
+- git diff --check: passed
+- conflict markers: none
+- SQL execution: not repeated; this incremental contains no SQL
+- Checkly typecheck: not repeated locally; no Checkly or tsconfig files changed
+
+POST-UPLOAD
+- fetch and require exactly these 6 paths and matching contents
+- require Calidad de Atinara including Deno, Pages and Benchmark IA offline success on one SHA
+- do not use Sonar
+- create a new clean production worktree from the resulting origin/main
+- take a read-only production baseline before applying or deploying anything
+- apply only the already-uploaded V2 catalog migration once
+- deploy only market-radar with verify_jwt=true
+- start exactly one fresh Kalshi refresh and continue only its UUID
+- create exactly one private draft after all Radar and eligibility gates
+- never confirm, publish, resolve or settle

@@ -1,23 +1,37 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 26 de agosto de 2026.
+Última actualización del contexto: 27 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado remoto y productivo verificado antes del siguiente despliegue:**
-> `origin/main` está en `8025df43e898280d06c88c70c43a26dc8acba472`.
-> El rango desde `58e47a8` contiene exactamente las diez rutas de continuidad
-> de evidencia oficial y coincide byte por byte con la entrega preservada. La
-> Action Calidad de Atinara —incluido Deno—, Pages y el benchmark offline están
-> verdes. No se usó Sonar.
+> `origin/main` está en `8caaa4787f09604a8f3e7ff535e6c418f75f7b2f`.
+> El último commit contiene exactamente las diez rutas del paquete Full Theme y
+> coincide byte por byte con la entrega local
+> `a10791257ffa5d95e8b498e3c9f639ed0c07202a`. Entre su base `8025df4` y esa
+> subida se integraron Corrector, Validator, gráfica, límite de Karma y la nueva
+> estrategia B2B. Los archivos estratégicos de `01351db` permanecen intactos y
+> autoritativos; este cierre no implementa la fase B2B, que Yol realizará en una
+> conversación separada.
 >
-> Producción todavía conserva `market-radar` v72 `ACTIVE`,
+> La sustitución manual de tres rutas compartidas revirtió hechos documentales
+> intermedios y una expectativa de caché. Pages y el benchmark offline terminaron
+> en `success`, pero `Calidad de Atinara` falló en pruebas JavaScript antes de
+> ejecutar Deno. GitHub Pages sirve realmente
+> `v=20260826-live-market-chart-limit1`; el test restaurado por el ZIP esperaba
+> todavía `v=20260825-radar-provider-checkpoint1`. La reproducción completa
+> detectó también una ordenación de tags sin comparador explícito que la puerta
+> de código actual rechaza. No se usó Sonar y no se ha desplegado el paquete
+> global mientras la Action siga roja.
+>
+> Producción conserva `market-radar` v72 `ACTIVE`,
 > `verify_jwt=true`, digest
 > `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`;
 > la migración local `20260826130000` consta aplicada remotamente como
 > `20260826112912`.
-> Solo se desplegó esa Edge; Expert v26, Corrector v22, Validator v31 y
-> Resolución v16 permanecen sin cambios y con JWT obligatorio.
+> Expert v26, Corrector v25, Validator v34 y Resolución v16 permanecen activos
+> con JWT obligatorio. La migración V2 de catálogo global todavía no está
+> aplicada y `market-radar` no se ha redesplegado.
 >
 > El único refresh nuevo es `c1f677eb-0dae-410f-820d-a4483601ab47`.
 > Kalshi terminó `completed/terminal`, `claim_count=3`, con 215/215 series,
@@ -44,13 +58,13 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `ELIGIBILITY_SCAN_UNAVAILABLE`. No se realizó un tercer intento, no se llamó
 > Market Expert y los seis borradores siguen intactos.
 >
-> La corrección de evidencia oficial ya está en GitHub, pero aún no se ha
-> desplegado. La entrega que debe activarse ahora es la ampliación general
+> La corrección de evidencia oficial y la ampliación global ya están en GitHub,
+> pero aún no se han desplegado. La entrega que debe activarse es la ampliación
 > descrita en
 > `docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md`: añade una
 > migración append-only para sellar el catálogo global Kalshi y avanzar sus
 > series por lotes durables sobre la misma UUID. Hasta integrar y verificar esa
-> entrega completa, no desplegar el paquete anterior aislado, no repetir
+> entrega junto a la corrección de composición, no desplegar el paquete anterior aislado, no repetir
 > elegibilidad, no ejecutar Market Expert y no crear un borrador por otra vía.
 > Como la base corrige la identidad familiar material `ngvi` por `gtavi`, el
 > expediente actual sigue stale: después del despliegue hará falta exactamente
@@ -89,8 +103,103 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   calidad declara que no degrada el proveedor.
 - No hay IDs de mercado o serie, frontend, DML, backfill, secretos ni cambios
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
-  continúa sin Gemini. La migración y el código están verificados localmente,
-  todavía no integrados ni desplegados.
+  continúa sin Gemini. La migración y el código están integrados en `8caaa47`,
+  pero todavía no están aplicados ni desplegados porque la Action funcional no
+  alcanzó Deno.
+
+### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
+
+- El upload Full Theme es exacto respecto de su ZIP: diez rutas, ninguna
+  adicional y ninguna eliminación. La diferencia material no está dentro del
+  ZIP, sino en su composición: fue construido sobre `8025df4` y reemplazó tres
+  archivos que también habían cambiado en commits posteriores.
+- `ORAKLO_PROJECT_CONTEXT.md` perdió las secciones de gráfica/límite y del
+  Corrector por campos; `README.md` perdió esos mismos hechos y las versiones
+  Corrector v25/Validator v34; `tests/market-radar.test.js` volvió a exigir una
+  release de caché ya sustituida por el frontend publicado.
+- La fusión de tres vías conserva sin conflicto todo el código Radar, la
+  migración V2, los tests globales y los cambios funcionales intermedios. Solo
+  README y contexto requieren una resolución semántica; el test de caché se
+  fusiona de forma directa.
+- La corrección incremental restaura esos tres archivos, usa en
+  `market-radar` el comparador UTF-16 ya existente para ordenar tags y añade su
+  documento y manifiesto. No toca SQL, frontend, producción, secretos, Auth,
+  AI, Registry, economía ni estrategia. Después de subirla deben quedar verdes
+  Calidad —incluido Deno—, Pages y benchmark antes de cualquier migración o
+  despliegue.
+
+### Gráfica temporal y máximo global de 1.000 Karma · 26 de agosto de 2026
+
+- La causa visual era local y determinista: `getChartPointCoordinates` colocaba
+  expresamente un histórico de un punto en `padding.left + chartWidth / 2`.
+  Ahora el punto inicial queda en `x=46`, límite izquierdo del área trazable, y
+  los puntos siguientes avanzan por tiempo hasta `x=696`. Si todos comparten
+  timestamp, el orden de versión evita que se oculten unos sobre otros.
+- Cliente y servidor aplicaban dos límites duplicados: 500 Karma y el 20 % del
+  saldo. La regla vigente es global, `min(1.000, saldo disponible)`, tanto en
+  `get_prediction_quote` como en `place_prediction`; continúan mínimo 10,
+  saldo no negativo, posición única, lock transaccional y protección
+  `PRICE_MOVED`.
+- La migración
+  `20260826183050_raise_live_prediction_max_to_1000_v1.sql` consta aplicada
+  una sola vez en producción como `20260826184500`. Conserva
+  `SECURITY DEFINER`, `search_path` vacío, cotización para `anon/authenticated`
+  y confirmación solo para `authenticated`. Los hashes activos son
+  `43adc4e6c6358613c01cec41999958c219e13774ecf9c60f405f6cae53e40acf`
+  y `8e180eb20edc7afa97e02d0b2dfafa413dfb8b31cd9d8c78f3992f585b5c2028`.
+- La prueba SQL reversible usa dos perfiles y un mercado transaccional: 1.000
+  Karma en Sí eleva el precio, 1.000 en No lo reduce, cada operación incrementa
+  versión e histórico, Sí+No permanece en 100 y 1001, saldo insuficiente,
+  duplicado y quote obsoleta fallan cerrados. Tras `ROLLBACK` siguen 16
+  mercados, 9 predicciones, 18 puntos, 2 perfiles, 2.932 Karma y 40 Prestigio;
+  no queda fixture alguno y Tibo conserva 0 predicciones y su único punto real.
+- La regresión de navegador recorre el frontend real con RPC simuladas en
+  1440 px y 320 px: `50/50 → 69,67/30,33 → 42,26/57,74`, coordenadas
+  `46 → 371 → 696`, scrubber y tooltip operativos, colores diferenciados y
+  cero desbordamiento horizontal. La release de caché coordinada para todas
+  las superficies que cargan observabilidad es
+  `v=20260826-live-market-chart-limit1`.
+
+### Corrector general por campos y publicación E2E verificada · 26 de agosto de 2026
+
+- `origin/main = c9eb88cd04bd4fe2a5ee552dc20bc781569af951` integra la
+  ampliación de los 23 campos y el reintento guiado del Validator. La migración
+  `fix_market_draft_corrector_field_scope_v1` consta aplicada una sola vez como
+  `20260826161837`; no debe repetirse. `validate-market-draft` v34 está
+  `ACTIVE`, con JWT obligatorio y digest
+  `c12f5955a8aeb1a0d6ec63348f0124b0f93f89b2df4d59eeb9df14e631309ef8`.
+- `market-draft-fixer` v25 está `ACTIVE`, con JWT obligatorio y digest
+  `76c87e535c2be6df7d5691e5beccd3d5978b9f671bb5b5ed9b16f303a54edb1f`.
+  Su último delta quedó integrado en GitHub: evita que el editor semántico
+  repita como bloqueo una objeción tipada de workflow de fuentes que la misma
+  ronda ya reparó y atestó autoritativamente. La excepción solo se
+  aplica cuando el parche determinista contiene fuente primaria y alternativas
+  verificadas; cualquier incidencia sustantiva, fuente incompleta o falta de
+  evidencia continúa bloqueando.
+- El Corrector mantiene estrategias registradas para los 23 campos rellenables,
+  tanto en borradores manuales como Radar. Proyecta contexto y propuesta a
+  contratos mínimos, representa opcionales ausentes sin `undefined` y limita
+  cada fuente enviada al Gateway a `url`, `name` y `role`. Validator v34 recibe
+  en su segundo intento la fase segura incumplida y vuelve a ejecutar todas las
+  validaciones deterministas; ninguna ruta fabrica evidencia, rebaja una puerta
+  o confirma y publica por sí sola.
+- El E2E real sobre `ca6a10ea-ad48-4196-aab3-cc3141d3bde1` terminó en versión
+  4, huella
+  `0b625fd1e8072d8545df4c17e332014c05bb7ed1648fa9060e182dbd7b822627`,
+  revisión efectiva 22 `approved` y cero incidencias. El Corrector renovó X y
+  cambió únicamente `primary_source` y `alternative_sources`; la revisión
+  posterior quedó aprobada con `atinara-market-gate-v3`.
+- Yol realizó después las dos acciones humanas separadas. Supabase registró
+  `HUMAN_CONFIRMATION_RECORDED` a las `17:55:03Z` y `MARKET_PUBLISHED` a las
+  `17:55:32Z`. El mercado público
+  `tibo-sottiaux-confirma-corte-pelo-septiembre-2026` está `Abierto`, existe una
+  sola vez por slug y pregunta, conserva `scheduled_for=null`,
+  `radar_candidate_id=null` y `family_relationship=standalone`. Chrome mostró
+  su ficha pública real con pregunta, criterios, fuente X y 50/50 inicial.
+- Evidencia del delta final: 115/115 pruebas focales, 597/597 unitarias,
+  sintaxis válida en 131 JavaScript, TypeScript verde, 9/9 Edge con Deno
+  2.1.14 y `git diff --check`. No añade migración, secreto, cambio de modo,
+  ruta, modelo, presupuesto, economía ni autoridad autónoma.
 
 ### Continuidad de evidencia oficial futura · 26 de agosto de 2026
 

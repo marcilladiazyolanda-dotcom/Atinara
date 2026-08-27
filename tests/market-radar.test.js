@@ -1062,6 +1062,7 @@ test("la Edge indexa todas las series gaming y esports de Kalshi antes de enumer
   assert.match(edge, /new URL\(`\$\{KALSHI_API_ROOT\}\/series`\)/);
   assert.match(edge, /include_product_metadata", "true"/);
   assert.match(edge, /include_volume", "true"/);
+  assert.match(edge, /\.map\(\(tag\) => cleanText\(tag, 100\)\)\.filter\(Boolean\)\.sort\(compareUtf16Text\)/);
   assert.match(edge, /classifyKalshiRadarSeriesCatalogV2/);
   assert.match(edge, /providerCatalogHash/);
   assert.match(edge, /search\/tags_by_categories/);
@@ -1294,7 +1295,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260825-radar-provider-checkpoint1/);
+  assert.match(adminHtml, /v=20260826-live-market-chart-limit1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

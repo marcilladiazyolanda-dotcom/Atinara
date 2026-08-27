@@ -15,16 +15,45 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 26 de agosto usa Radar v72, Expert v26, Corrector v22, Validator v31 y Resolución v16, todas con `verify_jwt=true`. El digest de Radar es `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 26 de agosto usa Radar v72, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
-## Estado operativo de 13.5.2 · Radar v72 activo y ampliación global pendiente
+## Corrector por campos · E2E y publicación verificados
 
-`origin/main = 8025df43e898280d06c88c70c43a26dc8acba472` contiene la corrección
-de continuidad de evidencia oficial y pasó Calidad de Atinara —incluido Deno—,
-Pages y benchmark offline. No se usó Sonar. Producción todavía conserva solo
-`market-radar` v72, `ACTIVE`, con JWT obligatorio y digest
+La migración `fix_market_draft_corrector_field_scope_v1` consta aplicada una
+sola vez como `20260826161837`. El flujo general sirve tanto a borradores
+manuales como a los procedentes de Radar: el parche determinista valida y
+atesta las fuentes, la capa semántica solo puede proponer campos rellenables y
+el Validator vuelve a comprobar el contrato completo. Una incidencia real o
+una fuente que no alcance la autoridad exigida continúa fallando de forma
+cerrada; el Corrector nunca confirma ni publica.
+
+El E2E real terminó el borrador manual de Tibo en versión 4, revisión efectiva
+22 aprobada y cero incidencias. Yol realizó después la confirmación humana y la
+publicación. Supabase y Chrome verificaron el mercado público
+[`tibo-sottiaux-confirma-corte-pelo-septiembre-2026`](market-detail.html?id=tibo-sottiaux-confirma-corte-pelo-septiembre-2026):
+está `Abierto`, conserva el periodo y los criterios aprobados, no fue programado,
+no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
+de Corrector v25 no contiene migración y quedó integrado en `origin/main`
+mediante `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`.
+
+## Estado operativo de 13.5.2 · Radar v72 activo y ampliación global integrada
+
+El corte remoto `8caaa4787f09604a8f3e7ff535e6c418f75f7b2f` contiene exactamente las
+diez rutas del paquete global y coincide byte por byte con la entrega local.
+Como ese paquete partía de `8025df4` y hubo subidas intermedias, el reemplazo
+manual revirtió en README, contexto y una regresión de Radar información ya
+integrada. Pages y el benchmark offline terminaron correctamente, pero
+`Calidad de Atinara` falló antes de Deno porque el test volvió a exigir la
+release de caché anterior. La reproducción completa detectó además una
+ordenación de tags sin comparador explícito que una puerta añadida en los
+commits intermedios ya prohíbe. La corrección usa el comparador binario UTF-16
+existente y no cambia la selección ni el contrato del catálogo. El detalle está en
+[`docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md`](docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md).
+
+No se ha desplegado el paquete global. Producción conserva `market-radar` v72,
+`ACTIVE`, con JWT obligatorio y digest
 `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`.
 
 El único refresh fresco, `c1f677eb-0dae-410f-820d-a4483601ab47`, terminó
@@ -75,12 +104,14 @@ vacío ni obligan a repetir discovery sano. La tabla privada fuerza RLS y las
 RPC son `service_role` only. Véase
 [`docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md`](docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md).
 
-Esta ampliación todavía es local: requiere integrar una migración versionada y
-desplegar después únicamente `market-radar`. No se llamó Market Expert y
-continúan exactamente seis borradores. Tras la integración será necesario
-exactamente un refresh Kalshi nuevo para sustituir la identidad stale; no debe
-reintentarse la preparación sobre el snapshot actual ni desplegar antes la
-corrección anterior de forma aislada.
+La ampliación está integrada en GitHub, pero su activación permanece bloqueada
+hasta que la corrección incremental de composición esté subida y Calidad de
+Atinara —incluido Deno— vuelva a verde. Después requiere aplicar una sola vez la
+migración versionada y desplegar únicamente `market-radar`. No se llamó Market
+Expert y continúan exactamente seis borradores. Hará falta exactamente un
+refresh Kalshi nuevo para sustituir la identidad stale; no debe reintentarse la
+preparación sobre el snapshot actual ni desplegar antes la corrección anterior
+de forma aislada.
 
 ## Historial operativo · Radar v69 y checkpoint de discovery
 
@@ -320,12 +351,22 @@ la base canónica `b10f0eb` usada para el Paso 13.5.1.
 
 Atinara usa en producción un creador automático de mercado LMSR con Karma para que `Sí` y `No` formen un precio colectivo real y siempre sumen 100 %. La migración `20260801172543_add_live_prediction_market_model.sql` fue aplicada una sola vez el 1 de agosto de 2026 y el frontend coordinado se publicó inicialmente en `f7aac42`. No se debe repetir la migración.
 
+El 26 de agosto se aplicó una segunda migración incremental y no destructiva,
+`20260826183050_raise_live_prediction_max_to_1000_v1.sql`, registrada por
+Supabase como `20260826184500`. Sustituye el máximo `min(500, 20 % del saldo)`
+por `min(1.000, saldo disponible)` en cotización y confirmación, sin modificar
+mercados, saldos, predicciones ni históricos existentes.
+
 - Cada mercado nuevo empieza al 50/50 y usa `b = 2000 Karma` durante la beta.
+- Cada predicción usa entre 10 y 1.000 Karma, limitada además por el saldo disponible.
 - Antes de confirmar, Supabase cotiza impacto, precio medio, contratos, retorno base, bonus de dificultad y Prestigio.
 - La versión del mercado y el precio máximo revisado protegen frente a una confirmación con una cotización antigua.
 - Cada contrato acertado nuevo liquida a 1 Karma y el bonus se añade por separado. El antiguo tope `×10` solo permanece en predicciones anteriores.
 - La beta admite una sola posición bloqueada hasta la resolución. No incluye venta, salida anticipada, cambio de lado, órdenes ni mercado secundario.
 - Las actualizaciones usan Broadcast de Supabase y una consulta periódica como respaldo, sin publicar identidad ni posiciones privadas.
+- Un único punto histórico se dibuja en el extremo izquierdo a su altura real;
+  cada movimiento posterior avanza hacia la derecha por tiempo, sin inventar
+  volatilidad.
 - `data.js` fue eliminado en `4ccd97e`: no existe en `origin/main`, su URL pública devuelve 404 y ante un fallo se muestra un error honesto con reintento, nunca mercados de demostración.
 
 La fotografía de activación fue de 11 mercados, 11 estados LMSR, 11 puntos históricos iniciales y 7 predicciones heredadas `legacy_fixed_v1`; no cambió ningún contrato anterior ni los saldos agregados de Karma y Prestigio. La aceptación pública de escritorio confirmó datos reales, `Sí + No = 100 %`, un único punto honesto sin movimiento, los cinco rangos temporales, cotización de solo lectura para invitadas y ausencia de controles de compraventa. No se creó ni modificó ninguna predicción durante la comprobación.
@@ -335,6 +376,12 @@ La limpieza completa se publicó en `a5c633b` y GitHub Pages ya sirve `v=2026080
 La aceptación móvil real se ejecutó a 320 × 568, 375 × 667, 390 × 844 y 768 × 1024. Producción reveló un desbordamiento global a 320 px y otro en la ficha resuelta a 375/390 px por URLs largas. El árbol de cierre elimina el mínimo rígido del elemento raíz y permite partir esas URLs; las seis superficies públicas superan después la comprobación visual local a 320 y 375 px, sin ocultar pregunta, precios, gráfica, rangos, cotización ni acciones. Los cinco rangos responden por interacción, el único punto continúa siendo honesto, el foco es visible, los controles tienen nombre accesible y no aparecen métricas privadas ni compraventa. Confirmar como invitada abre el acceso sin enviar formularios ni crear datos.
 
 Una nueva comprobación administrativa de Supabase, exclusivamente de lectura, volvió a confirmar 11 mercados, 11 estados LMSR, 11 puntos iniciales, 7 contratos heredados —5 activos— y 0 contratos `lmsr_v1`. Todos los estados continúan en versión 0, las probabilidades suman 100 %, `b = 2000`, la firma antigua sigue ausente y las tablas internas y la resolución permanecen protegidas. No se creó ni modificó ninguna predicción.
+
+El postcheck del límite vigente confirmó 16 mercados —5 abiertos—, 16 estados
+LMSR, 18 puntos, 9 predicciones, 2 perfiles, 2.932 Karma y 40 Prestigio. Una
+prueba con dos identidades ejecutó compras autoritativas de Sí y No, además de
+los rechazos por 1001, saldo, duplicado y `PRICE_MOVED`, y terminó con
+`ROLLBACK`; no dejó mercados, participaciones, saldos ni histórico de prueba.
 
 ## Resolución asistida por IA
 
@@ -353,7 +400,7 @@ Las claves se configuran únicamente como Edge secrets y nunca se añaden al fro
 
 - `admin-markets.html` conserva `Crear manualmente` y añade una pestaña `Radar de mercados` únicamente para administradoras.
 - `market-radar` centraliza las consultas externas, valida el JWT y `oraklo_admin`, limita hosts, tiempo, tamaño, reintentos y consumo, y conserva resultados parciales cuando una fuente falla.
-- Polymarket usa `GET /public-search`; Kalshi parte de `GET /series` con `Entertainment + Video games` y consulta sus mercados abiertos. No se consultan posiciones, traders, wallets, órdenes o perfiles externos.
+- Polymarket usa `GET /public-search`; Kalshi parte del catálogo global oficial `GET /series`, exige cursor agotado y selecciona por una política temática versionada antes de consultar mercados abiertos por serie. No se consultan posiciones, traders, wallets, órdenes o perfiles externos.
 - La ruta operativa del Radar es determinista y ejecuta cero llamadas de modelo. El contrato histórico de enriquecimiento permanece dormido y centralizado en el AI Gateway para compatibilidad, pruebas y una decisión futura explícita.
 - El score de 0 a 100 separa popularidad relativa, relevancia gaming, claridad, actualidad, incertidumbre y novedad. Las probabilidades externas son referencia privada y nunca alimentan el LMSR de Atinara.
 - `Preparar borrador` vuelve a comprobar estado y duplicados, muestra el origen de cada campo y rellena el formulario real. Los huecos no fiables permanecen vacíos; solo `Guardar borrador privado` persiste la propuesta y conserva la revisión semántica y confirmación humana existentes.
