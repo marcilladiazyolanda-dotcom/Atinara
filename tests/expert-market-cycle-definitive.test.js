@@ -18,6 +18,7 @@ const migration = read("supabase/migrations/20260809204739_close_expert_market_c
 const hardeningMigration = read("supabase/migrations/20260811100833_harden_repair_evidence_and_idempotency_v3.sql");
 const radarIsolationMigration = read("supabase/migrations/20260811104727_isolate_radar_poison_records_v4.sql");
 const parentReconciliationMigration = read("supabase/migrations/20260822205445_add_radar_parent_reconciliation_v1.sql");
+const editorBridgeContractMigration = read("supabase/migrations/20260827234500_fix_market_expert_editor_bridge_contract_v1.sql");
 const adminHtml = read("admin-markets.html");
 const adminAgentBridge = read("admin-agent-engine.js");
 const adminJs = read("admin-markets.js");
@@ -138,6 +139,28 @@ test("Editor · candidata abierta pero incompleta puede materializar un borrador
   assert.match(migration, /materialization_mode', 'private_repair_v1'/);
   assert.match(migration, /'publishes', false/);
   assert.match(migration, /'confirms', false/);
+  assert.match(editorBridgeContractMigration, /create or replace function public\.materialize_market_draft_for_repair_v1/);
+  assert.match(editorBridgeContractMigration, /save_market_draft_from_expert_with_issues_v2/);
+  assert.match(editorBridgeContractMigration, /writer_contract_version','save_market_draft_from_expert_with_issues_v2'/);
+  assert.doesNotMatch(editorBridgeContractMigration, /draft_input\s*-\s*'_radar_preparation_revision'/);
+  assert.doesNotMatch(editorBridgeContractMigration, /result_value:=public\.save_market_draft_from_radar\(/);
+});
+
+test("Editor · el writer vigente tiene precedencia y el alias V1 conserva compatibilidad", () => {
+  assert.match(adminAgentBridge,
+    /const rpcName = issueDraft \? "save_market_draft_from_expert_with_issues_v2"[\s\S]{0,180}: repairMaterialization \? "materialize_market_draft_for_repair_v1"/);
+  assert.match(editorBridgeContractMigration,
+    /proposal_ready_with_issues[\s\S]*?can_materialize_private_repair_draft[\s\S]*?can_save_private_draft/);
+  assert.match(editorBridgeContractMigration,
+    /revoke all on function public\.materialize_market_draft_for_repair_v1[\s\S]*?grant execute[\s\S]*?to authenticated/);
+});
+
+test("Editor · una incompatibilidad del Registry responde como fallo técnico reintentable", () => {
+  assert.match(editorEdge, /const registryCompatibilityFailure = code\.startsWith\("AGENT_"\)/);
+  assert.match(editorEdge, /agent_registry_compatibility/);
+  assert.match(editorEdge, /retry_editor_analysis/);
+  assert.match(editorEdge, /state_preserved:\s*true/);
+  assert.match(adminJs, /La versión activa del Agente Editor no coincide con su registro de estrategias/);
 });
 
 test("Editor · un bloqueo terminal nunca habilita materialización ni publicación", () => {

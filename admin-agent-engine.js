@@ -11,6 +11,7 @@
   const packageRequestVersions = new Map();
   const appliedPackages = new Map();
   const applyingCandidates = new Set();
+  const analysisAttempts = new Map();
   const STORAGE_KEY = "atinara:radar-expert-draft-package:v1";
   const SAVED_NOTICE_KEY = "atinara:radar-expert-saved:v1";
   let scanTimer = null;
@@ -74,6 +75,12 @@
     MARKET_EXPERT_ANALYSIS_STALE: "El análisis experto pertenece a una revisión anterior de la candidata.",
     MARKET_EXPERT_ANALYSIS_NOT_PERSISTED: "El análisis no quedó guardado como dictamen vigente.",
     MARKET_EXPERT_DOSSIER_UNAVAILABLE: "No se pudo recuperar el expediente experto.",
+    MARKET_EXPERT_DRAFT_ALREADY_EXISTS: "Ya existe un borrador para esta candidata y no coincide con este intento.",
+    MARKET_EXPERT_RUN_INVALID: "El dictamen no coincide con la candidata o su revisión vigente.",
+    PRIVATE_ISSUE_DRAFT_NOT_ALLOWED: "La propuesta con incidencias ya no cumple la puerta vigente.",
+    RADAR_PREPARATION_REVISION_MISMATCH: "La revisión de preparación cambió. Vuelve a aplicar la propuesta vigente.",
+    RADAR_PARENT_RECONCILIATION_INCOMPLETE: "El padre aún no ha terminado su reconciliación autoritativa.",
+    AGENT_STRATEGY_HANDLER_MISSING: "La versión activa del Agente Editor no coincide con el Registry vigente.",
     RADAR_ELIGIBILITY_REQUIRED: "La candidata necesita una decisión de elegibilidad vigente antes de avanzar.",
     ELIGIBILITY_EXPIRED: "La elegibilidad ha caducado. Actualiza el Radar.",
     CANDIDATE_NOT_REVALIDATABLE: "La candidata no admite una acción de preparación en su estado actual.",
@@ -400,17 +407,83 @@
     };
   }
 
+  function safeDraftSaveError(error) {
+    const messageCode = String(error?.message || "").trim();
+    const code = typedCode(
+      /^[A-Z][A-Z0-9_]{2,99}$/.test(messageCode) ? messageCode : error?.code,
+      "MARKET_EXPERT_DOSSIER_UNAVAILABLE"
+    );
+    const message = reasonLabels[code]
+      || "No se pudo guardar el borrador. El expediente sigue privado y puede reintentarse después de recargar su estado.";
+    return `${message} Referencia ${code}.`;
+  }
+
+  function normalizeAnalysisFailure(value) {
+    const failure = isRecord(value) ? value : {};
+    const code = typedCode(failure.code);
+    return {
+      code,
+      message: String(
+        failure.message
+        || reasonLabels[code]
+        || "El Agente Editor no pudo completar el análisis. No se ha guardado ni preparado nada."
+      ).trim().slice(0, 1_000),
+      retryable: failure.retryable === true,
+      status: Number(failure.status) || null,
+      phase: String(failure.phase || "").trim().slice(0, 80),
+      state_preserved: failure.state_preserved === true,
+      gate: isRecord(failure.gate) ? failure.gate : null,
+    };
+  }
+
+  function analysisFailureStatus(failure) {
+    if (["MARKET_EXPERT_ANALYSIS_STALE", "MARKET_EXPERT_ANALYSIS_NOT_PERSISTED"]
+      .includes(failure.code)) return "Análisis obsoleto";
+    if (["RADAR_ELIGIBILITY_REQUIRED", "ELIGIBILITY_EXPIRED", "RADAR_ELIGIBILITY_POLICY_OUTDATED"]
+      .includes(failure.code)) return "Elegibilidad obsoleta";
+    if (failure.retryable || failure.status === 429 || failure.status >= 500) {
+      return "Servicio temporalmente no disponible";
+    }
+    return "Error técnico";
+  }
+
+  function failedAnalysisPackage(value) {
+    const failure = normalizeAnalysisFailure(value);
+    return {
+      available: false,
+      ui_status_label: analysisFailureStatus(failure),
+      gate: failure.gate || {
+        status: "blocked",
+        can_prefill: false,
+        can_save_private_draft: false,
+        hard_blocks: [failure.code],
+        warnings: [],
+      },
+      error: failure,
+    };
+  }
+
+  function processingDossierMarkup() {
+    return `<div class="market-expert-dossier-heading">
+        <div><p class="eyebrow">Expediente experto · ejecución controlada</p><h3>Agente Editor</h3></div>
+        <span class="market-expert-dossier-status">Procesando</span>
+      </div>
+      <p role="status">El Agente Editor está comprobando el Registry, las puertas deterministas y la revisión vigente. La acción ya ha comenzado.</p>
+      <div class="market-expert-dossier-actions"><small>No se prepara, guarda, confirma ni publica ningún mercado durante este análisis.</small></div>`;
+  }
+
   function blockedDossierMarkup(pkg, candidateId) {
     const gate = isRecord(pkg?.gate) ? pkg.gate : {};
     const failure = packageFailure(pkg);
+    const statusLabel = String(pkg?.ui_status_label || labels.gate[gate.status] || "Propuesta bloqueada");
     return `<div class="market-expert-dossier-heading">
         <div><p class="eyebrow">Expediente experto · lectura segura</p><h3>Agente Editor</h3></div>
-        <span class="market-expert-dossier-status">${escapeHtml(labels.gate[gate.status] || "Propuesta bloqueada")}</span>
+        <span class="market-expert-dossier-status">${escapeHtml(statusLabel)}</span>
       </div>
       <p>${escapeHtml(failure.message)}</p>
       <div><h4>Estado tipado</h4>${listMarkup(failure.hardBlocks, "error")}</div>
       <div class="market-expert-dossier-actions">
-        <button class="primary-button" type="button" data-radar-expert="${escapeHtml(candidateId)}">Analizar con el Agente Editor</button>
+        <button class="primary-button" type="button" data-radar-expert="${escapeHtml(candidateId)}">${failure.retryable ? "Reintentar análisis" : "Analizar con el Agente Editor"}</button>
         <small>${failure.retryable
           ? "La incidencia es temporal. Analizar vuelve a solicitar un dictamen sin preparar, guardar ni publicar nada."
           : "Analizar crea o actualiza el dictamen sin preparar, guardar, confirmar ni publicar ningún mercado."}</small>
@@ -523,6 +596,17 @@
     target.dataset.expertPackageRequest = requestId;
     target.classList.add("market-expert-dossier");
     target.dataset.gate = "loading";
+    const analysisAttempt = analysisAttempts.get(candidateId);
+    if (analysisAttempt?.status === "processing") {
+      target.dataset.gate = "processing";
+      target.innerHTML = processingDossierMarkup();
+      return;
+    }
+    if (analysisAttempt?.status === "failed") {
+      target.dataset.gate = "blocked";
+      target.innerHTML = blockedDossierMarkup(failedAnalysisPackage(analysisAttempt.failure), candidateId);
+      return;
+    }
     target.innerHTML = `<h3>Agente Editor</h3><p>Cargando el expediente experto…</p>`;
     try {
       const pkg = await loadPackage(candidateId, force);
@@ -796,32 +880,44 @@
       const { data, error } = await client.rpc(rpcName, rpcPayload);
       if (error) throw error;
       const edits = changedFields(pkg.fields, payload);
-      await invokeExpert("record-feedback", {
-        run_id: pkg.run.id,
-        final_decision: edits.length ? "saved_with_edits" : "saved_as_proposed",
-        changed_fields: edits,
-        reason: edits.length
-          ? "La administradora ajustó la propuesta antes de guardarla como borrador privado."
-          : "La administradora guardó la propuesta sin cambios materiales."
-      }).catch(() => null);
+      let feedbackRecorded = true;
+      try {
+        await invokeExpert("record-feedback", {
+          run_id: pkg.run.id,
+          final_decision: edits.length ? "saved_with_edits" : "saved_as_proposed",
+          changed_fields: edits,
+          reason: edits.length
+            ? "La administradora ajustó la propuesta antes de guardarla como borrador privado."
+            : "La administradora guardó la propuesta sin cambios materiales."
+        });
+      } catch {
+        feedbackRecorded = false;
+      }
       clearPreparedPackage(form.dataset.expertCandidateId);
+      const savedMessage = issueDraft
+        ? "Borrador privado guardado con sus incidencias, responsable y siguiente acción. Aún no puede aprobarse ni publicarse."
+        : repairMaterialization
+        ? "Borrador privado creado en estado de reparación. Ya puede intervenir el Corrector Experto."
+        : "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes.";
+      const finalMessage = feedbackRecorded
+        ? savedMessage
+        : `${savedMessage} El feedback editorial no pudo registrarse; el borrador no debe volver a guardarse para repetirlo.`;
       try {
         sessionStorage.setItem(SAVED_NOTICE_KEY, JSON.stringify({
           draft_id: data?.draft?.id || null,
-          message: issueDraft
-            ? "Borrador privado guardado con sus incidencias, responsable y siguiente acción. Aún no puede aprobarse ni publicarse."
-            : repairMaterialization
-            ? "Borrador privado creado en estado de reparación. Ya puede intervenir el Corrector Experto."
-            : "Borrador privado guardado con procedencia del Radar, dictamen experto, Plan de Resolución y fuentes."
+          message: finalMessage,
+          tone: feedbackRecorded ? "success" : "warning"
         }));
       } catch { /* El guardado ya es definitivo; el aviso entre recargas es opcional. */ }
-      status.dataset.tone = "success";
-      status.textContent = "Borrador guardado. Recargando el expediente privado…";
+      status.dataset.tone = feedbackRecorded ? "success" : "warning";
+      status.textContent = feedbackRecorded
+        ? "Borrador guardado. Recargando el expediente privado…"
+        : "Borrador guardado; el feedback no pudo registrarse. Recargando sin repetir la escritura…";
       window.setTimeout(() => window.location.reload(), 450);
     } catch (error) {
       clearPreparedPackage(form.dataset.expertCandidateId);
       status.dataset.tone = "error";
-      status.textContent = error?.message || "No se pudo guardar el borrador. No se ha publicado ni resuelto nada.";
+      status.textContent = safeDraftSaveError(error);
       buttons.forEach((button) => { button.disabled = false; });
       delete form.dataset.expertSaving;
     }
@@ -835,7 +931,7 @@
     try { value = JSON.parse(raw); } catch { value = { message: raw }; }
     try { sessionStorage.removeItem(SAVED_NOTICE_KEY); } catch { /* The notice can remain in blocked storage. */ }
     const notice = document.createElement("p");
-    notice.className = "admin-status-message admin-status-success market-expert-saved-notice";
+    notice.className = `admin-status-message admin-status-${value.tone === "warning" ? "warning" : "success"} market-expert-saved-notice`;
     notice.setAttribute("role", "status");
     notice.textContent = value.message || "Borrador experto guardado de forma privada.";
     root.prepend(notice);
@@ -943,7 +1039,15 @@
     const analyzeButton = event.target.closest?.("[data-radar-expert]");
     if (analyzeButton) {
       const candidateId = analyzeButton.dataset.radarExpert;
+      if (analysisAttempts.get(candidateId)?.status === "processing") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+      analysisAttempts.set(candidateId, { status: "processing", startedAt: Date.now() });
       invalidatePackage(candidateId);
+      setBridgeStatus("El Agente Editor ha iniciado el análisis. No se guardará ningún borrador hasta que exista un dictamen autoritativo.", "warning");
+      scheduleScan(true);
     }
   }, true);
 
@@ -955,14 +1059,19 @@
   document.addEventListener("atinara:radar-expert-analysis-complete", (event) => {
     const candidateId = event.detail?.candidateId;
     if (!candidateId) return;
+    analysisAttempts.delete(candidateId);
     invalidatePackage(candidateId);
+    setBridgeStatus("Dictamen experto persistido. Ya puede revisarse el expediente exacto de esta candidata.", "success");
     scheduleScan(true);
   });
 
   document.addEventListener("atinara:radar-expert-analysis-failed", (event) => {
     const candidateId = event.detail?.candidateId;
     if (!candidateId) return;
+    const failure = normalizeAnalysisFailure(event.detail?.failure);
+    analysisAttempts.set(candidateId, { status: "failed", failure });
     invalidatePackage(candidateId);
+    setBridgeStatus(`${failure.code} · ${failure.message}`, "error");
     scheduleScan(true);
   });
 

@@ -16,6 +16,7 @@
   const ELIGIBILITY_RECOVERY_KEY_PREFIX = "atinara:radar-eligibility-recovery:v1";
   const domainReviewOperationIds = new Map();
   const DOMAIN_REVIEW_KEY_PREFIX = "atinara:radar-domain-review:v1";
+  const activeRadarExpertAnalyses = new Set();
 
   const state = {
     auth: null,
@@ -571,13 +572,47 @@
   }
 
   function expertErrorMessage(error, fallback) {
-    const base = helpers.getFriendlyError(error, "") || String(error?.message || "").trim() || fallback;
+    const code = /^[A-Z][A-Z0-9_]{2,99}$/.test(String(error?.code || "").trim())
+      ? String(error.code).trim() : "MARKET_EXPERT_DOSSIER_UNAVAILABLE";
+    const registryCompatibilityFailure = code.startsWith("AGENT_");
+    const knownMessages = {
+      MARKET_EXPERT_ANALYSIS_REQUIRED: "Primero debe completarse un análisis vigente del Agente Editor.",
+      MARKET_EXPERT_ANALYSIS_STALE: "El análisis pertenece a una revisión anterior. Vuelve a analizar la candidata vigente.",
+      MARKET_EXPERT_ANALYSIS_NOT_PERSISTED: "El análisis no quedó guardado como dictamen vigente. No se ha preparado ningún borrador.",
+      RADAR_ELIGIBILITY_REQUIRED: "La candidata necesita una elegibilidad vigente antes de continuar.",
+      ELIGIBILITY_EXPIRED: "La elegibilidad ha caducado. Renueva la candidata antes de continuar.",
+      PROVIDER_RATE_LIMITED: "El servicio experto ha alcanzado un límite temporal. Reintenta cuando termine la espera indicada.",
+      PROVIDER_TIMEOUT: "El servicio experto no respondió dentro del tiempo seguro. Puedes reintentar sin duplicar el análisis.",
+      SERVICE_UNAVAILABLE: "El servicio experto no está disponible temporalmente. No se ha guardado ni preparado nada.",
+    };
+    const base = registryCompatibilityFailure
+      ? "La versión activa del Agente Editor no coincide con su registro de estrategias. No se ha guardado nada; reintenta cuando el servicio esté actualizado."
+      : knownMessages[code]
+        || helpers.getFriendlyError(error, "")
+        || String(error?.message || "").trim()
+        || fallback;
     const details = [];
     if (error?.phase === "eligibility_check") details.push("Fase: comprobación de elegibilidad.");
+    if (error?.phase === "agent_registry_compatibility") details.push("Fase: compatibilidad del registro editorial.");
     if (error?.attemptId) details.push(`Intento: ${String(error.attemptId).slice(0, 36)}.`);
     if (error?.statePreserved === true) details.push("El último estado autoritativo se conserva.");
     if (error?.retryable === true) details.push("Puedes reintentarlo cuando finalice la degradación temporal.");
     return [base, ...details].filter(Boolean).join(" ");
+  }
+
+  function expertFailureSnapshot(error, fallback) {
+    const code = /^[A-Z][A-Z0-9_]{2,99}$/.test(String(error?.code || "").trim())
+      ? String(error.code).trim() : "MARKET_EXPERT_DOSSIER_UNAVAILABLE";
+    return {
+      code,
+      message: expertErrorMessage(error, fallback),
+      retryable: error?.retryable === true,
+      status: Number(error?.status) || null,
+      phase: String(error?.phase || "").slice(0, 80),
+      attempt_id: /^[0-9a-f-]{8,64}$/i.test(String(error?.attemptId || "")) ? String(error.attemptId) : "",
+      state_preserved: error?.statePreserved === true,
+      gate: error?.gate && typeof error.gate === "object" && !Array.isArray(error.gate) ? error.gate : null,
+    };
   }
 
   function feedbackComparableDraft(fields = {}) {
@@ -1481,6 +1516,9 @@
     const siblings = Array.isArray(candidate.family_matches) ? candidate.family_matches : [];
     const tags = Array.isArray(candidate.source_tags) ? candidate.source_tags : [];
     const currentExpertRun = expertRun(candidate.expert_analysis);
+    const expertAnalysisError = candidate.expert_analysis_error
+      && typeof candidate.expert_analysis_error === "object"
+      ? candidate.expert_analysis_error : null;
     const candidateReady = radarCandidateReady(candidate);
     const terminalCandidate = radarCandidateIsTerminal(candidate);
     const placeholderCandidate = radarCandidateIsPlaceholder(candidate);
@@ -1551,6 +1589,8 @@
           ? `<p>No se ejecuta mientras la identidad canónica o el padre permanezcan incompletos.</p>`
           : currentExpertRun
           ? `<p><strong>${escapeHtml(EXPERT_DECISION_LABELS[currentExpertRun.result_json?.decision] || "Dictamen disponible")}</strong></p><p>${escapeHtml(currentExpertRun.result_json?.summary || "Análisis estructurado guardado sin modificar el Radar.")}</p>`
+          : expertAnalysisError
+          ? `<p role="alert"><strong>El análisis no pudo completarse.</strong></p><p>${escapeHtml(expertAnalysisError.message || "El servicio experto no está disponible temporalmente.")}</p><small>Referencia ${escapeHtml(expertAnalysisError.code || "MARKET_EXPERT_DOSSIER_UNAVAILABLE")}${expertAnalysisError.retryable === true ? " · Se puede reintentar sin duplicar el expediente." : ""}</small>`
           : `<p>Análisis opcional y aditivo. No cambia la aptitud ni la política determinista del Radar.</p>`}</section>
         <section><h3>Agente de fuentes</h3>${radarAgentExecutionMarkup(candidate)}</section>
       </div>
@@ -2628,8 +2668,17 @@
         && radarCandidatePolicyCurrent(state.radar.selected)
         && radarParentComplete(state.radar.selected)
         && radarCanonicalChildProjectionValid(state.radar.selected)) {
-        const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId }).catch(() => null);
-        state.radar.selected.expert_analysis = expertRun(expert);
+        try {
+          const expert = await invokeMarketExpert("get-analysis", { origin_type: "radar_candidate", origin_id: candidateId });
+          state.radar.selected.expert_analysis = expertRun(expert);
+          state.radar.selected.expert_analysis_error = null;
+        } catch (expertError) {
+          state.radar.selected.expert_analysis = null;
+          state.radar.selected.expert_analysis_error = expertFailureSnapshot(
+            expertError,
+            "No se pudo recuperar el dictamen del Agente Editor. El Radar conserva su estado."
+          );
+        }
       }
     } catch (error) {
       setNotice(helpers.getFriendlyError(error, "No se pudo abrir el detalle del candidato."), "error");
@@ -3112,21 +3161,30 @@
         );
       }
       if (state.radar.selected?.id === candidateId) {
-        state.radar.selected = { ...state.radar.selected, expert_analysis: run };
+        state.radar.selected = { ...state.radar.selected, expert_analysis: run, expert_analysis_error: null };
       }
       document.dispatchEvent(new CustomEvent("atinara:radar-expert-analysis-complete", {
         detail: { candidateId, run }
       }));
       return { analysis, run };
     } catch (error) {
+      const failure = expertFailureSnapshot(
+        error,
+        "El análisis experto no está disponible. El Radar conserva su estado."
+      );
+      if (state.radar.selected?.id === candidateId) {
+        state.radar.selected = { ...state.radar.selected, expert_analysis: null, expert_analysis_error: failure };
+      }
       document.dispatchEvent(new CustomEvent("atinara:radar-expert-analysis-failed", {
-        detail: { candidateId }
+        detail: { candidateId, failure }
       }));
       throw error;
     }
   }
 
   async function analyzeRadarCandidate(candidateId) {
+    if (!candidateId || activeRadarExpertAnalyses.has(candidateId)) return;
+    activeRadarExpertAnalyses.add(candidateId);
     state.busy = true;
     setNotice("El Agente Editor está analizando el expediente en modo de solo lectura…", "info");
     renderWorkspace();
@@ -3142,6 +3200,7 @@
     } catch (error) {
       setNotice(expertErrorMessage(error, "El análisis experto no está disponible. El Radar sigue operativo."), "error");
     } finally {
+      activeRadarExpertAnalyses.delete(candidateId);
       state.busy = false;
       renderWorkspace();
     }

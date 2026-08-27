@@ -1,0 +1,58 @@
+ATINARA_RADAR_EDITOR_BRIDGE_REGISTRY_FIX_20260827
+Base: e74a6d79f3a6ba852d660d04ab6b7243630cdd95
+Fecha: 2026-08-27
+
+Inventario exacto del ZIP incremental (28 rutas)
+
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+M admin-agent-engine.js
+M admin-community.html
+M admin-markets.html
+M admin-markets.js
+M admin-resolution.html
+M community.html
+A docs/ATINARA_RADAR_EDITOR_BRIDGE_REGISTRY_FIX_20260827.md
+A docs/ATINARA_RADAR_EDITOR_BRIDGE_REGISTRY_FIX_20260827_MANIFEST.txt
+M index.html
+M market-detail.html
+M my-predictions.html
+M profile.html
+M ranking.html
+M reset-password.html
+M scripts/check-market-workflow-browser.mjs
+M supabase/functions/market-expert/index.ts
+A supabase/migrations/20260827234500_fix_market_expert_editor_bridge_contract_v1.sql
+A supabase/tests/market_expert_editor_bridge_contract_v1_transaction.sql
+M tests/agent-engine-frontend.test.js
+M tests/expert-market-cycle-definitive.test.js
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+M tests/radar-catalog-boundary.test.js
+M tests/radar-eligibility-sources-v5.test.js
+M tests/radar-provider-resumability-v1.test.js
+
+Eliminaciones: ninguna.
+Secretos, .env, .git, node_modules, temporales y ZIP anteriores: ninguno.
+
+Artefactos que deberán activarse después de GitHub y CI verde
+
+- Migración nueva: fix_market_expert_editor_bridge_contract_v1, una sola vez.
+- Edge market-radar desde el nuevo origin/main, verify_jwt=true.
+- Edge market-expert desde el mismo origin/main, verify_jwt=true.
+- GitHub Pages: despliegue automático con un único token coordinado de caché.
+- Ninguna otra Edge ni frontend manual.
+
+Invariantes
+
+- Se conserva la UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d y sus checkpoints.
+- No se inicia otro refresh ni se reescribe catálogo, checkpoint o manifest.
+- El Editor nunca confirma, programa, publica, resuelve o liquida.
+- Un retry de análisis o guardado no crea un segundo run autoritativo ni un
+  segundo borrador para la misma revisión y huella.
+- `materialize_market_draft_for_repair_v1` conserva firma y ACL, pero delega
+  toda escritura al writer V2 vigente.
+
+El SHA-256 se calcula sobre el ZIP final y se comunica junto al paquete; no se
+auto-incluye aquí para no alterar el propio archivo que se está hasheando.

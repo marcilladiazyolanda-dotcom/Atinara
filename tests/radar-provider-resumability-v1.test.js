@@ -516,6 +516,6 @@ test("UI elimina Tavily de tarjetas rojas y usa un único resumen expandible", (
   assert.match(admin, /Continuar actualización/);
   assert.doesNotMatch(admin, /class="radar-partial-error"/);
   assert.match(styles, /\.radar-operational-summary/);
-  assert.match(html, /radar-refresh-request\.js\?v=20260826-live-market-chart-limit1/);
-  assert.match(html, /admin-markets\.js\?v=20260826-live-market-chart-limit1/);
+  assert.match(html, /radar-refresh-request\.js\?v=20260827-radar-editor-bridge1/);
+  assert.match(html, /admin-markets\.js\?v=20260827-radar-editor-bridge1/);
 });

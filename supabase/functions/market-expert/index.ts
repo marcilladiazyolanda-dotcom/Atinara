@@ -510,6 +510,7 @@ function publicErrorCode(error: unknown, fallback = "SERVICE_UNAVAILABLE"): stri
 
 function handleEdgeError(error: unknown, fallbackMessage: string): Response {
   const code = publicErrorCode(error);
+  const registryCompatibilityFailure = code.startsWith("AGENT_");
   const upstreamStatus = error instanceof MarketExpertRpcError ? error.status : 0;
   const status = [400, 401, 403, 404, 409, 422, 429, 503, 504].includes(upstreamStatus)
     ? upstreamStatus
@@ -521,12 +522,16 @@ function handleEdgeError(error: unknown, fallbackMessage: string): Response {
           : code === "INTELLIGENCE_ORIGIN_NOT_FOUND" ? 404 : 503;
   const message = code === "PREPARATION_REVISION_MISMATCH"
     ? "La candidata cambió durante el análisis. Vuelve a aplicar para usar su revisión vigente."
+    : registryCompatibilityFailure
+      ? "La versión activa del Agente Editor no coincide con el registro de estrategias. No se ha guardado ningún dictamen; reintenta cuando el servicio esté actualizado."
     : fallbackMessage;
   return jsonResponse({
     error: code,
     message,
     classification: status === 429 || status >= 500 ? "technical" : "domain",
     retryable: status === 429 || status >= 500,
+    phase: registryCompatibilityFailure ? "agent_registry_compatibility" : "expert_analysis",
+    next_action: status === 429 || status >= 500 ? "retry_editor_analysis" : "review_editor_gate",
     state_preserved: true,
     publishes: false,
     confirms: false,

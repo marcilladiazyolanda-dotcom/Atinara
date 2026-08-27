@@ -87,6 +87,14 @@ const draftPackage = {
   sources: [{ role: "PRIMARY_RESOLUTION", url: "https://thegameawards.com/", precedence: 1, required: true }],
   gate: { status: "proposal_ready_with_issues", can_prefill: true, can_save_private_draft: true, can_materialize_private_repair_draft: true, hard_blocks: [issue.issue_code], warnings: [], workflow_issues: [issue], owner_stage: "corrector", next_action: issue.next_action },
 };
+const unavailableDraftPackage = {
+  available: false,
+  origin: { type: "radar_candidate", id: candidate.id, preparation_revision: 3 },
+  gate: {
+    status: "blocked", can_prefill: false, can_save_private_draft: false,
+    hard_blocks: ["MARKET_EXPERT_ANALYSIS_REQUIRED"], warnings: [],
+  },
+};
 const draft = {
   id: "44444444-4444-4444-8444-444444444444", market_slug: "aurora-goty",
   question: "¿Ganará Aurora el premio a juego del año?", subject: "Aurora", category: "Reviews/Premios",
@@ -491,6 +499,7 @@ function paginationDiscovery(offset) {
 const scenarios = {
   "draft-temporal": { activeDraft: draft, activePayload: draftPayload },
   "radar-temporal": { activeCandidate: candidate, activePackage: draftPackage },
+  "radar-editor-failure": { activeCandidate: candidate, activePackage: unavailableDraftPackage },
   "draft-content": {
     activeDraft: criteriaDraft,
     activePayload: payloadFixture(criteriaDraft, [{
@@ -692,6 +701,29 @@ function initMock(input) {
         prefill: { fields: recoveredPackage?.fields || activePackage?.fields || {},origins: {} },
       }, error: null };
     }
+    if (name === "market-expert" && action === "get-analysis" && scenario === "radar-editor-failure") {
+      return { data: { run: null }, error: null };
+    }
+    if (name === "market-expert"
+      && ["analyze-origin", "revalidate-analysis"].includes(action)
+      && scenario === "radar-editor-failure") {
+      return {
+        data: null,
+        error: {
+          code: "FUNCTION_FAILED",
+          context: {
+            status: 503,
+            clone: () => ({ json: async () => ({
+              error: "AGENT_STRATEGY_HANDLER_MISSING",
+              message: "Internal registry details must not reach the interface.",
+              retryable: true,
+              phase: "agent_registry_compatibility",
+              state_preserved: true,
+            }) }),
+          },
+        },
+      };
+    }
     if (name === "market-expert" && action === "get-analysis") return { data: { run }, error: null };
     if (name === "market-expert" && action === "get-draft-package") return { data: {
       ok: true,
@@ -785,6 +817,40 @@ try {
   assert.equal(await issueCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
   assert.deepEqual(issueCase.errors, []);
   await issueCase.context.close();
+
+  // Caso 1b · un 503 del Editor empieza visible, conserva la causa y ofrece retry.
+  const editorFailureCase = await pageFor("radar-editor-failure", { width: 390, height: 844 });
+  await editorFailureCase.page.click('[data-admin-view="radar"]');
+  await editorFailureCase.page.waitForSelector(`[data-radar-details="${candidate.id}"]`);
+  await editorFailureCase.page.click(`[data-radar-details="${candidate.id}"]`);
+  await editorFailureCase.page.waitForSelector(`[data-radar-expert="${candidate.id}"]`);
+  await editorFailureCase.page.locator(`[data-radar-expert="${candidate.id}"]`).evaluate((button) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await editorFailureCase.page.waitForFunction(() =>
+    /Servicio temporalmente no disponible/.test(
+      document.querySelector(".market-expert-dossier-status")?.textContent || ""
+    )).catch(async () => {
+      const debug = await editorFailureCase.page.evaluate(() => ({
+        calls: window.__atinaraCalls,
+        status: document.querySelector(".market-expert-dossier-status")?.textContent || "",
+        dossier: document.querySelector(".market-expert-dossier")?.textContent || "",
+        notice: document.querySelector(".admin-status-message")?.textContent || "",
+        bridge: document.querySelector(".market-expert-bridge-status")?.textContent || "",
+      }));
+      throw new Error(`EDITOR_FAILURE_STATE_NOT_VISIBLE:${JSON.stringify(debug)}:${editorFailureCase.errors.join("|")}`);
+    });
+  assert.match(await editorFailureCase.page.textContent(".market-expert-dossier"), /La versión activa del Agente Editor no coincide/);
+  assert.match(await editorFailureCase.page.textContent(".market-expert-dossier"), /Reintentar análisis/);
+  assert.doesNotMatch(await editorFailureCase.page.textContent(".market-expert-dossier"), /Internal registry details/);
+  const editorFailureCalls = await editorFailureCase.page.evaluate(() => window.__atinaraCalls);
+  assert.equal(editorFailureCalls.filter((call) => call.name === "market-expert"
+    && ["analyze-origin", "revalidate-analysis"].includes(call.action)).length, 1);
+  assert.equal(editorFailureCalls.some((call) => call.name === "save_market_draft_from_expert_with_issues_v2"), false);
+  assert.equal(await editorFailureCase.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+  assert.deepEqual(editorFailureCase.errors, []);
+  await editorFailureCase.context.close();
 
   // Caso 2 · criterios incoherentes -> Corrector -> revalidación.
   const contentCase = await pageFor("draft-content", { width: 1366, height: 900 });
@@ -1092,7 +1158,7 @@ try {
   await reconciliationPaginationCase.context.close();
 
   assert.equal(externalNetworkCalls, 0);
-  process.stdout.write(`MARKET_WORKFLOW_BROWSER_OK cases=18 viewports=390,768,1366 externalNetworkCalls=${externalNetworkCalls} blockedExternalAttempts=${blockedExternalAttempts}\n`);
+  process.stdout.write(`MARKET_WORKFLOW_BROWSER_OK cases=19 viewports=390,768,1366 externalNetworkCalls=${externalNetworkCalls} blockedExternalAttempts=${blockedExternalAttempts}\n`);
 } finally {
   await browser.close();
   await new Promise((resolveClose) => server.close(resolveClose));

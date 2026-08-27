@@ -4,13 +4,38 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado remoto y productivo verificado durante el cierre Radar/Discover:**
-> `origin/main` está en `a6152a76b4d966f67ece6f6e8b72dcd0f5400034`
-> (`radar fix`). Su rango directo desde `98e5ede` contiene exactamente las diez
-> rutas de `ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827`, sin eliminaciones,
-> y sus blobs coinciden con el ZIP entregado. Calidad de Atinara —incluido
-> Deno—, Benchmark IA offline y GitHub Pages están en `success` para ese SHA.
-> La estrategia B2B-first permanece intacta y autoritativa; este cierre no
+> **Checkpoint vigente previo a activar el cierre Editor:** `origin/main` está
+> en `e74a6d79f3a6ba852d660d04ab6b7243630cdd95`. El rango directo desde
+> `4177f84` contiene las nueve rutas de la corrección de hash V1 y sus blobs
+> coinciden con la entrega; Calidad de Atinara, Benchmark IA offline y Pages
+> están verdes para ese SHA. Producción continúa en Radar v75 y Expert v26.
+>
+> La prueba manual del Agente Editor reveló una incidencia distinta y real.
+> Expert v26 empaquetó 40 handlers del Registry, mientras la tabla productiva
+> ya exige 50 estrategias después del cambio de alcance por campos. El
+> `assertAgentRegistrySnapshot` falla con `AGENT_STRATEGY_HANDLER_MISSING`
+> antes de persistir el run. La UI conservaba después solo el 200 de
+> `get-draft-package` con `MARKET_EXPERT_ANALYSIS_REQUIRED`, ocultando el 503
+> tipado y dando la impresión de no-op. No se creó run, borrador ni segunda
+> UUID.
+>
+> La corrección local pendiente de subida hace visible el estado
+> procesando/error/retry por candidata, bloquea doble click, conserva el error
+> tipado y vuelve accionable una incompatibilidad de Registry. Una migración
+> nueva convierte `materialize_market_draft_for_repair_v1` en alias compatible
+> del writer `save_market_draft_from_expert_with_issues_v2`; no edita historia
+> ni ejecuta DML de negocio. Hasta integrar esta entrega no desplegar Expert,
+> no reanudar `39bc204b-aa3f-4a69-99da-557f5fa91f7d` y no crear un borrador.
+> Véase `docs/ATINARA_RADAR_EDITOR_BRIDGE_REGISTRY_FIX_20260827.md`.
+
+> **Checkpoint anterior preservado del cierre Radar/Discover:**
+> `origin/main` está en `4177f84f2c34b93da6fe4b2b4aa90ff13a141328`
+> (`radar`), descendiente directo de `a6152a7`. El rango contiene exactamente
+> las diez rutas de
+> `ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827`, sin eliminaciones, y
+> cada blob coincide con la entrega local. Calidad de Atinara —incluido Deno—,
+> Benchmark IA offline y GitHub Pages están en `success` para ese SHA. La
+> estrategia B2B-first permanece intacta y autoritativa; este cierre no
 > implementa B2B ni Atinara Engine.
 >
 > La migración local
@@ -36,19 +61,24 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > predicción, perfil, posición, precio ni borrador durante este incidente.
 >
 > Después de v73 se inició exactamente un refresh Kalshi:
-> `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Solo existen sus dos intenciones
-> esperadas (`kalshi/candidate_feed` y `tavily/source_enrichment`), ambas
-> `in_progress/claimed`, `claim_count=4`, lease vencido. Hay cuatro eventos
-> append-only —dos `RADAR_REFRESH_CLAIMED` y dos
-> `RADAR_REFRESH_RECLAIMED`—, cero checkpoints V2, cero batches, cero manifest y
-> cero candidatas. No se creó otra UUID y no debe ejecutarse otro intento con
-> v75.
+> `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Una actividad productiva ajena a esta
+> verificación reanudó la misma UUID con v75 y persistió cuatro checkpoints V2.
+> El último, secuencia 4 y hash
+> `ebb1586aba60eb4e34507299f10eac4b4f75cd9e1ca79e63eb2cbbae7f8c54ae`,
+> conserva un catálogo terminal de 13.561 series, 416 seleccionadas, 87
+> completas, 57 fallidas reintentables, 272 pendientes, cero agotadas y 129
+> padres. El hash del catálogo es
+> `73f681e2938ebcd1565b22a5db8ad5862962b0823478e8bcb6906a8dac5aa94f`
+> y la proyección almacenada es V1. Kalshi sigue `in_progress/fetching`,
+> `claim_count=8`, con lease vencido; Tavily terminó `completed/terminal`,
+> `claim_count=5`. Continúan en cero los batches, manifest y borradores de este
+> expediente. SQL confirma una sola `request_id`; no se abrió otra UUID.
 >
 > Las dos invocaciones de escritura de v73 terminaron HTTP 546 a 10.666 ms y
-> 10.033 ms. Las reanudaciones únicas con v74 y v75 reclamaron correctamente la
-> misma UUID y terminaron también HTTP 546 a 6.216 ms y 6.041 ms; la lectura
-> automática posterior a v75 devolvió HTTP 200 a 1.630 ms. No hubo checkpoint,
-> batch, manifest ni segunda UUID. Kalshi respondió sano y con cursor terminal.
+> 10.033 ms. Las primeras reanudaciones con v74 y v75 terminaron también HTTP
+> 546 a 6.216 ms y 6.041 ms. Las continuaciones posteriores demostraron que v75
+> sí puede persistir el catálogo y avanzar por lotes sobre la misma UUID; no
+> autorizan a desplegar una fuente cuyo contrato de hash no coincida con SQL.
 >
 > V75 conservó correctamente el análisis único y el hash incremental, pero su
 > perfil anterior empezaba después de materializar y parsear los 17 MB del
@@ -57,26 +87,32 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > aproximadamente 2.407 ms CPU y 285 MB RSS sobre 13.559 series, por encima de
 > los límites alojados de 2 s y 256 MB antes del primer checkpoint.
 >
-> La segunda corrección local mantiene el límite fail-closed de 24 MB mediante
-> un `TransformStream`, pero entrega el stream acotado a `Response.json()` para
-> el parse nativo; usa máscaras compactas y `Uint16Array` para las señales; y
-> sella la misma evidencia material en tuplas versionadas V2 sin objetos
-> canónicos por fila. Sobre dos lecturas live de 13.561 series y 17.306.369 bytes
-> conservó 84 términos y 416 seleccionadas, cursor terminal, 1.501–1.563 ms CPU
-> y 166 MB RSS máximo en Node. Deno 2.1.14 completó la ruta; el proceso completo
-> de diagnóstico consumió 1.891 ms CPU incluyendo su arranque. Pasan 618/618
-> unitarias, 19/19 focales V2, 9/9 Edge, sintaxis en 134 JavaScript, 21 contratos
-> SQL estáticos, canonicalización Node/Deno, TypeScript y `git diff --check`.
-> No cambia política, migración, frontend, otras Edge, datos, IA, Registry,
-> economía ni presupuestos. Véanse
-> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md` y
-> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md`.
+> La corrección integrada en `4177f84` mantiene el límite fail-closed de 24 MB,
+> usa parse JSON nativo y máscaras compactas. Sin embargo, la puerta previa al
+> despliegue detectó una discrepancia material: la Edge calculaba el hash con
+> `atinara-kalshi-series-catalog-projection-v2`, mientras el constructor del
+> checkpoint y la RPC aplicada almacenan y exigen
+> `atinara-kalshi-series-catalog-projection-v1`. CI no comprobaba el acuerdo de
+> las tres capas. Desplegarla habría creado en una UUID futura un hash V2
+> etiquetado como V1 y habría roto su reproducibilidad.
+>
+> La corrección incremental pendiente conserva la proyección V1 ya aplicada y
+> reproduce byte a byte su hash canónico desde las mismas tuplas compactas, sin
+> objetos ni ordenación de claves por fila. No modifica SQL ni checkpoints
+> existentes. Pasan 619/619 unitarias, 20/20 focales de catálogo global, 9/9
+> Edge con Deno 2.1.14, sintaxis en 134 JavaScript, 21 contratos SQL estáticos,
+> canonicalización Node/Deno y TypeScript. Un perfil sintético de 13.561 filas
+> ejecuta el nuevo hash en 47–110 ms CPU y unos 62 MB RSS de proceso. No cambia
+> política, migración, frontend, otras Edge, datos, IA, Registry, economía ni
+> presupuestos. Véanse
+> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md` y
+> `docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md`.
 >
 > El expediente histórico
 > `c1f677eb-0dae-410f-820d-a4483601ab47` permanece stale e intacto. Hasta que
-> Yol suba el nuevo ZIP y GitHub vuelva a quedar verde, no desplegar la corrección
-> local, no reanudar la UUID nueva, no iniciar otra UUID, no llamar Market Expert
-> y no crear un borrador por otra vía.
+> Yol suba el nuevo ZIP de contrato hash y GitHub vuelva a quedar verde, no
+> desplegar la corrección local, no reanudar `39bc…`, no iniciar otra UUID, no
+> llamar Market Expert y no crear un borrador por otra vía.
 
 ### Catálogo global y discovery durable V2 · 26 de agosto de 2026
 
@@ -113,9 +149,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
   continúa sin Gemini. La implementación y el hash incremental quedaron
   integrados en `a6152a7`, la migración se aplicó una vez como `20260827150224`
-  y v75 es el despliegue actual. El smoke posterior demostró que el parse del
-  body completo todavía superaba los recursos del worker; la segunda corrección
-  está preparada localmente, pero todavía no está en GitHub ni en producción.
+  y v75 es el despliegue actual. La segunda corrección de recursos está
+  integrada en `4177f84`, pero su desacuerdo V1/V2 bloquea el despliegue. La
+  corrección compatible del contrato hash está preparada localmente y pendiente
+  de subida.
 
 ### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
 
