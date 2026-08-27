@@ -1,0 +1,74 @@
+ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827
+Generated: 2026-08-27
+Base: origin/main a536a28e711a9c337ea23fde60c907a886584a72
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md
+A docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827_MANIFEST.txt
+M docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+A supabase/functions/_shared/radar-catalog-hash.mjs
+M supabase/functions/market-radar/index.ts
+M tests/radar-global-series-discovery-v2.test.js
+
+SHA-256 PAYLOAD FILES
+5bf887acb44b336a228af0f149fa479227b8c91b4596550b748f15e16c295247  ORAKLO_PROJECT_CONTEXT.md
+ca76d4e1f0784a2a63ec1ead15a6c5ff807ae6b601d68bc73689ac4be594dac9  README.md
+989dd358198badf340b7428a3c99642a0b98965b869740340f00a683ddc1aa4c  docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md
+61f1425189cfb11999d25070769fd2d32ccb6058605084759184cccd905ba4ec  docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+7de91c518fdbb9b96c13c191c8520297a8f1f2c7984e567b2f56e8e38310ce2d  supabase/functions/_shared/radar-catalog-hash.mjs
+6bbb7cf44968bc0ee1b05e085a0b5151933043218f805ed7f32fee3f956e31f2  supabase/functions/market-radar/index.ts
+f2aa07761d86433b5611dc802677a445b60b200058b2b6be80aa4d393a7d6437  tests/radar-global-series-discovery-v2.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar only (verify_jwt remains true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+B2B IMPLEMENTATION: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+MARKETS, PREDICTIONS AND DRAFTS: unchanged
+
+PRODUCTION EVIDENCE
+- V2 migration applied once as 20260827150224_checkpoint_market_radar_global_catalog_v2
+- market-radar v73 ACTIVE, verify_jwt=true
+- v73 digest 550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8
+- single refresh UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- two write invocations ended HTTP 546 at 10666 ms and 10033 ms
+- same UUID remains in_progress with claim_count=2 and zero checkpoints/batches
+- Kalshi live: HTTP 200, 13545 series, 17286505 bytes, cursor terminal
+- original canonical hash peak: 273.1 MB; hosted Edge limit: 256 MB
+- incremental hash peak: 149.9 MB; complete transformation peak: 172.8 MB
+- no second UUID, no Market Expert call, no new draft
+
+VERIFICATION
+- exact catalog/checkpoint tests: 17 passed, 0 failed
+- focused Radar-to-draft matrix: 334 passed, 0 failed
+- canonical digest equivalence: 137 projections including Unicode
+- Deno 2.1.14 market-radar check: passed
+- JavaScript syntax: passed
+- git diff --check: passed
+- Sonar: not used
+- SQL suites not repeated: no SQL changes
+- full 615 and 9-Edge baseline not repeated: unchanged base already green
+
+POST-UPLOAD
+- fetch and require exactly these 8 paths and matching contents
+- require Calidad de Atinara including Deno, Pages and Benchmark IA offline success
+- create a clean worktree from the resulting origin/main
+- do not reapply the V2 migration
+- deploy only market-radar with verify_jwt=true
+- continue only UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- do not create a second refresh
+- create exactly one private draft only after all Radar and eligibility gates
+- never confirm, publish, schedule, resolve or settle

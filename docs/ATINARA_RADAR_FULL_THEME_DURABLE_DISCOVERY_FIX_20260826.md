@@ -2,8 +2,34 @@
 
 Fecha: 26 de agosto de 2026
 Base exacta: `8025df43e898280d06c88c70c43a26dc8acba472`
-Estado: corrección incremental verificada en local; pendiente de integración,
-migración versionada y despliegue exclusivo de `market-radar`.
+Estado actualizado el 27 de agosto: integrada en `a536a28`; migración aplicada
+una sola vez como `20260827150224`; `market-radar` v73 desplegado. El primer
+refresh V2 queda pausado en su misma UUID por un límite de memoria del sellado
+global; la corrección incremental está preparada y pendiente de subida.
+
+## Actualización productiva · 27 de agosto de 2026
+
+La activación respetó el orden previsto: Actions verdes, baseline de solo
+lectura, migración V2 una vez y despliegue exclusivo de Radar con JWT. La Edge
+pasó de v72 a v73, digest
+`550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8`.
+Las demás Edge y los datos protegidos no cambiaron.
+
+El único refresh nuevo es
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después del intento inicial y una sola
+reanudación conserva dos intenciones `in_progress/claimed`, `claim_count=2`,
+cero checkpoints V2, cero batches y cero manifest. Las invocaciones de escritura
+terminaron HTTP 546; las lecturas de recuperación conservaron la UUID y no se
+abrió otra. No debe reanudarse con v73.
+
+La medición live actual produjo 13.545 series, 17.286.505 bytes, cursor terminal
+y HTTP 200 en 4,54 s. El proveedor no estaba caído. El pico aparecía al pasar la
+proyección global completa por `canonicalJson`: 273,1 MB frente al límite Edge
+de 256 MB. La corrección de
+`ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827` conserva el mismo SHA-256 con
+un digest incremental; el sellado baja a 149,9 MB y la transformación completa
+a 172,8 MB. Este addendum prevalece sobre las instrucciones históricas de
+activación que siguen abajo como registro del diseño original.
 
 ## Objetivo
 

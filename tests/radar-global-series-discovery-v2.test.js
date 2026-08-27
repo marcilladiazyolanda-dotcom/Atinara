@@ -6,15 +6,24 @@ const { test, before } = require("node:test");
 
 const root = join(__dirname, "..");
 const sharedPath = join(root, "supabase/functions/_shared/market-radar.mjs");
+const contractsPath = join(root, "supabase/functions/_shared/ai/contracts.mjs");
+const catalogHashPath = join(root, "supabase/functions/_shared/radar-catalog-hash.mjs");
 const edge = readFileSync(join(root, "supabase/functions/market-radar/index.ts"), "utf8");
+const catalogHashSource = readFileSync(catalogHashPath, "utf8");
 const migration = readFileSync(join(
   root,
   "supabase/migrations/20260826190000_checkpoint_market_radar_global_catalog_v2.sql",
 ), "utf8");
 let radar;
+let contracts;
+let catalogHash;
 
 before(async () => {
-  radar = await import(pathToFileURL(sharedPath).href);
+  [radar, contracts, catalogHash] = await Promise.all([
+    import(pathToFileURL(sharedPath).href),
+    import(pathToFileURL(contractsPath).href),
+    import(pathToFileURL(catalogHashPath).href),
+  ]);
 });
 
 const checkedAt = "2026-08-26T12:00:00.000Z";
@@ -210,6 +219,41 @@ test("Unicode, apóstrofes, subtítulos, guiones y números conservan clasificac
   }
 });
 
+test("el hash incremental conserva exactamente el contrato canónico con 100+ series", async () => {
+  const series = Array.from({ length: 137 }, (_, index) => ({
+    ticker: `KX-CATALOG-${String(index).padStart(4, "0")}`,
+    title: index % 2 ? `Tom Clancy's catálogo ${index}` : `Pokémon — catálogo ${index}`,
+    category: "Entertainment",
+    tags: ["Video games", `Página ${Math.floor(index / 48) + 1}`],
+    product_scope: `Subtítulo ${index}: edición Z-A`,
+    product_important_info: index % 3 ? null : {
+      title: `Información ${index}`,
+      message: "Resolución oficial y verificable",
+      markdown: `**Número ${index}**`,
+    },
+    settlement_sources: [{
+      name: "Fuente oficial",
+      url: `https://example.com/catalog/${index}`,
+    }],
+    volume_fp: String(index),
+    last_updated_ts: "2026-08-27T00:00:00.000Z",
+  }));
+  const input = {
+    entity_policy_version: "atinara-kalshi-catalog-entities-v1",
+    entity_terms_hash: hash("c"),
+    projection_version: "atinara-kalshi-series-catalog-projection-v1",
+    series,
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV1(input),
+    await contracts.sha256Hex(input),
+  );
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV1({
+    ...input,
+    series: [series[1], series[0]],
+  }), /PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID/);
+});
+
 test("el snapshot inicial prueba catálogo completo, selección razonada y cero progreso inventado", () => {
   const checkpoint = buildCheckpoint(3);
   const state = radar.providerDiscoveryCheckpointV2State(checkpoint, {
@@ -388,6 +432,11 @@ test("Edge usa catálogo global completo, lectura acotada y checkpoint antes de 
   assert.match(edge, /withRadarProviderDiscoveryBudget/);
   assert.match(edge, /buildKalshiRadarCatalogEntityTermsV2/);
   assert.match(edge, /catalog_entity_terms: catalogEntityTerms/);
+  assert.match(edge, /sha256KalshiCatalogProjectionV1/);
+  assert.doesNotMatch(edge, /providerCatalogHash\s*=\s*await sha256Hex/);
+  assert.match(catalogHashSource, /createHash\("sha256"\)/);
+  assert.match(catalogHashSource, /digest\.update\(canonicalJson\(projection\)\)/);
+  assert.doesNotMatch(catalogHashSource, /canonicalJson\(input\)/);
   assert.match(edge, /El deadline del lote no es un fallo de esta serie/);
   assert.match(edge, /boundedEnvironment\.execution\.signal\.aborted/);
   assert.match(edge, /provider_catalog_hash/);

@@ -4,71 +4,64 @@
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Estado remoto y productivo verificado antes del siguiente despliegue:**
-> `origin/main` está en `8caaa4787f09604a8f3e7ff535e6c418f75f7b2f`.
-> El último commit contiene exactamente las diez rutas del paquete Full Theme y
-> coincide byte por byte con la entrega local
-> `a10791257ffa5d95e8b498e3c9f639ed0c07202a`. Entre su base `8025df4` y esa
-> subida se integraron Corrector, Validator, gráfica, límite de Karma y la nueva
-> estrategia B2B. Los archivos estratégicos de `01351db` permanecen intactos y
-> autoritativos; este cierre no implementa la fase B2B, que Yol realizará en una
-> conversación separada.
+> **Estado remoto y productivo verificado durante el cierre Radar/Discover:**
+> `origin/main` está en `a536a28e711a9c337ea23fde60c907a886584a72` (`fix`).
+> Calidad de Atinara —incluido Deno—, Benchmark IA offline y GitHub Pages están
+> en `success` para ese SHA. La estrategia B2B-first de `01351db` permanece
+> intacta y autoritativa; este cierre no implementa B2B ni Atinara Engine.
 >
-> La sustitución manual de tres rutas compartidas revirtió hechos documentales
-> intermedios y una expectativa de caché. Pages y el benchmark offline terminaron
-> en `success`, pero `Calidad de Atinara` falló en pruebas JavaScript antes de
-> ejecutar Deno. GitHub Pages sirve realmente
-> `v=20260826-live-market-chart-limit1`; el test restaurado por el ZIP esperaba
-> todavía `v=20260825-radar-provider-checkpoint1`. La reproducción completa
-> detectó también una ordenación de tags sin comparador explícito que la puerta
-> de código actual rechaza. No se usó Sonar y no se ha desplegado el paquete
-> global mientras la Action siga roja.
+> La migración local
+> `20260826190000_checkpoint_market_radar_global_catalog_v2.sql` se aplicó una
+> sola vez en producción como
+> `20260827150224_checkpoint_market_radar_global_catalog_v2`. Tabla, índices,
+> RLS forzada, ACL, trigger append-only y las tres RPC `service_role` quedaron
+> verificados. No hubo DML de negocio ni backfill.
 >
-> Producción conserva `market-radar` v72 `ACTIVE`,
+> Se desplegó únicamente `market-radar`: pasó de v72 a v73, está `ACTIVE`,
 > `verify_jwt=true`, digest
-> `5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`;
-> la migración local `20260826130000` consta aplicada remotamente como
-> `20260826112912`.
-> Expert v26, Corrector v25, Validator v34 y Resolución v16 permanecen activos
-> con JWT obligatorio. La migración V2 de catálogo global todavía no está
-> aplicada y `market-radar` no se ha redesplegado.
+> `550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8`.
+> El bundle remoto de 14 archivos coincide byte por byte con `origin/main`.
+> Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron y
+> conservan JWT obligatorio.
 >
-> El único refresh nuevo es `c1f677eb-0dae-410f-820d-a4483601ab47`.
-> Kalshi terminó `completed/terminal`, `claim_count=3`, con 215/215 series,
-> 590 padres indexados, 24 padres completos seleccionados y 192/192 hijas
-> descubiertas, contabilizadas e identificadas. Expected, staged, processed y
-> accepted son 162; cuarentenas y fallos son cero. El manifest es
-> `085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4`
-> y la finalización es
-> `aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
-> Tavily también terminó sin degradar Kalshi. No se creó una segunda UUID.
+> El baseline productivo real anterior al refresh era: 16 mercados, 9
+> predicciones, 2 perfiles, Karma total 2.932, Prestigio total 40 y 7 registros
+> de borrador. El séptimo corresponde al mercado Tibo ya publicado el 26 de
+> agosto; por tanto, la referencia histórica a seis borradores ya no era el
+> estado real. Los recuentos protegidos permanecen iguales y no se creó mercado,
+> predicción, perfil, posición, precio ni borrador durante este incidente.
 >
-> La candidata `1aa9b332-07d9-4dff-a2e3-d98a7066237e`, hija
-> `kalshi:market:KXGTATRAILER-26SEP`, conserva padre completo, siete hijas,
-> paginación agotada, apertura y ausencia de duplicado. Su revisión humana está
-> registrada como `in_domain`, request
-> `6b5249ad-767d-488c-b0cc-5ab902f87b24`, con huella `r3712d951`, huella de dominio
-> `0c5c75388ff6690d6963c8ad5375c5628f078d5f34ab8b27fa323a9c97981653`
-> y política `atinara-gaming-domain-v2`. V72 conservó correctamente esa
-> atestación y alcanzó el escaneo oficial de elegibilidad.
+> Después de v73 se inició exactamente un refresh Kalshi:
+> `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Solo existen sus dos intenciones
+> esperadas (`kalshi/candidate_feed` y `tavily/source_enrichment`), ambas
+> `in_progress/claimed`, `claim_count=2`, lease vencido. Hay cuatro eventos
+> append-only —dos `RADAR_REFRESH_CLAIMED` y dos
+> `RADAR_REFRESH_RECLAIMED`—, cero checkpoints V2, cero batches, cero manifest y
+> cero candidatas. No se creó otra UUID y no debe ejecutarse un tercer intento
+> con v73.
 >
-> Los dos intentos controlados posteriores, requests
-> `0488f6b7-ee48-4cb9-853e-2b357101e64a` y
-> `bc5b79e8-8338-4f09-a020-36405b32957d`, fallaron ambos con HTTP 503 y
-> `ELIGIBILITY_SCAN_UNAVAILABLE`. No se realizó un tercer intento, no se llamó
-> Market Expert y los seis borradores siguen intactos.
+> Las dos invocaciones de escritura de v73 terminaron HTTP 546 a 10.666 ms y
+> 10.033 ms; las dos lecturas de recuperación devolvieron 200 y conservaron la
+> misma UUID. Kalshi no estaba caído: una lectura oficial independiente devolvió
+> HTTP 200, cursor terminal, 13.545 series y 17.286.505 bytes en 4,54 s. La causa
+> es el sellado monolítico del catálogo: `canonicalJson` materializaba la
+> proyección completa y elevaba el proceso a 273,1 MB, por encima del límite
+> productivo de 256 MB, antes de que JavaScript pudiera registrar deferral o el
+> primer checkpoint.
 >
-> La corrección de evidencia oficial y la ampliación global ya están en GitHub,
-> pero aún no se han desplegado. La entrega que debe activarse es la ampliación
-> descrita en
-> `docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md`: añade una
-> migración append-only para sellar el catálogo global Kalshi y avanzar sus
-> series por lotes durables sobre la misma UUID. Hasta integrar y verificar esa
-> entrega junto a la corrección de composición, no desplegar el paquete anterior aislado, no repetir
-> elegibilidad, no ejecutar Market Expert y no crear un borrador por otra vía.
-> Como la base corrige la identidad familiar material `ngvi` por `gtavi`, el
-> expediente actual sigue stale: después del despliegue hará falta exactamente
-> un refresh Kalshi nuevo, no DML ni un retry directo.
+> La corrección local pendiente de subida calcula exactamente el mismo SHA-256
+> mediante digest incremental de cada proyección canónica ordenada. Sobre el
+> catálogo real, el pico del sellado baja a 149,9 MB y el máximo de la
+> transformación a 172,8 MB. La equivalencia canónica, 334 regresiones focales,
+> Deno 2.1.14 y `git diff --check` están verdes. No cambia catálogo, selección,
+> migración, frontend, otras Edge, datos, IA, Registry, economía ni presupuestos.
+> Véase `docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md`.
+>
+> El expediente histórico
+> `c1f677eb-0dae-410f-820d-a4483601ab47` permanece stale e intacto. Hasta que
+> Yol suba el nuevo ZIP y GitHub vuelva a quedar verde, no desplegar la corrección
+> local, no reanudar la UUID nueva, no iniciar otra UUID, no llamar Market Expert
+> y no crear un borrador por otra vía.
 
 ### Catálogo global y discovery durable V2 · 26 de agosto de 2026
 
@@ -103,9 +96,11 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   calidad declara que no degrada el proveedor.
 - No hay IDs de mercado o serie, frontend, DML, backfill, secretos ni cambios
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
-  continúa sin Gemini. La migración y el código están integrados en `8caaa47`,
-  pero todavía no están aplicados ni desplegados porque la Action funcional no
-  alcanzó Deno.
+  continúa sin Gemini. La implementación quedó integrada en `a536a28`, la
+  migración se aplicó una vez como `20260827150224` y v73 fue el único despliegue.
+  El smoke posterior descubrió el límite de memoria del sellado canónico global;
+  la corrección incremental está preparada, pero todavía no está en GitHub ni en
+  producción.
 
 ### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
 

@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { sha256KalshiCatalogProjectionV1 } from "../_shared/radar-catalog-hash.mjs";
 import {
   RADAR_API_HOSTS,
   RADAR_CANDIDATE_PROVIDERS,
@@ -3505,7 +3506,7 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
   const catalogProjection = [...projectionByTicker.values()]
     .sort((left, right) => cleanText(left.ticker, 120) < cleanText(right.ticker, 120) ? -1
       : cleanText(left.ticker, 120) > cleanText(right.ticker, 120) ? 1 : 0);
-  const providerCatalogHash = await sha256Hex({
+  const providerCatalogHash = sha256KalshiCatalogProjectionV1({
     projection_version: "atinara-kalshi-series-catalog-projection-v1",
     entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
     entity_terms_hash: entityTermsHash,

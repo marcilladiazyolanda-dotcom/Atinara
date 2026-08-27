@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 26 de agosto usa Radar v72, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 27 de agosto usa Radar v73, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. V73 activó el checkpoint global V2, pero su refresh único está pausado hasta integrar la corrección de memoria documentada abajo. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -38,80 +38,55 @@ no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
 de Corrector v25 no contiene migración y quedó integrado en `origin/main`
 mediante `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`.
 
-## Estado operativo de 13.5.2 · Radar v72 activo y ampliación global integrada
+## Estado operativo de 13.5.2 · Radar v73 y cierre global pausado
 
-El corte remoto `8caaa4787f09604a8f3e7ff535e6c418f75f7b2f` contiene exactamente las
-diez rutas del paquete global y coincide byte por byte con la entrega local.
-Como ese paquete partía de `8025df4` y hubo subidas intermedias, el reemplazo
-manual revirtió en README, contexto y una regresión de Radar información ya
-integrada. Pages y el benchmark offline terminaron correctamente, pero
-`Calidad de Atinara` falló antes de Deno porque el test volvió a exigir la
-release de caché anterior. La reproducción completa detectó además una
-ordenación de tags sin comparador explícito que una puerta añadida en los
-commits intermedios ya prohíbe. La corrección usa el comparador binario UTF-16
-existente y no cambia la selección ni el contrato del catálogo. El detalle está en
-[`docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md`](docs/ATINARA_RADAR_FULL_THEME_INTEGRATION_FIX_20260827.md).
+El corte canónico verificado es
+`origin/main = a536a28e711a9c337ea23fde60c907a886584a72`. Calidad de Atinara
+—incluido Deno—, Benchmark IA offline y GitHub Pages están verdes para ese SHA.
+La nueva estrategia B2B-first permanece intacta; esta tarea solo cierra Radar y
+no implementa Atinara Engine.
 
-No se ha desplegado el paquete global. Producción conserva `market-radar` v72,
-`ACTIVE`, con JWT obligatorio y digest
-`5e95a578528355f92ced016d8aa1c5523d1931f00942d44679942f7d809d9116`.
+La migración
+`20260826190000_checkpoint_market_radar_global_catalog_v2.sql` se aplicó una
+sola vez en producción como
+`20260827150224_checkpoint_market_radar_global_catalog_v2`. Su tabla privada,
+índices, RLS forzada, ACL, trigger append-only y tres RPC `service_role` están
+verificados. Después se desplegó únicamente `market-radar`: v73, `ACTIVE`,
+`verify_jwt=true`, digest
+`550a3b4372a61e77e0004534085c74bb23475e52f42f27916437c15c02778bd8`.
+Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron.
 
-El único refresh fresco, `c1f677eb-0dae-410f-820d-a4483601ab47`, terminó
-Kalshi `completed/terminal` con 215/215 series, cero series fallidas, 590 padres
-indexados, 24 padres seleccionados completos y 192/192 hijas descubiertas,
-contabilizadas e identificadas. Persistió 162/162 candidatas, sin cuarentenas o
-fallos; manifest
-`085a5f169cd0f045c9ae867adba049b9b9937be1f02a79f02df6486d4537bae4`
-y finalización
-`aaab476f8b372eaafcfc41b2533af878ebec28f308bf2cbe71aa860a204cf5`.
-Las recuperaciones reutilizaron la misma UUID y no se inició otro refresh.
+El baseline real contiene 16 mercados, 9 predicciones, 2 perfiles, Karma total
+2.932, Prestigio total 40 y 7 registros de borrador. La referencia anterior a
+seis borradores quedó superada cuando Yol publicó el mercado manual de Tibo el
+26 de agosto. Ninguno de esos datos protegidos cambió durante este smoke.
 
-V72 conserva la revisión humana `in_domain` exacta de la candidata
-`1aa9b332-07d9-4dff-a2e3-d98a7066237e` y alcanza el escaneo oficial. Sus dos
-intentos controlados, `0488f6b7-ee48-4cb9-853e-2b357101e64a` y
-`bc5b79e8-8338-4f09-a020-36405b32957d`, fallaron igual con HTTP 503 y
-`ELIGIBILITY_SCAN_UNAVAILABLE`; no hubo un tercer retry.
+Tras v73 se inició exactamente un refresh Kalshi,
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Sus dos intenciones esperadas conservan
+`claim_count=2` y la misma UUID; no hay checkpoint V2, batch, manifest,
+candidata ni borrador. Las dos invocaciones de escritura terminaron HTTP 546 a
+10.666 ms y 10.033 ms. Las recuperaciones de lectura devolvieron 200 sin crear
+otra intención. No debe hacerse un tercer intento con v73.
 
-La causa general combina identidad y continuidad de evidencia. El artículo
-inglés `another` quedaba truncado tras un verbo español, de modo que la familia
-persistía `nother gta vi`. El escaneo tampoco reconocía una descripción
-audiovisual equivalente con `will premiere` y fecha oficial sin año, y una URL
-auxiliar fallida mantenía incompleto el grupo aunque existiera prueba oficial
-exacta de un estreno futuro dentro del contrato.
+Kalshi estaba sano: el endpoint oficial devolvió HTTP 200, cursor terminal,
+13.545 series y 17.286.505 bytes en 4,54 s. El fallo estaba en el proceso local:
+el hash global pasaba el catálogo entero por `canonicalJson`, alcanzaba 273,1 MB
+y superaba el límite productivo de 256 MB antes del primer checkpoint o del
+deferral. La corrección pendiente conserva exactamente el mismo SHA-256, pero
+alimenta un digest incremental con cada proyección canónica ordenada. El pico
+del sellado real baja a 149,9 MB y el máximo de la transformación a 172,8 MB.
 
-La corrección ya integrada conserva el artículo completo, deriva el sujeto desde
-la familia vigente, liga sujeto/predicado/fecha y permite continuar únicamente
-si todas las candidatas tienen cobertura oficial determinista antes de su
-frontera contractual. Otro sujeto, una afirmación terminal o una fecha fuera
-del contrato fallan cerrados. Pasa 219/219 pruebas focalizadas y 58/58 de
-reconciliación general, 9/9 Edge con Deno 2.1.14, sintaxis de 128 JavaScript y
-la página oficial real. Véase
-[`docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826.md`](docs/ATINARA_RADAR_OFFICIAL_EVIDENCE_CONTINUITY_FIX_20260826.md).
+La regresión prueba equivalencia canónica con más de cien series, Unicode,
+apóstrofes, subtítulos, guiones y números. Pasan 334/334 pruebas focales y Deno
+2.1.14. No cambia catálogo, selección, migración, frontend, otras Edge, Auth,
+secretos, IA, Registry, rutas, modos, flags, presupuestos, economía ni datos.
+Detalles:
+[`docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md`](docs/ATINARA_RADAR_CATALOG_HASH_MEMORY_FIX_20260827.md).
 
-La ampliación siguiente corrige además la cobertura temática general. Kalshi no
-ofrece búsqueda textual de series: las dos taxonomías anteriores no demuestran
-todos los lanzamientos, eventos, industria, streamers, reviews o YouTubers que
-el proveedor registra bajo otras categorías. Una lectura oficial live agotada
-de 13.486 series únicas seleccionó 410 mediante reglas versionadas, incluidas
-193 fuera de las taxonomías antiguas. La relación entre series hermanas deriva
-83 términos efímeros del propio catálogo acreditado; no usa IDs concretos,
-títulos fijados ni inferencias.
-
-El checkpoint V2 sella la huella del catálogo completo y encadena snapshots
-append-only de hasta 48 consultas de series. Timeout, rate limit o presupuesto
-agotado conservan la misma UUID, progreso y cooldown; nunca producen éxito
-vacío ni obligan a repetir discovery sano. La tabla privada fuerza RLS y las
-RPC son `service_role` only. Véase
-[`docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md`](docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md).
-
-La ampliación está integrada en GitHub, pero su activación permanece bloqueada
-hasta que la corrección incremental de composición esté subida y Calidad de
-Atinara —incluido Deno— vuelva a verde. Después requiere aplicar una sola vez la
-migración versionada y desplegar únicamente `market-radar`. No se llamó Market
-Expert y continúan exactamente seis borradores. Hará falta exactamente un
-refresh Kalshi nuevo para sustituir la identidad stale; no debe reintentarse la
-preparación sobre el snapshot actual ni desplegar antes la corrección anterior
-de forma aislada.
+La UUID histórica `c1f677eb-0dae-410f-820d-a4483601ab47` sigue stale e intacta.
+Hasta que Yol suba el ZIP incremental y las tres Actions estén verdes, no se
+despliega la corrección local, no se reanuda la UUID nueva, no se inicia otra,
+no se llama Market Expert y no se crea un borrador por otra vía.
 
 ## Historial operativo · Radar v69 y checkpoint de discovery
 
