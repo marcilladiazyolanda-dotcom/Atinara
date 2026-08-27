@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { sha256KalshiCatalogProjectionV1FromTuples } from "../_shared/radar-catalog-hash.mjs";
+import { sha256KalshiCatalogProjectionV2 } from "../_shared/radar-catalog-hash.mjs";
 import {
   RADAR_API_HOSTS,
   RADAR_CANDIDATE_PROVIDERS,
@@ -3504,8 +3504,8 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
   });
   if (!selected.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   if (selected.length > MAX_KALSHI_SERIES) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
-  const providerCatalogHash = sha256KalshiCatalogProjectionV1FromTuples({
-    projection_version: "atinara-kalshi-series-catalog-projection-v1",
+  const providerCatalogHash = sha256KalshiCatalogProjectionV2({
+    projection_version: "atinara-kalshi-series-catalog-projection-v2",
     entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
     entity_terms_hash: entityTermsHash,
     series: kalshiCatalogFingerprintProjectionsV2(rawSeries),
