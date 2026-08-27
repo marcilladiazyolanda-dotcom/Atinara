@@ -323,6 +323,72 @@ test("el hash V2 conserva evidencia completa con tuplas estables y un iterador d
   }), /PROVIDER_DISCOVERY_CATALOG_PROJECTION_INVALID/);
 });
 
+test("el hash compacto por tuplas reproduce exactamente la proyección V1 exigida por el checkpoint", async () => {
+  const objectSeries = Array.from({ length: 137 }, (_, index) => ({
+    ticker: `KX-CATALOG-COMPAT-${String(index).padStart(4, "0")}`,
+    title: index % 2 ? `Tom Clancy's catálogo ${index}` : `Pokémon — catálogo ${index}`,
+    category: "Entertainment",
+    tags: ["Página 1", "Video games"],
+    product_scope: `Subtítulo ${index}: edición Z-A`,
+    product_important_info: index % 3 ? null : {
+      title: `Información ${index}`,
+      message: "Resolución oficial",
+      markdown: `**Número ${index}**`,
+    },
+    settlement_sources: [{
+      name: "Fuente oficial",
+      url: `https://example.com/catalog/${index}`,
+    }],
+    volume_fp: String(index),
+    last_updated_ts: "2026-08-27T00:00:00.000Z",
+  }));
+  const tupleSeries = objectSeries.map((series) => ([
+    series.ticker,
+    series.title,
+    series.category,
+    series.tags,
+    series.product_scope,
+    series.product_important_info === null ? null : [
+      series.product_important_info.title,
+      series.product_important_info.message,
+      series.product_important_info.markdown,
+    ],
+    series.settlement_sources.map((source) => [source.name, source.url]),
+    series.volume_fp,
+    series.last_updated_ts,
+  ]));
+  const input = {
+    entity_policy_version: "atinara-kalshi-catalog-entities-v1",
+    entity_terms_hash: hash("e"),
+    projection_version: "atinara-kalshi-series-catalog-projection-v1",
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV1FromTuples({ ...input, series: tupleSeries }),
+    catalogHash.sha256KalshiCatalogProjectionV1({ ...input, series: objectSeries }),
+  );
+  let iteratorCalls = 0;
+  const oneShotSeries = {
+    *[Symbol.iterator]() {
+      iteratorCalls += 1;
+      if (iteratorCalls > 1) throw new Error("ITERATOR_REUSED");
+      yield* tupleSeries;
+    },
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV1FromTuples({ ...input, series: oneShotSeries }),
+    catalogHash.sha256KalshiCatalogProjectionV1({ ...input, series: objectSeries }),
+  );
+  assert.equal(iteratorCalls, 1);
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV1FromTuples({
+    ...input,
+    series: [tupleSeries[1], tupleSeries[0]],
+  }), /PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID/);
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV1FromTuples({
+    ...input,
+    series: [["KX-BROKEN"]],
+  }), /PROVIDER_DISCOVERY_CATALOG_PROJECTION_INVALID/);
+});
+
 test("el análisis global de 100+ series equivale a términos más clasificación unitaria", () => {
   const catalog = Array.from({ length: 137 }, (_, index) => ({
     ticker: `KX-GLOBAL-${String(index).padStart(4, "0")}`,
@@ -528,8 +594,8 @@ test("Edge usa catálogo global completo, lectura acotada y checkpoint antes de 
   assert.match(edge, /withRadarProviderDiscoveryBudget/);
   assert.match(sharedSource, /buildKalshiRadarCatalogEntityTermsV2/);
   assert.match(edge, /analyzeKalshiRadarSeriesCatalogV2/);
-  assert.match(edge, /sha256KalshiCatalogProjectionV2/);
-  assert.doesNotMatch(edge, /sha256KalshiCatalogProjectionV1/);
+  assert.match(edge, /sha256KalshiCatalogProjectionV1FromTuples/);
+  assert.doesNotMatch(edge, /sha256KalshiCatalogProjectionV2/);
   assert.doesNotMatch(edge, /providerCatalogHash\s*=\s*await sha256Hex/);
   assert.match(edge, /function\* kalshiCatalogFingerprintProjectionsV2/);
   assert.match(edge, /rawSeries\.sort\(/);
@@ -553,7 +619,12 @@ test("Edge usa catálogo global completo, lectura acotada y checkpoint antes de 
   assert.match(edge, /boundedEnvironment\.execution\.signal\.aborted/);
   assert.match(edge, /provider_catalog_hash/);
   assert.match(edge, /provider_catalog_pagination_exhausted/);
-  assert.match(edge, /atinara-kalshi-series-catalog-projection-v2/);
+  assert.match(edge, /atinara-kalshi-series-catalog-projection-v1/);
+  assert.match(sharedSource,
+    /projection_version:\s*"atinara-kalshi-series-catalog-projection-v1"/);
+  assert.match(migration,
+    /projection_version}'[\s\S]{0,100}atinara-kalshi-series-catalog-projection-v1/);
+  assert.doesNotMatch(migration, /atinara-kalshi-series-catalog-projection-v2/);
   assert.match(edge, /settlementSources/);
   assert.match(edge, /cleanText\(series\.volume_fp/);
   assert.doesNotMatch(edge, /KXSWITCH2|KXMETACRITICSTALKER2/);

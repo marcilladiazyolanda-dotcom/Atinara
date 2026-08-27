@@ -1,0 +1,91 @@
+ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827
+Generated: 2026-08-27
+Base: origin/main 4177f84f2c34b93da6fe4b2b4aa90ff13a141328
+Scope: incremental only
+
+INVENTORY
+M ORAKLO_PROJECT_CONTEXT.md
+M README.md
+A docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md
+A docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827_MANIFEST.txt
+M docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md
+M docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+M supabase/functions/_shared/radar-catalog-hash.mjs
+M supabase/functions/market-radar/index.ts
+M tests/radar-global-series-discovery-v2.test.js
+
+SHA-256 PAYLOAD FILES
+a84c9606df6b065b25ae43bd7dc4dd816d2216b7bf8cb4a39ffd8dc1363e1492  ORAKLO_PROJECT_CONTEXT.md
+0e91f407447d8b84cb07a1716b56faaf66916f88c73f6d5ede6e3111a7ed152e  README.md
+c8b0ea198c6434f297fbf82576a5bfb4c0be556fcf159ec436eeb91a2cbe2b7a  docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md
+13291a44458802214e2f7d3c29e50b4eaaf1f278ca11e21b4da6058699ff148c  docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md
+4999fe945573809d52f744ec75b0f5ee1d93d01a4963e94a03e5e794c8545469  docs/ATINARA_RADAR_FULL_THEME_DURABLE_DISCOVERY_FIX_20260826.md
+f42738a68056626a9a7534df35a9c52821b8719643ab4d2b8684f55682acc2f5  supabase/functions/_shared/radar-catalog-hash.mjs
+4e6e4e8d095003355580855741eeac930912b0c37c10990c3c4cc418276c3b01  supabase/functions/market-radar/index.ts
+9d13bd107cb18605c8d058b1b350cfc6d2f0f6dde0a8044cfc3b1410a2c1dbb4  tests/radar-global-series-discovery-v2.test.js
+
+MIGRATIONS: none
+FRONTEND: none
+
+EDGE FUNCTIONS
+market-radar only (verify_jwt remains true)
+
+SECRETS: none
+DELETIONS: none
+BACKFILL: none
+MANUAL DML: none
+GEMINI IN RADAR: none
+B2B IMPLEMENTATION: none
+REGISTRY OR AI SETTINGS: unchanged
+AI ROUTES, MODES, MODELS, FLAGS OR BUDGETS: unchanged
+ECONOMY, KARMA, PRESTIGE OR LMSR: unchanged
+MARKETS, PREDICTIONS AND EXISTING DRAFTS: unchanged
+
+ROOT CAUSE
+- origin/main 4177f84 computes catalog bytes as projection-v2
+- the shared V2 checkpoint labels the evidence projection-v1
+- the applied RPC accepts projection-v1 only
+- deployment would persist a V2 hash under a V1 declaration
+
+CORRECTION
+- stream exact canonical projection-v1 bytes from compact tuples
+- keep the compact worker-limit fix and one-shot ordered iterator
+- require projection-v1 in Edge, shared checkpoint and applied SQL contract
+- no migration and no rewrite of the four existing V1 checkpoints
+
+PRODUCTION EVIDENCE
+- V2 migration applied once as 20260827150224_checkpoint_market_radar_global_catalog_v2
+- market-radar v75 ACTIVE, verify_jwt=true
+- v75 digest 7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555
+- single refresh UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- checkpoint count 4; latest sequence 4
+- latest checkpoint hash ebb1586aba60eb4e34507299f10eac4b4f75cd9e1ca79e63eb2cbbae7f8c54ae
+- catalog hash 73f681e2938ebcd1565b22a5db8ad5862962b0823478e8bcb6906a8dac5aa94f
+- projection-v1; global 13561; selected 416
+- completed 87; retryable failed 57; pending 272; exhausted 0; parents 129
+- batches 0; manifest null; no draft from this refresh
+- no second request_id since the refresh began
+- protected counts unchanged: markets 16, predictions 9, profiles 2, drafts 7
+
+VERIFICATION
+- full unit suite: 619 passed, 0 failed
+- focused catalog/checkpoint suite: 20 passed, 0 failed
+- focused Radar/resumability suite: 129 passed, 0 failed
+- JavaScript syntax: valid in 134 files
+- static SQL contracts: 21 passed; no SQL execution because SQL is unchanged
+- Deno 2.1.14: 9 Edge Functions passed, including market-radar
+- TypeScript and canonical JSON parity: passed
+- synthetic 13561-row V1 tuple hash: 47-110 ms CPU, about 62 MB process RSS
+- git diff --check: passed
+- Sonar: not used
+
+POST-UPLOAD
+- fetch and require exactly these 9 paths and matching contents
+- require Calidad de Atinara including Deno, Pages and Benchmark IA offline success
+- create a clean worktree from the resulting origin/main
+- do not apply any migration
+- deploy only market-radar with verify_jwt=true
+- continue only UUID 39bc204b-aa3f-4a69-99da-557f5fa91f7d
+- do not create a second refresh
+- create exactly one private draft only after all Radar and eligibility gates
+- never confirm, publish, schedule, resolve or settle

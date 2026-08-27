@@ -3,10 +3,10 @@
 Fecha: 26 de agosto de 2026
 Base exacta: `8025df43e898280d06c88c70c43a26dc8acba472`
 Estado actualizado el 27 de agosto: integrada en `a6152a7`; migración aplicada
-una sola vez como `20260827150224`; `market-radar` v75 desplegado. El primer
-refresh V2 queda pausado en su misma UUID por un límite de recursos del worker;
-la corrección completa de lectura, análisis y hash está preparada localmente y
-pendiente de subida.
+una sola vez como `20260827150224`; `market-radar` v75 desplegado. La corrección
+de recursos está integrada en `4177f84`, pero no se desplegó porque la revisión
+detectó un desacuerdo entre el hash V2 de la Edge y la proyección V1 exigida por
+el checkpoint y SQL. La corrección compatible está preparada sobre ese SHA.
 
 ## Actualización productiva · 27 de agosto de 2026
 
@@ -17,23 +17,28 @@ actual es v75, digest
 Las demás Edge y los datos protegidos no cambiaron.
 
 El único refresh nuevo es
-`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después de v73 y una reanudación por
-versión con v74 y v75 conserva dos intenciones `in_progress/claimed`,
-`claim_count=4`,
-cero checkpoints V2, cero batches y cero manifest. Las invocaciones de escritura
-terminaron HTTP 546; las lecturas de recuperación conservaron la UUID y no se
-abrió otra. No debe reanudarse con v75.
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Una actividad productiva posterior
+continuó esa misma UUID con v75 hasta cuatro checkpoints V2. El último conserva
+13.561 series globales, 416 seleccionadas, 87 completas, 57 fallidas
+reintentables, 272 pendientes, cero agotadas y 129 padres. Kalshi sigue
+`in_progress/fetching`, `claim_count=8`, con lease vencido; Tavily terminó
+`completed/terminal`, `claim_count=5`. Continúan en cero batches, manifest y
+borradores. SQL confirma una sola UUID.
 
 V75 conservó el análisis único y el hash incremental de la primera corrección,
 pero el perfil usado para aprobarla omitía lectura, decodificación y parse del
 body. La ruta completa todavía consumía aproximadamente 2.407 ms CPU y 285 MB
 RSS sobre 13.559 series, por encima de 2 s y 256 MB. La corrección
 `ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827` usa parse JSON nativo sobre
-un stream acotado, máscaras compactas y una proyección V2 de tuplas. Dos lecturas
-posteriores de 13.561 series y 17.306.369 bytes conservaron 84 términos y 416
-seleccionadas, cursor terminal, 1.501–1.563 ms CPU y 166 MB RSS máximo en Node.
-Este addendum prevalece sobre las instrucciones históricas de activación que
-siguen abajo como registro del diseño original.
+un stream acotado, máscaras compactas y tuplas. Dos lecturas posteriores de
+13.561 series y 17.306.369 bytes conservaron 84 términos y 416 seleccionadas,
+cursor terminal, 1.501–1.563 ms CPU y 166 MB RSS máximo en Node. La versión
+integrada calculaba esas tuplas como proyección V2, aunque el constructor y la
+RPC aplicada seguían declarando V1. La corrección
+`ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827` mantiene las tuplas compactas,
+pero reproduce byte a byte el hash canónico V1 y exige por prueba el acuerdo de
+Edge, constructor y SQL. Este addendum prevalece sobre las instrucciones
+históricas de activación que siguen abajo como registro del diseño original.
 
 ## Objetivo
 

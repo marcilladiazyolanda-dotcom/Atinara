@@ -4,8 +4,11 @@ Fecha: 27 de agosto de 2026
 
 Base exacta: `a6152a76b4d966f67ece6f6e8b72dcd0f5400034`
 
-Estado: corrección general verificada en local; pendiente de subida por Yol,
-Actions verdes y despliegue exclusivo de `market-radar`.
+Estado: integrada en
+`4177f84f2c34b93da6fe4b2b4aa90ff13a141328`; sus tres Actions están verdes.
+No debe desplegarse tal cual: la puerta previa a producción detectó una
+discrepancia de versión del hash y preparó una corrección compatible desde ese
+SHA.
 
 ## Checkpoint productivo protegido
 
@@ -15,11 +18,13 @@ La migración V2 continúa aplicada exactamente una vez como
 `20260827150224_checkpoint_market_radar_global_catalog_v2`. Expert v26,
 Corrector v25, Validator v34 y Resolución v16 no cambiaron.
 
-La única UUID es `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Sus dos intenciones
-están `in_progress/claimed`, `claim_count=4`, lease vencido y conservan cero
-checkpoints V2, batches, manifest, candidatas y borradores. Solo hay cuatro
-eventos append-only y SQL confirma una única `request_id` desde que comenzó.
-No debe reintentarse con v75.
+La única UUID es `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Actividad productiva
+posterior continuó esa misma UUID con v75 hasta cuatro checkpoints. El último
+conserva 13.561 series globales, 416 seleccionadas, 87 completas, 57 fallidas
+reintentables, 272 pendientes, cero agotadas y 129 padres. Kalshi está
+`in_progress/fetching`, `claim_count=8`, con lease vencido; Tavily terminó
+`completed/terminal`, `claim_count=5`. Continúan en cero batches, manifest y
+borradores. SQL confirma una única `request_id` desde que comenzó.
 
 ## Causa raíz general
 
@@ -68,18 +73,24 @@ La política temática, patrones, stopwords y autoridades no cambian. El anális
   aceptar sufijos impostores;
 - sigue derivando entidades hermanas desde el catálogo acreditado completo.
 
-### Sellado V2 sin objetos canónicos por fila
+### Sellado compacto y discrepancia detectada
 
 `sha256KalshiCatalogProjectionV2` consume una sola vez un iterable ordenado de
 tuplas. Cada tupla conserva ticker, título, categoría, tags, scope, información
 importante, fuentes de liquidación, volumen y última actualización. El helper
 valida forma, identidad no vacía y orden estricto.
 
-La versión cambia de `atinara-kalshi-series-catalog-projection-v1` a
-`atinara-kalshi-series-catalog-projection-v2`: el hash resultante es nuevo por
-diseño, aunque la evidencia material sellada sea la misma. V1 permanece
-disponible para compatibilidad y pruebas. Esta UUID todavía no tiene ningún
-checkpoint V2, por lo que no se reescribe historia ni se requiere migración.
+La revisión completa de la migración demostró que ese cambio de versión no era
+desplegable: `buildProviderDiscoveryCheckpointV2` almacena
+`atinara-kalshi-series-catalog-projection-v1` y la RPC aplicada rechaza cualquier
+otra versión. La Edge integrada en `4177f84` habría calculado bytes V2 y los
+habría persistido bajo una etiqueta V1. Los checkpoints productivos existentes
+son V1 reales, por lo que no deben migrarse ni reescribirse.
+
+La corrección posterior añade
+`sha256KalshiCatalogProjectionV1FromTuples`: conserva la representación compacta
+y reproduce exactamente el Canonical JSON V1. Así evita objetos y ordenación de
+claves por fila sin introducir una versión que SQL no conoce.
 
 ## Perfil live posterior
 
@@ -101,12 +112,12 @@ Deno 2.1.14 completó la misma ruta; el proceso diagnóstico completo consumió
 1.891 ms CPU incluyendo el arranque del proceso. Esta evidencia local reduce
 CPU y memoria por debajo de los límites, pero no sustituye el smoke alojado.
 
-## Pruebas
+## Pruebas de la corrección compatible
 
-- 618/618 pruebas unitarias.
-- 19/19 pruebas focales de catálogo global y checkpoint V2.
-- Hash V2 equivalente al Canonical JSON de la misma estructura con 137 filas,
-  Unicode, apóstrofes, subtítulos, guiones y números.
+- 619/619 pruebas unitarias.
+- 20/20 pruebas focales de catálogo global y checkpoint V2.
+- Hash compacto V1 idéntico al Canonical JSON V1 con 137 filas, Unicode,
+  apóstrofes, subtítulos, guiones y números.
 - Iterable de una sola pasada y rechazo de forma, identidad u orden inválidos.
 - Equivalencia del análisis conjunto frente a clasificación unitaria.
 - Host oficial válido y sufijo impostor cubiertos.
@@ -127,10 +138,10 @@ Registry, AI Gateway, tarea, ruta, modo, modelo, flag, presupuesto, Karma,
 Prestigio, LMSR, mercado, predicción o borrador. Radar continúa sin Gemini.
 Solo debe desplegarse `market-radar`, siempre con `verify_jwt=true`.
 
-## Continuación después de la subida
+## Continuación después de subir la corrección de contrato
 
-1. Ejecutar `git fetch --all --prune` y comparar el rango desde `a6152a7`.
-2. Exigir exactamente las diez rutas del manifiesto y contenido idéntico.
+1. Ejecutar `git fetch --all --prune` y comparar el rango desde `4177f84`.
+2. Exigir exactamente las rutas del nuevo manifiesto y contenido idéntico.
 3. Exigir Calidad de Atinara —incluido Deno—, Pages y Benchmark IA offline
    verdes para el nuevo SHA. No usar Sonar.
 4. Crear una worktree limpia desde el nuevo `origin/main`.
