@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { sha256KalshiCatalogProjectionV1 } from "../_shared/radar-catalog-hash.mjs";
+import { sha256KalshiCatalogProjectionV2 } from "../_shared/radar-catalog-hash.mjs";
 import {
   RADAR_API_HOSTS,
   RADAR_CANDIDATE_PROVIDERS,
@@ -972,7 +972,7 @@ function isProviderRateLimit(error: unknown): error is ProviderRequestError {
     : error instanceof Error && /PROVIDER_RATE_LIMITED|HTTP_429/.test(error.message);
 }
 
-async function readProviderResponseText(response: Response, maxBytes: number): Promise<string> {
+async function readProviderResponseJson(response: Response, maxBytes: number): Promise<unknown> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
@@ -980,27 +980,32 @@ async function readProviderResponseText(response: Response, maxBytes: number): P
   if (!response.body) {
     const buffer = new Uint8Array(await response.arrayBuffer());
     if (buffer.byteLength > maxBytes) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
-    return new TextDecoder().decode(buffer);
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel("PROVIDER_RESPONSE_TOO_LARGE").catch(() => undefined);
-        throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
-      }
-      chunks.push(decoder.decode(value, { stream: true }));
+    try {
+      return JSON.parse(new TextDecoder().decode(buffer));
+    } catch {
+      throw new Error("PROVIDER_INVALID_RESPONSE");
     }
-    chunks.push(decoder.decode());
-    return chunks.join("");
-  } finally {
-    reader.releaseLock();
+  }
+  let totalBytes = 0;
+  let responseTooLarge = false;
+  const boundedBody = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      totalBytes += chunk.byteLength;
+      if (totalBytes > maxBytes) {
+        responseTooLarge = true;
+        controller.error(new Error("PROVIDER_RESPONSE_TOO_LARGE"));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+  try {
+    return await new Response(boundedBody, {
+      headers: { "Content-Type": "application/json" },
+    }).json();
+  } catch {
+    if (responseTooLarge) throw new Error("PROVIDER_RESPONSE_TOO_LARGE");
+    throw new Error("PROVIDER_INVALID_RESPONSE");
   }
 }
 
@@ -1026,12 +1031,7 @@ async function fetchJson(
     try {
       const response = await fetch(url, { ...init, signal: child.signal });
       if (response.ok) {
-        const text = await readProviderResponseText(response, maxResponseBytes);
-        try {
-          return JSON.parse(text);
-        } catch {
-          throw new Error("PROVIDER_INVALID_RESPONSE");
-        }
+        return await readProviderResponseJson(response, maxResponseBytes);
       }
       if (response.status === 429) {
         const retryAfterMs = retryAfterMilliseconds(response.headers);
@@ -3415,37 +3415,37 @@ async function buildKalshiProviderDiscoveryCheckpoint(
   }) as JsonRecord;
 }
 
-function kalshiCatalogFingerprintProjection(series: JsonRecord): JsonRecord {
+function kalshiCatalogFingerprintProjectionV2(series: JsonRecord): unknown[] {
   const productMetadata = toRecord(series.product_metadata);
   const importantInfo = toRecord(productMetadata?.important_info);
-  const settlementSources = toRecordArray(series.settlement_sources).map((source) => ({
-    name: cleanText(source.name, 200) || null,
-    url: cleanText(source.url, 2_048) || null,
-  })).filter((source) => source.url).sort((left, right) => {
-    const leftIdentity = `${left.url}\u0000${left.name ?? ""}`;
-    const rightIdentity = `${right.url}\u0000${right.name ?? ""}`;
+  const settlementSources = toRecordArray(series.settlement_sources).map((source) => ([
+    cleanText(source.name, 200) || null,
+    cleanText(source.url, 2_048) || null,
+  ])).filter((source) => source[1]).sort((left, right) => {
+    const leftIdentity = `${left[1]}\u0000${left[0] ?? ""}`;
+    const rightIdentity = `${right[1]}\u0000${right[0] ?? ""}`;
     return leftIdentity < rightIdentity ? -1 : leftIdentity > rightIdentity ? 1 : 0;
   });
-  return {
-    ticker: cleanText(series.ticker, 120),
-    title: cleanText(series.title ?? series.name, 400),
-    category: cleanText(series.category, 160),
-    tags: (Array.isArray(series.tags) ? series.tags : [])
+  return [
+    cleanText(series.ticker, 120),
+    cleanText(series.title ?? series.name, 400),
+    cleanText(series.category, 160),
+    (Array.isArray(series.tags) ? series.tags : [])
       .map((tag) => cleanText(tag, 100)).filter(Boolean).sort(compareUtf16Text),
-    product_scope: cleanText(productMetadata?.scope, 1_000) || null,
-    product_important_info: importantInfo ? {
-      title: cleanText(importantInfo.title, 500) || null,
-      message: cleanText(importantInfo.message, 2_000) || null,
-      markdown: cleanText(importantInfo.markdown, 4_000) || null,
-    } : null,
-    settlement_sources: settlementSources,
-    volume_fp: cleanText(series.volume_fp ?? series.volume, 80) || null,
-    last_updated_ts: safeIsoDate(series.last_updated_ts),
-  };
+    cleanText(productMetadata?.scope, 1_000) || null,
+    importantInfo ? [
+      cleanText(importantInfo.title, 500) || null,
+      cleanText(importantInfo.message, 2_000) || null,
+      cleanText(importantInfo.markdown, 4_000) || null,
+    ] : null,
+    settlementSources,
+    cleanText(series.volume_fp ?? series.volume, 80) || null,
+    safeIsoDate(series.last_updated_ts),
+  ];
 }
 
-function* kalshiCatalogFingerprintProjections(seriesRows: JsonRecord[]): Generator<JsonRecord> {
-  for (const series of seriesRows) yield kalshiCatalogFingerprintProjection(series);
+function* kalshiCatalogFingerprintProjectionsV2(seriesRows: JsonRecord[]): Generator<unknown[]> {
+  for (const series of seriesRows) yield kalshiCatalogFingerprintProjectionV2(series);
 }
 
 async function buildKalshiProviderDiscoveryCheckpointV2(
@@ -3504,11 +3504,11 @@ async function buildKalshiProviderDiscoveryCheckpointV2(
   });
   if (!selected.length) throw new Error("PROVIDER_INVALID_RESPONSE");
   if (selected.length > MAX_KALSHI_SERIES) throw new Error("PROVIDER_SERIES_SCOPE_LIMIT_EXCEEDED");
-  const providerCatalogHash = sha256KalshiCatalogProjectionV1({
-    projection_version: "atinara-kalshi-series-catalog-projection-v1",
+  const providerCatalogHash = sha256KalshiCatalogProjectionV2({
+    projection_version: "atinara-kalshi-series-catalog-projection-v2",
     entity_policy_version: KALSHI_RADAR_CATALOG_ENTITY_POLICY_VERSION,
     entity_terms_hash: entityTermsHash,
-    series: kalshiCatalogFingerprintProjections(rawSeries),
+    series: kalshiCatalogFingerprintProjectionsV2(rawSeries),
   });
   const compactSeries = selected.map(({ source, scopes, classification }) =>
     compactKalshiSeriesCheckpoint(source, scopes, classification));

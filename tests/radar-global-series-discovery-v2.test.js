@@ -136,6 +136,12 @@ test("taxonomía registrada, entidades, industria y autoridades son señales gen
   });
   assert.equal(official.selected, true);
   assert.ok(official.signals.includes("official_gaming_source"));
+  const impostor = radar.classifyKalshiRadarSeriesCatalogV2({
+    ticker: "ARBITRARY-IMPOSTOR", title: "Future product", category: "Companies", tags: [],
+    settlement_sources: [{ url: "https://newsroom.nintendo.com.evil.example/future-product" }],
+  });
+  assert.equal(impostor.selected, false);
+  assert.equal(impostor.signals.includes("official_gaming_source"), false);
   const editorial = radar.classifyKalshiRadarSeriesCatalogV2({
     ticker: "ARBITRARY-REVIEW", title: "Critic score", category: "Entertainment", tags: [],
     settlement_sources: [{ url: "https://www.metacritic.com/game/example" }],
@@ -270,6 +276,51 @@ test("el hash incremental conserva exactamente el contrato canónico con 100+ se
     ...input,
     series: {},
   }), /PROVIDER_DISCOVERY_CATALOG_HASH_INVALID/);
+});
+
+test("el hash V2 conserva evidencia completa con tuplas estables y un iterador de una sola pasada", async () => {
+  const series = Array.from({ length: 137 }, (_, index) => ([
+    `KX-CATALOG-V2-${String(index).padStart(4, "0")}`,
+    index % 2 ? `Tom Clancy's catálogo ${index}` : `Pokémon — catálogo ${index}`,
+    "Entertainment",
+    ["Página 1", "Video games"],
+    `Subtítulo ${index}: edición Z-A`,
+    index % 3 ? null : [`Información ${index}`, "Resolución oficial", `**Número ${index}**`],
+    [["Fuente oficial", `https://example.com/catalog/${index}`]],
+    String(index),
+    "2026-08-27T00:00:00.000Z",
+  ]));
+  const input = {
+    entity_policy_version: "atinara-kalshi-catalog-entities-v1",
+    entity_terms_hash: hash("d"),
+    projection_version: "atinara-kalshi-series-catalog-projection-v2",
+    series,
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV2(input),
+    await contracts.sha256Hex(input),
+  );
+  let iteratorCalls = 0;
+  const oneShotSeries = {
+    *[Symbol.iterator]() {
+      iteratorCalls += 1;
+      if (iteratorCalls > 1) throw new Error("ITERATOR_REUSED");
+      yield* series;
+    },
+  };
+  assert.equal(
+    catalogHash.sha256KalshiCatalogProjectionV2({ ...input, series: oneShotSeries }),
+    await contracts.sha256Hex(input),
+  );
+  assert.equal(iteratorCalls, 1);
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV2({
+    ...input,
+    series: [series[1], series[0]],
+  }), /PROVIDER_DISCOVERY_SERIES_IDENTITY_INVALID/);
+  assert.throws(() => catalogHash.sha256KalshiCatalogProjectionV2({
+    ...input,
+    series: [["KX-BROKEN"]],
+  }), /PROVIDER_DISCOVERY_CATALOG_PROJECTION_INVALID/);
 });
 
 test("el análisis global de 100+ series equivale a términos más clasificación unitaria", () => {
@@ -468,32 +519,43 @@ test("Edge usa catálogo global completo, lectura acotada y checkpoint antes de 
   assert.match(edge, /include_volume["'],\s*["']true/);
   assert.match(edge, /if \(providerCursor\) throw new Error\("PROVIDER_PAGINATION_INCOMPLETE"\)/);
   assert.match(edge, /MAX_KALSHI_CATALOG_RESPONSE_BYTES = 24_000_000/);
-  assert.match(edge, /readProviderResponseText/);
+  assert.match(edge, /readProviderResponseJson/);
+  assert.match(edge, /TransformStream<Uint8Array, Uint8Array>/);
+  assert.match(edge, /responseTooLarge/);
+  assert.doesNotMatch(edge, /const chunks: string\[\]/);
+  assert.doesNotMatch(edge, /chunks\.join\(/);
   assert.match(edge, /MAX_PROVIDER_DISCOVERY_SERIES_BATCH = 48/);
   assert.match(edge, /withRadarProviderDiscoveryBudget/);
   assert.match(sharedSource, /buildKalshiRadarCatalogEntityTermsV2/);
   assert.match(edge, /analyzeKalshiRadarSeriesCatalogV2/);
-  assert.match(edge, /sha256KalshiCatalogProjectionV1/);
+  assert.match(edge, /sha256KalshiCatalogProjectionV2/);
+  assert.doesNotMatch(edge, /sha256KalshiCatalogProjectionV1/);
   assert.doesNotMatch(edge, /providerCatalogHash\s*=\s*await sha256Hex/);
-  assert.match(edge, /function\* kalshiCatalogFingerprintProjections/);
+  assert.match(edge, /function\* kalshiCatalogFingerprintProjectionsV2/);
   assert.match(edge, /rawSeries\.sort\(/);
   assert.doesNotMatch(edge, /projectionByTicker|catalogProjection\s*=/);
   assert.match(catalogHashSource, /createHash\("sha256"\)/);
   assert.match(catalogHashSource, /for \(const projection of series\)/);
-  assert.match(catalogHashSource, /digest\.update\(canonicalJson\(projection\)\)/);
+  const v2Hash = catalogHashSource.slice(
+    catalogHashSource.indexOf("export function sha256KalshiCatalogProjectionV2"),
+  );
+  assert.match(v2Hash, /digest\.update\(JSON\.stringify\(projection\)\)/);
+  assert.doesNotMatch(v2Hash, /canonicalJson\(projection\)/);
   assert.doesNotMatch(catalogHashSource, /canonicalJson\(input\)/);
   const scanCatalog = sharedSource.slice(
     sharedSource.indexOf("function scanKalshiRadarCatalogV2"),
     sharedSource.indexOf("export function buildKalshiRadarCatalogEntityTermsV2"),
   );
   assert.doesNotMatch(scanCatalog, /classifyKalshiRadarSeriesCatalogV2\(/);
+  assert.match(scanCatalog, /new Uint16Array\(rows\.length\)/);
+  assert.doesNotMatch(scanCatalog, /preparedRows/);
   assert.match(edge, /El deadline del lote no es un fallo de esta serie/);
   assert.match(edge, /boundedEnvironment\.execution\.signal\.aborted/);
   assert.match(edge, /provider_catalog_hash/);
   assert.match(edge, /provider_catalog_pagination_exhausted/);
-  assert.match(edge, /product_important_info/);
-  assert.match(edge, /settlement_sources: settlementSources/);
-  assert.match(edge, /volume_fp: cleanText\(series\.volume_fp/);
+  assert.match(edge, /atinara-kalshi-series-catalog-projection-v2/);
+  assert.match(edge, /settlementSources/);
+  assert.match(edge, /cleanText\(series\.volume_fp/);
   assert.doesNotMatch(edge, /KXSWITCH2|KXMETACRITICSTALKER2/);
   assert.doesNotMatch(edge, /gemini/i);
 });

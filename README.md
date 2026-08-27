@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 27 de agosto usa Radar v74, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. V74 conserva el checkpoint global V2, pero su refresh único está pausado hasta integrar la corrección de límite de worker documentada abajo. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- Producción verificada el 27 de agosto usa Radar v75, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. V75 conserva el checkpoint global V2, pero su refresh único está pausado hasta integrar la segunda corrección general del límite de worker documentada abajo. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -38,11 +38,13 @@ no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
 de Corrector v25 no contiene migración y quedó integrado en `origin/main`
 mediante `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`.
 
-## Estado operativo de 13.5.2 · Radar v74 y cierre global pausado
+## Estado operativo de 13.5.2 · Radar v75 y cierre global pausado
 
 El corte canónico verificado es
-`origin/main = 98e5eded9fdef2dd9dea0975dad73a079bcb7f6e`. Calidad de Atinara
-—incluido Deno—, Benchmark IA offline y GitHub Pages están verdes para ese SHA.
+`origin/main = a6152a76b4d966f67ece6f6e8b72dcd0f5400034`. Su delta directo
+desde `98e5ede` contiene exactamente las diez rutas del ZIP de límite del worker
+y coincide con su contenido. Calidad de Atinara —incluido Deno—, Benchmark IA
+offline y GitHub Pages están verdes para ese SHA.
 La nueva estrategia B2B-first permanece intacta; esta tarea solo cierra Radar y
 no implementa Atinara Engine.
 
@@ -51,9 +53,9 @@ La migración
 sola vez en producción como
 `20260827150224_checkpoint_market_radar_global_catalog_v2`. Su tabla privada,
 índices, RLS forzada, ACL, trigger append-only y tres RPC `service_role` están
-verificados. Después se desplegó únicamente `market-radar`: v74, `ACTIVE`,
+verificados. Después se desplegó únicamente `market-radar`: v75, `ACTIVE`,
 `verify_jwt=true`, digest
-`aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea`.
+`7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555`.
 Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron.
 
 El baseline real contiene 16 mercados, 9 predicciones, 2 perfiles, Karma total
@@ -63,28 +65,34 @@ seis borradores quedó superada cuando Yol publicó el mercado manual de Tibo el
 
 Tras v73 se inició exactamente un refresh Kalshi,
 `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Sus dos intenciones esperadas conservan
-`claim_count=3` y la misma UUID; no hay checkpoint V2, batch, manifest,
+`claim_count=4` y la misma UUID; no hay checkpoint V2, batch, manifest,
 candidata ni borrador. Las dos invocaciones v73 terminaron HTTP 546 a 10.666 ms
-y 10.033 ms. La única reanudación v74 reclamó la misma UUID, terminó HTTP 546 a
-6.216 ms y se reconcilió por una lectura 200 sin crear otra intención. No debe
-reintentarse con v74.
+y 10.033 ms. Las reanudaciones únicas v74 y v75 reclamaron la misma UUID y
+terminaron HTTP 546 a 6.216 ms y 6.041 ms. La recuperación v75 respondió 200 a
+1.630 ms sin crear otra intención. No debe reintentarse con v75.
 
 Kalshi estaba sano: las lecturas oficiales devolvieron HTTP 200 y cursor
-terminal. V74 eliminó el pico de 273,1 MB del hash monolítico, pero todavía
-clasificaba todo el catálogo dos veces y retenía todas las proyecciones. El
-perfil Deno midió unos 5 s de CPU frente al límite alojado de 2 s. La corrección
-pendiente conserva política, términos, selección y SHA-256: analiza señales una
-vez, materializa solo las clasificaciones seleccionadas y hashea un iterable
-ordenado. Sobre 13.549 series y 17.291.725 bytes procesó la transformación en
-1.247 ms, con 83 términos, 411 seleccionadas y 160.002.048 bytes RSS.
+terminal. V75 conservó el análisis único y el hash incremental, pero su perfil
+anterior omitía la lectura y el parse del body. La ruta completa sobre 13.559
+series midió aproximadamente 2.407 ms CPU y 285 MB RSS, por encima de los
+límites alojados de 2 s y 256 MB antes del primer checkpoint.
+
+La segunda corrección pendiente conserva el límite de 24 MB con un stream
+contador y usa el parser JSON nativo, máscaras compactas para señales y una
+proyección V2 de tuplas que sella la misma evidencia material sin objetos
+canónicos por fila. Dos lecturas live de 13.561 series y 17.306.369 bytes
+conservaron cursor terminal, 84 términos y 416 seleccionadas, con 1.501–1.563 ms
+CPU y 166 MB RSS máximo en Node. Deno 2.1.14 también completó la ruta.
 
 La regresión prueba equivalencia canónica con más de cien series, Unicode,
-apóstrofes, subtítulos, guiones y números. Pasan 617/617 unitarias, 18/18
+apóstrofes, subtítulos, guiones y números. Pasan 618/618 unitarias, 19/19
 focales V2 y 9/9 Edge con Deno 2.1.14. No cambia catálogo, selección,
 migración, frontend, otras Edge, Auth,
 secretos, IA, Registry, rutas, modos, flags, presupuestos, economía ni datos.
 Detalles:
 [`docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md`](docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md).
+La corrección de segunda fase se documenta en
+[`docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md`](docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md).
 
 La UUID histórica `c1f677eb-0dae-410f-820d-a4483601ab47` sigue stale e intacta.
 Hasta que Yol suba el ZIP incremental y las tres Actions estén verdes, no se

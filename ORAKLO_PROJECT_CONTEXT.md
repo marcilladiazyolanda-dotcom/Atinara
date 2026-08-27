@@ -5,11 +5,13 @@
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
 > **Estado remoto y productivo verificado durante el cierre Radar/Discover:**
-> `origin/main` está en `98e5eded9fdef2dd9dea0975dad73a079bcb7f6e`
-> (`fix catalogo`).
-> Calidad de Atinara —incluido Deno—, Benchmark IA offline y GitHub Pages están
-> en `success` para ese SHA. La estrategia B2B-first de `01351db` permanece
-> intacta y autoritativa; este cierre no implementa B2B ni Atinara Engine.
+> `origin/main` está en `a6152a76b4d966f67ece6f6e8b72dcd0f5400034`
+> (`radar fix`). Su rango directo desde `98e5ede` contiene exactamente las diez
+> rutas de `ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827`, sin eliminaciones,
+> y sus blobs coinciden con el ZIP entregado. Calidad de Atinara —incluido
+> Deno—, Benchmark IA offline y GitHub Pages están en `success` para ese SHA.
+> La estrategia B2B-first permanece intacta y autoritativa; este cierre no
+> implementa B2B ni Atinara Engine.
 >
 > La migración local
 > `20260826190000_checkpoint_market_radar_global_catalog_v2.sql` se aplicó una
@@ -18,11 +20,11 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > RLS forzada, ACL, trigger append-only y las tres RPC `service_role` quedaron
 > verificados. No hubo DML de negocio ni backfill.
 >
-> Se desplegó únicamente `market-radar`: pasó de v73 a v74, está `ACTIVE`,
-> `verify_jwt=true`, digest
-> `aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea`.
-> El bundle remoto de 15 archivos coincide con `origin/main` tras normalizar
-> exclusivamente finales de línea.
+> Después del baseline se desplegó únicamente `market-radar` desde `a6152a7`:
+> pasó de v74 a v75, está `ACTIVE`, `verify_jwt=true`, digest
+> `7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555`.
+> Las tres fuentes modificadas del bundle remoto coinciden exactamente con
+> `origin/main`; las otras doce dependencias conservaron el grafo de v74.
 > Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron y
 > conservan JWT obligatorio.
 >
@@ -36,31 +38,39 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > Después de v73 se inició exactamente un refresh Kalshi:
 > `39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Solo existen sus dos intenciones
 > esperadas (`kalshi/candidate_feed` y `tavily/source_enrichment`), ambas
-> `in_progress/claimed`, `claim_count=3`, lease vencido. Hay cuatro eventos
+> `in_progress/claimed`, `claim_count=4`, lease vencido. Hay cuatro eventos
 > append-only —dos `RADAR_REFRESH_CLAIMED` y dos
 > `RADAR_REFRESH_RECLAIMED`—, cero checkpoints V2, cero batches, cero manifest y
 > cero candidatas. No se creó otra UUID y no debe ejecutarse otro intento con
-> v74.
+> v75.
 >
 > Las dos invocaciones de escritura de v73 terminaron HTTP 546 a 10.666 ms y
-> 10.033 ms. La reanudación única con v74 reclamó correctamente la misma UUID y
-> terminó también HTTP 546 a 6.216 ms; la lectura automática posterior devolvió
-> 200. No hubo checkpoint, batch, manifest ni segunda UUID. Kalshi respondió
-> sano y con cursor terminal.
+> 10.033 ms. Las reanudaciones únicas con v74 y v75 reclamaron correctamente la
+> misma UUID y terminaron también HTTP 546 a 6.216 ms y 6.041 ms; la lectura
+> automática posterior a v75 devolvió HTTP 200 a 1.630 ms. No hubo checkpoint,
+> batch, manifest ni segunda UUID. Kalshi respondió sano y con cursor terminal.
 >
-> V74 eliminó la materialización monolítica del JSON, pero la transformación aún
-> clasificaba las 13.547 series dos veces y retenía las 13.547 proyecciones antes
-> del hash. El perfil Deno exacto consumió aproximadamente 5 s de CPU para esa
-> fase frente al límite alojado de 2 s. La corrección local pendiente analiza
-> señales una sola vez, solo materializa las clasificaciones seleccionadas y
-> pasa un iterable ordenado al mismo SHA-256 incremental. Sobre una lectura live
-> posterior de 13.549 series y 17.291.725 bytes conservó 83 términos y 411
-> seleccionadas, procesó catálogo, orden y hash en 1.247 ms y alcanzó 160.002.048
-> bytes RSS. Pasan 617/617 unitarias, 18/18 focales V2, 9/9 Edge con Deno 2.1.14,
-> sintaxis en 134 JavaScript, 21 contratos SQL estáticos, canonicalización
-> Node/Deno, TypeScript y `git diff --check`. No cambia política, migración,
-> frontend, otras Edge, datos, IA, Registry, economía ni presupuestos. Véase
-> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md`.
+> V75 conservó correctamente el análisis único y el hash incremental, pero su
+> perfil anterior empezaba después de materializar y parsear los 17 MB del
+> proveedor. El perfil de ruta completa demostró la causa residual: lectura,
+> decodificación, unión de strings, `JSON.parse`, clasificación y hash consumían
+> aproximadamente 2.407 ms CPU y 285 MB RSS sobre 13.559 series, por encima de
+> los límites alojados de 2 s y 256 MB antes del primer checkpoint.
+>
+> La segunda corrección local mantiene el límite fail-closed de 24 MB mediante
+> un `TransformStream`, pero entrega el stream acotado a `Response.json()` para
+> el parse nativo; usa máscaras compactas y `Uint16Array` para las señales; y
+> sella la misma evidencia material en tuplas versionadas V2 sin objetos
+> canónicos por fila. Sobre dos lecturas live de 13.561 series y 17.306.369 bytes
+> conservó 84 términos y 416 seleccionadas, cursor terminal, 1.501–1.563 ms CPU
+> y 166 MB RSS máximo en Node. Deno 2.1.14 completó la ruta; el proceso completo
+> de diagnóstico consumió 1.891 ms CPU incluyendo su arranque. Pasan 618/618
+> unitarias, 19/19 focales V2, 9/9 Edge, sintaxis en 134 JavaScript, 21 contratos
+> SQL estáticos, canonicalización Node/Deno, TypeScript y `git diff --check`.
+> No cambia política, migración, frontend, otras Edge, datos, IA, Registry,
+> economía ni presupuestos. Véanse
+> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827.md` y
+> `docs/ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827.md`.
 >
 > El expediente histórico
 > `c1f677eb-0dae-410f-820d-a4483601ab47` permanece stale e intacto. Hasta que
@@ -102,10 +112,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 - No hay IDs de mercado o serie, frontend, DML, backfill, secretos ni cambios
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
   continúa sin Gemini. La implementación y el hash incremental quedaron
-  integrados en `98e5ede`, la migración se aplicó una vez como `20260827150224`
-  y v74 es el despliegue actual. El smoke posterior demostró el límite CPU
-  residual; la corrección de worker está preparada localmente, pero todavía no
-  está en GitHub ni en producción.
+  integrados en `a6152a7`, la migración se aplicó una vez como `20260827150224`
+  y v75 es el despliegue actual. El smoke posterior demostró que el parse del
+  body completo todavía superaba los recursos del worker; la segunda corrección
+  está preparada localmente, pero todavía no está en GitHub ni en producción.
 
 ### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
 

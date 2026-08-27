@@ -2,36 +2,38 @@
 
 Fecha: 26 de agosto de 2026
 Base exacta: `8025df43e898280d06c88c70c43a26dc8acba472`
-Estado actualizado el 27 de agosto: integrada en `98e5ede`; migración aplicada
-una sola vez como `20260827150224`; `market-radar` v74 desplegado. El primer
+Estado actualizado el 27 de agosto: integrada en `a6152a7`; migración aplicada
+una sola vez como `20260827150224`; `market-radar` v75 desplegado. El primer
 refresh V2 queda pausado en su misma UUID por un límite de recursos del worker;
-la segunda corrección incremental está preparada y pendiente de subida.
+la corrección completa de lectura, análisis y hash está preparada localmente y
+pendiente de subida.
 
 ## Actualización productiva · 27 de agosto de 2026
 
 La activación respetó el orden previsto: Actions verdes, baseline de solo
 lectura, migración V2 una vez y despliegues exclusivos de Radar con JWT. La Edge
-actual es v74, digest
-`aa502e5e6c17a26f13d38e2a06892659aa7979bd9d03c766164415aec6ccb8ea`.
+actual es v75, digest
+`7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555`.
 Las demás Edge y los datos protegidos no cambiaron.
 
 El único refresh nuevo es
-`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después de v73 y una sola reanudación
-con v74 conserva dos intenciones `in_progress/claimed`, `claim_count=3`,
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Después de v73 y una reanudación por
+versión con v74 y v75 conserva dos intenciones `in_progress/claimed`,
+`claim_count=4`,
 cero checkpoints V2, cero batches y cero manifest. Las invocaciones de escritura
 terminaron HTTP 546; las lecturas de recuperación conservaron la UUID y no se
-abrió otra. No debe reanudarse con v74.
+abrió otra. No debe reanudarse con v75.
 
-V74 eliminó el pico monolítico de `canonicalJson`, pero la transformación seguía
-clasificando dos veces todas las series y reteniendo todas las proyecciones. El
-perfil Deno exacto midió en torno a 5 s frente al límite CPU alojado de 2 s. La
-corrección `ATINARA_RADAR_CATALOG_WORKER_LIMIT_FIX_20260827` analiza señales una
-sola vez, solo materializa clasificaciones seleccionadas y entrega al mismo
-digest un iterable canónico ordenado. Una lectura posterior produjo 13.549
-series, 17.291.725 bytes, 83 términos y 411 seleccionadas; la transformación
-completa bajó a 1.247 ms y 160.002.048 bytes RSS. Este addendum prevalece sobre
-las instrucciones históricas de activación que siguen abajo como registro del
-diseño original.
+V75 conservó el análisis único y el hash incremental de la primera corrección,
+pero el perfil usado para aprobarla omitía lectura, decodificación y parse del
+body. La ruta completa todavía consumía aproximadamente 2.407 ms CPU y 285 MB
+RSS sobre 13.559 series, por encima de 2 s y 256 MB. La corrección
+`ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827` usa parse JSON nativo sobre
+un stream acotado, máscaras compactas y una proyección V2 de tuplas. Dos lecturas
+posteriores de 13.561 series y 17.306.369 bytes conservaron 84 términos y 416
+seleccionadas, cursor terminal, 1.501–1.563 ms CPU y 166 MB RSS máximo en Node.
+Este addendum prevalece sobre las instrucciones históricas de activación que
+siguen abajo como registro del diseño original.
 
 ## Objetivo
 

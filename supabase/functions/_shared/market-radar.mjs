@@ -585,6 +585,10 @@ const KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS = Object.freeze([
 
 const KALSHI_RADAR_CATALOG_CREATOR_HOSTS = Object.freeze(["twitch.tv", "youtube.com"]);
 
+const KALSHI_RADAR_CATALOG_OFFICIAL_HOST_SET = new Set(KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS);
+const KALSHI_RADAR_CATALOG_EDITORIAL_HOST_SET = new Set(KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS);
+const KALSHI_RADAR_CATALOG_CREATOR_HOST_SET = new Set(KALSHI_RADAR_CATALOG_CREATOR_HOSTS);
+
 const KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS = new Set([
   "registered_gaming_taxonomy",
   "explicit_gaming_metadata",
@@ -593,6 +597,24 @@ const KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS = new Set([
   "official_gaming_source",
   "gaming_editorial_source",
 ]);
+
+const KALSHI_RADAR_CATALOG_SIGNAL_ORDER = Object.freeze([
+  "registered_gaming_taxonomy",
+  "explicit_gaming_metadata",
+  "gaming_entity_metadata",
+  "gaming_industry_metadata",
+  "creator_theme_metadata",
+  "official_gaming_source",
+  "gaming_editorial_source",
+  "creator_theme_source",
+]);
+
+const KALSHI_RADAR_CATALOG_SIGNAL_BITS = Object.freeze(Object.fromEntries(
+  KALSHI_RADAR_CATALOG_SIGNAL_ORDER.map((signal, index) => [signal, 1 << index]),
+));
+
+const KALSHI_RADAR_CATALOG_ENTITY_SEED_MASK = [...KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS]
+  .reduce((mask, signal) => mask | KALSHI_RADAR_CATALOG_SIGNAL_BITS[signal], 0);
 
 const KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS = new Set([
   "will", "would", "when", "what", "which", "who", "where", "how", "many", "much",
@@ -611,10 +633,12 @@ const KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS = new Set([
   "lanzamiento", "fecha", "antes", "despues", "cuando", "cuantos", "oficial",
 ]);
 
-function kalshiCatalogEntityTokens(series, preparedTitle = null) {
+function kalshiCatalogEntityTokens(series, preparedTitle = null, preparedNormalizedTitle = null) {
   const rawTitle = preparedTitle === null
     ? cleanText(series?.title ?? series?.name, 400) : preparedTitle;
-  const normalizedTokens = normalizeComparableText(rawTitle).split(/\s+/).filter((token) =>
+  const normalizedTitle = preparedNormalizedTitle === null
+    ? normalizeComparableText(rawTitle) : preparedNormalizedTitle;
+  const normalizedTokens = normalizedTitle.split(/\s+/).filter((token) =>
     /^[a-z][a-z0-9]{2,39}$/.test(token)
       && !KALSHI_RADAR_CATALOG_ENTITY_STOPWORDS.has(token));
   const uppercaseAcronyms = new Set((rawTitle.match(/\b[A-Z][A-Z0-9]{2,7}\b/g) ?? [])
@@ -630,50 +654,61 @@ function kalshiCatalogSeriesMetadata(series) {
   const tags = safeStringArray(series?.tags, 30);
   const productMetadata = isRecord(series?.product_metadata) ? series.product_metadata : {};
   const importantInfo = isRecord(productMetadata.important_info) ? productMetadata.important_info : {};
-  const metadataText = normalizeComparableText([
-    title, category, ...tags, productMetadata.scope,
+  const normalizedTitle = normalizeComparableText(title);
+  const metadataRest = normalizeComparableText([
+    category, ...tags, productMetadata.scope,
     importantInfo.title, importantInfo.message, importantInfo.markdown,
   ].filter(Boolean).join(" "));
+  const metadataText = [normalizedTitle, metadataRest].filter(Boolean).join(" ");
   const normalizedTicker = normalizeComparableText(ticker).replace(/\s+/g, "");
   const sources = Array.isArray(series?.settlement_sources)
     ? series.settlement_sources.filter(isRecord).slice(0, 40) : [];
   const sourceHosts = sources.map(providerSourceHostname).filter(Boolean);
   return {
-    ticker, title, category, tags, productMetadata, metadataText,
+    ticker, title, category, tags, productMetadata, metadataText, normalizedTitle,
     normalizedTicker, sources, sourceHosts,
   };
 }
 
-function kalshiCatalogSeriesSignals(metadata) {
-  const signals = [];
+function kalshiCatalogSeriesSignalMask(metadata) {
+  let mask = 0;
   if (metadata.tags.some((tag) => /^(?:video games?|esports?)$/.test(normalizeComparableText(tag)))) {
-    signals.push("registered_gaming_taxonomy");
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.registered_gaming_taxonomy;
   }
   if (KALSHI_RADAR_CATALOG_EXPLICIT_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
-    signals.push("explicit_gaming_metadata");
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.explicit_gaming_metadata;
   }
   if (KALSHI_RADAR_CATALOG_ENTITY_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
-    signals.push("gaming_entity_metadata");
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.gaming_entity_metadata;
   }
   if (KALSHI_RADAR_CATALOG_INDUSTRY_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))) {
-    signals.push("gaming_industry_metadata");
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.gaming_industry_metadata;
   }
   if (KALSHI_RADAR_CATALOG_CREATOR_METADATA_PATTERNS.some((pattern) => pattern.test(metadata.metadataText))
       || KALSHI_RADAR_CATALOG_CREATOR_TICKER_PATTERN.test(metadata.normalizedTicker)) {
-    signals.push("creator_theme_metadata");
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.creator_theme_metadata;
   }
-  if (metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_OFFICIAL_HOSTS))) {
-    signals.push("official_gaming_source");
+  if (metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_OFFICIAL_HOST_SET))) {
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.official_gaming_source;
   }
   if (metadata.sources.length <= 6
-      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_EDITORIAL_HOSTS))) {
-    signals.push("gaming_editorial_source");
+      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_EDITORIAL_HOST_SET))) {
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.gaming_editorial_source;
   }
   if (metadata.sources.length <= 3
-      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_CREATOR_HOSTS))) {
-    signals.push("creator_theme_source");
+      && metadata.sourceHosts.some((host) => providerHostMatches(host, KALSHI_RADAR_CATALOG_CREATOR_HOST_SET))) {
+    mask |= KALSHI_RADAR_CATALOG_SIGNAL_BITS.creator_theme_source;
   }
-  return signals;
+  return mask;
+}
+
+function kalshiCatalogSignalsFromMask(mask) {
+  return KALSHI_RADAR_CATALOG_SIGNAL_ORDER
+    .filter((signal) => (mask & KALSHI_RADAR_CATALOG_SIGNAL_BITS[signal]) !== 0);
+}
+
+function kalshiCatalogSeriesSignals(metadata) {
+  return kalshiCatalogSignalsFromMask(kalshiCatalogSeriesSignalMask(metadata));
 }
 
 function normalizeKalshiCatalogEntityTerms(terms) {
@@ -682,9 +717,20 @@ function normalizeKalshiCatalogEntityTerms(terms) {
 }
 
 function kalshiCatalogEntityMatches(metadataText, entityTerms) {
-  if (!entityTerms.length) return [];
-  const metadataTokens = new Set(metadataText.split(/\s+/).filter(Boolean));
-  return entityTerms.filter((term) => metadataTokens.has(term)).slice(0, 20);
+  return kalshiCatalogEntityMatchesFromSet(metadataText, new Set(entityTerms));
+}
+
+function kalshiCatalogEntityMatchesFromSet(metadataText, entityTermSet) {
+  if (!entityTermSet.size) return [];
+  const matches = [];
+  const seen = new Set();
+  for (const token of metadataText.split(" ")) {
+    if (!token || !entityTermSet.has(token) || seen.has(token)) continue;
+    seen.add(token);
+    matches.push(token);
+    if (matches.length >= 20) break;
+  }
+  return matches;
 }
 
 function finalizeKalshiCatalogClassification(metadata, baseSignals, catalogEntityMatches) {
@@ -712,20 +758,23 @@ function scanKalshiRadarCatalogV2(seriesRows, { preserveAnalysis = false } = {})
   const globalFrequency = new Map();
   const trustedFrequency = new Map();
   const trustedAcronyms = new Set();
-  const preparedRows = preserveAnalysis ? [] : null;
-  for (const series of rows) {
+  const preparedMetadataTexts = preserveAnalysis ? new Array(rows.length) : null;
+  const preparedSignalMasks = preserveAnalysis ? new Uint16Array(rows.length) : null;
+  for (let index = 0; index < rows.length; index += 1) {
+    const series = rows[index];
     const metadata = kalshiCatalogSeriesMetadata(series);
-    const extracted = kalshiCatalogEntityTokens(series, metadata.title);
+    const extracted = kalshiCatalogEntityTokens(
+      series, metadata.title, metadata.normalizedTitle,
+    );
     for (const token of extracted.tokens) {
       globalFrequency.set(token, (globalFrequency.get(token) ?? 0) + 1);
     }
-    const signals = kalshiCatalogSeriesSignals(metadata);
-    if (preparedRows) preparedRows.push({
-      source: series,
-      metadata_text: metadata.metadataText,
-      base_signals: signals.length ? signals : null,
-    });
-    if (!signals.some((signal) => KALSHI_RADAR_CATALOG_ENTITY_SEED_SIGNALS.has(signal))) continue;
+    const signalMask = kalshiCatalogSeriesSignalMask(metadata);
+    if (preparedMetadataTexts && preparedSignalMasks) {
+      preparedMetadataTexts[index] = metadata.metadataText;
+      preparedSignalMasks[index] = signalMask;
+    }
+    if ((signalMask & KALSHI_RADAR_CATALOG_ENTITY_SEED_MASK) === 0) continue;
     for (const token of extracted.tokens) {
       trustedFrequency.set(token, (trustedFrequency.get(token) ?? 0) + 1);
     }
@@ -742,7 +791,7 @@ function scanKalshiRadarCatalogV2(seriesRows, { preserveAnalysis = false } = {})
       || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
     .slice(0, 1_000)
     .map(([token]) => token);
-  return { rows, entityTerms, preparedRows };
+  return { rows, entityTerms, preparedMetadataTexts, preparedSignalMasks };
 }
 
 /**
@@ -760,19 +809,23 @@ export function buildKalshiRadarCatalogEntityTermsV2(seriesRows = []) {
  * materializa clasificaciones para las series finalmente seleccionadas.
  */
 export function analyzeKalshiRadarSeriesCatalogV2(seriesRows = []) {
-  const { entityTerms, preparedRows } = scanKalshiRadarCatalogV2(
+  const { rows, entityTerms, preparedMetadataTexts, preparedSignalMasks } = scanKalshiRadarCatalogV2(
     seriesRows, { preserveAnalysis: true },
   );
+  const entityTermSet = new Set(entityTerms);
   const selected = [];
-  for (const prepared of preparedRows ?? []) {
-    const baseSignals = prepared.base_signals ?? [];
-    const catalogEntityMatches = kalshiCatalogEntityMatches(prepared.metadata_text, entityTerms);
-    if (!baseSignals.length && !catalogEntityMatches.length) continue;
-    const metadata = kalshiCatalogSeriesMetadata(prepared.source);
+  for (let index = 0; index < rows.length; index += 1) {
+    const signalMask = preparedSignalMasks?.[index] ?? 0;
+    const catalogEntityMatches = kalshiCatalogEntityMatchesFromSet(
+      preparedMetadataTexts?.[index] ?? "", entityTermSet,
+    );
+    if (!signalMask && !catalogEntityMatches.length) continue;
+    const source = rows[index];
+    const metadata = kalshiCatalogSeriesMetadata(source);
     selected.push({
-      source: prepared.source,
+      source,
       classification: finalizeKalshiCatalogClassification(
-        metadata, baseSignals, catalogEntityMatches,
+        metadata, kalshiCatalogSignalsFromMask(signalMask), catalogEntityMatches,
       ),
     });
   }
@@ -780,13 +833,23 @@ export function analyzeKalshiRadarSeriesCatalogV2(seriesRows = []) {
 }
 
 function providerSourceHostname(source) {
-  try { return new URL(cleanText(source?.url, 2048)).hostname.toLowerCase(); }
+  const value = cleanText(source?.url, 2048);
+  const commonHttpHost = /^https?:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i.exec(value)?.[1];
+  if (commonHttpHost) return commonHttpHost.toLowerCase();
+  try { return new URL(value).hostname.toLowerCase(); }
   catch { return ""; }
 }
 
 function providerHostMatches(hostname, allowedHosts) {
-  return Boolean(hostname) && allowedHosts.some((host) =>
-    hostname === host || hostname.endsWith(`.${host}`));
+  if (!hostname) return false;
+  let candidate = hostname;
+  while (candidate) {
+    if (allowedHosts.has(candidate)) return true;
+    const separator = candidate.indexOf(".");
+    if (separator < 0) return false;
+    candidate = candidate.slice(separator + 1);
+  }
+  return false;
 }
 
 /**
