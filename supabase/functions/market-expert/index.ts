@@ -19,6 +19,7 @@ import { persistAgentTelemetry } from "../_shared/ai/telemetry.mjs";
 import { createMarketWorkflowIssue } from "../_shared/market-workflow-issues.mjs";
 import { essentialMarketTextNotSpanish } from "../_shared/market-language.mjs";
 import { RADAR_NORMALIZER_VERSION } from "../_shared/market-radar.mjs";
+import { activeOriginWorkflowIssues } from "./domain-review.mjs";
 import { nullableFiniteNumber } from "../_shared/nullable-number.mjs";
 import { isIanaTimezone } from "../_shared/market-temporal-contract.mjs";
 
@@ -34,7 +35,7 @@ type SupabaseEnvironment = {
 const MARKET_INTELLIGENCE_POLICY_VERSION = "atinara-market-constitution-v1";
 const MARKET_EXPERT_SCHEMA_VERSION = "atinara-market-expert-v1";
 const SOURCE_CONTRACT_SCHEMA_VERSION = "atinara-resolution-contract-v1";
-const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v6";
+const MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v7";
 const RADAR_ELIGIBILITY_POLICY_VERSION = "atinara-prediction-policy-v5";
 const MAX_REQUEST_BYTES = 12_288;
 const OPERATION_TIMEOUT_MS = 110_000;
@@ -643,6 +644,7 @@ function safeOrigin(origin: JsonRecord): JsonRecord {
     "current_eligibility_check_id", "fingerprint", "preparation_revision",
     "advancement_gate", "workflow_issues", "temporal_contract", "domain_status",
     "domain_reason_code", "domain_positive_signals", "domain_negative_signals", "domain_policy_version",
+    "domain_review_fingerprint", "human_domain_review",
     "verified_at", "cache_expires_at", "quality_updated_at", "family_key", "family_title",
     "family_type", "family_child_key", "family_child_label", "family_relationship", "family_matches",
     "family_version", "family_semantics", "family_source_event_key", "family_sort_at",
@@ -1233,7 +1235,7 @@ function createDeterministicVerdict(origin: JsonRecord, originType: string): Jso
   const assessment = deterministicAssessment(origin, originType);
   const contract = contractFromOrigin(origin, hypothesis, originType);
   const issues = validationIssues(contract);
-  const originIssues = records(origin.workflow_issues);
+  const originIssues = activeOriginWorkflowIssues(origin);
   const workflowTerminal = originIssues.some((issue) =>
     text(issue.blocking_scope, 40) === "terminal" || text(issue.repairability, 40) === "terminal");
   const proposal = workflowTerminal ? {} : proposalFromOrigin(origin, hypothesis, contract);

@@ -7,6 +7,7 @@ const { before, test } = require("node:test");
 
 const root = join(__dirname, "..");
 const corePath = join(root, "supabase/functions/_shared/market-radar.mjs");
+const expertDomainReviewPath = join(root, "supabase/functions/market-expert/domain-review.mjs");
 const adminPage = readFileSync(join(root, "admin-markets.html"), "utf8");
 const adminBridge = readFileSync(join(root, "admin-agent-engine.js"), "utf8");
 const adminHtml = `${adminPage}\n${adminBridge}`;
@@ -14,11 +15,13 @@ const adminMarkets = readFileSync(join(root, "admin-markets.js"), "utf8");
 const marketExpert = readFileSync(join(root, "supabase/functions/market-expert/index.ts"), "utf8");
 const policyMigration = readFileSync(join(root, "supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql"), "utf8");
 let radar;
+let expertDomainReview;
 
 const now = "2026-08-08T12:00:00.000Z";
 
 before(async () => {
   radar = await import(pathToFileURL(corePath).href);
+  expertDomainReview = await import(pathToFileURL(expertDomainReviewPath).href);
 });
 
 function completeCandidate(question, overrides = {}) {
@@ -300,7 +303,7 @@ test("la política de elegibilidad v5 coincide en Radar, interfaz, Editor y rese
 
 test("Market Expert consume la versión del normalizador desde el contrato compartido del Radar", () => {
   assert.equal(radar.RADAR_NORMALIZER_VERSION, "atinara-radar-v3");
-  assert.match(marketExpert, /MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v6"/);
+  assert.match(marketExpert, /MARKET_EXPERT_IMPLEMENTATION_VERSION = "radar-intelligence-bridge-v7"/);
   assert.match(
     marketExpert,
     /import \{ RADAR_NORMALIZER_VERSION \} from "\.\.\/_shared\/market-radar\.mjs";/,
@@ -309,6 +312,47 @@ test("Market Expert consume la versión del normalizador desde el contrato compa
     marketExpert,
     /const RADAR_NORMALIZER_VERSION\s*=\s*"atinara-radar-v2"/,
   );
+});
+
+test("Market Expert descarta solo la incidencia de dominio ya resuelta por la atestación exacta vigente", () => {
+  const domainFingerprint = "a".repeat(64);
+  const staleDomainIssue = { issue_code: "GAMING_DOMAIN_REVIEW_REQUIRED", status: "open" };
+  const factualIssue = { issue_code: "RADAR_ELIGIBILITY_REQUIRED", status: "open" };
+  const origin = {
+    fingerprint: "r1234abcd",
+    domain_status: "in_domain",
+    domain_reason_code: null,
+    domain_policy_version: "atinara-gaming-domain-v2",
+    domain_review_fingerprint: domainFingerprint,
+    human_domain_review: {
+      decision: "in_domain",
+      policy_version: "atinara-gaming-domain-v2",
+      domain_fingerprint: domainFingerprint,
+      candidate_fingerprint: "r1234abcd",
+    },
+    workflow_issues: [staleDomainIssue, factualIssue],
+  };
+
+  assert.equal(expertDomainReview.hasCurrentInDomainHumanReview(origin), true);
+  assert.deepEqual(
+    expertDomainReview.activeOriginWorkflowIssues(origin).map((issue) => issue.issue_code),
+    ["RADAR_ELIGIBILITY_REQUIRED"],
+  );
+  for (const stale of [
+    { domain_review_fingerprint: "b".repeat(64) },
+    { fingerprint: "r99999999" },
+    { human_domain_review: { ...origin.human_domain_review, decision: "out_of_domain" } },
+  ]) {
+    const candidate = { ...origin, ...stale };
+    assert.equal(expertDomainReview.hasCurrentInDomainHumanReview(candidate), false);
+    assert.deepEqual(
+      expertDomainReview.activeOriginWorkflowIssues(candidate).map((issue) => issue.issue_code),
+      ["GAMING_DOMAIN_REVIEW_REQUIRED", "RADAR_ELIGIBILITY_REQUIRED"],
+    );
+  }
+  assert.match(marketExpert, /"domain_review_fingerprint", "human_domain_review"/);
+  assert.match(marketExpert, /import \{ activeOriginWorkflowIssues \} from "\.\/domain-review\.mjs"/);
+  assert.match(marketExpert, /const originIssues = activeOriginWorkflowIssues\(origin\)/);
 });
 
 test("loadPackage comparte inflight y una respuesta vieja no sobrescribe una revisión nueva", async () => {
