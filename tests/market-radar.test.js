@@ -1148,6 +1148,9 @@ test("Tavily se consulta una vez por evento padre y el contrato IA dormido queda
   assert.match(edge, /get_market_radar_authoritative_source_domains_v1/);
   assert.match(edge, /childQuestions/);
   assert.match(edge, /const factTerms =/);
+  assert.equal((researchSource.match(/Authorization:\s*`Bearer \$\{apiKey\}`/g) || []).length, 2);
+  assert.doesNotMatch(researchSource, /api_key:\s*apiKey/);
+  assert.match(researchSource, /failure_code:\s*firstFailure \? radarOperationalErrorCode/);
   assert.match(edge, /official announced revealed selected winner result complete lineup/);
   assert.match(edge, /selectionSubject[\s\S]*official \$\{selectionSubject\} cover reveal cover stars standard ultimate deluxe complete lineup/);
   assert.match(edge, /:\s*`\$\{factTerms\} \$\{group\.title\} \$\{childQuestions\}`/);
@@ -1295,7 +1298,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260828-radar-editor-domain1/);
+  assert.match(adminHtml, /v=20260828-radar-editor-tavily1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

@@ -2402,9 +2402,8 @@ async function discoverOfficialContext(
   const url = new URL("https://api.tavily.com/search");
   const response = await fetchProviderJson("tavily", url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      api_key: apiKey,
       query,
       topic: "news",
       days: 30,

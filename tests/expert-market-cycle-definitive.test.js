@@ -131,6 +131,16 @@ test("Editor · muestra la causa raíz sin cascada ni recuperación factual", ()
   assert.match(adminJs, /ensureRadarDraftEligibility/);
 });
 
+test("Editor · Tavily usa el contrato Bearer vigente y nunca filtra la clave en el payload", () => {
+  const discoverySource = editorEdge.slice(
+    editorEdge.indexOf("async function discoverOfficialContext"),
+    editorEdge.indexOf("async function discoverOpportunities"),
+  );
+  assert.match(discoverySource, /Authorization:\s*`Bearer \$\{apiKey\}`/);
+  assert.doesNotMatch(discoverySource, /api_key:\s*apiKey/);
+  assert.match(fixerEdge, /Authorization:\s*`Bearer \$\{env\.tavilyKey\}`/);
+});
+
 test("Editor · candidata abierta pero incompleta puede materializar un borrador privado reparable", () => {
   assert.match(editorEdge, /can_materialize_private_repair_draft:\s*canMaterializePrivateRepairDraft/);
   assert.match(adminAgentBridge, /materialize_market_draft_for_repair_v1/);

@@ -9,6 +9,7 @@
   const ATTEMPT_KEY_PREFIX = "atinara:market-draft-repair:attempt:v1";
   let timer = null;
   let restoring = false;
+  let repairInFlight = false;
 
   const style = document.createElement("style");
   style.textContent = `
@@ -141,6 +142,11 @@
     const description = document.createElement("p");
     const panelActions = document.createElement("div");
     const repairButton = document.createElement("button");
+    const confirmation = document.createElement("div");
+    const confirmationText = document.createElement("p");
+    const confirmationActions = document.createElement("div");
+    const confirmButton = document.createElement("button");
+    const cancelButton = document.createElement("button");
     const authority = document.createElement("small");
     const repairStatus = document.createElement("p");
     eyebrow.className = "eyebrow";
@@ -151,7 +157,23 @@
     repairButton.className = "primary-button";
     repairButton.type = "button";
     repairButton.dataset.expertRepairDraft = "true";
+    repairButton.setAttribute("aria-expanded", "false");
     repairButton.textContent = "Aplicar correcciones y volver a revisar";
+    confirmation.hidden = true;
+    confirmation.dataset.expertRepairConfirmation = "true";
+    confirmation.setAttribute("role", "group");
+    confirmation.setAttribute("aria-label", "Confirmar corrección privada");
+    confirmationText.textContent = "Atinara corregirá únicamente las incidencias registradas y volverá a revisar este mismo borrador. No lo confirmará, programará ni publicará.";
+    confirmationActions.className = "admin-expert-repair-panel-actions";
+    confirmButton.className = "primary-button";
+    confirmButton.type = "button";
+    confirmButton.dataset.expertRepairConfirm = "true";
+    confirmButton.textContent = "Confirmar corrección";
+    cancelButton.type = "button";
+    cancelButton.dataset.expertRepairCancel = "true";
+    cancelButton.textContent = "Cancelar";
+    confirmationActions.append(confirmButton, cancelButton);
+    confirmation.append(confirmationText, confirmationActions);
     authority.textContent = "No confirma, programa ni publica por ti. La confirmación humana seguirá siendo obligatoria.";
     repairStatus.className = "admin-expert-repair-panel-status";
     repairStatus.dataset.expertRepairStatus = "true";
@@ -159,7 +181,7 @@
     repairStatus.hidden = true;
     heading.append(eyebrow, title);
     panelActions.append(repairButton, authority);
-    panel.append(heading, description, panelActions, repairStatus);
+    panel.append(heading, description, panelActions, confirmation, repairStatus);
     const actions = gate.querySelector(".admin-gate-actions");
     if (actions) gate.insertBefore(panel, actions);
     else gate.appendChild(panel);
@@ -230,7 +252,43 @@
     };
   }
 
+  function requestRepair(button) {
+    if (repairInFlight) return;
+    const panel = button.closest("[data-expert-repair-panel]");
+    const confirmation = panel?.querySelector("[data-expert-repair-confirmation]");
+    const confirmButton = confirmation?.querySelector("[data-expert-repair-confirm]");
+    const status = panel?.querySelector("[data-expert-repair-status]");
+    if (!confirmation || !confirmButton) return;
+    confirmation.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    if (status) {
+      status.hidden = false;
+      status.dataset.tone = "info";
+      status.setAttribute("role", "status");
+      status.textContent = "Confirma la corrección privada para iniciar el proceso. Todavía no se ha enviado ninguna solicitud.";
+    }
+    confirmButton.focus();
+  }
+
+  function cancelRepair(button) {
+    if (repairInFlight) return;
+    const panel = button.closest("[data-expert-repair-panel]");
+    const confirmation = panel?.querySelector("[data-expert-repair-confirmation]");
+    const trigger = panel?.querySelector("[data-expert-repair-draft]");
+    const status = panel?.querySelector("[data-expert-repair-status]");
+    if (confirmation) confirmation.hidden = true;
+    trigger?.setAttribute("aria-expanded", "false");
+    if (status) {
+      status.hidden = false;
+      status.dataset.tone = "info";
+      status.setAttribute("role", "status");
+      status.textContent = "Corrección cancelada. No se ha enviado ninguna solicitud ni se ha modificado el borrador.";
+    }
+    trigger?.focus();
+  }
+
   async function runRepair(button) {
+    if (repairInFlight) return;
     const draft = currentDraft();
     if (!draft) return;
     const structuredIssueIds = [...document.querySelectorAll(
@@ -242,8 +300,11 @@
       "[data-workflow-repairability='waiting_authoritative_source']",
     )]
       .map((item) => safeText(item.dataset.workflowIssueId, 80)).filter(Boolean);
-    if (!window.confirm("Atinara corregirá únicamente los problemas registrados y ejecutará una nueva revisión. No se publicará ni se confirmará automáticamente. ¿Continuar?")) return;
-
+    repairInFlight = true;
+    const panel = button.closest("[data-expert-repair-panel]");
+    const confirmation = panel?.querySelector("[data-expert-repair-confirmation]");
+    if (confirmation) confirmation.hidden = true;
+    button.setAttribute("aria-expanded", "false");
     const status = document.querySelector("[data-expert-repair-status]");
     button.disabled = true;
     button.textContent = "Corrigiendo y revisando…";
@@ -305,6 +366,8 @@
       if (!failure.retryable) clearRepairAttempt(draft);
       button.disabled = false;
       button.textContent = "Aplicar correcciones y volver a revisar";
+    } finally {
+      repairInFlight = false;
     }
   }
 
@@ -361,8 +424,19 @@
   }
 
   root.addEventListener("click", (event) => {
+    const confirm = event.target.closest("[data-expert-repair-confirm]");
+    if (confirm) {
+      const trigger = confirm.closest("[data-expert-repair-panel]")?.querySelector("[data-expert-repair-draft]");
+      if (trigger) runRepair(trigger);
+      return;
+    }
+    const cancel = event.target.closest("[data-expert-repair-cancel]");
+    if (cancel) {
+      cancelRepair(cancel);
+      return;
+    }
     const button = event.target.closest("[data-expert-repair-draft]");
-    if (button) runRepair(button);
+    if (button) requestRepair(button);
   });
   new MutationObserver(schedule).observe(root, { childList: true, subtree: true });
   schedule();

@@ -9,12 +9,13 @@ const editorBridge = read("admin-agent-engine.js");
 const marketsHtml = read("admin-markets.html");
 const marketsUi = read("admin-markets.js");
 const correctorUi = read("market-draft-fixer.js");
+const correctorRepairUi = correctorUi.slice(0, correctorUi.indexOf("(function initAtinaraPublicationFlow"));
 const resolutionUi = read("admin-resolution.js");
 const validationUi = read("market-admin-validation.js");
 
 test("el puente del Agent Engine vive en un recurso externo ordenado y versionado", () => {
   assert.doesNotMatch(marketsHtml, /function\s+(?:invokeMarketExpert|installExpertPanel|renderExpertDossier)/);
-  assert.match(marketsHtml, /market-draft-fixer\.js\?v=20260828-radar-editor-domain1[\s\S]+admin-agent-engine\.js\?v=20260828-radar-editor-domain1/);
+  assert.match(marketsHtml, /market-draft-fixer\.js\?v=20260828-radar-editor-tavily1[\s\S]+admin-agent-engine\.js\?v=20260828-radar-editor-tavily1/);
   assert.match(editorBridge, /function initRadarExpertBridge/);
 });
 
@@ -26,10 +27,17 @@ test("las superficies de agente son neutrales respecto al proveedor", () => {
 
 test("el Corrector construye mensajes con DOM seguro y conserva regiones accesibles", () => {
   assert.doesNotMatch(correctorUi, /\.innerHTML\s*=/);
+  assert.doesNotMatch(correctorRepairUi, /window\.confirm/);
   assert.match(correctorUi, /document\.createElement/);
   assert.match(correctorUi, /\.textContent\s*=/);
   assert.match(correctorUi, /setAttribute\("role",\s*"alert"\)/);
   assert.match(correctorUi, /setAttribute\("role",\s*"status"\)/);
+  assert.match(correctorUi, /data\.expertRepairConfirmation|dataset\.expertRepairConfirmation/);
+  assert.match(correctorUi, /dataset\.expertRepairConfirm/);
+  assert.match(correctorUi, /dataset\.expertRepairCancel/);
+  assert.match(correctorUi, /Todavía no se ha enviado ninguna solicitud/);
+  assert.match(correctorUi, /let repairInFlight = false/);
+  assert.match(correctorUi, /if \(repairInFlight\) return/);
 });
 
 test("la propuesta de resolución sigue siendo solo una entrada para revisión humana", () => {
@@ -68,7 +76,7 @@ test("todas las páginas que cargan observabilidad usan la misma release de recu
   assert.ok(consumers.length >= 10);
   consumers.forEach((name) => {
     const source = read(name);
-    const version = "20260828-radar-editor-domain1";
+    const version = "20260828-radar-editor-tavily1";
     assert.match(source, new RegExp(`styles\\.css\\?v=${version}`));
     assert.match(source, new RegExp(`observability-config\\.js\\?v=${version}`));
     assert.match(source, new RegExp(`monitoring\\.js\\?v=${version}`));

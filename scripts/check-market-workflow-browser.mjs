@@ -784,6 +784,14 @@ try {
   assert.match(await draftCase.page.textContent(".admin-workflow-issues"), /Siguiente acción:/);
   assert.equal(await draftCase.page.locator("[data-request-review]").count(), 0);
   assert.equal(await draftCase.page.locator("[data-expert-repair-panel]").count(), 1);
+  await draftCase.page.click("[data-expert-repair-draft]");
+  await draftCase.page.waitForSelector("[data-expert-repair-confirmation]:not([hidden])");
+  assert.equal((await draftCase.page.evaluate(() => window.__atinaraCalls))
+    .some((call) => call.name === "market-draft-fixer"), false);
+  await draftCase.page.click("[data-expert-repair-cancel]");
+  assert.match(await draftCase.page.textContent("[data-expert-repair-status]"), /Corrección cancelada/);
+  assert.equal((await draftCase.page.evaluate(() => window.__atinaraCalls))
+    .some((call) => call.name === "market-draft-fixer"), false);
   assert.equal(await draftCase.page.locator("[data-confirm-review]").count(), 0);
   assert.equal(await draftCase.page.locator("[data-publish-draft]").count(), 0);
   assert.match(await draftCase.page.textContent("body"), /Corrector/);
@@ -856,9 +864,12 @@ try {
   const contentCase = await pageFor("draft-content", { width: 1366, height: 900 });
   await contentCase.page.click(`[data-open-draft="${criteriaDraft.id}"]`);
   await contentCase.page.waitForSelector("[data-expert-repair-panel]");
-  contentCase.page.on("dialog", (dialog) => dialog.accept());
   assert.equal(await contentCase.page.locator("[data-expert-repair-draft]").isEnabled(), true);
   await contentCase.page.click("[data-expert-repair-draft]");
+  await contentCase.page.waitForSelector("[data-expert-repair-confirmation]:not([hidden])");
+  assert.equal((await contentCase.page.evaluate(() => window.__atinaraCalls))
+    .some((call) => call.name === "market-draft-fixer"), false);
+  await contentCase.page.click("[data-expert-repair-confirm]");
   await contentCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "market-draft-fixer"));
   await contentCase.page.waitForFunction(() => /Corrección aplicada y revalidada/.test(document.querySelector("[data-expert-repair-status]")?.textContent || ""));
   assert.equal((await contentCase.page.evaluate(() => window.__atinaraCalls)).filter((call) => call.name === "market-draft-fixer").length, 1);
@@ -926,8 +937,11 @@ try {
   assert.equal(await waitingCase.page.locator('[name="primary_source_url"]').isEnabled(), true);
   assert.equal(await waitingCase.page.locator("[data-expert-repair-draft]").isEnabled(), true);
   assert.equal(await waitingCase.page.locator("[data-publish-draft]").count(), 0);
-  waitingCase.page.on("dialog", (dialog) => dialog.accept());
   await waitingCase.page.click("[data-expert-repair-draft]");
+  await waitingCase.page.waitForSelector("[data-expert-repair-confirmation]:not([hidden])");
+  assert.equal((await waitingCase.page.evaluate(() => window.__atinaraCalls))
+    .some((call) => call.name === "market-draft-fixer"), false);
+  await waitingCase.page.click("[data-expert-repair-confirm]");
   await waitingCase.page.waitForFunction(() => window.__atinaraCalls.some((call) => call.name === "market-draft-fixer"));
   await waitingCase.page.waitForFunction(() => /todavía no está disponible|sigue editable/.test(document.querySelector("[data-expert-repair-status]")?.textContent || ""));
   assert.deepEqual(waitingCase.errors, []);

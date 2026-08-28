@@ -6568,6 +6568,7 @@ export function publicProviderError(provider, code, status = 502) {
   const safeCode = cleanText(code, 100) || "PROVIDER_FAILED";
   const messages = {
     PROVIDER_NOT_CONFIGURED: "El proveedor no está configurado. El resto del Radar continúa disponible.",
+    PROVIDER_AUTH_FAILED: "El proveedor rechazó la autenticación del servidor. El resto del Radar continúa disponible y esta incidencia requiere revisión técnica.",
     PROVIDER_RATE_LIMITED: "El proveedor ha limitado temporalmente las consultas.",
     PROVIDER_INVALID_RESPONSE: "El proveedor devolvió una respuesta que no se pudo validar.",
     PROVIDER_TIMEOUT: "El proveedor tardó demasiado en responder.",

@@ -1,0 +1,39 @@
+ATINARA_RADAR_EDITOR_TAVILY_AUTH_VISIBLE_ACTION_FIX_20260828
+Base: 65efed3af0abfedecedfc5c8d74b5f9fcef46f72
+Fecha: 2026-08-28
+
+Inventario exacto del ZIP incremental (25 rutas)
+
+M admin-community.html
+M admin-markets.html
+M admin-resolution.html
+M community.html
+A docs/ATINARA_RADAR_EDITOR_TAVILY_AUTH_VISIBLE_ACTION_FIX_20260828.md
+A docs/ATINARA_RADAR_EDITOR_TAVILY_AUTH_VISIBLE_ACTION_FIX_20260828_MANIFEST.txt
+M index.html
+M market-detail.html
+M market-draft-fixer.js
+M my-predictions.html
+M profile.html
+M ranking.html
+M reset-password.html
+M scripts/check-market-workflow-browser.mjs
+M supabase/functions/_shared/market-radar.mjs
+M supabase/functions/market-expert/index.ts
+M supabase/functions/market-radar/index.ts
+M tests/agent-engine-frontend.test.js
+M tests/expert-market-cycle-definitive.test.js
+M tests/human-confirmation-flow.test.js
+M tests/market-radar.test.js
+M tests/official-opportunity-discovery.test.js
+M tests/radar-catalog-boundary.test.js
+M tests/radar-eligibility-sources-v5.test.js
+M tests/radar-provider-resumability-v1.test.js
+
+Eliminaciones: ninguna.
+Migraciones nuevas o modificadas: ninguna.
+Edge Functions modificadas: market-radar, market-expert.
+Frontend modificado: diez HTML de release y market-draft-fixer.js.
+Secretos, .env, .git, node_modules, temporales y ZIP anteriores: ninguno.
+
+El SHA-256 se calcula sobre el ZIP final y se comunica junto al paquete.

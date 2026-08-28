@@ -642,7 +642,7 @@ test("Datos y tendencias conserva análisis, autofill y guardado como acciones h
   ]) {
     assert.match(observatoryEdge, new RegExp(`${field}: text\\(proposal\\.${field}`));
   }
-  assert.match(observatoryHtml, /official-opportunity-request\.js\?v=20260828-radar-editor-domain1/);
-  assert.match(observatoryHtml, /admin-markets\.js\?v=20260828-radar-editor-domain1/);
-  assert.match(observatoryHtml, /styles\.css\?v=20260828-radar-editor-domain1/);
+  assert.match(observatoryHtml, /official-opportunity-request\.js\?v=20260828-radar-editor-tavily1/);
+  assert.match(observatoryHtml, /admin-markets\.js\?v=20260828-radar-editor-tavily1/);
+  assert.match(observatoryHtml, /styles\.css\?v=20260828-radar-editor-tavily1/);
 });

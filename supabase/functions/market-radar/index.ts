@@ -1090,7 +1090,8 @@ function providerFailure(error: unknown, provider: string) {
   const internalFailure = internalRadarOperationalFailure(error, provider);
   if (internalFailure) return internalFailure;
   const raw = error instanceof Error ? error.message : "PROVIDER_UNAVAILABLE";
-  const code = raw.includes("TIMEOUT") ? "PROVIDER_TIMEOUT"
+  const code = raw.includes("HTTP_401") || raw.includes("HTTP_403") ? "PROVIDER_AUTH_FAILED"
+    : raw.includes("TIMEOUT") ? "PROVIDER_TIMEOUT"
     : raw.includes("RATE_LIMITED") || raw.includes("429") ? "PROVIDER_RATE_LIMITED"
       : raw.includes("INVALID") || raw.includes("TOO_LARGE") || raw.includes("HTTP_400") ? "PROVIDER_INVALID_RESPONSE"
         : "PROVIDER_UNAVAILABLE";
@@ -4366,9 +4367,8 @@ async function researchGroupsWithTavily(
         : "official announcement release date result eligibility";
     const payload = toRecord(await fetchJson(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        api_key: apiKey,
         query: cleanText(selectionSubject
           ? `official ${selectionSubject} cover reveal cover stars standard ultimate deluxe complete lineup`
           : metricSubject
@@ -4408,7 +4408,12 @@ async function researchGroupsWithTavily(
     status: firstFailure ? (tavilyUrlCount || directContractCount ? "degraded" : "failed") : "completed",
     actionKey: "official-search",
     progressFingerprint: `official-search:${tavilyUrlCount}:${firstFailure ? "degraded" : "complete"}`,
-    summary: { count: tavilyUrlCount, configured: Boolean(apiKey), direct_contracts_preserved: directContractCount },
+    summary: {
+      count: tavilyUrlCount,
+      configured: Boolean(apiKey),
+      direct_contracts_preserved: directContractCount,
+      failure_code: firstFailure ? radarOperationalErrorCode(firstFailure, "PROVIDER_UNAVAILABLE") : null,
+    },
   });
   const usableGroups = [...discoveredByGroup.values()].filter((urls) => urls.length > 0).length;
   if (!usableGroups && firstFailure) throw firstFailure;
@@ -4624,9 +4629,8 @@ async function researchGroupsWithTavily(
         try {
           const payload = toRecord(await fetchJson(new URL("https://api.tavily.com/search"), {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({
-              api_key: apiKey,
               query: cleanText(query, 1_200),
               search_depth: "advanced",
               max_results: MAX_SELECTION_FOLLOWUP_URLS_PER_GROUP,
