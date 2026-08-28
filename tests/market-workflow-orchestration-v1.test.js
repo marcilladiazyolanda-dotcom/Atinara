@@ -331,6 +331,26 @@ test("la pérdida de respuesta de elegibilidad reanuda desde checkpoint sin repe
   assert.match(recovery, /provider_calls_replayed:0/);
 });
 
+test("la recuperación visible distingue respuesta autoritativa de transporte ambiguo", () => {
+  const recoveryStart = admin.indexOf("async function recoverDraftRadarEligibility");
+  const recoveryEnd = admin.indexOf("async function confirmReview", recoveryStart);
+  const recovery = admin.slice(recoveryStart, recoveryEnd);
+  assert.match(admin, /function eligibilityRecoveryErrorMessage/);
+  assert.match(admin, /wrapped\.attemptId =/);
+  assert.match(admin, /aria-live="polite" aria-atomic="true"/);
+  assert.match(recovery, /if \(error\?\.attemptId === operationId\) clearRecoveryIntent\(\)/);
+  assert.match(recovery, /eligibilityRecoveryErrorMessage\(error\)/);
+  assert.match(recovery, /error\?\.retryable === true \|\| error\?\.statePreserved === true/);
+  assert.match(recovery, /finally[\s\S]*state\.busy = false[\s\S]*renderWorkspace\(\)[\s\S]*focusActionStatus\(\)/);
+});
+
+test("ninguna ruta de publicación absorbe un fallo de elegibilidad", () => {
+  assert.match(admin, /await ensureRadarDraftEligibility\(draft\);/);
+  assert.doesNotMatch(admin, /ensureRadarDraftEligibility\(draft\)\.catch\(\(\) => null\)/);
+  assert.match(fixerUi, /await checkRadarPublicationEligibility\(context\);/);
+  assert.doesNotMatch(fixerUi, /checkRadarPublicationEligibility\(context\)\.catch\(\(\) => null\)/);
+});
+
 test("Radar enlaza Market Expert al guardar y la UI deriva autoridad del issue efectivo", () => {
   assert.match(admin, /save_market_draft_from_radar_intelligence/);
   assert.match(admin, /contract_input: intelligencePrefill\.contract/);

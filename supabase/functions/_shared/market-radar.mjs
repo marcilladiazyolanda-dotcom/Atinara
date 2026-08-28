@@ -5680,8 +5680,23 @@ const RESOLUTION_AUTHORITY_IDENTITY_STOPWORDS = new Set([
 ]);
 
 function resolutionAuthorityIdentityTokens(value) {
-  return normalizeComparableText(value).split(" ")
-    .filter((token) => token.length >= 3 && !RESOLUTION_AUTHORITY_IDENTITY_STOPWORDS.has(token));
+  const tokens = normalizeComparableText(value).split(" ").filter(Boolean);
+  return tokens.filter((token, index) => (
+    token.length >= 3 && !RESOLUTION_AUTHORITY_IDENTITY_STOPWORDS.has(token)
+  ) || (
+    index === tokens.length - 1 && /^(?:[0-9]{1,4}|[ivxlcdm]{1,8})$/.test(token)
+  ));
+}
+
+function resolutionAuthorityIdentityAcronym(value) {
+  const tokens = normalizeComparableText(value).split(" ")
+    .filter((token) => /^[a-z0-9]{1,40}$/.test(token));
+  if (tokens.length < 2) return null;
+  const suffix = /^(?:[0-9]{1,4}|[ivxlcdm]{1,8})$/.test(tokens.at(-1) ?? "")
+    ? tokens.at(-1) : "";
+  const baseTokens = suffix ? tokens.slice(0, -1) : tokens;
+  const acronym = baseTokens.map((token) => token[0]).join("");
+  return acronym.length >= 3 ? { acronym, suffix } : null;
 }
 
 function resolutionAuthorityIdentityMatches(value, material) {
@@ -5691,7 +5706,12 @@ function resolutionAuthorityIdentityMatches(value, material) {
   if (!identity || !comparableMaterial || !tokens.length) return false;
   if (comparableMaterial.includes(identity)) return true;
   const materialTokens = new Set(comparableMaterial.split(" "));
-  return tokens.every((token) => materialTokens.has(token));
+  if (tokens.every((token) => materialTokens.has(token))) return true;
+  const abbreviated = resolutionAuthorityIdentityAcronym(value);
+  if (!abbreviated || !materialTokens.has(abbreviated.acronym)) {
+    return Boolean(abbreviated?.suffix && materialTokens.has(`${abbreviated.acronym}${abbreviated.suffix}`));
+  }
+  return !abbreviated.suffix || materialTokens.has(abbreviated.suffix);
 }
 
 function resolutionAuthorityEndpointIdentity(candidate, contract, page) {
@@ -5718,8 +5738,7 @@ export function resolutionAuthorityContract(candidate, urlValue, authoritativeDo
   const rules = cleanText(candidate?.source_resolution_rules, 4_000);
   const identity = resolutionContractIdentity(candidate);
   const normalizedRules = normalizeComparableText(rules);
-  const identityTokens = normalizeComparableText(identity).split(" ").filter((token) => token.length > 2);
-  const hasIdentity = identityTokens.length > 0 && identityTokens.every((token) => normalizedRules.includes(token));
+  const hasIdentity = resolutionAuthorityIdentityMatches(identity, normalizedRules);
   const hasResolutionPredicate = /\b(?:resolv(?:e|es|ed|er|era|erá)|settle[sd]?|determined|determina(?:do|r|rá))\b/i.test(rules);
   const hasOutcome = /\b(?:yes|no|si|sí|true|false)\b/i.test(rules);
   if (rules.length < 24 || !hasIdentity || !hasResolutionPredicate || !hasOutcome) return null;

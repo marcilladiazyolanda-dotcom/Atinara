@@ -824,7 +824,7 @@
     }
 
     try {
-      await checkRadarPublicationEligibility(context).catch(() => null);
+      await checkRadarPublicationEligibility(context);
       const requestId = publicationRequestId(context);
       const { data, error } = await client.rpc("publish_market_draft_v2", publicationPayload(context, requestId));
       if (error) throw error;

@@ -8,6 +8,7 @@ const { before, test } = require("node:test");
 const root = join(__dirname, "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
 const sharedPath = join(root, "supabase/functions/_shared/market-radar.mjs");
+const probePath = join(root, "supabase/functions/_shared/radar-official-source-probes.mjs");
 const radarEdge = read("supabase/functions/market-radar/index.ts");
 const marketExpert = read("supabase/functions/market-expert/index.ts");
 const adminJs = read("admin-markets.js");
@@ -15,9 +16,11 @@ const adminHtml = read("admin-markets.html");
 const styles = read("styles.css");
 const migration = read("supabase/migrations/20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql");
 let radar;
+let sourceProbes;
 
 before(async () => {
   radar = await import(pathToFileURL(sharedPath).href);
+  sourceProbes = await import(pathToFileURL(probePath).href);
 });
 
 const now = "2026-08-11T16:00:00.000Z";
@@ -338,6 +341,104 @@ test("Autoridad resolutiva · un endpoint genérico o la evidencia de otra opci�
   );
 });
 
+test("Autoridad resolutiva · la caída del buscador solo habilita sondas same-origin derivadas de identidad", () => {
+  const domains = new Set(["studio.example.com"]);
+  const candidate = {
+    provider: "kalshi",
+    external_id: "kalshi:project-aurora-iv-trailer",
+    normalizer_version: "atinara-radar-v3",
+    source_title: "Project Aurora IV: New trailer release date",
+    source_question: "Will another Project Aurora IV trailer come out before Sep 2026?",
+    source_resolution_rules: "If a new Project Aurora IV trailer is officially released before Sep 1, 2026, the market resolves Yes; otherwise it resolves No.",
+    source_resolution_url: "https://studio.example.com/",
+    source_resolution_provenance: {
+      provider: "kalshi",
+      source_url: "https://studio.example.com/",
+      upstream_field: "market.settlement_sources",
+      adapter_version: "atinara-radar-v3",
+      declared_by_provider: true,
+    },
+  };
+  const probes = sourceProbes.providerResolutionIdentityProbeUrls(
+    candidate,
+    candidate.source_resolution_url,
+    domains,
+  );
+  assert.deepEqual(probes.slice(0, 4), [
+    "https://studio.example.com/iv/media/videos",
+    "https://studio.example.com/iv/videos",
+    "https://studio.example.com/iv/media",
+    "https://studio.example.com/iv",
+  ]);
+  assert.ok(probes.length <= 12);
+  assert.ok(probes.every((url) => new URL(url).origin === "https://studio.example.com"));
+  assert.deepEqual(sourceProbes.providerResolutionIdentityProbeUrls(
+    { ...candidate, source_resolution_provenance: null },
+    candidate.source_resolution_url,
+    domains,
+  ), []);
+
+  const exactPage = {
+    url: probes[0],
+    title: "Project Aurora IV - Videos",
+    content: "Official Project Aurora IV video archive.",
+    contentType: "text/html",
+    contentSha256: "b".repeat(64),
+  };
+  const evidence = radar.buildResolutionAuthorityEvidence(
+    candidate,
+    exactPage,
+    now,
+    domains,
+  );
+  assert.equal(evidence.contract_url, candidate.source_resolution_url);
+  assert.equal(evidence.url, exactPage.url);
+  assert.equal(evidence.endpoint_identity_basis, "subject_header");
+  assert.equal(radar.isResolutionAuthorityEvidence(evidence), true);
+  assert.equal(radar.selectVerifiedResolutionUrl(candidate, [evidence], domains), exactPage.url);
+  assert.equal(radar.buildResolutionAuthorityEvidence(candidate, {
+    ...exactPage,
+    url: "https://studio.example.com/news",
+    title: "Studio news",
+  }, now, domains), null);
+});
+
+test("Autoridad resolutiva · una sigla inequívoca conserva el sufijo de identidad", () => {
+  const domains = new Set(["studio.example.com"]);
+  const candidate = {
+    provider: "kalshi",
+    external_id: "kalshi:galactic-racing-odyssey-iv-trailer",
+    normalizer_version: "atinara-radar-v3",
+    source_title: "Galactic Racing Odyssey IV: New trailer release date",
+    source_question: "Will another GRO IV trailer be released before October 2026?",
+    source_resolution_rules: "The market resolves Yes if an official GRO IV trailer is released before October 2026.",
+    source_resolution_url: "https://studio.example.com/",
+    source_resolution_provenance: {
+      provider: "kalshi",
+      source_url: "https://studio.example.com/",
+      upstream_field: "market.settlement_sources",
+      adapter_version: "atinara-radar-v3",
+      declared_by_provider: true,
+    },
+  };
+  const contract = radar.resolutionAuthorityContract(
+    candidate,
+    candidate.source_resolution_url,
+    domains,
+  );
+  assert.equal(contract?.identity, "galactic racing odyssey iv");
+  assert.equal(radar.resolutionAuthorityContract({
+    ...candidate,
+    source_resolution_rules: "The market resolves Yes if an official GRO V trailer is released before October 2026.",
+  }, candidate.source_resolution_url, domains), null);
+  assert.equal(radar.resolutionAuthorityContract({
+    ...candidate,
+    source_title: "Project Aurora IV: New trailer release date",
+    source_question: "Will another PA IV trailer be released before October 2026?",
+    source_resolution_rules: "The market resolves Yes if an official PA IV trailer is released before October 2026.",
+  }, candidate.source_resolution_url, domains), null);
+});
+
 test("UI · todas las opciones son desplegables y cada tarjeta conserva su altura", () => {
   assert.match(adminJs, /const candidates = expanded \? allCandidates : highlightedCandidates/);
   assert.match(adminJs, /`Ver las \$\{allCandidates\.length\} opciones identificadas`/);
@@ -387,7 +488,7 @@ test("Contrato · la revisión factual operativa queda retirada y la elegibilida
   assert.match(migration, /then 'technical_hold'[\s\S]*?ELIGIBILITY_REFRESH_REQUIRED/);
   assert.match(migration, /candidate\.id, provenance_revision/);
   assert.match(migration, /where code = 'RADAR_FACTUAL_VERIFICATION_REQUIRED'/);
-  assert.match(adminHtml, /20260828-radar-editor-tavily1/);
+  assert.match(adminHtml, /20260828-radar-official-recovery1/);
 });
 
 test("Editor · la proyección segura conserva la elegibilidad autoritativa sin incluir leases en la huella", () => {

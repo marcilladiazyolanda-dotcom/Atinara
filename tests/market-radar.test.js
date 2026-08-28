@@ -938,6 +938,8 @@ test("una URL auxiliar fallida solo se recupera con cobertura oficial futura exa
     edge.indexOf("function officialEventResolutionSignals"),
   );
   assert.match(researchSource, /hasDeterministicOfficialResearchCoverage\(groupCandidates, groupEvidence, coverageCheckedAt\)/);
+  assert.match(researchSource, /providerResolutionIdentityProbeUrls\(candidate, contractUrl, authoritativeDomains\)/);
+  assert.match(researchSource, /identity_probes:\s*identityProbeCount/);
   assert.match(researchSource, /deterministic_future_fallback_groups: deterministicFutureFallbackGroups/);
   assert.match(researchSource, /incompleteGroupKeys\.delete\(groupKey\)/);
   assert.doesNotMatch(researchSource, /GTA|Rockstar|KXGTATRAILER|Project Aurora/i);
@@ -1298,7 +1300,7 @@ test("la interfaz agrupa por evento, separa fuentes y audita rechazados", () => 
   assert.match(adminUi, /class="primary-button" type="button" data-radar-details/);
   assert.match(styles, /radar-event-card\[data-child-count="1"\][\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(styles, /radar-rejection-filter/);
-  assert.match(adminHtml, /v=20260828-radar-editor-tavily1/);
+  assert.match(adminHtml, /v=20260828-radar-official-recovery1/);
   assert.doesNotMatch(adminHtml, /v=20260811-expert-cycle3/);
   assert.doesNotMatch(adminHtml, /v=20260809-expert-cycle2/);
   assert.doesNotMatch(adminHtml, /v=20260806-radar2/);

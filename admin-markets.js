@@ -514,17 +514,26 @@
 
   async function edgeInvocationError(error, fallback) {
     let payload = null;
-    try {
-      if (error?.context && typeof error.context.clone === "function") {
-        payload = await error.context.clone().json();
+    const context = error?.context;
+    if (context) {
+      try {
+        const response = typeof context.clone === "function" ? context.clone() : context;
+        if (typeof response?.json === "function") payload = await response.json();
+      } catch {
+        try {
+          const response = typeof context.clone === "function" ? context.clone() : null;
+          const raw = response && typeof response.text === "function" ? await response.text() : "";
+          if (raw && raw.length <= 16_000) payload = JSON.parse(raw);
+        } catch {
+          // Un cuerpo vacío, no JSON o ya consumido no se muestra como error técnico crudo.
+        }
       }
-    } catch {
-      // El cuerpo puede no ser JSON; se conserva un error seguro y acotado.
     }
     const payloadError = payload?.error && typeof payload.error === "object" ? payload.error : null;
     const rawCode = payloadError?.code
       || (typeof payload?.error === "string" ? payload.error : "")
       || payload?.code
+      || (payload?.details && typeof payload.details === "object" ? payload.details.code : "")
       || error?.code;
     const code = /^[A-Z][A-Z0-9_]{2,99}$/.test(String(rawCode || "").trim())
       ? String(rawCode).trim()
@@ -569,7 +578,7 @@
   function gateNoticeMarkup() {
     if (!state.gateNotice) return "";
     const role = state.gateNoticeTone === "error" ? "alert" : "status";
-    return `<p class="admin-status-message admin-gate-status admin-status-${escapeHtml(state.gateNoticeTone)}" role="${role}" tabindex="-1" data-review-action-status>${escapeHtml(state.gateNotice)}</p>`;
+    return `<p class="admin-status-message admin-gate-status admin-status-${escapeHtml(state.gateNoticeTone)}" role="${role}" aria-live="polite" aria-atomic="true" tabindex="-1" data-review-action-status>${escapeHtml(state.gateNotice)}</p>`;
   }
 
   function focusActionStatus({ preferGate = true } = {}) {
@@ -637,6 +646,18 @@
       state_preserved: error?.statePreserved === true,
       gate: error?.gate && typeof error.gate === "object" && !Array.isArray(error.gate) ? error.gate : null,
     };
+  }
+
+  function eligibilityRecoveryErrorMessage(error) {
+    const base = helpers.getFriendlyError(
+      error,
+      "No se pudo renovar la elegibilidad. El borrador continúa privado y editable.",
+    );
+    const details = [];
+    if (error?.attemptId) details.push(`Intento registrado: ${String(error.attemptId).slice(0, 36)}.`);
+    if (error?.statePreserved === true) details.push("El último estado autoritativo se conserva.");
+    if (error?.retryable === true) details.push("Puedes reintentar; el siguiente intento no repetirá esta respuesta fallida.");
+    return [base, ...details].filter(Boolean).join(" ");
   }
 
   function feedbackComparableDraft(fields = {}) {
@@ -2297,7 +2318,11 @@
       clearRecoveryIntent();
       setGateNotice(result?.message || "Elegibilidad renovada. Validator ya puede revisar la versión enlazada.", "success");
     } catch (error) {
-      setGateNotice(helpers.getFriendlyError(error, "No se pudo renovar la elegibilidad. El borrador continúa privado y editable."), "warning");
+      if (error?.attemptId === operationId) clearRecoveryIntent();
+      setGateNotice(
+        eligibilityRecoveryErrorMessage(error),
+        error?.retryable === true || error?.statePreserved === true ? "warning" : "error",
+      );
     } finally {
       state.busy = false;
       renderWorkspace();
@@ -2408,7 +2433,7 @@
       try { sessionStorage.removeItem(publicationKey); } catch { /* El resultado autoritativo ya es terminal. */ }
     };
     try {
-      await ensureRadarDraftEligibility(draft).catch(() => null);
+      await ensureRadarDraftEligibility(draft);
       publicationRequested = true;
       result = await rpc("publish_market_draft_v2", {
         draft_id_input: draft.id,

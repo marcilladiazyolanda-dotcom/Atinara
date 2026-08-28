@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { sha256KalshiCatalogProjectionV2 } from "../_shared/radar-catalog-hash.mjs";
+import { providerResolutionIdentityProbeUrls } from "../_shared/radar-official-source-probes.mjs";
 import {
   RADAR_API_HOSTS,
   RADAR_CANDIDATE_PROVIDERS,
@@ -4333,21 +4334,29 @@ async function researchGroupsWithTavily(
   const agent = await createRadarAgentV2(environment, candidates);
   const contractRead = await dispatchRadarTool(agent, "read_provider_contract", () => {
     const discoveredByGroup = new Map<string, string[]>();
+    const identityProbesByGroup = new Map<string, string[]>();
     let directContractCount = 0;
     for (const group of groups) {
-      const urls = [...new Set(toRecordArray(group.candidates)
+      const candidatesInGroup = toRecordArray(group.candidates);
+      const urls = [...new Set(candidatesInGroup
         .flatMap((candidate) => providerResolutionSourceUrls(candidate, authoritativeDomains)))]
         .slice(0, 8);
+      const probes = [...new Set(candidatesInGroup.flatMap((candidate) =>
+        providerResolutionSourceUrls(candidate, authoritativeDomains).flatMap((contractUrl) =>
+          providerResolutionIdentityProbeUrls(candidate, contractUrl, authoritativeDomains))))]
+        .slice(0, 12);
       directContractCount += urls.length;
       discoveredByGroup.set(cleanText(group.event_group_key, 240), urls);
+      identityProbesByGroup.set(cleanText(group.event_group_key, 240), probes);
     }
-    return { discoveredByGroup, directContractCount };
+    return { discoveredByGroup, identityProbesByGroup, directContractCount };
   }, {
     actionKey: "provider-contracts",
     progressFingerprint: `provider-contracts:${groups.length}`,
     summary: { groups: groups.length },
   });
   const discoveredByGroup = contractRead.discoveredByGroup;
+  const identityProbesByGroup = contractRead.identityProbesByGroup;
   const directContractCount = contractRead.directContractCount;
 
   const settled = apiKey ? await mapWithConcurrency(groups, TAVILY_CONCURRENCY, async (group) => {
@@ -4390,17 +4399,36 @@ async function researchGroupsWithTavily(
     };
   }) : [];
   let firstFailure: unknown = apiKey ? null : new Error("PROVIDER_NOT_CONFIGURED");
-  if (!apiKey) groups.forEach((group) => incompleteGroupKeys.add(cleanText(group.event_group_key, 240)));
+  let identityProbeCount = 0;
+  if (!apiKey) groups.forEach((group) => {
+    const groupKey = cleanText(group.event_group_key, 240);
+    incompleteGroupKeys.add(groupKey);
+    const probes = identityProbesByGroup.get(groupKey) ?? [];
+    const merged = [...new Set([
+      ...(discoveredByGroup.get(groupKey) ?? []),
+      ...probes,
+    ])].slice(0, 10);
+    identityProbeCount += probes.filter((url) => merged.includes(url)).length;
+    discoveredByGroup.set(groupKey, merged);
+  });
   let tavilyUrlCount = 0;
   for (const [index, result] of settled.entries()) {
+    const groupKey = cleanText(groups[index]?.event_group_key, 240);
     if (result.status === "fulfilled") {
       const direct = discoveredByGroup.get(result.value.eventGroupKey) ?? [];
-      const merged = [...new Set([...direct, ...result.value.urls])].slice(0, 10);
+      const probes = result.value.urls.length ? [] : (identityProbesByGroup.get(groupKey) ?? []);
+      const merged = [...new Set([...direct, ...result.value.urls, ...probes])].slice(0, 10);
       tavilyUrlCount += result.value.urls.length;
+      identityProbeCount += probes.filter((url) => merged.includes(url)).length;
       discoveredByGroup.set(result.value.eventGroupKey, merged);
     }
     else {
-      incompleteGroupKeys.add(cleanText(groups[index]?.event_group_key, 240));
+      const direct = discoveredByGroup.get(groupKey) ?? [];
+      const probes = identityProbesByGroup.get(groupKey) ?? [];
+      const merged = [...new Set([...direct, ...probes])].slice(0, 10);
+      identityProbeCount += probes.filter((url) => merged.includes(url)).length;
+      discoveredByGroup.set(groupKey, merged);
+      incompleteGroupKeys.add(groupKey);
       if (!firstFailure) firstFailure = result.reason;
     }
   }
@@ -4412,6 +4440,7 @@ async function researchGroupsWithTavily(
       count: tavilyUrlCount,
       configured: Boolean(apiKey),
       direct_contracts_preserved: directContractCount,
+      identity_probes: identityProbeCount,
       failure_code: firstFailure ? radarOperationalErrorCode(firstFailure, "PROVIDER_UNAVAILABLE") : null,
     },
   });

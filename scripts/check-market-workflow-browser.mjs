@@ -668,6 +668,23 @@ function initMock(input) {
           },
         },
       };
+      if (scenario === "draft-expired-recovery" && recoveryInvocations === 2) return {
+        data: null,
+        error: {
+          code: "FUNCTION_FAILED",
+          context: {
+            status: 503,
+            clone: () => ({ json: async () => ({
+              error: "ELIGIBILITY_SCAN_UNAVAILABLE",
+              message: "No se pudo descartar de forma segura un resultado oficial ya conocido.",
+              attempt_id: body?.body?.operation_id,
+              phase: "eligibility_check",
+              retryable: true,
+              state_preserved: true,
+            }) }),
+          },
+        },
+      };
       return { data: { ok: true, status: "eligible", message: "Elegibilidad renovada." }, error: null };
     }
     if (name === "market-radar" && action === "prepare") {
@@ -923,9 +940,18 @@ try {
   await recoveryCase.page.waitForSelector(`[data-recover-draft-eligibility="${candidate.id}"]:not([disabled])`);
   await recoveryCase.page.click(`[data-recover-draft-eligibility="${candidate.id}"]`);
   await recoveryCase.page.waitForFunction(() => window.__atinaraCalls.filter((call) => call.name === "market-radar" && call.action === "recover-draft-eligibility").length===2);
-  const recoveryCalls = (await recoveryCase.page.evaluate(() => window.__atinaraCalls))
+  let recoveryCalls = (await recoveryCase.page.evaluate(() => window.__atinaraCalls))
     .filter((call) => call.name === "market-radar" && call.action === "recover-draft-eligibility");
   assert.equal(recoveryCalls[0].body.operation_id,recoveryCalls[1].body.operation_id);
+  await recoveryCase.page.waitForFunction(() => /resultado oficial|estado autoritativo/i.test(
+    document.querySelector("[data-review-action-status]")?.textContent || ""
+  ));
+  await recoveryCase.page.waitForSelector(`[data-recover-draft-eligibility="${candidate.id}"]:not([disabled])`);
+  await recoveryCase.page.click(`[data-recover-draft-eligibility="${candidate.id}"]`);
+  await recoveryCase.page.waitForFunction(() => window.__atinaraCalls.filter((call) => call.name === "market-radar" && call.action === "recover-draft-eligibility").length===3);
+  recoveryCalls = (await recoveryCase.page.evaluate(() => window.__atinaraCalls))
+    .filter((call) => call.name === "market-radar" && call.action === "recover-draft-eligibility");
+  assert.notEqual(recoveryCalls[1].body.operation_id,recoveryCalls[2].body.operation_id);
   assert.deepEqual(recoveryCase.errors, []);
   await recoveryCase.context.close();
 
