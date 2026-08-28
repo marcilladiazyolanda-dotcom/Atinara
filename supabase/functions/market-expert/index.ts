@@ -1366,6 +1366,7 @@ function modelSafeOrigin(origin: JsonRecord): JsonRecord {
     "advancement_gate", "workflow_issues", "temporal_contract",
     "domain_status", "domain_reason_code", "domain_policy_version",
     "domain_positive_signals", "domain_negative_signals",
+    "domain_review_fingerprint", "human_domain_review",
     "source_market_open_at", "source_event_at", "source_event_start_at", "source_event_end_at",
     "source_settlement_at", "source_series_expiry_at", "source_last_trade_at",
   ]);

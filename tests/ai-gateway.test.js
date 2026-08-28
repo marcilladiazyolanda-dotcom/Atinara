@@ -433,6 +433,8 @@ test("la proyección productiva de Market Expert permanece alineada con la allow
   ];
   assert.ok(projectedKeys.includes("duplicate_matches"));
   assert.ok(projectedKeys.includes("official_source_content_sha256"));
+  assert.ok(!projectedKeys.includes("domain_review_fingerprint"));
+  assert.ok(!projectedKeys.includes("human_domain_review"));
 
   const { gateway, calls } = dependencies({
     fetchImpl: async () => response(geminiEnvelope(VALID.market_expert_reasoning.output)),
