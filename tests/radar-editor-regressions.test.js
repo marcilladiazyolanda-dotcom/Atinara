@@ -107,6 +107,14 @@ function extractBridgeFunction(name, nextName) {
   return adminBridge.slice(start, end).trim();
 }
 
+function extractAdminMarketsFunction(name, nextName) {
+  const start = adminMarkets.indexOf(`  function ${name}(`);
+  const end = adminMarkets.indexOf(`  function ${nextName}(`, start);
+  assert.ok(start >= 0, `No se encontró la función de Radar ${name}`);
+  assert.ok(end > start, `No se encontró el límite de Radar ${nextName}`);
+  return adminMarkets.slice(start, end).trim();
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -353,6 +361,50 @@ test("Market Expert descarta solo la incidencia de dominio ya resuelta por la at
   assert.match(marketExpert, /"domain_review_fingerprint", "human_domain_review"/);
   assert.match(marketExpert, /import \{ activeOriginWorkflowIssues \} from "\.\/domain-review\.mjs"/);
   assert.match(marketExpert, /const originIssues = activeOriginWorkflowIssues\(origin\)/);
+});
+
+test("la UI habilita el Editor solo ante la misma atestación humana exacta que acepta Market Expert", () => {
+  const uiDomainReview = runInNewContext(`(() => {
+    const RADAR_DOMAIN_POLICY_VERSION = "atinara-gaming-domain-v2";
+    ${extractAdminMarketsFunction("radarHasCurrentInDomainHumanReview", "radarCandidatePolicyCurrent")}
+    ${extractAdminMarketsFunction("radarCandidateDispositionCode", "radarCandidateIsTerminal")}
+    return { radarHasCurrentInDomainHumanReview, radarCandidateDispositionCode };
+  })()`);
+  const domainFingerprint = "a".repeat(64);
+  const candidate = {
+    fingerprint: "r1234abcd",
+    eligibility_reason_code: "GAMING_DOMAIN_REVIEW_REQUIRED",
+    domain_status: "in_domain",
+    domain_reason_code: null,
+    domain_policy_version: "atinara-gaming-domain-v2",
+    domain_review_fingerprint: domainFingerprint,
+    human_domain_review: {
+      decision: "in_domain",
+      policy_version: "atinara-gaming-domain-v2",
+      domain_fingerprint: domainFingerprint,
+      candidate_fingerprint: "r1234abcd",
+    },
+  };
+
+  assert.equal(uiDomainReview.radarHasCurrentInDomainHumanReview(candidate), true);
+  assert.equal(uiDomainReview.radarCandidateDispositionCode(candidate), "");
+  assert.equal(expertDomainReview.hasCurrentInDomainHumanReview(candidate), true);
+  for (const stale of [
+    { domain_review_fingerprint: "b".repeat(64) },
+    { fingerprint: "r99999999" },
+    { domain_policy_version: "atinara-gaming-domain-v1" },
+    { human_domain_review: { ...candidate.human_domain_review, decision: "out_of_domain" } },
+    { human_domain_review: { ...candidate.human_domain_review, policy_version: "atinara-gaming-domain-v1" } },
+  ]) {
+    const staleCandidate = { ...candidate, ...stale };
+    assert.equal(uiDomainReview.radarHasCurrentInDomainHumanReview(staleCandidate), false);
+    assert.equal(
+      uiDomainReview.radarCandidateDispositionCode(staleCandidate),
+      "GAMING_DOMAIN_REVIEW_REQUIRED",
+    );
+  }
+  assert.match(adminMarkets, /domainReviewRequired[\s\S]+data-radar-expert/);
+  assert.match(adminMarkets, /Revisión humana vigente · elegibilidad factual pendiente/);
 });
 
 test("loadPackage comparte inflight y una respuesta vieja no sobrescribe una revisión nueva", async () => {

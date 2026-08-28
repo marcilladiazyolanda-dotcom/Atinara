@@ -106,6 +106,7 @@
   const RADAR_CATEGORIES = ["Lanzamientos", "Eventos", "Industria", "Streamers", "Reviews/Premios", "YouTubers"];
   const RADAR_PROVIDER_LABELS = { polymarket: "Polymarket", kalshi: "Kalshi", tavily: "Fuentes oficiales" };
   const RADAR_POLICY_VERSION = "atinara-prediction-policy-v5";
+  const RADAR_DOMAIN_POLICY_VERSION = "atinara-gaming-domain-v2";
   const RADAR_NORMALIZER_VERSION = "atinara-radar-v3";
   const RADAR_FAMILY_VERSION = "atinara-market-family-v5";
   const RADAR_RECONCILIATION_VERSION = "atinara-radar-parent-reconciliation-v1";
@@ -321,6 +322,25 @@
     return candidate?.display_reason_code || candidate?.verification_reason_code || "VERIFICATION_REQUIRED";
   }
 
+  function radarHasCurrentInDomainHumanReview(candidate) {
+    const review = candidate?.human_domain_review;
+    if (!review || typeof review !== "object" || Array.isArray(review)) return false;
+    const text = (value, max) => String(value ?? "").trim().slice(0, max);
+    const currentDomainFingerprint = text(candidate?.domain_review_fingerprint, 64).toLowerCase();
+    const reviewedDomainFingerprint = text(review.domain_fingerprint, 64).toLowerCase();
+    const candidateFingerprint = text(candidate?.fingerprint, 100);
+    const reviewedCandidateFingerprint = text(review.candidate_fingerprint, 100);
+    return text(candidate?.domain_status, 40) === "in_domain"
+      && !text(candidate?.domain_reason_code, 100)
+      && text(candidate?.domain_policy_version, 80) === RADAR_DOMAIN_POLICY_VERSION
+      && text(review.decision, 40) === "in_domain"
+      && text(review.policy_version, 80) === RADAR_DOMAIN_POLICY_VERSION
+      && /^[a-f0-9]{64}$/.test(currentDomainFingerprint)
+      && reviewedDomainFingerprint === currentDomainFingerprint
+      && Boolean(candidateFingerprint)
+      && reviewedCandidateFingerprint === candidateFingerprint;
+  }
+
   function radarCandidatePolicyCurrent(candidate) {
     return candidate?.eligibility_policy_version === RADAR_POLICY_VERSION
       && candidate?.normalizer_version === RADAR_NORMALIZER_VERSION
@@ -372,6 +392,10 @@
   function radarReasonDescription(candidate) {
     if (!radarCandidatePolicyCurrent(candidate)) {
       return "Esta evaluación pertenece al criterio anterior y debe volver a comprobarse antes de tomarla como válida.";
+    }
+    if (radarHasCurrentInDomainHumanReview(candidate)
+      && String(candidate?.eligibility_reason_code || "").trim() === "GAMING_DOMAIN_REVIEW_REQUIRED") {
+      return "La decisión humana de dominio sigue vigente. El Agente Editor puede reanalizar la candidata y la elegibilidad factual se renovará antes de materializar el borrador.";
     }
     const code = radarRejectionReasonCode(candidate);
     const reason = String(candidate?.display_reason || candidate?.verification_reason || "").trim();
@@ -1163,7 +1187,11 @@
   }
 
   function radarCandidateDispositionCode(candidate) {
-    return String(candidate?.eligibility_reason_code || candidate?.domain_reason_code || "");
+    const eligibilityReasonCode = String(candidate?.eligibility_reason_code || "").trim();
+    const domainReasonCode = String(candidate?.domain_reason_code || "").trim();
+    if (eligibilityReasonCode === "GAMING_DOMAIN_REVIEW_REQUIRED"
+      && radarHasCurrentInDomainHumanReview(candidate)) return domainReasonCode;
+    return eligibilityReasonCode || domainReasonCode;
   }
 
   function radarCandidateIsTerminal(candidate) {
@@ -1527,6 +1555,7 @@
     const domainReviewRequired = radarCandidateDispositionCode(candidate) === "GAMING_DOMAIN_REVIEW_REQUIRED";
     const humanDomainReview = candidate.human_domain_review && typeof candidate.human_domain_review === "object"
       ? candidate.human_domain_review : null;
+    const currentInDomainHumanReview = radarHasCurrentInDomainHumanReview(candidate);
     const domainReviewActionable = domainReviewRequired || Boolean(humanDomainReview?.request_id);
     const domainEvidence = Array.isArray(humanDomainReview?.evidence_refs)
       ? humanDomainReview.evidence_refs : [];
@@ -1568,7 +1597,11 @@
             ? radarEligibilityCurrent(candidate)
               ? "La última elegibilidad válida sigue vigente; el enriquecimiento más reciente se reintentará."
               : "Se conserva el último expediente conocido, pero su elegibilidad ya no está vigente y debe renovarse."
-            : candidate.verification_status === "verified_open" ? "Mercado predictivo válido" : radarReasonLabel(candidate.verification_reason_code))}</dd></div>
+            : candidate.verification_status === "verified_open"
+              ? "Mercado predictivo válido"
+              : currentInDomainHumanReview && candidate.eligibility_reason_code === "GAMING_DOMAIN_REVIEW_REQUIRED"
+                ? "Revisión humana vigente · elegibilidad factual pendiente"
+                : radarReasonLabel(candidate.verification_reason_code))}</dd></div>
           <div><dt>Comprobada</dt><dd>${escapeHtml(displayDate(candidate.eligibility_checked_at || candidate.verified_at))}</dd></div>
           <div><dt>Vigente hasta</dt><dd>${escapeHtml(displayDate(candidate.eligibility_expires_at || candidate.verification_expires_at))}</dd></div>
         </dl><p>${escapeHtml(radarReasonDescription(candidate))}</p></section>
