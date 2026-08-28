@@ -2,6 +2,7 @@
 
 Fecha: 2026-08-28
 Base: `04b4f9de5b2fec1056d8abadacd08cd5006b02d3`
+Corte funcional integrado: `b160e30752ad0abb69e361c6f9081d69dad5b897`
 
 ## Incidencia reproducida
 
@@ -81,17 +82,40 @@ ninguna acción confirma, programa, publica, resuelve o liquida.
 - Benchmark offline: 5/5 contratos técnicos, cero llamadas externas.
 - `git diff --check` válido.
 
-## Activación pendiente
+## Plan de activación previo al cierre · histórico
 
-La entrega debe integrarse primero en `origin/main` y superar Calidad de
-Atinara, Benchmark IA offline y GitHub Pages para ese SHA. Después debe
-desplegarse únicamente `market-radar`, con JWT obligatorio. El cambio compartido
-solo altera lógica invocada por Radar; `market-expert` continúa consumiendo del
-módulo únicamente la constante de versión, que no cambia, y no necesita
-redespliegue. El frontend se activa mediante Pages.
+Antes del cierre, la entrega debía integrarse primero en `origin/main` y superar
+Calidad de Atinara, Benchmark IA offline y GitHub Pages para ese SHA. Después
+debía desplegarse únicamente `market-radar`, con JWT obligatorio. El cambio
+compartido solo alteraba lógica invocada por Radar; en ese plan,
+`market-expert` continuaba consumiendo del módulo únicamente la constante de
+versión y no necesitaba redespliegue. El frontend se activaría mediante Pages.
 
-La verificación productiva debe reutilizar el intento de elegibilidad ya
-persistido cuando corresponda, recuperar la ligadura del único borrador privado
-existente y demostrar idempotencia. No se crea otra UUID Radar, otra candidata
-E2E ni otro borrador. README y contexto se actualizarán solo con la versión,
-digest, SHA y evidencias finales realmente observadas.
+La verificación productiva debía reutilizar el intento de elegibilidad ya
+persistido cuando correspondiera, recuperar la ligadura del único borrador
+privado existente y demostrar idempotencia. El plan prohibía crear otra UUID
+Radar, otra candidata E2E u otro borrador. Esta sección conserva la secuencia
+previa como historia; el resultado final se registra a continuación.
+
+## Cierre operativo verificado
+
+- El corte funcional integrado del cierre Radar es
+  `b160e30752ad0abb69e361c6f9081d69dad5b897`.
+- La verificación operativa final dejó `market-radar` v79 y `market-expert` v30.
+- La única UUID del expediente es
+  `39bc204b-aa3f-4a69-99da-557f5fa91f7d`; no se inició otra y el discovery
+  durable quedó completado.
+- Se creó exactamente un borrador privado en este expediente:
+  `4f5a0260-6e42-4bc3-9dcb-1d01e47f2568`. Su persistencia es evidencia acotada
+  del puente Radar/Editor, pero no representa un E2E funcional perfecto ni una
+  publicación.
+- Radar/Editor queda cerrado operativamente. Las puertas de revisión,
+  confirmación humana y publicación permanecen separadas y no se rebajan.
+- `RISK-RADAR-SOURCE-001` queda aceptado con estado exacto
+  `accepted / non-blocking / fail-closed`: no bloquea el cierre y cualquier
+  evidencia de fuente insuficiente sigue deteniendo el avance.
+- Radar pasa a mantenimiento. Solo se reabre por bug crítico, seguridad o
+  pérdida de datos.
+- El roadmap B2B queda desbloqueado para la siguiente decisión de Yol. Este
+  cierre no declara superadas las puertas B2B ni autoriza por sí mismo cambios
+  de producto o producción.

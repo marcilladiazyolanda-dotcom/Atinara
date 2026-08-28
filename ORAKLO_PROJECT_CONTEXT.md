@@ -1,14 +1,35 @@
 # Atinara · contexto de relevo · repositorio interno Oraklo
 
-Última actualización del contexto: 27 de agosto de 2026.
+Última actualización del contexto: 28 de agosto de 2026.
 
 Este documento permite continuar el proyecto en un chat nuevo sin depender del transcript anterior. Debe leerse junto con `AGENTS.md` y `README.md` antes de proponer o modificar nada.
 
-> **Checkpoint vigente previo a activar el cierre Editor:** `origin/main` está
-> en `e74a6d79f3a6ba852d660d04ab6b7243630cdd95`. El rango directo desde
+> **Baseline documental vigente tras el cierre operativo Radar/Editor:** el
+> corte funcional integrado es
+> `b160e30752ad0abb69e361c6f9081d69dad5b897`. La verificación operativa final
+> dejó `market-radar` v79 y `market-expert` v30.
+>
+> La única UUID del expediente es
+> `39bc204b-aa3f-4a69-99da-557f5fa91f7d`; no se inició otra y su discovery
+> durable quedó completado. El expediente produjo exactamente un borrador
+> privado, `4f5a0260-6e42-4bc3-9dcb-1d01e47f2568`. Ese borrador acredita una
+> persistencia acotada, pero no representa un E2E funcional perfecto ni una
+> publicación.
+>
+> Radar/Editor queda cerrado operativamente. `RISK-RADAR-SOURCE-001` se acepta
+> como `accepted / non-blocking / fail-closed`: no bloquea el cierre, pero una
+> fuente insuficiente sigue deteniendo cualquier avance sensible. Radar pasa a
+> mantenimiento salvo bug crítico, seguridad o pérdida de datos. El roadmap B2B queda desbloqueado
+> para la siguiente decisión de Yol; este baseline no declara
+> superadas las puertas B2B ni autoriza despliegues o cambios productivos.
+
+> **Checkpoint histórico inmediatamente anterior a activar el cierre Editor:**
+> `origin/main` estaba en `e74a6d79f3a6ba852d660d04ab6b7243630cdd95`.
+> El rango directo desde
 > `4177f84` contiene las nueve rutas de la corrección de hash V1 y sus blobs
 > coinciden con la entrega; Calidad de Atinara, Benchmark IA offline y Pages
-> están verdes para ese SHA. Producción continúa en Radar v75 y Expert v26.
+> estaban verdes para ese SHA. Producción estaba entonces en Radar v75 y Expert
+> v26.
 >
 > La prueba manual del Agente Editor reveló una incidencia distinta y real.
 > Expert v26 empaquetó 40 handlers del Registry, mientras la tabla productiva
@@ -19,17 +40,18 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > tipado y dando la impresión de no-op. No se creó run, borrador ni segunda
 > UUID.
 >
-> La corrección local pendiente de subida hace visible el estado
+> La corrección local que entonces estaba pendiente de subida hacía visible el estado
 > procesando/error/retry por candidata, bloquea doble click, conserva el error
 > tipado y vuelve accionable una incompatibilidad de Registry. Una migración
 > nueva convierte `materialize_market_draft_for_repair_v1` en alias compatible
 > del writer `save_market_draft_from_expert_with_issues_v2`; no edita historia
-> ni ejecuta DML de negocio. Hasta integrar esta entrega no desplegar Expert,
-> no reanudar `39bc204b-aa3f-4a69-99da-557f5fa91f7d` y no crear un borrador.
+> ni ejecuta DML de negocio. Mientras esa entrega no estuvo integrada, se
+> impuso la pausa de no desplegar Expert, no reanudar
+> `39bc204b-aa3f-4a69-99da-557f5fa91f7d` y no crear un borrador.
 > Véase `docs/ATINARA_RADAR_EDITOR_BRIDGE_REGISTRY_FIX_20260827.md`.
 
 > **Checkpoint anterior preservado del cierre Radar/Discover:**
-> `origin/main` está en `4177f84f2c34b93da6fe4b2b4aa90ff13a141328`
+> `origin/main` estaba en `4177f84f2c34b93da6fe4b2b4aa90ff13a141328`
 > (`radar`), descendiente directo de `a6152a7`. El rango contiene exactamente
 > las diez rutas de
 > `ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827`, sin eliminaciones, y
@@ -46,7 +68,7 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > verificados. No hubo DML de negocio ni backfill.
 >
 > Después del baseline se desplegó únicamente `market-radar` desde `a6152a7`:
-> pasó de v74 a v75, está `ACTIVE`, `verify_jwt=true`, digest
+> pasó de v74 a v75, quedó `ACTIVE`, `verify_jwt=true`, digest
 > `7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555`.
 > Las tres fuentes modificadas del bundle remoto coinciden exactamente con
 > `origin/main`; las otras doce dependencias conservaron el grafo de v74.
@@ -69,10 +91,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > completas, 57 fallidas reintentables, 272 pendientes, cero agotadas y 129
 > padres. El hash del catálogo es
 > `73f681e2938ebcd1565b22a5db8ad5862962b0823478e8bcb6906a8dac5aa94f`
-> y la proyección almacenada es V1. Kalshi sigue `in_progress/fetching`,
+> y la proyección almacenada es V1. Kalshi seguía `in_progress/fetching`,
 > `claim_count=8`, con lease vencido; Tavily terminó `completed/terminal`,
-> `claim_count=5`. Continúan en cero los batches, manifest y borradores de este
-> expediente. SQL confirma una sola `request_id`; no se abrió otra UUID.
+> `claim_count=5`. Continuaban en cero los batches, manifest y borradores de ese
+> expediente. SQL confirmaba una sola `request_id`; no se abrió otra UUID.
 >
 > Las dos invocaciones de escritura de v73 terminaron HTTP 546 a 10.666 ms y
 > 10.033 ms. Las primeras reanudaciones con v74 y v75 terminaron también HTTP
@@ -96,7 +118,7 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > las tres capas. Desplegarla habría creado en una UUID futura un hash V2
 > etiquetado como V1 y habría roto su reproducibilidad.
 >
-> La corrección incremental pendiente conserva la proyección V1 ya aplicada y
+> La corrección incremental entonces pendiente conservaba la proyección V1 ya aplicada y
 > reproduce byte a byte su hash canónico desde las mismas tuplas compactas, sin
 > objetos ni ordenación de claves por fila. No modifica SQL ni checkpoints
 > existentes. Pasan 619/619 unitarias, 20/20 focales de catálogo global, 9/9
@@ -109,10 +131,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
 > `docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md`.
 >
 > El expediente histórico
-> `c1f677eb-0dae-410f-820d-a4483601ab47` permanece stale e intacto. Hasta que
-> Yol suba el nuevo ZIP de contrato hash y GitHub vuelva a quedar verde, no
-> desplegar la corrección local, no reanudar `39bc…`, no iniciar otra UUID, no
-> llamar Market Expert y no crear un borrador por otra vía.
+> `c1f677eb-0dae-410f-820d-a4483601ab47` permanecía stale e intacto. En ese
+> checkpoint se mantuvo la pausa de no desplegar, no reanudar `39bc…`, no iniciar
+> otra UUID, no llamar Market Expert y no crear un borrador por otra vía. La
+> pausa quedó superada por el baseline vigente documentado arriba.
 
 ### Catálogo global y discovery durable V2 · 26 de agosto de 2026
 
@@ -149,10 +171,10 @@ Este documento permite continuar el proyecto en un chat nuevo sin depender del t
   de Registry, AI, modelos, rutas, modos, flags, presupuestos o economía. Radar
   continúa sin Gemini. La implementación y el hash incremental quedaron
   integrados en `a6152a7`, la migración se aplicó una vez como `20260827150224`
-  y v75 es el despliegue actual. La segunda corrección de recursos está
-  integrada en `4177f84`, pero su desacuerdo V1/V2 bloquea el despliegue. La
-  corrección compatible del contrato hash está preparada localmente y pendiente
-  de subida.
+  y v75 era el despliegue observado en aquel corte. La segunda corrección de
+  recursos estaba integrada en `4177f84`, pero su desacuerdo V1/V2 bloqueaba el
+  despliegue. La corrección compatible del contrato hash estaba preparada
+  localmente y pendiente de subida.
 
 ### Integración segura sobre las subidas intermedias · 27 de agosto de 2026
 

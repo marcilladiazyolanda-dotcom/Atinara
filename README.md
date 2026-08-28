@@ -15,7 +15,7 @@ La arquitectura V2.1 y las cinco Edge coordinadas están desplegadas en producci
 - OpenRouter y NVIDIA NIM están apagados, con presupuesto cero y solo transports mock en CI. No existe dependencia productiva de endpoints gratuitos ni coste nuevo obligatorio.
 - El benchmark público es offline y contiene solo fixtures `draft`; no existe ground truth aprobado ni proveedor adjudicado.
 - Las tres migraciones V2.1 se aplicaron una sola vez en producción el 13 de agosto de 2026 y constan remotamente como `20260813163839`, `20260813163918` y `20260813163959`. No modificarlas ni repetirlas.
-- Producción verificada el 27 de agosto usa Radar v75, Expert v26, Corrector v25, Validator v34 y Resolución v16, todas con `verify_jwt=true`. V75 conserva cuatro checkpoints globales V2 de la única UUID activa. La corrección de compatibilidad entre el hash de catálogo y la proyección V1 ya está integrada en `e74a6d79f3a6ba852d660d04ab6b7243630cdd95`; su activación se coordina con la reparación del puente Editor descrita abajo. Corrector v25 y Validator v34 cubren los 23 campos rellenables, minimizan fuentes y evitan que una objeción semántica de workflow ya reparada y atestada en la misma ronda se repita como falso bloqueo. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
+- El corte funcional integrado del cierre Radar/Editor es `b160e30752ad0abb69e361c6f9081d69dad5b897`. La verificación operativa final dejó `market-radar` v79 y `market-expert` v30; el checkpoint de Radar v75 y Expert v26 del 27 de agosto se conserva más abajo únicamente como historia. OpenRouter y NVIDIA NIM siguen apagados, sin rutas ni presupuesto positivo.
 
 Arquitectura: [`docs/ATINARA_AI_GATEWAY.md`](docs/ATINARA_AI_GATEWAY.md). Benchmark: [`docs/ATINARA_AI_BENCHMARK_TECHNICAL.md`](docs/ATINARA_AI_BENCHMARK_TECHNICAL.md). Operación y rollback: [`docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md`](docs/ATINARA_AGENT_ENGINE_V2_RUNBOOK.md).
 
@@ -38,9 +38,35 @@ no tiene linaje Radar y existe una sola vez por slug y pregunta. El delta final
 de Corrector v25 no contiene migración y quedó integrado en `origin/main`
 mediante `c9eb88cd04bd4fe2a5ee552dc20bc781569af951`.
 
-## Estado operativo de 13.5.2 · Radar v75 y cierre global pausado
+## Cierre operativo de 13.5.2 · Radar/Editor
 
-El corte canónico verificado es
+El corte funcional integrado del cierre Radar es
+`b160e30752ad0abb69e361c6f9081d69dad5b897`. La verificación operativa final
+dejó `market-radar` v79 y `market-expert` v30. La única UUID del expediente es
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`: no se inició otra y su discovery
+durable quedó completado.
+
+El cierre produjo exactamente un borrador privado en este expediente,
+`4f5a0260-6e42-4bc3-9dcb-1d01e47f2568`. Ese resultado acredita persistencia y
+continuidad acotadas, pero **no representa un E2E funcional perfecto** ni una
+publicación: las puertas de revisión, confirmación humana y publicación siguen
+siendo independientes.
+
+Radar/Editor queda cerrado operativamente. El riesgo residual
+`RISK-RADAR-SOURCE-001` se acepta con estado exacto
+`accepted / non-blocking / fail-closed`: no bloquea este cierre ni el siguiente
+trabajo aprobado, y cualquier evidencia de fuente insuficiente continúa
+deteniendo el avance de forma cerrada. Radar pasa a mantenimiento y solo se
+reabre por bug crítico, seguridad o pérdida de datos. Con este cierre, el
+roadmap B2B queda desbloqueado; no significa que sus puertas estén superadas ni
+autoriza por sí mismo una implementación, despliegue o cambio productivo.
+
+Detalles del corte:
+[`docs/ATINARA_RADAR_OFFICIAL_SOURCE_RECOVERY_AND_EDITOR_RETRY_FIX_20260828.md`](docs/ATINARA_RADAR_OFFICIAL_SOURCE_RECOVERY_AND_EDITOR_RETRY_FIX_20260828.md).
+
+### Checkpoint histórico inmediatamente anterior al cierre
+
+El corte canónico verificado en aquel checkpoint era
 `origin/main = e74a6d79f3a6ba852d660d04ab6b7243630cdd95`. Su delta directo
 desde `4177f84` contiene exactamente las nueve rutas de la corrección de hash
 V1; sus blobs coinciden con la entrega y las tres Actions están verdes. El
@@ -48,8 +74,8 @@ checkpoint anterior `4177f84` contenía exactamente las diez rutas del ZIP
 `ATINARA_RADAR_CATALOG_WORKER_LIMIT_V2_FIX_20260827` y cada blob coincide con
 su contenido. Calidad de Atinara —incluido Deno—, Benchmark IA offline y
 GitHub Pages estaban verdes también para ese SHA.
-La nueva estrategia B2B-first permanece intacta; esta tarea solo cierra Radar y
-no implementa Atinara Engine.
+La nueva estrategia B2B-first permanecía intacta; aquel checkpoint cerraba una
+fase de Radar y no implementaba Atinara Engine.
 
 La migración
 `20260826190000_checkpoint_market_radar_global_catalog_v2.sql` se aplicó una
@@ -61,19 +87,19 @@ verificados. Después se desplegó únicamente `market-radar`: v75, `ACTIVE`,
 `7a831f3ce6b91480515b82f0f3c74a1aaf2e8e62160ae2a650a75e54f9372555`.
 Expert v26, Corrector v25, Validator v34 y Resolución v16 no cambiaron.
 
-El baseline real contiene 16 mercados, 9 predicciones, 2 perfiles, Karma total
+El baseline real de aquel checkpoint contenía 16 mercados, 9 predicciones, 2 perfiles, Karma total
 2.932, Prestigio total 40 y 7 registros de borrador. La referencia anterior a
 seis borradores quedó superada cuando Yol publicó el mercado manual de Tibo el
 26 de agosto. Ninguno de esos datos protegidos cambió durante este smoke.
 
 Tras v73 se inició exactamente un refresh Kalshi,
-`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Actividad productiva ajena a esta
+`39bc204b-aa3f-4a69-99da-557f5fa91f7d`. Actividad productiva ajena a aquella
 verificación continuó esa misma UUID con v75 hasta el checkpoint 4: catálogo
 terminal de 13.561 series, 416 seleccionadas, 87 completas, 57 fallidas
-reintentables, 272 pendientes, cero agotadas y 129 padres. Kalshi permanece
+reintentables, 272 pendientes, cero agotadas y 129 padres. Kalshi permanecía
 `in_progress/fetching`, `claim_count=8`, con lease vencido; Tavily terminó
-`completed/terminal`, `claim_count=5`. No hay batch, manifest ni borrador y SQL
-confirma que no existe una segunda UUID.
+`completed/terminal`, `claim_count=5`. No había batch, manifest ni borrador y SQL
+confirmaba que no existía una segunda UUID.
 
 Kalshi estaba sano: las lecturas oficiales devolvieron HTTP 200 y cursor
 terminal. V75 conservó el análisis único y el hash incremental, pero su perfil
@@ -89,7 +115,7 @@ estado habría producido un hash V2 etiquetado como V1 en una UUID futura.
 
 La corrección incremental integrada en `e74a6d7` reproduce exactamente el hash canónico V1
 desde las tuplas compactas. No cambia la evidencia, SQL, migraciones ni los
-cuatro checkpoints actuales y añade una regresión que exige el mismo contrato
+cuatro checkpoints de aquel momento y añade una regresión que exige el mismo contrato
 en Edge, constructor compartido y RPC.
 
 La regresión prueba equivalencia canónica con más de cien series, Unicode,
@@ -104,10 +130,11 @@ La corrección de segunda fase se documenta en
 La compatibilidad final del hash se documenta en
 [`docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md`](docs/ATINARA_RADAR_CATALOG_HASH_CONTRACT_FIX_20260827.md).
 
-La UUID histórica `c1f677eb-0dae-410f-820d-a4483601ab47` sigue stale e intacta.
-Hasta que Yol suba el ZIP incremental y las tres Actions estén verdes, no se
-despliega la corrección local, no se reanuda la UUID nueva, no se inicia otra,
-no se llama Market Expert y no se crea un borrador por otra vía.
+En aquel checkpoint, la UUID histórica
+`c1f677eb-0dae-410f-820d-a4483601ab47` seguía stale e intacta y se impuso una
+pausa temporal de despliegue, reanudación y creación de borradores. Esa pausa
+quedó superada por el corte funcional y la verificación operativa final
+documentados arriba.
 
 ## Historial operativo · Radar v69 y checkpoint de discovery
 
@@ -186,21 +213,21 @@ Corrección pendiente de cobertura y reanudación:
 Corrección incremental de la puerta CI y caché pública:
 [`docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md`](docs/ATINARA_RADAR_CACHE_VERSION_CI_FIX_20260826.md).
 
-## Estado vigente · cierre definitivo del ciclo experto
+## Historial operativo · cierre del ciclo experto previo a Radar/Editor
 
-Atinara conserva su producto social de predicciones con Karma ficticio y, sobre
+En aquel hito, Atinara conservaba su producto social de predicciones con Karma ficticio y, sobre
 el mismo núcleo contractual, construye **Atinara Engine** como producto B2B. El
 árbol incorpora el **Observatorio de Datos y tendencias**, un Agente Editor
 compartido, el Corrector Autónomo y el **Agente Centinela** de fuentes. La
-infraestructura principal de este hito está activada en producción; los
-schedulers de descubrimiento y monitorización continúan apagados.
+infraestructura principal de ese hito estaba activada en producción; los
+schedulers de descubrimiento y monitorización continuaban apagados.
 
-El backend coordinado está activo en producción. El build de GitHub Pages para
+El backend coordinado estaba activo en producción. El build de GitHub Pages para
 `ddf61bb` terminó correctamente, pero el HTML publicado mezcla
 `20260825-radar-catalog-bound1` y `20260825-radar-provider-checkpoint1`; no debe
 considerarse una entrega funcional aprobada hasta integrar la corrección que
 unifica el corte de recursos en las diez páginas. El smoke anterior contra
-Pages y el backend vigente confirmó el refresco real, el cooldown en tiempo real, el
+Pages y el backend entonces vigente confirmó el refresco real, el cooldown en tiempo real, el
 aislamiento por proveedor, la exclusión exacta de opciones ya preparadas y las
 opciones completas sin confirmar ni publicar mercados.
 
@@ -230,13 +257,13 @@ opciones completas sin confirmar ni publicar mercados.
   Los borradores manuales anteriores conservan su flujo.
 - Las migraciones locales `20260809120000`, `20260809133000`, `20260809140000`,
   `20260809145000`, `20260809150000`, `20260809160000` y `20260809170000`
-  forman el corte B2B vigente. La `140000` ya fue aplicada materialmente y su
+  formaban el corte B2B de aquel hito. La `140000` ya fue aplicada materialmente y su
   historial se reconcilió mediante `145000`: **no se debe ejecutar otra vez**.
   Las restantes también están aplicadas y registradas en producción. La
   corrección operativa `20260809180000_fix_radar_refresh_timeout.sql` también
   está aplicada y no debe repetirse.
-- `market-radar` v54, `market-draft-fixer` v18,
-  `validate-market-draft` v26 y `market-expert` v21 están activas con
+- En aquel corte, `market-radar` v54, `market-draft-fixer` v18,
+  `validate-market-draft` v26 y `market-expert` v21 estaban activas con
   `verify_jwt=true`. Radar separa disponibilidad técnica, descartes de contenido
   y cuarentena por fila; Gemini conserva el último estado válido y no bloquea a
   los demás proveedores. Editor, Validador y Corrector comparten una taxonomía
@@ -247,7 +274,7 @@ opciones completas sin confirmar ni publicar mercados.
   `20260811104727 · isolate_radar_poison_records_v4`. Sus archivos locales
   conservan los timestamps `20260809204739`, `20260811100833` y
   `20260811104727`, respectivamente.
-- La puerta vigente se completó con la migración local no repetible
+- La puerta de aquel hito se completó con la migración local no repetible
   `20260811163339_replace_radar_fact_gate_with_eligibility_v7.sql`, registrada
   remotamente como `20260811185229 · replace_radar_fact_gate_with_eligibility_v7`.
   El bootstrap histórico solo concede `technical_hold`; una fuente primaria
