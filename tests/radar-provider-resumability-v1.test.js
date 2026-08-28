@@ -218,6 +218,60 @@ test("la continuidad semántica conserva la revisión sin confundir cambios de d
   assert.match(edge,/revalidateCurrentCandidateDomain\(environment, providerCandidate, candidate\)/);
 });
 
+test("la revalidación parcial conserva la taxonomía autoritativa del catálogo", async () => {
+  const radar = await import(`${sharedUrl}?partialCatalogContext=${Date.now()}`);
+  const persisted = {
+    provider:"kalshi",external_id:"kalshi:KX-TRAILER-SEP",external_event_id:"KX-TRAILER",
+    event_group_key:"kalshi:KX-TRAILER",source_title:"Studio game trailer release",
+    source_question:"Will the official game trailer be released before September?",
+    source_description:"Before September",source_category:"Entertainment",
+    source_tags:["Entertainment","KXTRAILER","Video games"],
+    provider_payload:{
+      yes_sub_title:"Before September",series_ticker:"KXTRAILER",
+      series_title:"Official game trailers",event_ticker:"KX-TRAILER",
+      status:"closed",result:"yes",
+      taxonomy_scopes:[{category:"Entertainment",tag:"Video games"}],
+    },
+    identity_status:"resolved",identity_classification:"identified_real_option",
+    identity_source:"provider_contract_identity",parent_reconciliation_fingerprint:"a".repeat(64),
+  };
+  const attestedFingerprint = await radar.radarDomainFingerprintV1(persisted);
+  const partial = {
+    ...persisted,
+    source_tags:["Entertainment","KXTRAILER"],
+    provider_payload:{
+      yes_sub_title:"Before September",series_ticker:"KXTRAILER",event_ticker:"KX-TRAILER",
+      status:"open",result:null,
+    },
+    source_probability_yes:61,
+    source_status:"open",
+    parent_reconciliation_fingerprint:"b".repeat(64),
+  };
+  assert.notEqual(
+    await radar.selectRadarDomainReviewFingerprintV1(partial,{
+      ...persisted,domain_review_fingerprint:attestedFingerprint,
+    }),
+    attestedFingerprint,
+  );
+  const merged = radar.mergeRadarPartialCatalogContextV1(partial,persisted);
+  assert.deepEqual(merged.source_tags,["Entertainment","KXTRAILER","Video games"]);
+  assert.equal(merged.provider_payload.series_title,"Official game trailers");
+  assert.deepEqual(merged.provider_payload.taxonomy_scopes,[
+    {category:"Entertainment",tag:"Video games"},
+  ]);
+  assert.equal(merged.provider_payload.status,"open");
+  assert.equal(merged.provider_payload.result,null);
+  assert.equal(merged.source_probability_yes,61);
+  assert.equal(merged.source_status,"open");
+  assert.equal(
+    await radar.selectRadarDomainReviewFingerprintV1(merged,{
+      ...persisted,domain_review_fingerprint:attestedFingerprint,
+    }),
+    attestedFingerprint,
+  );
+  assert.match(edge,/mergeRadarPartialCatalogContextV1\(current, candidate\)/);
+});
+
 test("contrato de incidencias V6 es completo, estable y no altera Registry V2.1", async () => {
   const issues = await import(`${issuesUrl}?contract=${Date.now()}`);
   const options = {

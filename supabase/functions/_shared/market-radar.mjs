@@ -497,6 +497,56 @@ export async function radarDomainFingerprintV1(candidate) {
 }
 
 /**
+ * Conserva el contexto de catálogo que una revalidación puntual no vuelve a
+ * consultar. El endpoint de un evento puede refrescar estado, reglas e hijas,
+ * pero no representa por sí solo la taxonomía completa de la serie obtenida
+ * durante discovery. Por eso solo se usa al combinar una observación parcial
+ * con la candidata persistida del catálogo autoritativo.
+ *
+ * @param {Record<string, any>} currentCandidate
+ * @param {Record<string, any>} persistedCandidate
+ */
+export function mergeRadarPartialCatalogContextV1(
+  currentCandidate = {},
+  persistedCandidate = {},
+) {
+  const currentProviderPayload = isRecord(currentCandidate?.provider_payload)
+    ? currentCandidate.provider_payload : {};
+  const persistedProviderPayload = isRecord(persistedCandidate?.provider_payload)
+    ? persistedCandidate.provider_payload : {};
+  const sourceTags = [];
+  const seenTags = new Set();
+  for (const tag of [
+    ...safeStringArray(currentCandidate?.source_tags, 30),
+    ...safeStringArray(persistedCandidate?.source_tags, 30),
+  ]) {
+    const cleaned = cleanText(tag, 100);
+    const comparable = normalizeComparableText(cleaned);
+    if (!cleaned || !comparable || seenTags.has(comparable)) continue;
+    seenTags.add(comparable);
+    sourceTags.push(cleaned);
+    if (sourceTags.length >= 30) break;
+  }
+  const sourceCategory = cleanText(persistedCandidate?.source_category, 160)
+    || cleanText(currentCandidate?.source_category, 160);
+  const providerPayload = { ...currentProviderPayload };
+  for (const field of ["category", "series_ticker", "series_title", "series_slug"]) {
+    const persistedValue = cleanText(persistedProviderPayload[field], field === "series_title" ? 500 : 220);
+    const currentValue = cleanText(currentProviderPayload[field], field === "series_title" ? 500 : 220);
+    if (persistedValue || currentValue) providerPayload[field] = persistedValue || currentValue;
+  }
+  if (Array.isArray(persistedProviderPayload.taxonomy_scopes)) {
+    providerPayload.taxonomy_scopes = persistedProviderPayload.taxonomy_scopes.slice(0, 30);
+  }
+  return {
+    ...currentCandidate,
+    ...(sourceCategory ? { source_category: sourceCategory } : {}),
+    source_tags: sourceTags,
+    provider_payload: providerPayload,
+  };
+}
+
+/**
  * Conserva una atestación humana ya persistida únicamente cuando la candidata
  * revalidada mantiene exactamente el mismo material de dominio. La
  * reconciliación del padre tiene una puerta autoritativa propia y puede cambiar

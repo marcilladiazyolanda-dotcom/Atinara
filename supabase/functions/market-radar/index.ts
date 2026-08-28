@@ -65,6 +65,7 @@ import {
   localizeRadarProviderLabel,
   mergeProviderParentSelections,
   mergeProviderTaxonomySeriesV1,
+  mergeRadarPartialCatalogContextV1,
   paginateMergedRadarParents,
   officialEvidenceSegmentsForSubject,
   officialSelectionEditionCoverage,
@@ -6442,9 +6443,11 @@ async function revalidateKalshiCandidate(environment: Environment, candidate: Js
     environment, "kalshi", [canonicalEvent], contextual, checkedAt,
   );
   const current = reconciled.candidates.find((item) => cleanText(item.external_market_id, 220) === marketTicker);
-  return current ? {
+  const currentWithCatalogContext = current
+    ? mergeRadarPartialCatalogContextV1(current, candidate) : null;
+  return currentWithCatalogContext ? {
     ...candidate,
-    ...current,
+    ...currentWithCatalogContext,
     id: candidate.id,
     state: candidate.state,
     prepared_draft_id: candidate.prepared_draft_id,
